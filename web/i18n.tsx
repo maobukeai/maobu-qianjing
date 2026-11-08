@@ -49,7 +49,7 @@ export function readLanguage(): string {
 type TranslationValues = Record<string, string | number>;
 type TranslationContextValue = {
   language: string;
-  setLanguage: (language: string) => void;
+  setLanguage: (language: string) => Promise<void>;
   /** Translate `source`. Missing keys fall back to the English catalog, then
    *  to the key itself. Supports `{name}` / `{{name}}` placeholders. */
   t: (source: string, values?: TranslationValues) => string;
@@ -84,12 +84,14 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   // restart in localStorage alone. Hydrate from the server-persisted value;
   // null means the user never chose, so the system-language default stands.
   const hydratedRef = useRef(false);
+  const changedRef = useRef(false);
+  const writesRef = useRef<Promise<void>>(Promise.resolve());
   useEffect(() => {
     if (hydratedRef.current) return;
     hydratedRef.current = true;
     fetchShellLanguage()
       .then((saved) => {
-        if (isKnownLanguage(saved) && saved !== readLanguage()) {
+        if (!changedRef.current && isKnownLanguage(saved) && saved !== readLanguage()) {
           setLanguageState(saved);
           try {
             localStorage.setItem(LANGUAGE_KEY, saved);
@@ -101,14 +103,17 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setLanguage = (lang: string) => {
-    if (!isKnownLanguage(lang)) return;
-    setLanguageState(lang);
-    try {
-      localStorage.setItem(LANGUAGE_KEY, lang);
-      document.documentElement.lang = lang;
-    } catch {}
-    // Persist server-side so the choice survives restarts (fire-and-forget).
-    saveShellLanguage(lang).catch(() => {});
+    if (!isKnownLanguage(lang)) return Promise.reject(new Error("Unsupported interface language"));
+    changedRef.current = true;
+    // Commit before displaying success. Both settings surfaces receive failures,
+    // and rapid changes keep their order instead of racing the saved language.
+    const pending = writesRef.current.catch(() => {}).then(async () => {
+      await saveShellLanguage(lang);
+      setLanguageState(lang);
+      try { localStorage.setItem(LANGUAGE_KEY, lang); document.documentElement.lang = lang; } catch {}
+    });
+    writesRef.current = pending;
+    return pending;
   };
 
   useEffect(() => {

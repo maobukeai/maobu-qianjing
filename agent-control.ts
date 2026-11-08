@@ -2,22 +2,15 @@ import { buildNewProfile, type NewProfileInput } from "./create.ts";
 import { syncFirefoxTimezone } from "./firefox-config.ts";
 import { callFirefoxOwner, type FirefoxOwner } from "./firefox-runtime.ts";
 import { attachTimezones } from "./geoip.ts";
-import type { CloudConnectionRuntime } from "./cloud-connection.ts";
-import { CloudApiError } from "./cloud-client.ts";
-import {
-  CloudProfileEditor,
-  CloudProfileEditorError,
-} from "./cloud-profile-editor.ts";
-import type { CloudBrowserLifecycle } from "./cloud-browser.ts";
 import {
   BrowserLaunchError,
   type BrowserOpenOptions,
   type Launcher,
 } from "./launcher.ts";
 import type { LifecycleAdmissionController } from "./lifecycle-admission.ts";
-import type { RemoteCoordinator } from "./remote.ts";
-import { ProxyReplacementInputError, runProxyReplacements } from "./proxy-replacements.ts";
+import { ProxyReplacementInputError } from "./proxy-replacements.ts";
 import type { ProfileStore } from "./store.ts";
+import { editedLocalProfile, replaceLocalProfileProxies } from "./agent/local-profiles.ts";
 
 export const AGENT_CONTROL_PROTOCOL = "aliasmode-agent-v1";
 export const AGENT_CONTROL_PATH = "/api/agent/v1/connect";
@@ -43,9 +36,6 @@ export interface AgentControlDeps {
   store: ProfileStore;
   admission: LifecycleAdmissionController;
   firefoxCall?: (owner: FirefoxOwner, operation: string, payload: Record<string, unknown>) => Promise<unknown>;
-  remote?: RemoteCoordinator | null;
-  cloudBrowser?: CloudBrowserLifecycle;
-  cloudConnection?: CloudConnectionRuntime;
   log?: (message: string) => void;
 }
 
@@ -76,8 +66,6 @@ type SafeProfile = {
   capabilities?: readonly string[];
   debugPort?: number;
   headless?: boolean;
-  expectedVersion?: number;
-  permission?: "view" | "edit";
 };
 
 function object(value: unknown): Record<string, unknown> {
@@ -135,7 +123,7 @@ function errorResponse(id: number, error: unknown): AgentControlResponse {
     ok: false,
     error: {
       code: "operation_failed",
-      message: error instanceof Error ? error.message : "AliasMode operation failed",
+      message: error instanceof Error ? error.message : "猫步·千境 operation failed",
     },
   };
 }
@@ -244,88 +232,32 @@ export class AgentControlSession {
       case "browser.close":
         return await this.closeProfile(stringParam(params, "profileId"),
           params.expectedEndpoint === undefined ? undefined : stringParam(params, "expectedEndpoint"));
-      case "mcp.connectors.create":
-        return await this.createMcpConnector(stringParam(params, "label"));
-      case "mcp.connectors.list":
-        return await this.listMcpConnectors();
-      case "mcp.connectors.revoke":
-        return await this.revokeMcpConnector(stringParam(params, "connectorId"));
       default:
         throw agentError("unknown_method", `unknown agent method: ${method}`);
     }
   }
 
-  private cloudMcpConnection(): { connection: CloudConnectionRuntime; deviceId: string } {
-    const connection = this.deps.cloudConnection;
-    const deviceId = connection?.deviceId();
-    if (!connection || !deviceId) {
-      throw agentError("cloud_unavailable", "Sign in to AliasMode Cloud on this device first");
-    }
-    return { connection, deviceId };
-  }
-
-  private async createMcpConnector(label: string) {
-    const { connection, deviceId } = this.cloudMcpConnection();
-    const created = await connection.client.createMcpConnector(label);
-    return {
-      connectorId: created.connector.id,
-      deviceId,
-      url: connection.client.remoteMcpUrl(deviceId),
-      token: created.token,
-    };
-  }
-
-  private async listMcpConnectors() {
-    const { connection, deviceId } = this.cloudMcpConnection();
-    const listed = await connection.client.listMcpConnectors();
-    return {
-      deviceId,
-      url: connection.client.remoteMcpUrl(deviceId),
-      connectors: listed.connectors,
-    };
-  }
-
-  private async revokeMcpConnector(connectorId: string) {
-    const { connection } = this.cloudMcpConnection();
-    await connection.client.revokeMcpConnector(connectorId);
-    return { connectorId, revoked: true as const };
-  }
-
   private async replaceProfileProxies(params: Record<string, unknown>) {
-    if (!this.deps.cloudBrowser) {
-      throw agentError("cloud_unavailable", "Switch to AliasMode Cloud and sign in on this device first");
-    }
-    const { connection } = this.cloudMcpConnection();
-    return runProxyReplacements(connection.client, params);
+    return await this.deps.admission.run(
+      { kind: "cleanup", profileIds: this.deps.store.listProfiles().map((profile) => profile.id) },
+      () => replaceLocalProfileProxies(this.deps.store, params),
+    );
   }
 
   private async updateProfile(params: Record<string, unknown>) {
-    if (!this.deps.cloudBrowser) {
-      throw agentError("cloud_unavailable", "Switch to AliasMode Cloud and sign in on this device first");
-    }
-    const { connection } = this.cloudMcpConnection();
     const profileId = stringParam(params, "profileId");
     const set = object(params.set);
-    const stringFields = ["name", "group", "platform", "username", "password", "email", "emailPassword", "twofa", "proxy", "proxyType", "resolution"];
-    if (!Object.keys(set).length) throw agentError("invalid_request", "set must contain an editable field");
-    for (const [field, value] of Object.entries(set)) {
-      const valid = stringFields.includes(field) ? typeof value === "string"
-        : field === "extensions" || field === "tags"
-          ? (field === "tags" && typeof value === "string") || Array.isArray(value) && value.every((item) => typeof item === "string")
-          : false;
-      if (!valid) throw agentError("invalid_request", `invalid editable field: ${field}`);
-    }
-    try {
-      const editor = new CloudProfileEditor(connection.client, this.deps.store);
-      await editor.save(profileId, params.expectedVersion as number, set);
-      return { profileId, updated: true as const };
-    } catch (error) {
-      if (error instanceof CloudApiError) throw agentError(error.code, error.message);
-      if (error instanceof CloudProfileEditorError) {
-        throw agentError(error.status === 409 ? "conflict" : "invalid_request", error.message);
+    return await this.deps.admission.run({ kind: "cleanup", profileIds: [profileId] }, () => {
+      if (this.deps.store.getLaunch(profileId)) throw agentError("profile_open", "close the profile before editing it");
+      const profile = this.deps.store.getProfile(profileId);
+      if (!profile) throw agentError("profile_not_found", "profile was not found");
+      try {
+        this.deps.store.upsertProfile(editedLocalProfile(profile, set));
+      } catch (error) {
+        throw agentError("invalid_request", error instanceof Error ? error.message : "invalid profile edit");
       }
-      throw error;
-    }
+      return { profileId, updated: true as const };
+    });
   }
 
   private async firefoxCall(profileId: string, operation: string, payload: Record<string, unknown>): Promise<unknown> {
@@ -339,38 +271,6 @@ export class AgentControlSession {
 
   private async listProfiles(): Promise<SafeProfile[]> {
     await this.deps.launcher.reconcileOrphans();
-    if (this.deps.cloudBrowser) {
-      const roster = await this.deps.cloudBrowser.listRoster();
-      return roster.profiles.map((profile) => {
-        const launch = this.deps.store.getLaunch(profile.id);
-        return {
-          id: profile.id,
-          name: profile.name,
-          group: profile.group,
-          platform: profile.platform ?? "",
-          tags: profile.tags,
-          expectedVersion: profile.version,
-          permission: profile.permission,
-          running: !!launch,
-          ...(launch ? { ...(isFirefoxEngine(launch) ? firefoxPublicFields() : { debugPort: launch.debugPort }), headless: launch.headless } : {}),
-        };
-      });
-    }
-    if (this.deps.remote) {
-      const roster = await this.deps.remote.listRoster();
-      return roster.profiles.map((profile) => {
-        const launch = this.deps.store.getLaunch(profile.id);
-        return {
-          id: profile.id,
-          name: profile.name,
-          group: profile.group,
-          platform: profile.platform ?? "",
-          tags: profile.tags ?? [],
-          running: !!launch,
-          ...(launch ? { ...(isFirefoxEngine(launch) ? firefoxPublicFields() : { debugPort: launch.debugPort }), headless: launch.headless } : {}),
-        };
-      });
-    }
     return this.deps.store.listProfiles().map((profile) => {
       const launch = this.deps.store.getLaunch(profile.id);
       return {
@@ -388,25 +288,14 @@ export class AgentControlSession {
   private async createProfile(params: Record<string, unknown>): Promise<{ id: string; temporary: boolean }> {
     const input = object(params.input ?? {});
     const temporary = params.temporary === true;
-    let id: string;
-    if (this.deps.remote && input.chromiumRuntime) throw new Error("AliasMode Chromium is unavailable in legacy Remote mode");
-    if (this.deps.remote) {
-      id = (await this.deps.remote.createProfile(input as NewProfileInput)).id;
-    } else {
-      const profile = buildNewProfile(input as NewProfileInput, (candidate) => !!this.deps.store.getProfile(candidate));
-      if (profile.proxy) {
-        await attachTimezones([profile], undefined, true).catch(() => {});
-        syncFirefoxTimezone(profile);
-      }
-      if (this.deps.cloudBrowser) {
-        id = (await this.deps.cloudBrowser.create(profile)).id;
-      } else {
-        this.deps.store.upsertProfile(profile);
-        id = profile.id;
-      }
+    const profile = buildNewProfile(input as NewProfileInput, (candidate) => !!this.deps.store.getProfile(candidate));
+    if (profile.proxy) {
+      await attachTimezones([profile], undefined, true).catch(() => {});
+      syncFirefoxTimezone(profile);
     }
-    if (temporary) this.deps.store.markAgentTemporary(id);
-    return { id, temporary };
+    this.deps.store.upsertProfile(profile);
+    if (temporary) this.deps.store.markAgentTemporary(profile.id);
+    return { id: profile.id, temporary };
   }
 
   private async openProfile(params: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -434,20 +323,6 @@ export class AgentControlSession {
           return { ws: existing.ws, port: existing.debugPort, alreadyOpen, headless: existing.headless ?? false };
         }
 
-        if (this.deps.cloudBrowser) {
-          const result = await this.deps.cloudBrowser.open(profileId, startupUrls, options);
-          if (!result.ok || !result.ws || !result.port) {
-            throw agentError("open_failed", result.error ?? "Cloud browser open failed");
-          }
-          return { ws: result.ws, port: result.port, alreadyOpen: false, headless: options.headless ?? false };
-        }
-        if (this.deps.remote) {
-          const result = await this.deps.remote.open(profileId, startupUrls, false, options);
-          if (!result.ok || !result.ws || !result.port) {
-            throw agentError("open_failed", result.error ?? "remote browser open failed");
-          }
-          return { ws: result.ws, port: result.port, alreadyOpen: false, headless: options.headless ?? false };
-        }
         const result = await this.deps.launcher.start(profileId, startupUrls, options);
         const launch = this.deps.store.getLaunch(profileId);
         return {
@@ -509,7 +384,6 @@ export class AgentControlSession {
   private async closeProfile(profileId: string, expectedEndpoint?: string): Promise<{
     profileId: string;
     closed: true;
-    sync?: "complete" | "pending" | "conflict";
     deleted: boolean;
   }> {
     return await this.deps.admission.run(
@@ -521,17 +395,7 @@ export class AgentControlSession {
           this.openedEndpoints.delete(profileId);
           throw agentError("browser_changed", "The browser instance changed; the current browser was left open");
         }
-        let closed: boolean;
-        let sync: "complete" | "pending" | "conflict" | undefined;
-        if (this.deps.cloudBrowser) {
-          const result = await this.deps.cloudBrowser.close(profileId);
-          closed = result.closed;
-          if (result.closed) sync = result.sync;
-        } else if (this.deps.remote) {
-          closed = await this.deps.remote.close(profileId);
-        } else {
-          closed = await this.deps.launcher.stop(profileId);
-        }
+        const closed = await this.deps.launcher.stop(profileId);
         if (!closed) throw agentError("close_unconfirmed", `browser teardown is unconfirmed: ${profileId}`);
 
         this.openedByConnection.delete(profileId);
@@ -539,13 +403,12 @@ export class AgentControlSession {
         this.attachedExisting.delete(profileId);
         const temporary = this.deps.store.listAgentTemporary().includes(profileId);
         let deleted = false;
-        if (temporary && (sync === undefined || sync === "complete")) {
+        if (temporary) {
           deleted = await this.deleteClosedProfile(profileId);
         }
         return {
           profileId,
           closed: true as const,
-          ...(sync ? { sync } : {}),
           deleted,
         };
       },
@@ -565,31 +428,6 @@ export class AgentControlSession {
   }
 
   private async deleteClosedProfile(profileId: string): Promise<boolean> {
-    if (this.deps.cloudBrowser) {
-      if (!this.deps.cloudConnection) throw agentError("cloud_unavailable", "Cloud connection is unavailable");
-      try {
-        const editor = new CloudProfileEditor(this.deps.cloudConnection.client, this.deps.store);
-        const expectedVersion = await editor.closedProfileVersion(profileId);
-        await this.deps.cloudConnection.client.trashProfile(profileId, { expectedVersion });
-        this.deps.store.clearAgentTemporary(profileId);
-        return true;
-      } catch (error) {
-        if (
-          error instanceof CloudProfileEditorError && error.status === 409 ||
-          error instanceof CloudApiError && error.status === 409 && error.code === "profile_open"
-        ) {
-          throw agentError("profile_open", "close the profile before deleting it");
-        }
-        throw error;
-      }
-    }
-    if (this.deps.remote) {
-      const result = await this.deps.remote.deleteProfiles([profileId]);
-      if (result.locked.includes(profileId)) throw agentError("profile_open", "close the profile before deleting it");
-      const deleted = result.deleted > 0;
-      if (deleted) this.deps.store.clearAgentTemporary(profileId);
-      return deleted;
-    }
     if (!this.deps.store.getProfile(profileId)) {
       this.deps.store.clearAgentTemporary(profileId);
       return false;

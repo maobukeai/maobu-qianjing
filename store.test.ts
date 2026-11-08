@@ -163,7 +163,6 @@ test("rename is exact, idempotent, durable, and preserves all profile metadata",
       debugPort: 9333,
       ws: "ws://127.0.0.1:9333/devtools/browser/test",
       startedAt: 1_720_000_000_000,
-      sessionBaseVersion: 9,
       binaryPath: "/opt/cloakbrowser",
       userDataDir: `/profiles/${profile.id}`,
       binarySha256: "a".repeat(64),
@@ -450,7 +449,6 @@ test("launch records round-trip exact process, kernel, and persona identity", ()
     debugPort: 9333,
     ws: "ws://x",
     startedAt: 111,
-    sessionBaseVersion: 4,
     binaryPath: "/approved/cloak",
     userDataDir: "/profiles/k1d0cd11",
     binarySha256: "a".repeat(64),
@@ -465,7 +463,6 @@ test("launch records round-trip exact process, kernel, and persona identity", ()
     debugPort: 9333,
     ws: "ws://x",
     startedAt: 111,
-    sessionBaseVersion: 4,
     binaryPath: "/approved/cloak",
     userDataDir: "/profiles/k1d0cd11",
     binarySha256: "a".repeat(64),
@@ -474,8 +471,6 @@ test("launch records round-trip exact process, kernel, and persona identity", ()
     processGroupId: 1234,
     rootStartTime: "987654",
   });
-  store.updateLaunchSessionBaseVersion("k1d0cd11", 5);
-  expect(store.getLaunch("k1d0cd11")!.sessionBaseVersion).toBe(5);
   expect(store.listLaunches().length).toBe(1);
   store.clearLaunch("k1d0cd11");
   expect(store.getLaunch("k1d0cd11")).toBeNull();

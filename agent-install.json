@@ -1,14 +1,12 @@
 {
   "schema": 1,
-  "product": "AliasMode",
+  "product": "猫步·千境（本地版）",
+  "localOnly": true,
   "platforms": ["windows-x64"],
-  "wingetId": "AliasMode.AliasMode",
-  "releaseManifest": "https://github.com/aliasmode/aliasmode/releases/download/v{version}/aliasmode-agent-bootstrap.json",
-  "bootstrapScript": "scripts/install-agent.ps1",
-  "installedHelper": "%LOCALAPPDATA%\\AliasMode\\aliasmode-mcp.exe",
+  "installedHelper": "src-tauri/target/debug/aliasmode-mcp.exe",
   "mcp": {
     "transport": "stdio",
-    "command": "%LOCALAPPDATA%\\AliasMode\\playwright\\node\\node.exe",
-    "args": ["%LOCALAPPDATA%\\AliasMode\\playwright\\agent\\mcp-host.mjs"]
+    "command": "src-tauri/target/debug/aliasmode-mcp.exe",
+    "args": []
   }
 }

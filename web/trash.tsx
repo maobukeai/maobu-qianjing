@@ -97,12 +97,12 @@ export function TrashPage({ active, onChanged, folderTree = [] }: { active: bool
     setFolders(next); setSelected(new Set()); setPage(0); setNotice("");
   };
 
-  return <div className="workspace proxy-page trash-page" hidden={!active}>
-    <div className="tools-intro">
-      <div><span className="tools-eyebrow">{t("PROFILE RECOVERY")}</span><h2>{t("Pick up where you left off.")}</h2>
-        <p>{t("Restore profiles with their saved identity and session, right back to their original folders.")}</p></div>
+  return <div className="workspace proxy-page trash-page" hidden={!active} aria-labelledby="trash-page-title" aria-busy={!!busy}>
+    <header className="tools-intro page-heading">
+      <div><h2 className="sect-title" id="trash-page-title">{t("Trash")}</h2>
+        <p className="page-subtitle">{t("Restore profiles with their saved identity and session, right back to their original folders.")}</p></div>
       <span className="tools-count"><strong>{profiles.length.toLocaleString()}</strong> {t("profiles in Trash")}</span>
-    </div>
+    </header>
     {error && <div className="tools-alert" role="alert">{error}</div>}
     {notice && <div className="tools-notice" role="status">{notice}</div>}
     <div className="trash-layout">
@@ -159,7 +159,7 @@ export function TrashPage({ active, onChanged, folderTree = [] }: { active: bool
               <td><span className="tools-folder-tag">{profile.group || t("Ungrouped")}</span></td>
               <td><time dateTime={new Date(profile.trashedAt).toISOString()} title={new Date(profile.trashedAt).toLocaleString()}>{new Date(profile.trashedAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</time><small>{new Date(profile.trashedAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</small></td>
             </tr>)}</tbody></table></div>
-          <div className="proxy-pager"><span>{(paged.page * 50 + 1).toLocaleString()}–{Math.min((paged.page + 1) * 50, filtered.length).toLocaleString()} of {filtered.length.toLocaleString()}</span>
+          <div className="proxy-pager"><span>{t("{from}–{to} of {total}", { from: (paged.page * 50 + 1).toLocaleString(), to: Math.min((paged.page + 1) * 50, filtered.length).toLocaleString(), total: filtered.length.toLocaleString() })}</span>
             <button className="btn" disabled={paged.page === 0} onClick={() => setPage(paged.page - 1)}>{t("Previous")}</button>
             <span>{paged.page + 1} / {paged.pages}</span>
             <button className="btn" disabled={paged.page + 1 >= paged.pages} onClick={() => setPage(paged.page + 1)}>{t("Next")}</button>

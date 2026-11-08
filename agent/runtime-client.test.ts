@@ -1,10 +1,15 @@
 import { expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import { join } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import {
   AgentRuntimeClient,
+  UnsupportedRuntimeError,
   RUNTIME_PROTOCOL,
+  RUNTIME_VERSION,
   defaultRuntimeDescriptorPath,
+  discoverRuntime,
   validateRuntimeDescriptor,
   windowsProcessIdentityCommand,
 } from "./runtime-client.mjs";
@@ -12,7 +17,7 @@ import {
 function descriptor() {
   return {
     protocol: RUNTIME_PROTOCOL,
-    appVersion: "0.1.0-beta.32",
+    appVersion: RUNTIME_VERSION,
     generation: "a".repeat(64),
     nonce: "b".repeat(64),
     port: 50400,
@@ -31,9 +36,37 @@ test("runtime descriptor validation binds protocol, version, process, and nonce"
   expect(() => validateRuntimeDescriptor({ ...descriptor(), nonce: "public" }))
     .toThrow("did not match");
   expect(() => validateRuntimeDescriptor({ ...descriptor(), readiness: "starting" }))
-    .toThrow("did not match");
+    .toThrow(UnsupportedRuntimeError);
   expect(() => validateRuntimeDescriptor({ ...descriptor(), desktopStartedAt: "" }))
     .toThrow("did not match");
+});
+
+test("local adapters reject unsupported descriptors without starting or contacting a desktop", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "aliasmode-local-runtime-"));
+  try {
+    for (const readiness of ["account", "unavailable"]) {
+      const value = { ...descriptor(), readiness };
+      expect(() => validateRuntimeDescriptor(value)).toThrow(UnsupportedRuntimeError);
+      const descriptorPath = join(directory, "agent-runtime.json");
+      writeFileSync(descriptorPath, JSON.stringify(value));
+      await expect(discoverRuntime({
+        descriptorPath,
+        desktopExecutable: join(directory, "missing-desktop.exe"),
+        version: value.appVersion,
+        waitMs: 1_000,
+      })).rejects.toThrow(UnsupportedRuntimeError);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("runtime discovery does not launch an original installation as a fallback", async () => {
+  await expect(discoverRuntime({
+    descriptorPath: join(import.meta.dir, "missing-runtime.json"),
+    env: { LOCALAPPDATA: "C:\\Users\\me\\AppData\\Local" },
+    waitMs: 1_000,
+  })).rejects.toThrow("Set ALIASMODE_DESKTOP_EXE to this local build");
 });
 
 test("invalid agent responses terminate their WebSocket", () => {
@@ -67,15 +100,15 @@ test("Windows process identity does not depend on PowerShell modules or PATH", (
 
 test("runtime descriptor path uses the Tauri application data directory", () => {
   expect(defaultRuntimeDescriptorPath({ APPDATA: "C:\\Users\\me\\AppData\\Roaming" } as any, "win32"))
-    .toBe(join("C:\\Users\\me\\AppData\\Roaming", "com.aliasmode.desktop", "agent-runtime.json"));
+    .toBe(join("C:\\Users\\me\\AppData\\Roaming", "com.maobu.local", "agent-runtime.json"));
   // Linux follows Tauri's data folder: XDG_DATA_HOME when it is absolute, else ~/.local/share.
   // Linux paths use "/" whatever system runs the code.
   expect(defaultRuntimeDescriptorPath({ HOME: "/home/me" } as any, "linux"))
-    .toBe("/home/me/.local/share/com.aliasmode.desktop/agent-runtime.json");
+    .toBe("/home/me/.local/share/com.maobu.local/agent-runtime.json");
   expect(defaultRuntimeDescriptorPath({ HOME: "/home/me", XDG_DATA_HOME: "/data/me" } as any, "linux"))
-    .toBe("/data/me/com.aliasmode.desktop/agent-runtime.json");
+    .toBe("/data/me/com.maobu.local/agent-runtime.json");
   expect(defaultRuntimeDescriptorPath({ HOME: "/home/me", XDG_DATA_HOME: "relative" } as any, "linux"))
-    .toBe("/home/me/.local/share/com.aliasmode.desktop/agent-runtime.json");
+    .toBe("/home/me/.local/share/com.maobu.local/agent-runtime.json");
   expect(defaultRuntimeDescriptorPath({
     ALIASMODE_RUNTIME_DESCRIPTOR: "C:\\fixture\\runtime.json",
   } as any)).toBe("C:\\fixture\\runtime.json");

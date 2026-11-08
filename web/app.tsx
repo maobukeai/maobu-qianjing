@@ -1,134 +1,44 @@
-import { Channel } from "@tauri-apps/api/core";
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as React from "react";
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 import "./proxies.css";
-import "./services.css";
+import maobuMarkUrl from "./maobu-mark.png";
 import { ProxiesPage } from "./proxies.tsx";
-import { ServicesPage } from "./services.tsx";
-import { CartIcon, ProxyProviderOffer, ProxyStoreContext, proxyOfferUrl, type ProxySrc } from "./proxy-offer.tsx";
-import { StorePage, useCloudStore } from "./store.tsx";
-import { trackStoreEvent, useStoreEvents } from "./store-events.ts";
 import { TrashPage } from "./trash.tsx";
 import { parsePastedProxy } from "./proxy-input.ts";
 import { ScriptRunPanel, ScriptsPage } from "./scripts.tsx";
 import { I18nProvider, availableLanguages, languageNativeName, useTranslation } from "./i18n.tsx";
 import { localeTimezoneMismatch } from "../profile-locale.ts";
-import { folderTree, folderScope, folderGrantPermission, type FolderInfo } from "../folders.ts";
+import { folderTree, folderScope, type FolderInfo } from "../folders.ts";
+import { GROUP_DISCLOSURE_KEY, profileGroupCollapsed, profileGroupSections, readGroupDisclosure, serializeGroupDisclosure, toggleProfileSelection } from "../profile-group-state.ts";
 import { THEME_KEY, readThemeChoice, themeCookie, type ThemeChoice } from "./theme.ts";
-import {
-  describeDesktopUpdateResult,
-  parseDesktopUpdateResult,
-  type DesktopUpdateResult,
-} from "./desktop-update-result.ts";
-import {
-  type UiProfile,
-  type HealthSource,
-  type DiagnoseReport,
-  type EditProfile,
-  type Extension,
-  type GroupExtensionDefaults,
-  type AppModeConfig,
-  type CloudAuthState,
-  CloudSessionRestoreError,
-  CloudAuthError,
-  type CloudDiagnosticEvent,
-  type CloudTeamState,
-  acceptCloudInvitation,
-  acceptCloudLegal,
-  createCloudConnector,
-  fetchCloudConnector,
-  revokeCloudConnector,
-  cloudSessionContextReady,
-  cloudWorkspaceReady,
-  fetchAppMode,
-  fetchCloudAuth,
-  fetchCloudEvents,
-  fetchRuntimeDownloads,
-  type RuntimeDownload,
-  fetchCloudTeam,
-  cloudWorkspaceAction,
-  forgetCloudSession,
-  signInCloud,
-  signOutCloud,
-  signUpCloud,
-  restoreCloudSession,
-  requestCloudPasswordReset,
-  resendCloudSignUp,
-  verifyCloudSignUp,
-  selectAppMode,
-  saveServicesHidden,
-  fetchProfiles,
-  serialLoader,
-  fetchHealth,
-  fetchDiskSpace,
-  type DiskSpace,
-  fetchLogs,
-  fetchDiagnose,
-  checkProxy,
-  ProxyCheckError,
-  type ProxyCheckInput,
-  type ProxyCheckResult,
-  addProfileCookies,
-  fetchPendingCookies,
-  clearPendingCookies,
-  openProfile,
-  closeProfile,
-  restartProfile,
-  raiseProfile,
-  checkFingerprint,
-  restoreParkedSession,
-  fetchExtensions,
-  installWebStoreExtension,
-  uploadExtensions,
-  removeExtension,
-  assignExtensionBulk,
-  fetchGroupExtensionDefaults,
-  setGroupExtensionDefaults,
-  uploadExports,
-  moveProfiles,
-  deleteProfiles,
-  createProfile,
-  fetchProfileEdit,
-  updateProfile,
-  refreshProfileTimezone,
-  convertMobileProfile,
-  exportProfiles,
-  type ExportFormat,
-  type ExportProgress,
-  updateFromFile,
-  createGroup,
-  renameGroup,
-  moveGroup,
-  deleteGroup,
-  fetchTotp,
-} from "./api.ts";
-
+import { ProfileActionMenu } from "./profile-action-menu.tsx";
+import { WorkspaceProvider, WorkspaceSwitcher, WorkspaceManagementPage, WorkspaceActivity, DevicePanel, useWorkspaceCatalog, type WorkspacePageIntent, type WorkspacePageRequest } from "./workspace-manager.tsx";
+import { fetchWorkspacePreferences, saveWorkspacePreference } from "./workspaces-api.ts";
+import { DesktopStartupBar, WindowActionError, WindowControls, useWindowChrome } from "./window-chrome.tsx";
+import { type UiProfile, type DiagnoseReport, type EditProfile, type Extension, type GroupExtensionDefaults, type AppModeConfig, fetchAppMode, fetchRuntimeDownloads, type RuntimeDownload, fetchProfiles, serialLoader, fetchHealth, fetchDiskSpace, type DiskSpace, fetchLogs, fetchDiagnose, checkProxy, ProxyCheckError, type ProxyCheckInput, type ProxyCheckResult, addProfileCookies, fetchPendingCookies, clearPendingCookies, openProfile, closeProfile, restartProfile, raiseProfile, fetchExtensions, installWebStoreExtension, uploadExtensions, removeExtension, assignExtensionBulk, fetchGroupExtensionDefaults, setGroupExtensionDefaults, uploadExports, moveProfiles, deleteProfiles, createProfile, fetchProfileEdit, updateProfile, refreshProfileTimezone, convertMobileProfile, exportProfiles, type ExportFormat, type ExportProgress, updateFromFile, createGroup, renameGroup, moveGroup, deleteGroup, fetchTotp } from "./api.ts";
 /** Run async tasks with bounded concurrency (so "Open 50" isn't 50 at once). */
 async function runPool<T>(items: T[], n: number, fn: (item: T) => Promise<void>): Promise<void> {
-  let i = 0;
-  const worker = async () => { while (i < items.length) await fn(items[i++]!); };
-  await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker));
+    let i = 0;
+    const worker = async () => { while (i < items.length) await fn(items[i++]!); };
+    await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker));
 }
-
 const CSV_TEMPLATE =
   "name,group,platform,proxy,username,password,email,emailpassword,twofa\n" +
   "alice_warmup,Warmup,x.com,1.2.3.4:8080:proxyuser:proxypass,alice_user,SuperSecret1,alice@example.com,MailboxSecret1,JBSWY3DPEHPK3PXP\n" +
   "bob_eu,EU,telegram.org,,bob_user,SuperSecret2,bob@example.com,MailboxSecret2,\n" +
   "carol_noproxy,Warmup,,,carol_user,SuperSecret3,carol@example.com,MailboxSecret3,KRSXG5CTMVRXEZLU\n";
-
 const TXT_EXAMPLE =
   "id=k1example01\ngroup=Warmup\nplatform=x.com\nname=alice_warmup\nusername=alice@example.com\n" +
   "password=SuperSecret1\nemail=mailbox@example.com\nemailpassword=MailboxSecret1\nfakey=JBSWY3DPEHPK3PXP\ncookie=[]\nproxytype=http\n" +
   "proxy=1.2.3.4:8080:proxyuser:proxypass\nua=\nresolution=1920*1080\n******************\n";
-
 // Example sheet for the Update-from-file flow. The FIRST column (id) is what
 // matches each row to an existing profile — keep it. Edit the other columns;
 // delete any column you don't want to change.
 const UPDATE_TEMPLATE_CSV =
   "id,name,group,platform,proxy,proxytype,username,password,twofa,resolution,custom_no\n" +
   "<paste-the-profile-id-here>,New name,Warmup,x.com,1.2.3.4:8080:user:pass,http,new@example.com,NewPass1,JBSWY3DPEHPK3PXP,1920*1080,123456\n";
-
 /**
  * How many profiles a pasted AdsPower export would create. Every record starts
  * with its own `id=` line, so counting those is exact rather than a guess at
@@ -137,13 +47,11 @@ const UPDATE_TEMPLATE_CSV =
 function countPastedRecords(text: string): number {
   return (text.match(/^id=/gm) ?? []).length;
 }
-
 function sameExtensionSelection(left: string[], right: string[]): boolean {
   const leftIds = new Set(left);
   const rightIds = new Set(right);
   return leftIds.size === rightIds.size && [...leftIds].every((id) => rightIds.has(id));
 }
-
 function downloadText(name: string, text: string, type: string): void {
   const url = URL.createObjectURL(new Blob([text], { type }));
   const a = document.createElement("a");
@@ -151,32 +59,22 @@ function downloadText(name: string, text: string, type: string): void {
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
 }
-
 const REFRESH_MS = 3000;
-const PROFILE_PAGE_SIZE = 50;
-const PAGE_SIZES = [25, 50, 100, 200];
-
-const PAGE_TITLES: Record<"profiles" | "scripts" | "settings" | "extensions" | "proxies" | "trash" | "services", string> = {
-  profiles: "Profiles",
-  scripts: "Scripts",
-  settings: "Settings",
-  extensions: "Extensions",
-  proxies: "Proxies",
-  trash: "Trash",
-  services: "Services",
+const PROFILE_PAGE_SIZE = 20;
+const PAGE_SIZES = [20, 25, 50, 100, 200];
+const PAGE_TITLES: Record<"profiles" | "scripts" | "settings" | "extensions" | "proxies" | "trash" | "workspaces", string> = {
+    profiles: "Profiles",
+    scripts: "Scripts",
+    settings: "Settings",
+    extensions: "Extensions",
+    proxies: "Proxies",
+    trash: "Trash",
+    workspaces: "Workspace management",
 };
-
-const SETTINGS_TABS = [
-  { key: "account", label: "Account" },
-  { key: "team", label: "Workspace" },
-  { key: "advanced", label: "Advanced" },
-] as const;
-
+const SETTINGS_TABS = [{ key: "account", label: "General" }, { key: "advanced", label: "Advanced" }] as const;
 type SettingsTab = (typeof SETTINGS_TABS)[number]["key"];
-
 /** Mirrors MAX_CUSTOM_NO_LENGTH in parse.ts — the server rejects anything longer. */
 const MAX_CUSTOM_NO = 12;
-
 /**
  * Roster columns. `width` is the single source of truth: each column is laid out
  * at exactly that width and the table's min-width is their sum, so a column can
@@ -184,28 +82,25 @@ const MAX_CUSTOM_NO = 12;
  * Only the checkbox column is fixed; everything else can be hidden.
  */
 const COLUMNS = [
-  { key: "no", label: "No.", sort: true, width: 96 },
-  { key: "name", label: "Name", sort: true, width: 220 },
-  { key: "group", label: "Group", sort: true, width: 120 },
+  { key: "no", label: "No.", sort: true, width: 52 },
+  { key: "name", label: "Name", sort: true, width: 200 },
+  { key: "group", label: "Group", sort: true, width: 100 },
   { key: "platform", label: "Platform", sort: true, width: 128 },
   { key: "tags", label: "Tags", sort: false, width: 140 },
-  { key: "proxy", label: "Proxy", sort: true, width: 160 },
-  /* Every row action lives here, beside Open/Close — no hover reveal. */
-  { key: "action", label: "Action", sort: false, width: 230 },
+  { key: "proxy", label: "Proxy", sort: true, width: 150 },
+  { key: "status", label: "Status", sort: false, width: 90 },
+  /* The launch action stays visible; the labeled menu holds secondary actions. */
+  { key: "action", label: "Action", sort: false, width: 132 },
 ] as const;
-
 /** Width of the always-present select-all checkbox column. */
-const CHECKBOX_COLUMN_WIDTH = 44;
-
+const CHECKBOX_COLUMN_WIDTH = 36;
 type ColumnKey = (typeof COLUMNS)[number]["key"];
 type SortKey = ColumnKey | "status";
-
 const THEMES = [
   { key: "system", label: "System", icon: "laptop" },
   { key: "light", label: "Light", icon: "sun" },
   { key: "dark", label: "Dark", icon: "moon" },
 ] as const;
-
 function readTheme(): ThemeChoice {
   let cookies = "";
   let stored: string | null = null;
@@ -213,25 +108,20 @@ function readTheme(): ThemeChoice {
   try { stored = localStorage.getItem(THEME_KEY); } catch {}
   return readThemeChoice(cookies, stored);
 }
-
 const SIDEBAR_KEY = "aliasmode.shell.sidebarCollapsed";
-
 /**
  * Below this width the sidebar always renders as the icon rail. Hiding it
  * entirely (the old breakpoint behavior) left a small window with no
  * navigation at all — this is a desktop app and the user sizes it freely.
  */
 const RAIL_MEDIA = "(max-width: 760px)";
-
 function readRailForced(): boolean {
   try { return window.matchMedia(RAIL_MEDIA).matches; } catch { return false; }
 }
 const HIDDEN_COLUMNS_KEY = "aliasmode.roster.hiddenColumns";
 const PAGE_SIZE_KEY = "aliasmode.roster.pageSize";
-
-/** Tags are off until an operator asks for them — most rosters do not use them. */
-const DEFAULT_HIDDEN_COLUMNS: ColumnKey[] = ["tags"];
-
+/** Keep the everyday view focused; optional columns stay in the column picker. */
+const DEFAULT_HIDDEN_COLUMNS: ColumnKey[] = ["no", "group", "platform", "tags"];
 /** Roster layout preferences are a convenience: a hostile/empty store must not break the view. */
 function readHiddenColumns(): Set<ColumnKey> {
   try {
@@ -242,89 +132,23 @@ function readHiddenColumns(): Set<ColumnKey> {
     return new Set((Array.isArray(raw) ? raw : []).filter((key) => known.has(key)) as ColumnKey[]);
   } catch { return new Set(DEFAULT_HIDDEN_COLUMNS); }
 }
-
 function readSidebarCollapsed(): boolean {
-  try { return localStorage.getItem(SIDEBAR_KEY) === "1"; } catch { return false; }
+  try { return localStorage.getItem(SIDEBAR_KEY) !== "0"; } catch { return true; }
 }
-
 function readPageSize(): number {
   try {
     const stored = Number(localStorage.getItem(PAGE_SIZE_KEY));
     return PAGE_SIZES.includes(stored) ? stored : PROFILE_PAGE_SIZE;
   } catch { return PROFILE_PAGE_SIZE; }
 }
-
+let preferenceRevision = 0;
 function writeSetting(key: string, value: string): void {
   try { localStorage.setItem(key, value); } catch { /* private mode / disabled storage */ }
+  if ([HIDDEN_COLUMNS_KEY, PAGE_SIZE_KEY, SIDEBAR_KEY, GROUP_DISCLOSURE_KEY].includes(key)) {
+    preferenceRevision++;
+    void saveWorkspacePreference(key, value).catch((error) => window.dispatchEvent(new CustomEvent("workspace-preference-error", { detail: error instanceof Error ? error.message : String(error) })));
+  }
 }
-
-const CLOUD_DIAGNOSTIC_LABELS: Record<CloudDiagnosticEvent["type"], string> = {
-  open_started: "Cloud open started",
-  cloud_registered: "Cloud session registered",
-  browser_started: "CloakBrowser started",
-  browser_launch_preflight_failed: "Browser profile preparation failed",
-  browser_launch_mode_conflict_failed: "Browser was already starting in another mode",
-  browser_launch_binary_verification_failed: "Browser runtime verification failed",
-  browser_launch_profile_directory_failed: "Browser profile folder could not be prepared",
-  browser_launch_relay_setup_failed: "Proxy relay setup failed",
-  browser_launch_process_spawn_failed: "CloakBrowser process could not start",
-  browser_launch_cdp_readiness_failed: "CloakBrowser debugging connection was not ready",
-  session_restore_started: "Session restore started",
-  session_restore_completed: "Session restore completed",
-  session_restore_unclassified_failed: "Session restore failed before classification",
-  session_restore_invalid_bundle_failed: "Session data was invalid",
-  session_restore_invalid_bundle_timeout: "Session data validation timed out",
-  session_restore_connect_failed: "Browser connection failed",
-  session_restore_connect_timeout: "Browser connection timed out",
-  session_restore_context_failed: "Persistent browser context was unavailable",
-  session_restore_context_timeout: "Persistent browser context timed out",
-  session_restore_origin_storage_failed: "Website storage restore failed",
-  session_restore_origin_storage_timeout: "Website storage restore timed out",
-  session_restore_cookie_clear_failed: "Cookie clear failed",
-  session_restore_cookie_clear_timeout: "Cookie clear timed out",
-  session_restore_cookie_add_failed: "Cookie restore failed",
-  session_restore_cookie_add_timeout: "Cookie restore timed out",
-  session_restore_navigation_failed: "Startup navigation failed",
-  session_restore_navigation_timeout: "Startup navigation timed out",
-  session_restore_disconnect_failed: "Browser connection cleanup failed",
-  session_restore_disconnect_timeout: "Browser connection cleanup timed out",
-  open_running: "Cloud profile is running",
-  open_failed: "Cloud profile open failed",
-  close_started: "Cloud close started",
-  session_captured: "Session captured",
-  browser_stopped: "CloakBrowser stopped",
-  session_synced: "Session synchronized",
-  checkpoint_saved: "Session checkpoint saved",
-  checkpoint_unchanged: "Session checkpoint unchanged",
-  checkpoint_capture_failed: "Session checkpoint capture failed",
-  checkpoint_invalid: "Session checkpoint was invalid",
-  manual_stop_detected: "Manual browser close detected",
-  session_sync_pending: "Session synchronization is pending",
-  dirty_monitor_unavailable: "Fast session monitoring is unavailable",
-  cloud_registration_released: "Cloud session registration released",
-  cleanup_retained: "Browser or recovery state was retained",
-  heartbeat_failed: "Cloud heartbeat failed",
-  heartbeat_terminal_conflict: "Cloud lease ended after a version conflict",
-  heartbeat_terminal_access_ended: "Cloud lease ended after access was revoked",
-  no_page_observed: "Browser has no visible page",
-  no_page_close_requested: "Browser close requested after pages disappeared",
-  browser_death_confirmed: "Browser process exit confirmed",
-  browser_teardown_unconfirmed: "Browser teardown could not be confirmed",
-  session_sync_conflict: "Session synchronization has a terminal conflict",
-  access_ended: "Cloud access ended",
-  parked_session_restored: "Saved session restored to Cloud",
-  checkpoint_uploaded: "Open session saved to Cloud",
-  checkpoint_upload_failed: "Open session could not be saved to Cloud",
-};
-
-function cloudDiagnosticFailed(type: CloudDiagnosticEvent["type"]): boolean {
-  return type.includes("failed") || type.includes("timeout") || type === "checkpoint_invalid"
-    || type === "session_sync_pending" || type === "session_sync_conflict"
-    || type === "cleanup_retained" || type === "heartbeat_terminal_conflict"
-    || type === "heartbeat_terminal_access_ended" || type === "no_page_close_requested"
-    || type === "browser_teardown_unconfirmed" || type === "access_ended";
-}
-
 /**
  * Stroke-icon set (16px grid, 1.7 stroke) used everywhere a control needs a
  * glyph. Inline so the dashboard ships no icon font or sprite request, and one
@@ -342,6 +166,7 @@ const ICONS = {
   refresh: <><path d="M20 11a8 8 0 10-2.3 5.7" /><path d="M20 4v7h-7" /></>,
   chevronRight: <path d="M9 6l6 6-6 6" />,
   chevronDown: <path d="M6 9l6 6 6-6" />,
+  chevronUp: <path d="M6 15l6-6 6 6" />,
   chevronLeft: <path d="M15 6l-6 6 6 6" />,
   sort: <path d="M8 9l4-4 4 4M8 15l4 4 4-4" />,
   sortUp: <path d="M7 14l5-5 5 5" />,
@@ -369,7 +194,6 @@ const ICONS = {
   check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
   activity: <path d="M3 12h4l3 8 4-16 3 8h4" />,
   lock: <><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 118 0v3" /></>,
-  cloud: <path d="M7.5 19a4.5 4.5 0 01-.4-9 6 6 0 0111.4 1.6A3.9 3.9 0 0117.5 19z" />,
   laptop: <><rect x="4" y="5" width="16" height="11" rx="2" /><path d="M2 20h20" /></>,
   hash: <path d="M9 4L7 20M17 4l-2 16M4 9h16M3 15h16" />,
   window: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18" /></>,
@@ -378,76 +202,48 @@ const ICONS = {
   filter: <path d="M4 5h16l-6 7v6l-4 2v-8z" />,
   sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></>,
   moon: <path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" />,
-  services: <><rect x="4" y="4" width="7" height="7" rx="1.5" /><rect x="13" y="4" width="7" height="7" rx="1.5" /><rect x="4" y="13" width="7" height="7" rx="1.5" /><rect x="13" y="13" width="7" height="7" rx="1.5" /></>,
   help: <><circle cx="12" cy="12" r="9" /><path d="M9.4 9.1a2.7 2.7 0 015.3.7c0 1.8-2.7 2.2-2.7 3.7" /><path d="M12 16.8v.3" /></>,
 } as const;
-
 type IconName = keyof typeof ICONS;
 
-/**
- * Official project links, mirroring the footer on aliasmode.com. The GitHub URL
- * is this repository's own origin, so the two can never drift apart.
- */
-const PROJECT_LINKS = [
-  {
-    href: "https://github.com/aliasmode/aliasmode",
-    label: "GitHub",
-    path: "M12 .3a12 12 0 00-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.2 1.9 1.2 1.1 1.9 2.9 1.3 3.6 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 016 0C17.4 5.4 18.4 5.7 18.4 5.7c.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0012 .3z",
-  },
-  {
-    href: "https://t.me/aliasmode",
-    label: "Telegram",
-    path: "M23.91 3.79 20.3 20.84c-.25 1.21-.98 1.5-1.99.93l-5.49-4.05-2.65 2.55c-.3.3-.55.55-1.12.55l.4-5.63 10.24-9.25c.45-.4-.1-.62-.69-.22L6.44 13.09.2 11.14c-1.36-.42-1.38-1.36.28-2.01L22.17 1.8c1.13-.42 2.12.26 1.74 1.99Z",
-  },
-] as const;
-
-function Icon({ name, className }: { name: IconName; className?: string }) {
-  return (
-    <svg className={className ? `icon ${className}` : "icon"} viewBox="0 0 24 24" aria-hidden="true">
+function Icon({ name, className }: {
+    name: IconName;
+    className?: string;
+}) {
+    return (<svg className={className ? `icon ${className}` : "icon"} viewBox="0 0 24 24" aria-hidden="true">
       {ICONS[name]}
-    </svg>
-  );
+    </svg>);
 }
-
 /**
  * Close a popover on outside click or Escape. The returned ref goes on the
  * wrapper holding BOTH the trigger and the panel, so clicking the trigger again
  * toggles it instead of closing and immediately reopening.
  */
 function useDismiss<T extends HTMLElement>(open: boolean, close: () => void) {
-  const ref = useRef<T>(null);
-  const onClose = useRef(close);
-  onClose.current = close;
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (event: MouseEvent) => {
+    const ref = useRef<T>(null);
+    const onClose = useRef(close);
+    onClose.current = close;
+    useEffect(() => {
+        if (!open) return;
+        const onDown = (event: MouseEvent) => {
       if (ref.current && !ref.current.contains(event.target as Node)) onClose.current();
     };
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose.current(); };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
+        const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose.current(); };
+        document.addEventListener("mousedown", onDown);
+        document.addEventListener("keydown", onKey);
+        return () => {
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
-  return ref;
+    }, [open]);
+    return ref;
 }
-
-/**
- * The Alias Loop mark, inlined so it can follow the theme: the dark arm is
- * near-black in the packaged SVG and would vanish on a dark surface, so here it
- * takes currentColor (the theme's ink) and the loop arm takes the accent.
- */
-function AliasLoop({ className }: { className?: string }) {
-  return (
-    <svg className={className ? `alias-loop ${className}` : "alias-loop"} viewBox="0 0 512 512" aria-hidden="true">
-      <path d="M152 96H320C380 96 416 136 416 196V316C416 376 376 416 316 416H196C136 416 96 376 96 316V288" stroke="currentColor" />
-      <path className="loop-accent" d="M96 288C96 240 136 208 184 208H280" stroke="#2457D6" />
-    </svg>
-  );
+/** The shared app mark keeps the approved brand colours in either theme. */
+function MaobuMark({ className }: {
+    className?: string;
+}) {
+    return <img className={className ? `maobu-mark ${className}` : "maobu-mark"} src={maobuMarkUrl} width={32} height={32} alt="" aria-hidden="true" />;
 }
-
 /**
  * The number an operator sees for a profile: their custom NO. when set, else the
  * store serial, else the row's position. Mirrors profileDisplayNo in launcher.ts
@@ -459,52 +255,61 @@ function displayNo(profile: UiProfile, fallbackIndex: number): { value: string; 
   if (profile.serial != null) return { value: String(profile.serial), custom: false };
   return { value: String(fallbackIndex + 1), custom: false };
 }
-
 /**
  * Whether this profile's last measured fingerprint still matches the one its
  * import claimed. Renders nothing when there is no attestation to check
  * against — "unknown" must not look like "verified".
  */
-function FingerprintBadge({ p }: { p: UiProfile }) {
-  const v = p.fpVerdict;
-  if (!v) return null;
-  if (v.verdict === "match") {
-    return (
-      <span className="fpbadge ok" title={`Fingerprint verified against the import${p.fpCapturedAt ? ` — measured ${p.fpCapturedAt}` : ""}`}>
+function FingerprintBadge({ p }: {
+    p: UiProfile;
+}) {
+    const v = p.fpVerdict;
+    if (!v) return null;
+    if (v.verdict === "match") {
+        return (<span className="fpbadge ok" title={`Fingerprint verified against the import${p.fpCapturedAt ? ` — measured ${p.fpCapturedAt}` : ""}`}>
         verified
-      </span>
-    );
-  }
-  const detail = v.differences
+      </span>);
+    }
+    const detail = v.differences
     .map((d) => `${d.field}: ${d.expected || "(none)"} → ${d.observed || "(none)"}`)
     .join("; ");
-  return (
-    <span className="fpbadge warn" title={`This browser no longer matches the imported fingerprint — ${detail}`}>
+    return (<span className="fpbadge warn" title={`This browser no longer matches the imported fingerprint — ${detail}`}>
       identity changed
-    </span>
-  );
+    </span>);
 }
-
 function StatusDot({ running }: { running: boolean }) {
   return <span className={`dot ${running ? "on" : ""}`} title={running ? "running" : "stopped"} />;
 }
 
-function HealthSources({ sources }: { sources: HealthSource[] }) {
-  if (sources.length === 0) return <div className="health-sources none">No health nodes</div>;
-  return (
-    <div className="health-sources" aria-label="Automation node freshness">
-      {sources.map((source) => (
-        <span
-          key={source.sourceId}
-          className={`health-source${source.stale ? " stale" : ""}`}
-          title={`Last snapshot ${new Date(source.lastSnapshotAt).toLocaleString()}`}
-        >
-          <Icon name="activity" className="sm" />
-          {source.sourceId} · {source.stale ? "stale" : "fresh"} · {new Date(source.lastSnapshotAt).toLocaleTimeString()}
-        </span>
-      ))}
-    </div>
-  );
+/** Keep keyboard navigation inside an editor and return to its entry point. */
+function useProfileEditorFocus(open: boolean, ready = true) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const editor = ref.current;
+    if (!editor) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusable = () => [...editor.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]')].filter((element) => element.getClientRects().length > 0);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const controls = focusable();
+      if (!controls.length) { event.preventDefault(); editor.focus(); return; }
+      const first = controls[0]!;
+      const last = controls[controls.length - 1]!;
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === editor || !editor.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && (document.activeElement === last || !editor.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
+    };
+    editor.focus();
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      if (previous?.isConnected) previous.focus({ preventScroll: true });
+    };
+  }, [open]);
+  useEffect(() => {
+    if (open && ready) ref.current?.querySelector<HTMLInputElement>('.modal-body input:not(:disabled):not([readonly])')?.focus({ preventScroll: true });
+  }, [open, ready]);
+  return ref;
 }
 
 /**
@@ -583,7 +388,6 @@ const PLATFORM_MARKS: Record<string, { key: string; path: string }> = {
     path: "M8.559 2.445c0-.325.033-.52.59-.52h7.465c1.3 0 2.02 1.11 2.54 3.193l.42 1.666h1.27c.23-4.728.43-6.784.43-6.784s-3.196.36-5.09.36H6.635L1.521.196v1.37l1.725.326c1.21.24 1.5.496 1.6 1.606 0 0 .11 3.27.11 8.64 0 5.385-.09 8.61-.09 8.61 0 .973-.39 1.333-1.59 1.573l-1.722.33V24l5.13-.165h8.55c1.935 0 6.39.165 6.39.165.105-1.17.75-6.48.855-7.064h-1.2l-1.284 2.91c-1.005 2.28-2.476 2.445-4.11 2.445h-4.906c-1.63 0-2.415-.64-2.415-2.05V12.8s3.62 0 4.79.096c.912.064 1.463.325 1.76 1.598l.39 1.695h1.41l-.09-4.278.192-4.305h-1.391l-.45 1.89c-.283 1.244-.48 1.47-1.754 1.6-1.666.17-4.815.14-4.815.14V2.45h-.05z",
   },
 };
-
 const KNOWN_PLATFORMS: { value: string; label: string }[] = [
   { value: "", label: "(none)" },
   { value: "x.com", label: "Twitter / X" },
@@ -604,112 +408,70 @@ const KNOWN_PLATFORMS: { value: string; label: string }[] = [
   { value: "ebay.com", label: "eBay" },
   { value: "etsy.com", label: "Etsy" },
 ];
-
-function PlatformPill({ platform }: { platform: string }) {
-  if (!platform) return <span className="muted">—</span>;
-  const known = KNOWN_PLATFORMS.find((candidate) => candidate.value === platform);
-  const mark = PLATFORM_MARKS[platform];
-  return (
-    <span className="platform-pill" title={platform}>
+function PlatformPill({ platform }: {
+    platform: string;
+}) {
+    if (!platform) return <span className="muted">—</span>;
+    const known = KNOWN_PLATFORMS.find((candidate) => candidate.value === platform);
+    const mark = PLATFORM_MARKS[platform];
+    return (<span className="platform-pill" title={platform}>
       <span className={`glyph pm-${mark?.key ?? "other"}`}>
         {mark
           ? <svg className="brandmark" viewBox="0 0 24 24" aria-hidden="true"><path d={mark.path} /></svg>
           : platform.slice(0, 1).toUpperCase()}
       </span>
       {known?.label ?? platform}
-    </span>
-  );
+    </span>);
 }
-
 /**
  * Group selector used in every dialog: a styled <select> of existing groups
  * plus "➕ New group…", which flips to an inline text field so you can create a
  * group on the fly. Consistent with the other modal selects (no native datalist).
  */
-function GroupPicker({ value, onChange, groups, allowCreate = true }: { value: string; onChange: (v: string) => void; groups: string[]; allowCreate?: boolean }) {
-  const { t } = useTranslation();
-  const [creating, setCreating] = useState(false);
-  if (creating) {
-    return (
-      <div className="grouppick">
-        <input autoFocus placeholder="new group name" value={value} onChange={(e) => onChange(e.target.value)} />
+function GroupPicker({ value, onChange, groups, allowCreate = true }: {
+    value: string;
+    onChange: (v: string) => void;
+    groups: string[];
+    allowCreate?: boolean;
+}) {
+    const { t } = useTranslation();
+    const [creating, setCreating] = useState(false);
+    if (creating) {
+        return (<div className="grouppick">
+        <input autoFocus placeholder={t("new group name")} value={value} onChange={(e) => onChange(e.target.value)} />
         <button type="button" className="btn gp-back tip" data-tip={t("Pick an existing group")} title={t("Pick an existing group")} onClick={() => { setCreating(false); onChange(""); }}><Icon name="chevronLeft" /></button>
-      </div>
-    );
-  }
-  return (
-    <select
-      value={groups.includes(value) ? value : ""}
-      onChange={(e) => {
+      </div>);
+    }
+    return (<select value={groups.includes(value) ? value : ""} onChange={(e) => {
         if (e.target.value === "__new__") { setCreating(true); onChange(""); }
         else onChange(e.target.value);
-      }}
-    >
+      }}>
       <option value="">{t("(ungrouped)")}</option>
       {groups.map((g) => <option key={g} value={g}>{g}</option>)}
       {allowCreate && <option value="__new__">{t("➕ New group…")}</option>}
-    </select>
-  );
+    </select>);
 }
-
-function PlatformPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const { t } = useTranslation();
-  const known = KNOWN_PLATFORMS.some((p) => p.value === value);
-  const [creating, setCreating] = useState(false);
-  if (creating || (!!value && !known)) {
-    return (
-      <div className="grouppick">
+function PlatformPicker({ value, onChange }: {
+    value: string;
+    onChange: (v: string) => void;
+}) {
+    const { t } = useTranslation();
+    const known = KNOWN_PLATFORMS.some((p) => p.value === value);
+    const [creating, setCreating] = useState(false);
+    if (creating || (!!value && !known)) {
+        return (<div className="grouppick">
         <input autoFocus placeholder={t("new platform (e.g. linkedin.com)")} value={value} onChange={(e) => onChange(e.target.value)} />
         <button type="button" className="btn gp-back tip" data-tip={t("Pick a known platform")} title={t("Pick a known platform")} onClick={() => { setCreating(false); onChange(""); }}><Icon name="chevronLeft" /></button>
-      </div>
-    );
-  }
-  return (
-    <select value={value} onChange={(e) => { if (e.target.value === "__new__") { setCreating(true); onChange(""); } else onChange(e.target.value); }}>
+      </div>);
+    }
+    return (<select value={value} onChange={(e) => {
+        if (e.target.value === "__new__") { setCreating(true); onChange(""); }
+        else onChange(e.target.value);
+      }}>
       {KNOWN_PLATFORMS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
       <option value="__new__">{t("➕ New platform…")}</option>
-    </select>
-  );
+    </select>);
 }
-
-function ModeSwitchConfirmation({
-  mode,
-  busy,
-  error,
-  onConfirm,
-  onCancel,
-}: {
-  mode: "local" | "cloud";
-  busy: boolean;
-  error: string | null;
-  onConfirm: () => void;
-  onCancel: () => void;
-}) {
-  const toLocal = mode === "local";
-  return (
-    <div className="modal-backdrop" onClick={onCancel}>
-      <div className="modal mode-confirm" role="dialog" aria-modal="true" aria-labelledby="mode-confirm-title" onClick={(event) => event.stopPropagation()}>
-        <div className="modal-head" id="mode-confirm-title">Switch to {toLocal ? "Local" : "Cloud"}?</div>
-        <div className="modal-body">
-          <p>
-            {toLocal
-              ? "Cloud profiles will not appear until you switch back. Local mode does not contact AliasMode Cloud."
-              : "Your Local profiles stay on this computer. AliasMode does not upload them to Cloud automatically."}
-          </p>
-          <p className="hint">AliasMode saves and closes active browsers, then restarts automatically.</p>
-          {error && <div className="modal-err" role="alert">{error}</div>}
-        </div>
-        <div className="modal-foot">
-          <button className="btn ghost" type="button" disabled={busy} onClick={onCancel}>Cancel</button>
-          <button className="btn primary" type="button" disabled={busy} onClick={onConfirm}>
-            {busy ? "Switching…" : `Switch to ${toLocal ? "Local" : "Cloud"}`}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 async function copyPlainText(value: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(value);
@@ -725,10 +487,14 @@ async function copyPlainText(value: string): Promise<void> {
   textarea.remove();
   if (!copied) throw new Error("copy failed");
 }
-
-function CopyField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
+function CopyField({ label, value, onChange }: {
+    label: string;
+    value: string;
+    onChange: (value: string) => void;
+}) {
+    const { t } = useTranslation();
+    const [copied, setCopied] = useState(false);
+    const copy = async () => {
     try {
       await copyPlainText(value);
       setCopied(true);
@@ -737,27 +503,18 @@ function CopyField({ label, value, onChange }: { label: string; value: string; o
       setCopied(false);
     }
   };
-  return (
-    <div className="fld grow">
+    return (<div className="fld grow">
       <span>{label}</span>
       {/* Copy sits inside the field rather than beside it: a separate bordered
           button per credential turned the dialog into a grid of grey boxes. */}
       <div className="inputwrap">
-        <input value={value} onChange={(event) => onChange(event.target.value)} />
-        <button
-          type="button"
-          className={`inline-action tip${copied ? " ok" : ""}`}
-          data-tip={copied ? "Copied" : `Copy ${label.toLowerCase()}`}
-          aria-label={`Copy ${label}`}
-          onClick={copy}
-        >
+        <input aria-label={label} value={value} onChange={(event) => onChange(event.target.value)} />
+        <button type="button" className={`inline-action tip${copied ? " ok" : ""}`} data-tip={copied ? t("Copied") : `${t("Copy")} ${label}`} aria-label={`${t("Copy")} ${label}`} onClick={copy}>
           <Icon name={copied ? "check" : "copy"} className="sm" />
         </button>
       </div>
-    </div>
-  );
+    </div>);
 }
-
 const AUTOMATIC_FINGERPRINT_FIELDS = [
   ["User agent", "Automatic"],
   ["Browser version", "Automatic · latest installed"],
@@ -769,59 +526,39 @@ const AUTOMATIC_FINGERPRINT_FIELDS = [
   ["Canvas / WebGL / audio", "Automatic"],
   ["WebRTC", "Automatic · proxy-aware"],
 ] as const;
-
 // A template literal, so the translation key holds the same line breaks as the source.
 const FINGERPRINT_EDIT_WARNING = `These settings work together. Changing them can create an inconsistent fingerprint, make your browser easier to detect, or trigger account verification. We recommend automatic settings. Custom changes are your responsibility.
 
 Save fingerprint changes?`;
-
-const CLOAKBROWSER_NOTE = "CloakBrowser profiles on one computer can be linked to each other. Use AliasMode Chromium or AliasMode Firefox for separate identities.";
-
+const CLOAKBROWSER_NOTE = "CloakBrowser profiles on one computer can be linked to each other. Use Chromium or Firefox for separate identities.";
 function browserLabel(engine: "chromium" | "firefox", chromiumRuntime?: string): string {
-  if (engine === "firefox") return "AliasMode Firefox";
-  return chromiumRuntime ? "AliasMode Chromium" : "CloakBrowser";
+  if (engine === "firefox") return "Firefox";
+  return chromiumRuntime ? "Chromium" : "CloakBrowser";
 }
-
-function FingerprintSettings({
-  engine,
-  chromiumRuntime,
-  screen,
-  onScreenChange,
-  platformOs,
-  onPlatformOsChange,
-  timezone,
-  onTimezoneChange,
-  locale,
-  onLocaleChange,
-  cores,
-  onCoresChange,
-  seed,
-  onSeedChange,
-  disabled = false,
-  onUndo,
-  hardware,
-}: {
-  engine: "chromium" | "firefox";
-  chromiumRuntime?: string;
-  screen: string;
-  onScreenChange: (value: string) => void;
-  platformOs: string;
-  onPlatformOsChange?: (value: string) => void;
-  timezone?: string;
-  onTimezoneChange?: (value: string) => void;
-  locale?: string;
-  onLocaleChange?: (value: string) => void;
-  cores?: string;
-  onCoresChange?: (value: string) => void;
-  seed?: string;
-  onSeedChange?: (value: string) => void;
-  disabled?: boolean;
-  onUndo?: () => void;
-  hardware?: { gpu?: string; cores?: number };
+function FingerprintSettings({ engine, chromiumRuntime, screen, onScreenChange, platformOs, onPlatformOsChange, timezone, onTimezoneChange, locale, onLocaleChange, cores, onCoresChange, seed, onSeedChange, disabled = false, onUndo, hardware, }: {
+    engine: "chromium" | "firefox";
+    chromiumRuntime?: string;
+    screen: string;
+    onScreenChange: (value: string) => void;
+    platformOs: string;
+    onPlatformOsChange?: (value: string) => void;
+    timezone?: string;
+    onTimezoneChange?: (value: string) => void;
+    locale?: string;
+    onLocaleChange?: (value: string) => void;
+    cores?: string;
+    onCoresChange?: (value: string) => void;
+    seed?: string;
+    onSeedChange?: (value: string) => void;
+    disabled?: boolean;
+    onUndo?: () => void;
+    hardware?: {
+        gpu?: string;
+        cores?: number;
+    };
 }) {
-  const { t } = useTranslation();
-  return (
-    <details className="fingerprint-settings">
+    const { t } = useTranslation();
+    return (<details className="fingerprint-settings">
       <summary>
         <span>{t("Fingerprint settings")}</span>
         <span className="automatic-badge">{onTimezoneChange ? t("Advanced") : t("Automatic")}</span>
@@ -832,312 +569,88 @@ function FingerprintSettings({
           <input value={browserLabel(engine, chromiumRuntime)} readOnly tabIndex={-1} className="ro" />
         </label>
         <label className="fld">
-          <span>Screen</span>
+          <span>{t("Screen")}</span>
           <input value={screen} disabled={disabled} placeholder={t("Automatic · e.g. 1920x1080")} onChange={(event) => onScreenChange(event.target.value)} />
         </label>
         <label className="fld">
           <span>{t("Operating system")}</span>
-          {onPlatformOsChange ? (
-            <select value={platformOs} disabled={disabled} onChange={(event) => onPlatformOsChange(event.target.value)}>
+          {onPlatformOsChange ? (<select value={platformOs} disabled={disabled} onChange={(event) => onPlatformOsChange(event.target.value)}>
               <option value="">{t("Automatic — match this computer")}</option>
               <option value="windows">Windows</option>
               <option value="macos">macOS</option>
               <option value="linux">Linux</option>
-            </select>
-          ) : (
-            <input value={{ windows: "Windows", macos: "macOS", linux: "Linux" }[platformOs] ?? "Automatic"} readOnly tabIndex={-1} className="ro" />
-          )}
+            </select>) : (<input value={{ windows: "Windows", macos: "macOS", linux: "Linux" }[platformOs] ?? "Automatic"} readOnly tabIndex={-1} className="ro" />)}
         </label>
-        {onTimezoneChange && (
-          <label className="fld">
+        {onTimezoneChange && (<label className="fld">
             <span>{t("Timezone")}</span>
             <input value={timezone ?? ""} disabled={disabled} placeholder={t("Automatic · e.g. Europe/Paris")} onChange={(event) => onTimezoneChange(event.target.value)} />
-          </label>
-        )}
-        {onLocaleChange && (
-          <label className="fld">
+          </label>)}
+        {onLocaleChange && (<label className="fld">
             <span>{t("Language")}</span>
             <input value={locale ?? ""} disabled={disabled} placeholder={t("Automatic · e.g. en-US")} onChange={(event) => onLocaleChange(event.target.value)} />
-          </label>
-        )}
-        {onCoresChange && (
-          <label className="fld">
+          </label>)}
+        {onCoresChange && (<label className="fld">
             <span>{t("CPU")}</span>
             <input value={cores ?? ""} disabled={disabled} inputMode="numeric" placeholder={hardware?.cores ? t("Automatic · {n} cores", { n: hardware.cores }) : t("Automatic · e.g. 8")} onChange={(event) => onCoresChange(event.target.value)} />
-          </label>
-        )}
-        {onSeedChange && (
-          <label className="fld">
+          </label>)}
+        {onSeedChange && (<label className="fld">
             <span>{t("Fingerprint seed")}</span>
             <input value={seed ?? ""} disabled={disabled} inputMode="numeric" onChange={(event) => onSeedChange(event.target.value)} />
-          </label>
-        )}
-        {AUTOMATIC_FINGERPRINT_FIELDS.filter(([label]) => !(
-          (label === "Timezone" && onTimezoneChange) || (label === "CPU" && onCoresChange) || (label === "Fingerprint seed" && onSeedChange)
-        )).map(([label, value]) => {
-          // A stored value is the same on every computer that opens the profile.
-          const stored = label === "GPU" ? hardware?.gpu : label === "CPU" && hardware?.cores ? `${hardware.cores} cores` : undefined;
-          return (
-            <label className="fld" key={label}>
+          </label>)}
+        {AUTOMATIC_FINGERPRINT_FIELDS.filter(([label]) => !((label === "Timezone" && onTimezoneChange) || (label === "CPU" && onCoresChange) || (label === "Fingerprint seed" && onSeedChange))).map(([label, value]) => {
+            // A stored value is the same on every computer that opens the profile.
+            const stored = label === "GPU" ? hardware?.gpu : label === "CPU" && hardware?.cores ? `${hardware.cores} cores` : undefined;
+            return (<label className="fld" key={label}>
               <span>{t(label)}</span>
               <input value={stored ? `Stored · ${stored}` : t(value)} title={stored} readOnly tabIndex={-1} className="ro" />
-            </label>
-          );
+            </label>);
         })}
         <div className="hint">{t("We recommend keeping every setting automatic. Custom values can make the browser look inconsistent, easier to detect, and can trigger account checks.")}</div>
         <div className="hint">{onTimezoneChange
-          ? `${t("Leave a field blank to keep it automatic. A timezone you type stays when the proxy changes.")}${chromiumRuntime && cores ? ` ${t("AliasMode Chromium shows at most the processor count of the computer it runs on.")}` : ""}`
+          ? `${t("Leave a field blank to keep it automatic. A timezone you type stays when the proxy changes.")}${chromiumRuntime && cores ? ` ${t("Chromium shows at most the processor count of the computer it runs on.")}` : ""}`
           : engine === "firefox"
-            ? t("AliasMode Firefox uses its native profile. CDP, PDF, and Chrome extensions are unavailable.")
+            ? t("Firefox uses its native profile. CDP, PDF, and Chrome extensions are unavailable.")
             : t("The browser keeps the locked values coordinated. Screen and operating system are the only fingerprint settings you can override.")}</div>
         {onUndo && <button type="button" className="btn ghost" disabled={disabled} onClick={onUndo}>{t("Undo fingerprint edits")}</button>}
       </div>
-    </details>
-  );
+    </details>);
 }
-
 type DesktopInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
-type DesktopUpdateStatus =
-  | { state: "upToDate"; currentVersion: string }
-  | { state: "available"; currentVersion: string; version: string; highlights: string[] };
-type DesktopUpdateProgress =
-  | { phase: "preparing" | "reconnecting" | "verifying" | "closingBrowsers" | "installing" }
-  | { phase: "downloading"; percent: number | null; downloadedBytes: number; totalBytes: number | null };
-type DesktopUpdateMessage =
-  | DesktopUpdateProgress
-  | { phase: "ready"; version: string; highlights: string[] };
-type SavedSessionPhase = "restoring" | "manual-signin" | "retryable-failure";
-type RemoteMcpCredential =
-  | { version: 1; state: "active"; connectorId: string; deviceId: string; token: string }
-  | { version: 1; state: "disabled" };
-interface RemoteMcpSettings {
-  state: "idle" | "loading" | "active" | "disabled" | "error";
-  connectorId?: string;
-  deviceId?: string;
-  url?: string;
-  token?: string;
-  error?: string;
-}
-
-function parseRemoteMcpCredential(value: string): RemoteMcpCredential {
-  const parsed = JSON.parse(value) as Record<string, unknown>;
-  if (parsed.version !== 1) throw new Error("Stored Remote MCP settings are invalid.");
-  if (parsed.state === "disabled") return { version: 1, state: "disabled" };
-  if (
-    parsed.state === "active" &&
-    typeof parsed.connectorId === "string" && parsed.connectorId &&
-    typeof parsed.deviceId === "string" && parsed.deviceId &&
-    typeof parsed.token === "string" && parsed.token
-  ) {
-    return {
-      version: 1,
-      state: "active",
-      connectorId: parsed.connectorId,
-      deviceId: parsed.deviceId,
-      token: parsed.token,
-    };
-  }
-  throw new Error("Stored Remote MCP settings are invalid.");
-}
-
-async function readDesktopRemoteMcpCredential(): Promise<RemoteMcpCredential | null | undefined> {
-  const invoke = desktopInvoke();
-  if (!invoke) return undefined;
-  const value = await invoke("credential_get", { key: "remote_mcp_connector" });
-  if (value === null || value === undefined) return null;
-  if (typeof value !== "string") throw new Error("Stored Remote MCP settings are invalid.");
-  return parseRemoteMcpCredential(value);
-}
-
-async function storeDesktopRemoteMcpCredential(value: RemoteMcpCredential): Promise<void> {
-  const invoke = desktopInvoke();
-  if (!invoke) throw new Error("Remote MCP settings are available in the desktop app.");
-  await invoke("credential_set", { key: "remote_mcp_connector", secret: JSON.stringify(value) });
-}
-
-async function deleteDesktopRemoteMcpCredential(): Promise<void> {
-  const invoke = desktopInvoke();
-  if (invoke) await invoke("credential_delete", { key: "remote_mcp_connector" });
-}
-
-function isUpdateHighlights(value: unknown): value is string[] {
-  return Array.isArray(value) && value.length <= 3 && value.every((highlight) => typeof highlight === "string");
-}
-
-function parseDesktopUpdateStatus(value: unknown): DesktopUpdateStatus {
-  if (!value || typeof value !== "object") throw new Error("AliasMode returned an invalid update status.");
-  const status = value as Record<string, unknown>;
-  if (status.state === "upToDate" && typeof status.currentVersion === "string") {
-    return { state: "upToDate", currentVersion: status.currentVersion };
-  }
-  if (
-    status.state === "available" &&
-    typeof status.currentVersion === "string" &&
-    typeof status.version === "string" &&
-    isUpdateHighlights(status.highlights)
-  ) {
-    return {
-      state: "available",
-      currentVersion: status.currentVersion,
-      version: status.version,
-      highlights: status.highlights,
-    };
-  }
-  throw new Error("AliasMode returned an invalid update status.");
-}
-
-function parseDesktopUpdateMessage(value: unknown): DesktopUpdateMessage {
-  if (!value || typeof value !== "object") throw new Error("AliasMode returned invalid update progress.");
-  const progress = value as Record<string, unknown>;
-  if (progress.phase === "ready" && typeof progress.version === "string" && isUpdateHighlights(progress.highlights)) {
-    return { phase: "ready", version: progress.version, highlights: progress.highlights };
-  }
-  if (
-    progress.phase === "preparing" ||
-    progress.phase === "reconnecting" ||
-    progress.phase === "verifying" ||
-    progress.phase === "closingBrowsers" ||
-    progress.phase === "installing"
-  ) {
-    return { phase: progress.phase };
-  }
-  const isByteCount = (value: unknown): value is number =>
-    typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-  if (
-    progress.phase === "downloading" &&
-    (progress.percent === null ||
-      (typeof progress.percent === "number" && Number.isInteger(progress.percent) && progress.percent >= 0 && progress.percent <= 100)) &&
-    isByteCount(progress.downloadedBytes) &&
-    (progress.totalBytes === null || isByteCount(progress.totalBytes))
-  ) {
-    return {
-      phase: "downloading",
-      percent: progress.percent as number | null,
-      downloadedBytes: progress.downloadedBytes,
-      totalBytes: progress.totalBytes as number | null,
-    };
-  }
-  throw new Error("AliasMode returned invalid update progress.");
-}
-
 function desktopInvoke(): DesktopInvoke | undefined {
   return (window as any).__TAURI_INTERNALS__?.invoke as DesktopInvoke | undefined;
 }
-
-function UpdateHighlights({ version, highlights }: { version: string; highlights: string[] }) {
-  if (highlights.length === 0) return null;
-  return (
-    <details className="update-highlights">
-      <summary>What’s new in {version}</summary>
-      <ul>{highlights.map((highlight) => <li key={highlight}>{highlight}</li>)}</ul>
-    </details>
-  );
-}
-
-function DesktopUpdateProgressView({ progress }: { progress: DesktopUpdateProgress }) {
-  const { t } = useTranslation();
-  const percent = progress.phase === "downloading" ? progress.percent : null;
-  const label = progress.phase === "preparing"
-    ? t("Preparing update…")
-    : progress.phase === "downloading"
-      ? percent === null ? t("Downloading update…") : t("Downloading update… {percent}%", { percent: String(percent) })
-      : progress.phase === "reconnecting"
-        ? t("Connection lost. Reconnecting…")
-        : progress.phase === "verifying"
-          ? t("Verifying update…")
-          : progress.phase === "closingBrowsers"
-            ? t("Saving and closing browsers…")
-            : t("Installing and restarting…");
-  // Megabytes received, so a slow download still shows movement between percent steps.
-  const size = progress.phase !== "downloading"
-    ? null
-    : progress.totalBytes === null
-      ? t("{downloaded} MB", { downloaded: String(Math.floor(progress.downloadedBytes / 1e6)) })
-      : t("{downloaded} of {total} MB", {
-        downloaded: String(Math.floor(progress.downloadedBytes / 1e6)),
-        total: String(Math.ceil(progress.totalBytes / 1e6)),
-      });
-  return (
-    <div className="update-progress" role="status">
-      <span>{size ? `${label} ${size}` : label}</span>
-      <progress max={100} value={percent ?? undefined} aria-label="Update progress" />
-    </div>
-  );
-}
-
 /** Percent of the bytes these browser downloads have received. */
 function downloadPercent(downloads: RuntimeDownload[]): number {
   const total = downloads.reduce((sum, download) => sum + download.totalBytes, 0);
   const received = downloads.reduce((sum, download) => sum + download.receivedBytes, 0);
   return Math.floor(received * 100 / total);
 }
-
 /** The browser downloads that opening this profile waits for. */
 function profileDownloads(profile: UiProfile, downloads: RuntimeDownload[]): RuntimeDownload[] {
   const runtime = profile.engine === "firefox" ? "firefox" : profile.chromiumRuntime ?? "cloakbrowser";
   return downloads.filter((download) => download.runtime === runtime);
 }
-
-function RuntimeDownloadProgressView({ downloads }: { downloads: RuntimeDownload[] }) {
-  const { t } = useTranslation();
-  const percent = downloadPercent(downloads);
-  return (
-    <div className="update-progress" role="status">
+function RuntimeDownloadProgressView({ downloads }: {
+    downloads: RuntimeDownload[];
+}) {
+    const { t } = useTranslation();
+    const percent = downloadPercent(downloads);
+    return (<div className="update-progress" role="status">
       <span>{t("Downloading browser… {percent}%", { percent: String(percent) })}</span>
       <progress max={100} value={percent} aria-label={t("Browser download progress")} />
-    </div>
-  );
+    </div>);
 }
-
-async function readDesktopCloudCredentials(): Promise<{
-  refreshToken?: string;
-  deviceCredential?: string;
-  queueKey?: string;
-} | null> {
-  const invoke = desktopInvoke();
-  if (!invoke) return null;
-  const [refreshToken, deviceCredential, queueKey] = await Promise.all([
-    invoke("credential_get", { key: "refresh_token" }),
-    invoke("credential_get", { key: "device_credential" }),
-    invoke("credential_get", { key: "queue_encryption_key" }),
-  ]);
-  return {
-    ...(typeof refreshToken === "string" && refreshToken ? { refreshToken } : {}),
-    ...(typeof deviceCredential === "string" && deviceCredential ? { deviceCredential } : {}),
-    ...(typeof queueKey === "string" && queueKey ? { queueKey } : {}),
-  };
-}
-
-async function storeDesktopCloudCredentials(
-  refreshToken: string,
-  deviceCredential: string,
-  createdQueueKey?: string,
-): Promise<boolean> {
-  const invoke = desktopInvoke();
-  if (!invoke) return false;
-  if (createdQueueKey) {
-    await invoke("credential_set", { key: "queue_encryption_key", secret: createdQueueKey });
-  }
-  await invoke("credential_set", { key: "device_credential", secret: deviceCredential });
-  await invoke("credential_set", { key: "refresh_token", secret: refreshToken });
-  return true;
-}
-
 const BLANK_FORM = {
   name: "", engine: "chromium" as "chromium" | "firefox", chromiumRuntime: "" as "" | "aliasmode", group: "", platform: "", proxyType: "http", host: "", port: "", user: "", pass: "",
   screen: "", platformOs: "", customNo: "", username: "", password: "", email: "", emailPassword: "", twofa: "",
 };
-
 const BLANK_COOKIE_FORM = { name: "", value: "", domain: "", path: "/" };
-
 type ProxyCheckUiState = {
   checking: boolean;
   result: ProxyCheckResult | null;
   error: "invalid" | "unavailable" | null;
 };
-
 const EMPTY_PROXY_CHECK: ProxyCheckUiState = { checking: false, result: null, error: null };
-
 function proxyFailureMessage(t: (s: string) => string, reason: ProxyCheckResult["reason"]): string {
   if (reason === "authentication_failed") return t("Proxy authentication failed.");
   if (reason === "timeout") return t("Proxy connection timed out.");
@@ -1146,14 +659,16 @@ function proxyFailureMessage(t: (s: string) => string, reason: ProxyCheckResult[
   if (reason === "proxy_bypassed") return t("Traffic did not use this proxy.");
   return t("Proxy connection failed.");
 }
-
-function ProxyCheckFeedback({ hasProxy, state }: { hasProxy: boolean; state: ProxyCheckUiState }) {
-  const { t } = useTranslation();
-  if (!hasProxy) return <ProxyProviderOffer placement="profile-dialog" />;
-  if (state.error) {
-    const invalid = state.error === "invalid";
-    return (
-      <>
+function ProxyCheckFeedback({ hasProxy, state }: {
+    hasProxy: boolean;
+    state: ProxyCheckUiState;
+}) {
+    const { t } = useTranslation();
+    if (!hasProxy)
+        return null;
+    if (state.error) {
+        const invalid = state.error === "invalid";
+        return (<>
         <div className={`proxy-check-result ${invalid ? "failed" : "unavailable"}`} role="status">
           <Icon name={invalid ? "alert" : "activity"} className="sm" />
           <span>{invalid
@@ -1161,299 +676,229 @@ function ProxyCheckFeedback({ hasProxy, state }: { hasProxy: boolean; state: Pro
             : t("Proxy check is unavailable. Try again later.")}</span>
         </div>
         {invalid
-          ? <ProxyProviderOffer placement="profile-dialog-check-failed" replacement />
-          : <ProxyProviderOffer placement="profile-dialog" />}
-      </>
-    );
-  }
-  const result = state.result;
-  // A profile that already has a proxy keeps the offer, so it also shows in Edit profile.
-  if (!result) return <ProxyProviderOffer placement="profile-dialog" />;
-  const location = [result.city, result.region, result.country].filter(Boolean).join(", ");
-  const exit = [result.ip ? `Exit IP: ${result.ip}` : "", location].filter(Boolean).join(" · ");
-  if (result.status === "working") {
-    return (
-      <>
+                ? null : null}
+      </>);
+    }
+    const result = state.result;
+    // A profile that already has a proxy keeps the offer, so it also shows in Edit profile.
+    if (!result)
+        return null;
+    const location = [result.city, result.region, result.country].filter(Boolean).join(", ");
+    const exit = [result.ip ? `Exit IP: ${result.ip}` : "", location].filter(Boolean).join(" · ");
+    if (result.status === "working") {
+        return (<>
         <div className="proxy-check-result working" role="status">
           <Icon name="check" className="sm" />
-          <span><strong>{t("Proxy is working.")}</strong>{exit && <> {exit}.</>}{result.rotating && <> Rotating exit IPs detected.</>}</span>
+          <span><strong>{t("Proxy is working.")}</strong>{exit && <> {exit}.</>}{result.rotating && <> {t("Rotating exit IPs detected.")}</>}</span>
         </div>
-        <ProxyProviderOffer placement="profile-dialog" />
-      </>
-    );
-  }
-  if (result.status === "unstable") {
-    return (
-      <>
+      </>);
+    }
+    if (result.status === "unstable") {
+        return (<>
         <div className="proxy-check-result unstable" role="status">
           <Icon name="warning" className="sm" />
           <span><strong>{t("Proxy checks were mixed.")}</strong> {result.successes} of {result.attempts} succeeded.</span>
         </div>
-        <ProxyProviderOffer placement="profile-dialog-check-failed" replacement />
-      </>
-    );
-  }
-  if (result.status === "failed") {
-    return (
-      <>
+      </>);
+    }
+    if (result.status === "failed") {
+        return (<>
         <div className="proxy-check-result failed" role="status">
           <Icon name="alert" className="sm" />
           <span>{proxyFailureMessage(t, result.reason)}</span>
         </div>
-        <ProxyProviderOffer placement="profile-dialog-check-failed" replacement />
-      </>
-    );
-  }
-  return (
-    <>
+      </>);
+    }
+    return (<>
       <div className="proxy-check-result unavailable" role="status">
         <Icon name="activity" className="sm" />
         <span>{t("Proxy check is unavailable. Try again later.")}</span>
       </div>
-      <ProxyProviderOffer placement="profile-dialog" />
-    </>
-  );
+    </>);
 }
-
-function GrantControl({ label, direct, inherited, busy, onChange }: {
-  label: string; direct: string; inherited: string; busy: boolean; onChange: (permission: string) => void;
-}) {
-  const { t } = useTranslation();
-  const effective = direct === "edit" || inherited === "edit" ? "edit" : direct || inherited;
-  const permissionLabel = (value: string) => value === "edit" ? t("Edit") : value === "view" ? t("View") : t("No access");
-  return <label className="grant-control">
-    <span>{label}</span>
-    <select className="select" aria-label={label} value={direct} disabled={busy} onChange={(event) => onChange(event.target.value)}>
-      <option value="">{inherited ? t("Inherited: {permission}", { permission: permissionLabel(inherited) }) : t("No access")}</option>
-      <option value="view">{t("View")}</option><option value="edit">{t("Edit")}</option>
-    </select>
-    <small>{t("Effective access: {permission}", { permission: permissionLabel(effective) })}{inherited && direct ? ` · ${t("Inherited: {permission}", { permission: permissionLabel(inherited) })}` : ""}</small>
-  </label>;
-}
-
 function App() {
-  const { t, language, setLanguage } = useTranslation();
-  const [profiles, setProfiles] = useState<UiProfile[]>([]);
-  const [registeredGroups, setRegisteredGroups] = useState<string[]>([]);
-  const [localFolders, setLocalFolders] = useState<FolderInfo[]>([]);
-  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
-  const [sharedOnly, setSharedOnly] = useState(false);
-  const [folderMenu, setFolderMenu] = useState<string | null>(null);
-  const [folderMenuPosition, setFolderMenuPosition] = useState({ left: 0, top: 0 });
-  const [newFolderParent, setNewFolderParent] = useState<string | null>(null);
-  const [movingFolder, setMovingFolder] = useState<string | null>(null);
-  const [folderParent, setFolderParent] = useState("");
-  const [folderMoveBusy, setFolderMoveBusy] = useState(false);
-  const [folderMoveErr, setFolderMoveErr] = useState<string | null>(null);
-  const [accessTarget, setAccessTarget] = useState<{ kind: "folder" | "profile"; id: string; name: string; folder: string } | null>(null);
-  const [appMode, setAppMode] = useState<AppModeConfig | null>(null);
-  const [modeBusy, setModeBusy] = useState(false);
-  const [modeErr, setModeErr] = useState<string | null>(null);
-  const [restartRequired, setRestartRequired] = useState(false);
-  // "profiles" is the roster; "settings" replaces it in the same content area
-  // rather than opening a dialog — Settings outgrew a modal. New profile and
-  // Edit stay dialogs: short forms, and a page felt like too much ceremony.
-  const [view, setView] = useState<"profiles" | "scripts" | "settings" | "extensions" | "proxies" | "trash" | "services">("profiles");
-  const [scriptRunOpen, setScriptRunOpen] = useState(false);
-  const [scriptRunProfiles, setScriptRunProfiles] = useState<UiProfile[]>([]);
-  const [showCreate, setShowCreate] = useState(false);
-  const [createProxyOpen, setCreateProxyOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>("account");
-  const [remoteMcp, setRemoteMcp] = useState<RemoteMcpSettings>({ state: "idle" });
-  const [remoteMcpTokenVisible, setRemoteMcpTokenVisible] = useState(false);
-  const [remoteMcpCopied, setRemoteMcpCopied] = useState<"url" | "token" | null>(null);
-  const [cloudEvents, setCloudEvents] = useState<CloudDiagnosticEvent[]>([]);
-  const [cloudEventsBusy, setCloudEventsBusy] = useState(false);
-  const [cloudEventsErr, setCloudEventsErr] = useState<string | null>(null);
-  const [pendingMode, setPendingMode] = useState<"local" | "cloud" | null>(null);
-  const [cloudAuth, setCloudAuth] = useState<CloudAuthState | null>(null);
-  const [savedSessionPhase, setSavedSessionPhase] = useState<SavedSessionPhase>("restoring");
-  const [scheduledRefreshPending, setScheduledRefreshPending] = useState(false);
-  const [authView, setAuthView] = useState<"signin" | "signup" | "verify">("signin");
-  const [authEmail, setAuthEmail] = useState("");
-  const [authPassword, setAuthPassword] = useState("");
-  const [authBusy, setAuthBusy] = useState(false);
-  const [authErr, setAuthErr] = useState<string | null>(null);
-  const [authNotice, setAuthNotice] = useState<string | null>(null);
-  const [confirmationEmail, setConfirmationEmail] = useState("");
-  const [authCode, setAuthCode] = useState("");
-  const [localPrompt, setLocalPrompt] = useState(false);
-  const [invitationCode, setInvitationCode] = useState("");
-  const [team, setTeam] = useState<CloudTeamState | null>(null);
-  const [teamEmail, setTeamEmail] = useState("");
-  const [teamRole, setTeamRole] = useState<"admin" | "member">("member");
-  const [teamBusy, setTeamBusy] = useState(false);
-  const [teamErr, setTeamErr] = useState<string | null>(null);
-  const [healthSources, setHealthSources] = useState<HealthSource[]>([]);
-  const [appVersion, setAppVersion] = useState("");
-  const [desktopUpdate, setDesktopUpdate] = useState<DesktopUpdateStatus | null>(null);
-  const [desktopUpdateResult, setDesktopUpdateResult] = useState<DesktopUpdateResult | null>(null);
-  const [desktopUpdateResultDismissed, setDesktopUpdateResultDismissed] = useState(false);
-  const [desktopUpdateChecking, setDesktopUpdateChecking] = useState(false);
-  const [desktopUpdateInstalling, setDesktopUpdateInstalling] = useState(false);
-  const [desktopUpdateProgress, setDesktopUpdateProgress] = useState<DesktopUpdateProgress | null>(null);
-  const [desktopUpdateErr, setDesktopUpdateErr] = useState<string | null>(null);
-  const [logDir, setLogDir] = useState<string | undefined>(undefined);
-  const [diskSpace, setDiskSpace] = useState<DiskSpace | null>(null);
-  const [diskWarningDismissed, setDiskWarningDismissed] = useState(false);
-  const [logView, setLogView] = useState<{ file: string; content: string } | null>(null);
-  const [logErr, setLogErr] = useState<string | null>(null);
-  const [diag, setDiag] = useState<DiagnoseReport | null>(null);
-  const [showDiag, setShowDiag] = useState(false);
-  const [q, setQ] = useState("");
-  const [group, setGroup] = useState("all");
-  const [profilePage, setProfilePage] = useState(0);
-  const [pageSize, setPageSize] = useState(readPageSize);
-  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "no", dir: 1 });
-  const [hiddenCols, setHiddenCols] = useState<Set<ColumnKey>>(readHiddenColumns);
-  const [colsOpen, setColsOpen] = useState(false);
-  const [nodesOpen, setNodesOpen] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [groupsOpen, setGroupsOpen] = useState(true);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
-  const [railForced, setRailForced] = useState(readRailForced);
-  const [tableScrolled, setTableScrolled] = useState(false);
-  const [theme, setTheme] = useState<ThemeChoice>(readTheme);
-  const [busy, setBusy] = useState<Record<string, boolean>>({});
-  const [runtimeDownloads, setRuntimeDownloads] = useState<RuntimeDownload[]>([]);
-  // Two error slots so an auto-refresh can't silently wipe why an action failed:
-  // actionErr is sticky (Open/Close/move/import), connErr tracks load() only.
-  const [actionErr, setActionErr] = useState<string | null>(null);
-  const [connErr, setConnErr] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null); // transient success banner
-  const [loaded, setLoaded] = useState(false);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [deleting, setDeleting] = useState(false);
-  const deleteInFlight = useRef(false);
-  const rosterLoader = useRef(serialLoader(() => loadRoster()));
-  // Active profile export: null when idle, otherwise how far the server-side
-  // collection has progressed ({completed: total} = file being built).
-  const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
-  const [moveTarget, setMoveTarget] = useState("");
-  const [newMode, setNewMode] = useState(false);
-  const [newGroup, setNewGroup] = useState("");
-  const [dragging, setDragging] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [createErr, setCreateErr] = useState<string | null>(null);
-  const [form, setForm] = useState(BLANK_FORM);
-  const [createProxyCheck, setCreateProxyCheck] = useState<ProxyCheckUiState>(EMPTY_PROXY_CHECK);
-  const createProxyCheckGeneration = useRef(0);
-  const [cookieTargets, setCookieTargets] = useState<UiProfile[] | null>(null);
-  const [cookieForm, setCookieForm] = useState(BLANK_COOKIE_FORM);
-  const [cookieText, setCookieText] = useState("");
-  const [cookieErr, setCookieErr] = useState<string | null>(null);
-  const [cookieSaving, setCookieSaving] = useState(false);
-  const [pendingView, setPendingView] = useState<{ profile: UiProfile; cookies: Array<{ domain: string; name: string }> | null; error: string | null; busy: boolean } | null>(null);
-  const [proxyPaste, setProxyPaste] = useState("");
-  const [proxyPasteOk, setProxyPasteOk] = useState<string | null>(null);
-  // Edit modal + bulk export/update + group rename
-  const [editId, setEditId] = useState<string | null>(null);
-  const [editExpectedVersion, setEditExpectedVersion] = useState<number | null>(null);
-  const [editForm, setEditForm] = useState<Record<string, string>>({});
-  const [editInitialFingerprint, setEditInitialFingerprint] = useState<Record<string, string>>({});
-  const [editInitialProxy, setEditInitialProxy] = useState({ proxy: "", proxyType: "http" });
-  const [outreachOfferDismissed, setOutreachOfferDismissed] = useState(() => {
-    try { return localStorage.getItem("aliasmode.offers.xreacherDismissed") === "1"; } catch { return false; }
-  });
-  const [editProxyCheck, setEditProxyCheck] = useState<ProxyCheckUiState>(EMPTY_PROXY_CHECK);
-  const editProxyCheckGeneration = useRef(0);
-  const [editErr, setEditErr] = useState<string | null>(null);
-  const [editSaving, setEditSaving] = useState(false);
-  const [editLoading, setEditLoading] = useState(false);
-  // Cloud profile open on this device: edits land in the local cache and sync
-  // to Cloud with the running session — no expectedVersion handshake.
-  const [editLive, setEditLive] = useState(false);
-  // Null until the profile detail loads, so a failed load never names a browser.
-  const [editEngine, setEditEngine] = useState<"chromium" | "firefox" | null>(null);
-  const [editChromiumRuntime, setEditChromiumRuntime] = useState("");
-  const [editHardware, setEditHardware] = useState<{ gpu?: string; cores?: number } | undefined>();
-  const [timezoneBusy, setTimezoneBusy] = useState(false);
-  const editFetchId = useRef<string | null>(null);
-  const [editMobile, setEditMobile] = useState<NonNullable<EditProfile["desktopConversion"]> | null>(null);
-  const [editTotp, setEditTotp] = useState<{ code: string; secs: number } | null>(null);
-  const [twoFaFlash, setTwoFaFlash] = useState<{ id: string; code: string } | null>(null);
-  const [editExts, setEditExts] = useState<string[]>([]);
-  const [editInitialExts, setEditInitialExts] = useState<string[]>([]);
-  // Local extension registry + Extensions page
-  const [extensions, setExtensions] = useState<Extension[]>([]);
-  const [groupExtensionDefaults, setGroupExtensionDefaultsState] = useState<GroupExtensionDefaults[]>([]);
-  const [groupDefaultName, setGroupDefaultName] = useState("");
-  const [groupDefaultExts, setGroupDefaultExts] = useState<string[]>([]);
-  const [groupDefaultBusy, setGroupDefaultBusy] = useState(false);
-  const [extSource, setExtSource] = useState("");
-  const [extInstallBusy, setExtInstallBusy] = useState(false);
-  const [extBusy, setExtBusy] = useState(false);
-  const [extErr, setExtErr] = useState<string | null>(null);
-  const extFileRef = useRef<HTMLInputElement>(null);
-  const [bulkExt, setBulkExt] = useState(""); // extension chosen for bulk assign
-  // Update-from-file modal (export → edit → re-upload, matched by id)
-  const [showUpdate, setShowUpdate] = useState(false);
-  const [updateFile, setUpdateFile] = useState<File | null>(null);
-  const [updateBusy, setUpdateBusy] = useState(false);
-  const [updateErr, setUpdateErr] = useState<string | null>(null);
-  const [updateResult, setUpdateResult] = useState<string | null>(null);
-  const [updateOver, setUpdateOver] = useState(false);
-  const updateFileRef = useRef<HTMLInputElement>(null);
-  const [exportOpen, setExportOpen] = useState(false);
-  const [renaming, setRenaming] = useState<string | null>(null);
-  const [renameVal, setRenameVal] = useState("");
-  const [addingGroup, setAddingGroup] = useState(false);
-  const [sidebarGroupName, setSidebarGroupName] = useState("");
-  // Bulk add accounts from provider files or pasted AdsPower text.
-  const [showBulk, setShowBulk] = useState(false);
-  const [bulkFiles, setBulkFiles] = useState<File[]>([]);
-  const [bulkText, setBulkText] = useState("");
-  const [bulkGroup, setBulkGroup] = useState("");
-  const [bulkPlatform, setBulkPlatform] = useState("");
-  const [bulkBusy, setBulkBusy] = useState(false);
-  const [bulkErr, setBulkErr] = useState<string | null>(null);
-  const [bulkOver, setBulkOver] = useState(false);
-  // One source at a time: two full-height inputs stacked made it ambiguous which
-  // one the Import button would actually read.
-  const [bulkSource, setBulkSource] = useState<"file" | "paste">("file");
-  // After an import, offer proxies for the profiles that have none, until dismissed.
-  const [showImportOffer, setShowImportOffer] = useState(false);
-  const bulkFileRef = useRef<HTMLInputElement>(null);
-  const authGeneration = useRef(0);
-  const remoteMcpInFlight = useRef<Promise<void> | null>(null);
-  const remoteMcpAccountExit = useRef(false);
-  const publishedRuntimeReadiness = useRef<string | null>(null);
-  const [runtimeReadinessAttempt, setRuntimeReadinessAttempt] = useState(0);
-  const restoreInFlight = useRef(false);
-  const savedSessionRestoreEnabled = useRef(true);
-  const desktopUpdateCheckStarted = useRef(false);
-  const isCloudMode = appMode?.mode === "cloud";
-  // Profiles that need a proxy. Local mode only: a Cloud profile shows no
-  // proxy until its encrypted payload is fetched, so the count would be wrong.
-  const profilesWithoutProxy = isCloudMode ? 0 : profiles.filter((p) => !p.proxy?.trim()).length;
-  const workspaceReady = appMode?.mode === "local" || (isCloudMode && cloudWorkspaceReady(cloudAuth));
-  const canEditCloud = !isCloudMode || cloudAuth?.workspace?.role === "owner" || cloudAuth?.workspace?.role === "admin" ||
-    team?.folders.some((folder) => folder.permission === "edit" && !folder.archivedAt) === true;
-  const canManageCloudFolders = cloudAuth?.workspace?.role === "owner" || cloudAuth?.workspace?.role === "admin";
-  // In-app wallet and proxy store, when this AliasMode Cloud has it. Otherwise
-  // the offers stay links to NobleProxy.
-  const cloudStore = useCloudStore(isCloudMode && workspaceReady && !restartRequired, `${cloudAuth?.user?.id ?? ""}:${cloudAuth?.workspace?.id ?? ""}`);
-  const storeSnapshot = cloudStore.state?.available === true ? cloudStore.state : null;
-  // Store placement events go to Cloud only while the in-app store is available (never in Local mode).
-  useStoreEvents(!!storeSnapshot);
-  // Each way into the store records its placement; the Buy tab view, Pay and the purchase carry it.
-  const [storeEntry, setStoreEntry] = useState<{ src: ProxySrc; key: number }>({ src: "direct", key: 0 });
-  const enterStore = useCallback((src: ProxySrc) => {
-    trackStoreEvent("entry_click", src);
-    setStoreEntry((current) => ({ src, key: current.key + 1 }));
-  }, []);
-  // Offers open the shop on the Proxies page: the quantity is preselected and the shop scrolls into view.
-  const [storeRequest, setStoreRequest] = useState({ quantity: 0, key: 0 });
-  const openStore = useCallback((quantity: number, src: ProxySrc) => {
-    enterStore(src);
-    setStoreRequest((current) => ({ quantity, key: current.key + 1 }));
-    setView("proxies");
-    void cloudStore.reload();
-  }, [cloudStore.reload, enterStore]);
+    const { t, language, setLanguage } = useTranslation();
+    const windowChrome = useWindowChrome();
+    const { currentName: savedWorkspaceName } = useWorkspaceCatalog();
+    const currentName = savedWorkspaceName || t("Local workspace");
+    useEffect(() => { document.title = `${currentName} · 猫步·千境`; }, [currentName]);
+    const [profiles, setProfiles] = useState<UiProfile[]>([]);
+    const [registeredGroups, setRegisteredGroups] = useState<string[]>([]);
+    const [localFolders, setLocalFolders] = useState<FolderInfo[]>([]);
+    const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+    const [folderMenu, setFolderMenu] = useState<string | null>(null);
+    const [folderMenuPosition, setFolderMenuPosition] = useState({ left: 0, top: 0 });
+    const [newFolderParent, setNewFolderParent] = useState<string | null>(null);
+    const [movingFolder, setMovingFolder] = useState<string | null>(null);
+    const [folderParent, setFolderParent] = useState("");
+    const [folderMoveBusy, setFolderMoveBusy] = useState(false);
+    const [folderMoveErr, setFolderMoveErr] = useState<string | null>(null);
 
-  // The app resolves "system" itself and stamps the result on <html>, so the
-  // stylesheet carries exactly one dark palette instead of a duplicated media query.
-  useEffect(() => {
+    const [appMode, setAppMode] = useState<AppModeConfig | null>(null);
+
+    const [modeErr, setModeErr] = useState<string | null>(null);
+    // Management sections share the main content area. Focused profile forms
+    // keep their own centred editor while the underlying roster stays mounted.
+    const [view, setView] = useState<"profiles" | "scripts" | "settings" | "extensions" | "proxies" | "trash" | "workspaces">("profiles");
+    const [workspacePageRequest, setWorkspacePageRequest] = useState<WorkspacePageRequest>({ mode: "manage", id: 0 });
+    const [scriptRunOpen, setScriptRunOpen] = useState(false);
+    const [scriptRunProfiles, setScriptRunProfiles] = useState<UiProfile[]>([]);
+    const [showCreate, setShowCreate] = useState(false);
+    const [createProxyOpen, setCreateProxyOpen] = useState(false);
+    const [settingsTab, setSettingsTab] = useState<SettingsTab>("account");
+
+    const [appVersion, setAppVersion] = useState("");
+
+    const [logDir, setLogDir] = useState<string | undefined>(undefined);
+    const [diskSpace, setDiskSpace] = useState<DiskSpace | null>(null);
+    const [diskWarningDismissed, setDiskWarningDismissed] = useState(false);
+    const [logView, setLogView] = useState<{ file: string; content: string } | null>(null);
+    const [logErr, setLogErr] = useState<string | null>(null);
+    const [diag, setDiag] = useState<DiagnoseReport | null>(null);
+    const [showDiag, setShowDiag] = useState(false);
+    const [q, setQ] = useState("");
+    const [profileStatus, setProfileStatus] = useState<"all" | "running" | "stopped">("all");
+    const [group, setGroup] = useState("all");
+    const [profilePage, setProfilePage] = useState(0);
+    const [pageSize, setPageSize] = useState(readPageSize);
+    const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "no", dir: 1 });
+    const [hiddenCols, setHiddenCols] = useState<Set<ColumnKey>>(readHiddenColumns);
+    const [colsOpen, setColsOpen] = useState(false);
+    const [groupDisclosure, setGroupDisclosure] = useState(() => readGroupDisclosure(null));
+    const [groupManagerOpen, setGroupManagerOpen] = useState(false);
+    const [bulkToolsOpen, setBulkToolsOpen] = useState(false);
+
+    const [refreshing, setRefreshing] = useState(false);
+    const [groupsOpen, setGroupsOpen] = useState(true);
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
+    const [railForced, setRailForced] = useState(readRailForced);
+    const [tableScrolled, setTableScrolled] = useState(false);
+    const [theme, setTheme] = useState<ThemeChoice>(readTheme);
+    const [busy, setBusy] = useState<Record<string, boolean>>({});
+    const [runtimeDownloads, setRuntimeDownloads] = useState<RuntimeDownload[]>([]);
+    // Two error slots so an auto-refresh can't silently wipe why an action failed:
+    // actionErr is sticky (Open/Close/move/import), connErr tracks load() only.
+    const [actionErr, setActionErr] = useState<string | null>(null);
+    useEffect(() => {
+      let alive = true;
+      const revision = preferenceRevision;
+      void fetchWorkspacePreferences().then((preferences) => {
+        if (!alive || preferenceRevision !== revision) return;
+        for (const [key, value] of Object.entries(preferences)) try { localStorage.setItem(key, value); } catch { }
+        if (preferences[HIDDEN_COLUMNS_KEY] !== undefined) {
+          const keys: unknown = JSON.parse(preferences[HIDDEN_COLUMNS_KEY]!);
+          const known = new Set(COLUMNS.map((column) => column.key as string));
+          if (Array.isArray(keys)) setHiddenCols(new Set(keys.filter((key) => known.has(key)) as ColumnKey[]));
+        }
+        if (preferences[PAGE_SIZE_KEY] !== undefined && PAGE_SIZES.includes(Number(preferences[PAGE_SIZE_KEY]))) setPageSize(Number(preferences[PAGE_SIZE_KEY]));
+        if (preferences[SIDEBAR_KEY] !== undefined) setSidebarCollapsed(preferences[SIDEBAR_KEY] === "1");
+        setGroupDisclosure(readGroupDisclosure(preferences[GROUP_DISCLOSURE_KEY]));
+      }).catch((error) => { if (alive) setActionErr(error instanceof Error ? error.message : String(error)); });
+      const failed = (event: Event) => setActionErr(String((event as CustomEvent).detail));
+      window.addEventListener("workspace-preference-error", failed);
+      return () => { alive = false; window.removeEventListener("workspace-preference-error", failed); };
+    }, []);
+    const [connErr, setConnErr] = useState<string | null>(null);
+    const [connectionAlertDismissed, setConnectionAlertDismissed] = useState(false);
+    useEffect(() => { if (!connErr) setConnectionAlertDismissed(false); }, [connErr]);
+    const [notice, setNotice] = useState<string | null>(null); // transient success banner
+    const [loaded, setLoaded] = useState(false);
+    const [selected, setSelected] = useState<Set<string>>(new Set());
+    const [deleting, setDeleting] = useState(false);
+    const deleteInFlight = useRef(false);
+    const rosterLoader = useRef(serialLoader(() => loadRoster()));
+    // Active profile export: null when idle, otherwise how far the server-side
+    // collection has progressed ({completed: total} = file being built).
+    const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
+    const [moveTarget, setMoveTarget] = useState("");
+    const [newMode, setNewMode] = useState(false);
+    const [newGroup, setNewGroup] = useState("");
+    const [dragging, setDragging] = useState(false);
+    const [creating, setCreating] = useState(false);
+    const [createErr, setCreateErr] = useState<string | null>(null);
+    const [form, setForm] = useState(BLANK_FORM);
+    const [createProxyCheck, setCreateProxyCheck] = useState<ProxyCheckUiState>(EMPTY_PROXY_CHECK);
+    const createProxyCheckGeneration = useRef(0);
+    const [cookieTargets, setCookieTargets] = useState<UiProfile[] | null>(null);
+    const [cookieForm, setCookieForm] = useState(BLANK_COOKIE_FORM);
+    const [cookieText, setCookieText] = useState("");
+    const [cookieErr, setCookieErr] = useState<string | null>(null);
+    const [cookieSaving, setCookieSaving] = useState(false);
+    const [pendingView, setPendingView] = useState<{ profile: UiProfile; cookies: Array<{ domain: string; name: string }> | null; error: string | null; busy: boolean } | null>(null);
+    const [proxyPaste, setProxyPaste] = useState("");
+    const [proxyPasteOk, setProxyPasteOk] = useState<string | null>(null);
+    // Edit modal + bulk export/update + group rename
+    const [editId, setEditId] = useState<string | null>(null);
+
+    const [editForm, setEditForm] = useState<Record<string, string>>({});
+    const [editInitialFingerprint, setEditInitialFingerprint] = useState<Record<string, string>>({});
+    const [editInitialProxy, setEditInitialProxy] = useState({ proxy: "", proxyType: "http" });
+
+    const [editProxyCheck, setEditProxyCheck] = useState<ProxyCheckUiState>(EMPTY_PROXY_CHECK);
+    const editProxyCheckGeneration = useRef(0);
+    const [editErr, setEditErr] = useState<string | null>(null);
+    const [editSaving, setEditSaving] = useState(false);
+    const [editLoading, setEditLoading] = useState(false);
+    const createEditorRef = useProfileEditorFocus(showCreate);
+    const editEditorRef = useProfileEditorFocus(!!editId, !editLoading);
+
+    // Null until the profile detail loads, so a failed load never names a browser.
+    const [editEngine, setEditEngine] = useState<"chromium" | "firefox" | null>(null);
+    const [editChromiumRuntime, setEditChromiumRuntime] = useState("");
+    const [editHardware, setEditHardware] = useState<{ gpu?: string; cores?: number } | undefined>();
+    const [timezoneBusy, setTimezoneBusy] = useState(false);
+    const editFetchId = useRef<string | null>(null);
+    const [editMobile, setEditMobile] = useState<NonNullable<EditProfile["desktopConversion"]> | null>(null);
+    const [editTotp, setEditTotp] = useState<{ code: string; secs: number } | null>(null);
+    const [twoFaFlash, setTwoFaFlash] = useState<{ id: string; code: string } | null>(null);
+    const [editExts, setEditExts] = useState<string[]>([]);
+    const [editInitialExts, setEditInitialExts] = useState<string[]>([]);
+    // Local extension registry + Extensions page
+    const [extensions, setExtensions] = useState<Extension[]>([]);
+    const [groupExtensionDefaults, setGroupExtensionDefaultsState] = useState<GroupExtensionDefaults[]>([]);
+    const [groupDefaultName, setGroupDefaultName] = useState("");
+    const [groupDefaultExts, setGroupDefaultExts] = useState<string[]>([]);
+    const [groupDefaultBusy, setGroupDefaultBusy] = useState(false);
+    const [extSource, setExtSource] = useState("");
+    const [extInstallBusy, setExtInstallBusy] = useState(false);
+    const [extBusy, setExtBusy] = useState(false);
+    const [extErr, setExtErr] = useState<string | null>(null);
+    const extFileRef = useRef<HTMLInputElement>(null);
+    const [bulkExt, setBulkExt] = useState(""); // extension chosen for bulk assign
+    // Update-from-file modal (export → edit → re-upload, matched by id)
+    const [showUpdate, setShowUpdate] = useState(false);
+    const [updateFile, setUpdateFile] = useState<File | null>(null);
+    const [updateBusy, setUpdateBusy] = useState(false);
+    const [updateErr, setUpdateErr] = useState<string | null>(null);
+    const [updateResult, setUpdateResult] = useState<string | null>(null);
+    const [updateOver, setUpdateOver] = useState(false);
+    const updateFileRef = useRef<HTMLInputElement>(null);
+    const [exportOpen, setExportOpen] = useState(false);
+    const [renaming, setRenaming] = useState<string | null>(null);
+    const [renameVal, setRenameVal] = useState("");
+    const [addingGroup, setAddingGroup] = useState(false);
+    const [sidebarGroupName, setSidebarGroupName] = useState("");
+    // Bulk add accounts from provider files or pasted AdsPower text.
+    const [showBulk, setShowBulk] = useState(false);
+    const [bulkFiles, setBulkFiles] = useState<File[]>([]);
+    const [bulkText, setBulkText] = useState("");
+    const [bulkGroup, setBulkGroup] = useState("");
+    const [bulkPlatform, setBulkPlatform] = useState("");
+    const [bulkBusy, setBulkBusy] = useState(false);
+    const [bulkErr, setBulkErr] = useState<string | null>(null);
+    const [bulkOver, setBulkOver] = useState(false);
+    // One source at a time: two full-height inputs stacked made it ambiguous which
+    // one the Import button would actually read.
+    const [bulkSource, setBulkSource] = useState<"file" | "paste">("file");
+
+    const bulkFileRef = useRef<HTMLInputElement>(null);
+
+
+
+
+    // The app resolves "system" itself and stamps the result on <html>, so the
+    // stylesheet carries exactly one dark palette instead of a duplicated media query.
+    useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
       document.documentElement.dataset.theme =
@@ -1465,54 +910,47 @@ function App() {
     media.addEventListener("change", apply);
     return () => media.removeEventListener("change", apply);
   }, [theme]);
-
-  useEffect(() => {
+    useEffect(() => {
     const media = window.matchMedia(RAIL_MEDIA);
     const apply = () => setRailForced(media.matches);
     media.addEventListener("change", apply);
     return () => media.removeEventListener("change", apply);
   }, []);
-
-  // Escape closes whatever dialog is open, topmost first — standard desktop
-  // behavior the mouse-only close buttons don't cover.
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (accessTarget) { if (!teamBusy) setAccessTarget(null); return; }
-      if (movingFolder) { if (!folderMoveBusy) setMovingFolder(null); return; }
-      if (pendingMode) { if (!modeBusy) setPendingMode(null); return; }
-      if (logView || logErr) { setLogView(null); setLogErr(null); return; }
-      if (showUpdate) { setShowUpdate(false); return; }
-      if (showBulk) { closeBulk(); return; }
-      if (pendingView) { if (!pendingView.busy) setPendingView(null); return; }
-      if (cookieTargets) { if (!cookieSaving) closeCookie(); return; }
-      if (editId) { closeEdit(); return; }
-      if (showCreate) closeCreate();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  });
-
-  const reloadGroupExtensionDefaults = async () => {
+    // Escape closes whatever dialog is open, topmost first — standard desktop
+    // behavior the mouse-only close buttons don't cover.
+    useEffect(() => {
+        const onKey = (event: KeyboardEvent) => {
+            if (event.key !== "Escape") return;
+            if (movingFolder) { if (!folderMoveBusy) setMovingFolder(null); return; }
+            if (logView || logErr) { setLogView(null); setLogErr(null); return; }
+            if (showUpdate) { setShowUpdate(false); return; }
+            if (showBulk) { closeBulk(); return; }
+            if (pendingView) { if (!pendingView.busy) setPendingView(null); return; }
+            if (cookieTargets) { if (!cookieSaving) closeCookie(); return; }
+            if (editId) { closeEdit(); return; }
+            if (showCreate) closeCreate();
+        };
+        document.addEventListener("keydown", onKey);
+        return () => document.removeEventListener("keydown", onKey);
+    });
+    const reloadGroupExtensionDefaults = async () => {
     try {
       setGroupExtensionDefaultsState(await fetchGroupExtensionDefaults());
     } catch (error) {
       setExtErr(error instanceof Error ? error.message : String(error));
     }
   };
-
-  // One roster request at a time: on a slow link a large roster takes longer
-  // than the poll interval, and stacked requests share the bandwidth until
-  // every one of them fails.
-  const { load, poll: pollRoster } = rosterLoader.current;
-
-  const loadRoster = async () => {
+    // One roster request at a time: on a slow link a large roster takes longer
+    // than the poll interval, and stacked requests share the bandwidth until
+    // every one of them fails.
+    const { load, poll: pollRoster } = rosterLoader.current;
+    const loadRoster = async () => {
     try {
       const roster = await fetchProfiles();
       setProfiles(roster.profiles);
       setRegisteredGroups(roster.groups);
       setLocalFolders(roster.folders ?? []);
-      setHealthSources(roster.healthSources);
+
       setConnErr(null); // manages connectivity only; never clears an action error
     } catch (e) {
       setConnErr(String(e));
@@ -1520,723 +958,73 @@ function App() {
       setLoaded(true);
     }
   };
-
-  const loadCloudEvents = async () => {
-    if (!isCloudMode) {
-      setCloudEvents([]);
-      setCloudEventsErr(null);
-      return;
-    }
-    setCloudEventsBusy(true);
-    setCloudEventsErr(null);
-    try {
-      setCloudEvents((await fetchCloudEvents()).slice().reverse());
-    } catch {
-      setCloudEventsErr("Recent diagnostics could not be loaded.");
-    } finally {
-      setCloudEventsBusy(false);
-    }
-  };
-
-  const loadTeam = async () => {
-    if (!isCloudMode) return;
-    setTeamBusy(true);
-    setTeamErr(null);
-    try { setTeam(await fetchCloudTeam()); }
-    catch (error) { setTeamErr(error instanceof Error ? error.message : String(error)); }
-    finally { setTeamBusy(false); }
-  };
-
-  const runTeamAction = async (action: string, input: Record<string, string>, done?: string): Promise<boolean> => {
-    setTeamBusy(true);
-    setTeamErr(null);
-    try {
-      await cloudWorkspaceAction(action, input);
-      await loadTeam();
-      if (done) flash(done);
-      return true;
-    } catch (error) {
-      setTeamErr(error instanceof Error ? error.message : String(error));
-      setTeamBusy(false);
-      return false;
-    }
-  };
-
-  const inviteTeamMember = async () => {
-    const email = teamEmail.trim();
-    const ok = await runTeamAction("invite", { email, role: teamRole }, `Invitation sent to ${email}`);
-    if (ok) setTeamEmail("");
-  };
-
-  const checkDesktopUpdate = async (manual: boolean) => {
-    const invoke = desktopInvoke();
-    if (!invoke) {
-      if (manual) setDesktopUpdateErr("Updates are available only in the desktop app.");
-      return;
-    }
-    setDesktopUpdateChecking(true);
-    if (manual) setDesktopUpdateErr(null);
-    try {
-      setDesktopUpdate(parseDesktopUpdateStatus(await invoke("check_for_updates")));
-    } catch (error) {
-      if (manual) setDesktopUpdateErr(error instanceof Error ? error.message : String(error));
-    } finally {
-      setDesktopUpdateChecking(false);
-    }
-  };
-
-  const installDesktopUpdate = async () => {
-    const invoke = desktopInvoke();
-    if (!invoke || desktopUpdate?.state !== "available") return;
-    const onProgress = new Channel<unknown>();
-    onProgress.onmessage = (value) => {
-      try {
-        const message = parseDesktopUpdateMessage(value);
-        if (message.phase === "ready") {
-          setDesktopUpdate((status) => status?.state === "available"
-            ? { ...status, version: message.version, highlights: message.highlights }
-            : status);
-        } else {
-          setDesktopUpdateProgress(message);
-        }
-      } catch { /* Ignore malformed native progress without interrupting the update. */ }
+    const openSettings = () => setView("settings");
+    const openWorkspaceManagement = (intent: WorkspacePageIntent) => {
+      setWorkspacePageRequest((current) => ({ ...intent, id: current.id + 1 }));
+      setView("workspaces");
     };
-    setDesktopUpdateInstalling(true);
-    setDesktopUpdateProgress({ phase: "preparing" });
-    setDesktopUpdateErr(null);
-    try {
-      await invoke("update_now", { onProgress });
-    } catch (error) {
-      setDesktopUpdateErr(error instanceof Error ? error.message : String(error));
-      setDesktopUpdateProgress(null);
-      setDesktopUpdateInstalling(false);
-    }
-  };
-
-  const provisionRemoteMcp = async (): Promise<RemoteMcpSettings> => {
-    const created = await createCloudConnector();
-    if (
-      created.state !== "active" ||
-      typeof created.connectorId !== "string" || !created.connectorId ||
-      typeof created.deviceId !== "string" || !created.deviceId ||
-      typeof created.url !== "string" || !created.url ||
-      typeof created.token !== "string" || !created.token
-    ) {
-      throw new Error("AliasMode Cloud returned invalid Remote MCP settings.");
-    }
-    try {
-      await storeDesktopRemoteMcpCredential({
-        version: 1,
-        state: "active",
-        connectorId: created.connectorId,
-        deviceId: created.deviceId,
-        token: created.token,
-      });
-    } catch {
-      await revokeCloudConnector(created.connectorId).catch(() => undefined);
-      throw new Error("The Remote MCP access key could not be stored securely.");
-    }
-    return {
-      state: "active",
-      connectorId: created.connectorId,
-      deviceId: created.deviceId,
-      url: created.url,
-      token: created.token,
-    };
-  };
-
-  const runRemoteMcpTask = (work: () => Promise<void>): Promise<void> => {
-    if (remoteMcpAccountExit.current) return Promise.resolve();
-    if (remoteMcpInFlight.current) return remoteMcpInFlight.current;
-    const task = work().finally(() => {
-      if (remoteMcpInFlight.current === task) remoteMcpInFlight.current = null;
-    });
-    remoteMcpInFlight.current = task;
-    return task;
-  };
-
-  const loadRemoteMcp = (): Promise<void> => runRemoteMcpTask(async () => {
-    if (!isCloudMode || !cloudWorkspaceReady(cloudAuth)) {
-      setRemoteMcp({ state: "idle" });
-      return;
-    }
-    setRemoteMcpTokenVisible(false);
-    setRemoteMcpCopied(null);
-    setRemoteMcp({ state: "loading" });
-    try {
-      const stored = await readDesktopRemoteMcpCredential();
-      if (stored === undefined) {
-        throw new Error("Remote MCP settings are available in the desktop app.");
-      }
-      if (stored?.state === "disabled") {
-        setRemoteMcp({ state: "disabled" });
-        return;
-      }
-      if (stored?.state === "active") {
-        const status = await fetchCloudConnector(stored.connectorId);
-        if (status.state === "active" && status.url) {
-          setRemoteMcp({
-            state: "active",
-            connectorId: stored.connectorId,
-            deviceId: stored.deviceId,
-            url: status.url,
-            token: stored.token,
-          });
-          return;
-        }
-      }
-      setRemoteMcp(await provisionRemoteMcp());
-    } catch (error) {
-      setRemoteMcp({ state: "error", error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  const enableRemoteMcp = (): Promise<void> => runRemoteMcpTask(async () => {
-    setRemoteMcp({ state: "loading" });
-    setRemoteMcpTokenVisible(false);
-    try {
-      setRemoteMcp(await provisionRemoteMcp());
-    } catch (error) {
-      setRemoteMcp({ state: "error", error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  const disableRemoteMcp = async () => {
-    if (remoteMcp.state !== "active" || !remoteMcp.connectorId) return;
-    if (!window.confirm("Disable this Remote MCP connection? Connected clients will stop working.")) return;
-    await runRemoteMcpTask(async () => {
-      setRemoteMcp({ state: "loading" });
-      setRemoteMcpTokenVisible(false);
-      try {
-        await revokeCloudConnector(remoteMcp.connectorId!);
-        await storeDesktopRemoteMcpCredential({ version: 1, state: "disabled" });
-        setRemoteMcp({ state: "disabled" });
-      } catch (error) {
-        setRemoteMcp({ state: "error", error: error instanceof Error ? error.message : String(error) });
-      }
-    });
-  };
-
-  const regenerateRemoteMcp = async () => {
-    if (remoteMcp.state !== "active" || !remoteMcp.connectorId) return;
-    if (!window.confirm("Generate a new Remote MCP access key? Existing clients will disconnect.")) return;
-    await runRemoteMcpTask(async () => {
-      setRemoteMcp({ state: "loading" });
-      setRemoteMcpTokenVisible(false);
-      try {
-        await revokeCloudConnector(remoteMcp.connectorId!);
-        await storeDesktopRemoteMcpCredential({ version: 1, state: "disabled" });
-        setRemoteMcp(await provisionRemoteMcp());
-      } catch (error) {
-        setRemoteMcp({ state: "error", error: error instanceof Error ? error.message : String(error) });
-      }
-    });
-  };
-
-  const copyRemoteMcp = async (kind: "url" | "token", value: string) => {
-    try {
-      await copyPlainText(value);
-      setRemoteMcpCopied(kind);
-      window.setTimeout(() => setRemoteMcpCopied((current) => current === kind ? null : current), 1200);
-    } catch {
-      setRemoteMcp((current) => ({ ...current, error: "Remote MCP connection details could not be copied." }));
-    }
-  };
-
-  const prepareRemoteMcpForAccountExit = async (bestEffort = false) => {
-    remoteMcpAccountExit.current = true;
-    try {
-      if (remoteMcpInFlight.current) await remoteMcpInFlight.current;
-      const connector = await readDesktopRemoteMcpCredential();
-      if (connector?.state === "active") {
-        await revokeCloudConnector(connector.connectorId);
-        await storeDesktopRemoteMcpCredential({ version: 1, state: "disabled" });
-        setRemoteMcp({ state: "disabled" });
-        setRemoteMcpTokenVisible(false);
-      }
-    } catch (error) {
-      if (!bestEffort) throw error;
-    }
-  };
-
-  const openAccountSettings = () => {
-    setModeErr(null);
-    setView("settings");
-    setRemoteMcpTokenVisible(false);
-    void loadRemoteMcp();
-    void loadCloudEvents();
-    void loadTeam();
-  };
-
-  /** Leaving Settings must never keep a revealed Remote MCP key on screen. */
-  const closeAccountSettings = () => {
-    setRemoteMcpTokenVisible(false);
-    setRemoteMcpCopied(null);
-    setView("profiles");
-  };
-
-  const chooseMode = async (mode: "local" | "cloud"): Promise<boolean> => {
-    setModeBusy(true);
-    setModeErr(null);
-    try {
-      const result = await selectAppMode(mode);
-      setAppMode(result.config);
-      const needsRestart = result.restartRequired === true;
-      setRestartRequired(needsRestart);
-      const invoke = desktopInvoke();
-      if (needsRestart && invoke) await invoke("restart_after_mode_change");
-      return true;
-    } catch (error) {
-      setModeErr(error instanceof Error ? error.message : String(error));
-      return false;
-    } finally {
-      setModeBusy(false);
-    }
-  };
-
-  const requestModeSwitch = (mode: "local" | "cloud") => {
-    setModeErr(null);
-    setPendingMode(mode);
-  };
-
-  const confirmModeSwitch = async () => {
-    if (!pendingMode) return;
-    if (await chooseMode(pendingMode)) {
-      setPendingMode(null);
-      closeAccountSettings();
-    }
-  };
-
-  const restoreSavedSession = async (startup: boolean) => {
-    if (!savedSessionRestoreEnabled.current || restoreInFlight.current) return;
-    restoreInFlight.current = true;
-    const generation = authGeneration.current;
-    if (startup) {
-      setSavedSessionPhase("restoring");
-      setAuthBusy(true);
-    }
-    try {
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          const stored = await readDesktopCloudCredentials();
-          if (generation !== authGeneration.current || !savedSessionRestoreEnabled.current) return;
-          if (!stored?.refreshToken || !stored.deviceCredential || !stored.queueKey) {
-            setCloudAuth({ authenticated: false });
-            setSavedSessionPhase("manual-signin");
-            setScheduledRefreshPending(false);
-            setAuthErr(null);
-            return;
-          }
-          const result = await restoreCloudSession(
-            stored.refreshToken,
-            stored.deviceCredential,
-            stored.queueKey,
-            startup,
-          );
-          if (generation !== authGeneration.current || !savedSessionRestoreEnabled.current) return;
-          if (typeof result.refreshToken !== "string" || !result.refreshToken) {
-            throw new Error("Cloud did not return a refresh token");
-          }
-          await storeDesktopCloudCredentials(result.refreshToken, stored.deviceCredential);
-          if (generation !== authGeneration.current || !savedSessionRestoreEnabled.current) return;
-          setCloudAuth({
-            authenticated: true,
-            expiresAt: result.expiresAt,
-            user: result.user,
-            workspace: result.workspace,
-            legal: result.legal,
-          });
-          setSavedSessionPhase("manual-signin");
-          setScheduledRefreshPending(false);
-          setAuthErr(null);
-          return;
-        } catch (error) {
-          if (generation !== authGeneration.current || !savedSessionRestoreEnabled.current) return;
-          if (error instanceof CloudSessionRestoreError && !error.retryable) {
-            await deleteDesktopRemoteMcpCredential().catch(() => undefined);
-            setRemoteMcp({ state: "idle" });
-            setRemoteMcpTokenVisible(false);
-            setCloudAuth({ authenticated: false });
-            setSavedSessionPhase("manual-signin");
-            setScheduledRefreshPending(false);
-            setAuthErr(error.message);
-            return;
-          }
-          if (attempt === 0) continue;
-          const message = error instanceof CloudSessionRestoreError
-            ? error.message
-            : "Saved Cloud session could not be restored. Try again when the connection is available.";
-          setAuthErr(message);
-          if (startup) setSavedSessionPhase("retryable-failure");
-          else setScheduledRefreshPending(true);
-        }
-      }
-    } finally {
-      restoreInFlight.current = false;
-      if (startup && generation === authGeneration.current) setAuthBusy(false);
-    }
-  };
-
-  const signInInstead = async () => {
-    savedSessionRestoreEnabled.current = false;
-    const generation = ++authGeneration.current;
-    setAuthBusy(true);
-    setAuthErr(null);
-    try {
-      await prepareRemoteMcpForAccountExit(true);
-      await forgetCloudSession();
-      await deleteDesktopRemoteMcpCredential().catch(() => undefined);
-      setRemoteMcp({ state: "idle" });
-      if (generation !== authGeneration.current) return;
-      setCloudAuth({ authenticated: false });
-      setSavedSessionPhase("manual-signin");
-      setScheduledRefreshPending(false);
-      setProfiles([]);
-      setHealthSources([]);
+    const showRunningProfiles = () => {
+      setQ("");
+      setGroup("all");
       setSelected(new Set());
-      setTeam(null);
-      setCloudEvents([]);
-      setAuthPassword("");
-      setAuthNotice(null);
-    } catch (error) {
-      if (generation === authGeneration.current) {
-        savedSessionRestoreEnabled.current = true;
-        setAuthErr(error instanceof Error ? error.message : String(error));
-      }
-    } finally {
-      remoteMcpAccountExit.current = false;
-      if (generation === authGeneration.current) setAuthBusy(false);
-    }
-  };
-
-  const submitCloudAuth = async () => {
-    const generation = authGeneration.current;
-    setAuthBusy(true);
-    setAuthErr(null);
-    setAuthNotice(null);
-    try {
-      if (authView === "signup") {
-        const result = await signUpCloud(authEmail, authPassword);
-        if (result.verificationRequired) {
-          setConfirmationEmail(authEmail);
-          setAuthCode("");
-          setAuthView("verify");
-        } else {
-          setAuthNotice(t("Account created. You can sign in now."));
-          setAuthView("signin");
-        }
-      } else {
-        if (authView === "verify") {
-          await verifyCloudSignUp(confirmationEmail, authCode);
-          // The code works once: if the sign-in below fails, the user retries from the sign-in form.
-          setAuthView("signin");
-        }
-        const stored = await readDesktopCloudCredentials();
-        const result = await signInCloud(authEmail, authPassword, stored?.queueKey);
-        if (generation !== authGeneration.current) return;
-        if (typeof result.refreshToken !== "string" || !result.refreshToken) {
-          throw new Error("Cloud did not return a refresh token");
-        }
-        if (typeof result.deviceCredential !== "string" || !result.deviceCredential) {
-          throw new Error("Cloud did not return a device credential");
-        }
-        if (
-          !stored?.queueKey &&
-          result.queueKeyPersisted !== true &&
-          (typeof result.queueKey !== "string" || !result.queueKey)
-        ) {
-          throw new Error("Cloud did not initialize encrypted pending sync");
-        }
-        const persisted = await storeDesktopCloudCredentials(
-          result.refreshToken,
-          result.deviceCredential,
-          typeof result.queueKey === "string" ? result.queueKey : undefined,
-        );
-        if (generation !== authGeneration.current) return;
-        savedSessionRestoreEnabled.current = true;
-        setCloudAuth({
-          authenticated: true,
-          expiresAt: result.expiresAt,
-          user: result.user,
-          workspace: result.workspace,
-          legal: result.legal,
+      setProfilePage(0);
+      setProfileStatus("running");
+      setView("profiles");
+    };
+    useEffect(() => {
+        fetchAppMode().then((config) => {
+            setAppMode({ ...config, mode: "local", localAnalytics: false });
+        }).catch((error) => {
+            setConnErr(String(error));
+            setLoaded(true);
         });
-        setSavedSessionPhase("manual-signin");
-        setScheduledRefreshPending(false);
-        setAuthPassword("");
-        if (!persisted) setAuthNotice(t("Signed in for this run; desktop credential storage is unavailable."));
-      }
-    } catch (error) {
-      if (generation !== authGeneration.current) return;
-      if (error instanceof CloudAuthError && error.code === "email_not_confirmed") {
-        // An account that was never confirmed signs in through the code screen.
-        setConfirmationEmail(authEmail);
-        setAuthCode("");
-        setAuthView("verify");
-        setAuthNotice(t("Confirm your email first. Enter the code from the email, or send a new code."));
-      } else if (error instanceof CloudAuthError && error.code === "otp_invalid") {
-        setAuthErr(t("The code is wrong or has expired. Check the newest email, or send a new code."));
-      } else {
-        setAuthErr(error instanceof Error ? error.message : String(error));
-      }
-    } finally {
-      if (generation === authGeneration.current) setAuthBusy(false);
-    }
-  };
-
-  const signOut = async () => {
-    setAuthBusy(true);
-    setAuthErr(null);
-    try {
-      await prepareRemoteMcpForAccountExit();
-      await signOutCloud();
-      await deleteDesktopRemoteMcpCredential().catch(() => undefined);
-      setRemoteMcp({ state: "idle" });
-      authGeneration.current++;
-      setCloudAuth({ authenticated: false });
-      setSavedSessionPhase("manual-signin");
-      setScheduledRefreshPending(false);
-      setProfiles([]);
-      setHealthSources([]);
-      setSelected(new Set());
-      setTeam(null);
-      setCloudEvents([]);
-      setAuthPassword("");
-      setAuthNotice(null);
-      closeAccountSettings();
-    } catch (error) {
-      setAuthErr(error instanceof Error ? error.message : String(error));
-    } finally {
-      remoteMcpAccountExit.current = false;
-      setAuthBusy(false);
-    }
-  };
-
-  const resendConfirmation = async () => {
-    setAuthBusy(true);
-    setAuthErr(null);
-    try {
-      await resendCloudSignUp(confirmationEmail);
-      setAuthCode("");
-      setAuthNotice(t("We sent a new email to {email}.", { email: confirmationEmail }));
-    } catch (error) {
-      setAuthErr(error instanceof Error ? error.message : String(error));
-    } finally {
-      setAuthBusy(false);
-    }
-  };
-
-  const forgotPassword = async () => {
-    const email = authEmail.trim();
-    setAuthErr(null);
-    setAuthNotice(null);
-    if (!email) {
-      setAuthErr(t("Enter your email, then select Forgot password."));
-      return;
-    }
-    setAuthBusy(true);
-    try {
-      await requestCloudPasswordReset(email);
-      setAuthNotice(t("If {email} has an account, a password reset link is on its way. Check spam too.", { email }));
-    } catch (error) {
-      setAuthErr(error instanceof Error ? error.message : String(error));
-    } finally {
-      setAuthBusy(false);
-    }
-  };
-
-  const acceptInvitation = async () => {
-    setAuthBusy(true);
-    setAuthErr(null);
-    try {
-      await acceptCloudInvitation(invitationCode);
-      setInvitationCode("");
-      setAuthNotice("Invitation accepted.");
-      setCloudAuth(await fetchCloudAuth());
-      await Promise.all([load(), loadTeam()]);
-    } catch (error) {
-      setAuthErr(error instanceof Error ? error.message : String(error));
-    } finally {
-      setAuthBusy(false);
-    }
-  };
-
-  const acceptCurrentLegal = async () => {
-    setAuthBusy(true);
-    setAuthErr(null);
-    try {
-      const result = await acceptCloudLegal();
-      setCloudAuth((state) => state ? { ...state, legal: result.legal } : state);
-    } catch (error) {
-      setAuthErr(error instanceof Error ? error.message : String(error));
-    } finally {
-      setAuthBusy(false);
-    }
-  };
-
-  useEffect(() => {
-    const invoke = desktopInvoke();
-    if (!invoke) return;
-    let active = true;
-    void invoke("last_update_result")
-      .then((value) => {
-        if (!active) return;
-        setDesktopUpdateResult(parseDesktopUpdateResult(value));
-        setDesktopUpdateResultDismissed(false);
-      })
-      .catch((error) => {
-        if (active) setDesktopUpdateErr(error instanceof Error ? error.message : String(error));
-      });
-    return () => { active = false; };
-  }, []);
-
-  useEffect(() => {
-    fetchAppMode().then((config) => {
-      setAppMode(config);
-      setRestartRequired(config.restartRequired === true);
-    }).catch((error) => {
-      setConnErr(String(error));
-      setLoaded(true);
-    });
-  }, []);
-
-  useEffect(() => {
-    if (restartRequired) return;
-    const readiness = appMode?.mode === "local"
-      ? "local"
-      : appMode?.mode === "cloud" && cloudAuth !== null
-        ? cloudAuth.authenticated ? "cloud_authenticated" : "sign_in_required"
-        : null;
-    const invoke = desktopInvoke();
-    if (!readiness || !invoke || publishedRuntimeReadiness.current === readiness) return;
-    let active = true;
-    let retry: number | undefined;
-    publishedRuntimeReadiness.current = readiness;
-    void invoke("agent_runtime_ready", { readiness }).catch(() => {
-      if (!active || publishedRuntimeReadiness.current !== readiness) return;
-      publishedRuntimeReadiness.current = null;
-      retry = window.setTimeout(() => {
-        if (active) setRuntimeReadinessAttempt((attempt) => attempt + 1);
-      }, 500);
-    });
-    return () => {
-      active = false;
-      if (retry !== undefined) window.clearTimeout(retry);
-    };
-  }, [appMode?.mode, cloudAuth?.authenticated, restartRequired, runtimeReadinessAttempt]);
-
-  useEffect(() => {
-    if (!appMode || restartRequired || desktopUpdateCheckStarted.current) return;
-    desktopUpdateCheckStarted.current = true;
-    void checkDesktopUpdate(false);
-  }, [appMode?.mode, restartRequired]);
-
-  useEffect(() => {
-    if (appMode?.mode !== "cloud" || restartRequired) return;
-    let active = true;
-    const generation = authGeneration.current;
-    setSavedSessionPhase("restoring");
-    const restore = async () => {
-      try {
-        const state = await fetchCloudAuth();
-        if (cloudSessionContextReady(state)) {
-          if (active && generation === authGeneration.current) {
-            setCloudAuth(state);
-            setSavedSessionPhase("manual-signin");
-            setAuthErr(null);
-          }
-          return;
-        }
-      } catch {
-        // A saved session can still recover when the first status probe fails.
-      }
-      if (active && generation === authGeneration.current) await restoreSavedSession(true);
-    };
-    void restore();
-    return () => { active = false; };
-  }, [appMode?.mode, restartRequired]);
-
-  useEffect(() => {
-    if (
-      appMode?.mode !== "cloud" ||
-      restartRequired ||
-      !cloudAuth?.authenticated ||
-      !cloudAuth.expiresAt
-    ) return;
-    const delay = Math.max(1_000, cloudAuth.expiresAt - Date.now() - 60_000);
-    const timer = window.setTimeout(() => { void restoreSavedSession(false); }, delay);
-    return () => window.clearTimeout(timer);
-  }, [appMode?.mode, restartRequired, cloudAuth?.authenticated, cloudAuth?.expiresAt]);
-
-  useEffect(() => {
-    if (appMode?.mode !== "cloud" || restartRequired) return;
-    const retryWhenOnline = () => {
-      if (savedSessionPhase === "retryable-failure") void restoreSavedSession(true);
-      else if (scheduledRefreshPending) void restoreSavedSession(false);
-    };
-    window.addEventListener("online", retryWhenOnline);
-    return () => window.removeEventListener("online", retryWhenOnline);
-  }, [appMode?.mode, restartRequired, savedSessionPhase, scheduledRefreshPending]);
-
-  useEffect(() => {
-    if (!isCloudMode || !workspaceReady || restartRequired) return;
-    void loadTeam();
-  }, [isCloudMode, restartRequired, workspaceReady]);
-
-  useEffect(() => {
-    if (view !== "settings" || !isCloudMode || !workspaceReady || restartRequired) return;
-    void loadRemoteMcp();
-  }, [view, isCloudMode, restartRequired, workspaceReady]);
-
-  useEffect(() => {
-    if (!appMode || !workspaceReady || restartRequired) return;
+    }, []);
+    useEffect(() => {
+        const invoke = desktopInvoke();
+        if (!appMode || !invoke)
+            return;
+        void invoke("agent_runtime_ready", { readiness: "local" }).catch(() => undefined);
+    }, [appMode]);
+    useEffect(() => {
+    if (!appMode) return;
     load();
     fetchHealth().then((health) => { setAppVersion(health.version); setLogDir(health.logDir); }).catch(() => {});
-    // The extension registry is local to this computer in both modes; Cloud
-    // profiles carry assignments and load the matching uploads at launch.
+    // Resolve extension assignments from the local registry.
     fetchExtensions().then(setExtensions).catch(() => {});
-    if (appMode.mode === "local") {
-      fetchDiagnose().then(setDiag).catch(() => {});
-    }
-  }, [appMode?.mode, restartRequired, workspaceReady]);
-
-  useEffect(() => {
-    if (view !== "extensions" || !appMode || !workspaceReady || restartRequired) return;
+    fetchDiagnose().then(setDiag).catch(() => {});
+  }, [appMode]);
+    useEffect(() => {
+    if (view !== "extensions" || !appMode) return;
     void reloadGroupExtensionDefaults();
-  }, [view, appMode?.mode, restartRequired, workspaceReady]);
-
-  useEffect(() => {
-    const editable = groupExtensionDefaults.filter((item) => item.permission === "edit");
+  }, [view, appMode]);
+    useEffect(() => {
+    const editable = groupExtensionDefaults;
     if (!editable.some((item) => item.name === groupDefaultName)) {
       setGroupDefaultName(editable[0]?.name ?? "");
     }
   }, [groupExtensionDefaults, groupDefaultName]);
-
-  useEffect(() => {
+    useEffect(() => {
     setGroupDefaultExts(
       groupExtensionDefaults.find((item) => item.name === groupDefaultName)?.extensions ?? [],
     );
   }, [groupExtensionDefaults, groupDefaultName]);
-
-  useEffect(() => {
-    if (!appMode || !workspaceReady || restartRequired) return;
+    useEffect(() => {
+    if (!appMode) return;
     const t = setInterval(pollRoster, REFRESH_MS);
     return () => clearInterval(t);
-  }, [appMode?.mode, restartRequired, workspaceReady]);
-
-  // Both browsers delete saved site data when the profiles drive is almost full.
-  useEffect(() => {
-    let live = true;
-    const check = () => void fetchDiskSpace().then((next) => { if (live) setDiskSpace(next); }).catch(() => {});
-    check();
-    const timer = setInterval(check, 60_000);
-    return () => { live = false; clearInterval(timer); };
-  }, []);
-
-  // Browser runtime downloads: read once when the profile count changes (a new profile
-  // starts its download), then every second while one runs or a row is busy opening.
-  const anyBusy = Object.values(busy).some(Boolean);
-  useEffect(() => {
+  }, [appMode]);
+    // Both browsers delete saved site data when the profiles drive is almost full.
+    useEffect(() => {
+        let live = true;
+        const check = () => void fetchDiskSpace().then((next) => { if (live) setDiskSpace(next); }).catch(() => { });
+        check();
+        const timer = setInterval(check, 60_000);
+        return () => { live = false; clearInterval(timer); };
+    }, []);
+    // Browser runtime downloads: read once when the profile count changes (a new profile
+    // starts its download), then every second while one runs or a row is busy opening.
+    const anyBusy = Object.values(busy).some(Boolean);
+    useEffect(() => {
     let live = true;
     let timer: number | undefined;
     const poll = () => {
@@ -2252,55 +1040,49 @@ function App() {
     poll();
     return () => { live = false; window.clearTimeout(timer); };
   }, [anyBusy, profiles.length]);
-
-  // Live 2FA code in the Edit modal: fetch the current TOTP, count it down
-  // locally, and refetch when the window rolls over.
-  useEffect(() => {
-    if (!editId || isCloudMode) { setEditTotp(null); return; }
-    let alive = true;
-    const tick = async () => {
+    // Live 2FA code in the Edit modal: fetch the current TOTP, count it down
+    // locally, and refetch when the window rolls over.
+    useEffect(() => {
+        if (!editId) { setEditTotp(null); return; }
+        let alive = true;
+        const tick = async () => {
       try {
         const r = await fetchTotp(editId);
         if (alive) setEditTotp(r.code ? { code: r.code, secs: r.secondsRemaining ?? 30 } : null);
       } catch { if (alive) setEditTotp(null); }
     };
-    tick();
-    const timer = setInterval(() => {
+        tick();
+        const timer = setInterval(() => {
       setEditTotp((t) => {
         if (!t) return t;
         if (t.secs <= 1) { tick(); return t; }
         return { ...t, secs: t.secs - 1 };
       });
     }, 1000);
-    return () => { alive = false; clearInterval(timer); };
-  }, [editId, isCloudMode]);
-
-  const folders = useMemo<FolderInfo[]>(() => {
-    if (isCloudMode) return team?.folders.filter((folder) => !folder.archivedAt) ?? [];
-    const metadata = new Map(localFolders.map((folder) => [folder.name, folder]));
-    return [...new Set([...registeredGroups, ...profiles.map((profile) => profile.group).filter(Boolean)])]
+        return () => { alive = false; clearInterval(timer); };
+    }, [editId]);
+    const folders = useMemo<FolderInfo[]>(() => {
+        const metadata = new Map(localFolders.map((folder) => [folder.name, folder]));
+        return [...new Set([...registeredGroups, ...profiles.map((profile) => profile.group).filter(Boolean)])]
       .map((name) => metadata.get(name) ?? { name });
-  }, [isCloudMode, team?.folders, localFolders, registeredGroups, profiles]);
-  const tree = useMemo(() => folderTree(folders), [folders]);
-  const groups = useMemo(() => ["all", ...tree.map((folder) => folder.name)], [tree]);
-  const selectedScope = useMemo(() => folderScope(folders, group), [folders, group]);
-  const sharedProfiles = useMemo(() => isCloudMode
-    ? profiles.filter((profile) => !folders.some((folder) => folder.name === profile.group)) : [], [isCloudMode, profiles, folders]);
-  const breadcrumb = tree.find((folder) => folder.name === group);
-  const selectFolder = (name: string) => { setSharedOnly(false); setGroup(name); setView("profiles"); };
-  const folderLabel = (name: string) => folders.find((folder) => folder.name === name)?.label ?? name;
+    }, [localFolders, registeredGroups, profiles]);
+    const tree = useMemo(() => folderTree(folders), [folders]);
+    const groups = useMemo(() => ["all", ...tree.map((folder) => folder.name)], [tree]);
+    const selectedScope = useMemo(() => folderScope(folders, group), [folders, group]);
 
-  /**
-   * Every profile's visible "No.", resolved once against the unsorted roster so
-   * sorting or paging can never renumber a row underneath the operator.
-   */
-  const numbering = useMemo(() => {
+    const breadcrumb = tree.find((folder) => folder.name === group);
+    const selectFolder = (name: string) => { setGroup(name); setView("profiles"); };
+    const folderLabel = (name: string) => folders.find((folder) => folder.name === name)?.label ?? name;
+    /**
+     * Every profile's visible "No.", resolved once against the unsorted roster so
+     * sorting or paging can never renumber a row underneath the operator.
+     */
+    const numbering = useMemo(() => {
     const map = new Map<string, { value: string; custom: boolean }>();
     profiles.forEach((profile, index) => map.set(profile.id, displayNo(profile, index)));
     return map;
   }, [profiles]);
-
-  const sortField = (p: UiProfile, key: SortKey): string | number => {
+    const sortField = (p: UiProfile, key: SortKey): string | number => {
     switch (key) {
       case "no": return Number(numbering.get(p.id)?.value ?? 0);
       case "name": return p.name.toLowerCase();
@@ -2311,25 +1093,31 @@ function App() {
       default: return 0;
     }
   };
-
-  const filtered = useMemo(() => {
-    const matched = profiles.filter((p) => {
-      if (sharedOnly ? !sharedProfiles.includes(p) : group !== "all" && !selectedScope.has(p.group)) return false;
-      if (q) {
+    const matchingProfiles = useMemo(() => {
+        return profiles.filter((p) => {
+            if (group !== "all" && !selectedScope.has(p.group))
+                return false;
+            if (q) {
         const needle = q.toLowerCase();
         const no = numbering.get(p.id)?.value ?? "";
         if (
           !p.id.toLowerCase().includes(needle) &&
           !p.name.toLowerCase().includes(needle) &&
           !no.includes(needle) &&
+          !(p.proxy ?? "").toLowerCase().includes(needle) &&
+          !p.group.toLowerCase().includes(needle) &&
           !(p.tags ?? []).some((tag) => tag.toLowerCase().includes(needle))
         ) return false;
       }
-      return true;
-    });
-    // Running profiles stay on top regardless of the chosen column: an open
-    // browser is the row an operator acts on next.
-    return matched.sort((a, b) => {
+            return true;
+        });
+    }, [profiles, group, selectedScope, q, numbering]);
+    const matchingRunningCount = matchingProfiles.filter((profile) => profile.running).length;
+    const filtered = useMemo(() => {
+        const matched = matchingProfiles.filter((profile) => profileStatus === "all" || (profileStatus === "running" ? profile.running : !profile.running));
+        // Running profiles stay on top regardless of the chosen column: an open
+        // browser is the row an operator acts on next.
+        return matched.sort((a, b) => {
       if (a.running !== b.running) return a.running ? -1 : 1;
       const left = sortField(a, sort.key);
       const right = sortField(b, sort.key);
@@ -2337,29 +1125,45 @@ function App() {
       if (left > right) return sort.dir;
       return a.id.localeCompare(b.id);
     });
-  }, [profiles, group, sharedOnly, sharedProfiles, selectedScope, q, sort, numbering]);
-
-  const profilePageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const visibleProfilePage = Math.min(profilePage, profilePageCount - 1);
-  const visibleProfiles = filtered.slice(visibleProfilePage * pageSize, (visibleProfilePage + 1) * pageSize);
-  useEffect(() => setProfilePage(0), [q, group, sharedOnly, pageSize]);
-
-  const editSerial = editId ? profiles.find((profile) => profile.id === editId)?.serial ?? null : null;
-  const editRunning = editId ? profiles.find((profile) => profile.id === editId)?.running === true : false;
-  const createHasProxy = !!(form.host.trim() || form.port.trim() || form.user.trim() || form.pass);
-  const editHasProxy = !!(editForm.proxy ?? "").trim();
-  const editProxyChanged = (editForm.proxy ?? "") !== editInitialProxy.proxy ||
+    }, [matchingProfiles, profileStatus, sort, numbering]);
+    const profilePageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+    const visibleProfilePage = Math.min(profilePage, profilePageCount - 1);
+    const visibleProfiles = filtered.slice(visibleProfilePage * pageSize, (visibleProfilePage + 1) * pageSize);
+    const previousProfileFilters = useRef({ q, group, pageSize, profileStatus });
+    const revealGroupMatches = !!q.trim() || profileStatus !== "all" || group !== "all";
+    const profileSections = useMemo(() => profileGroupSections(
+      visibleProfiles,
+      filtered,
+      tree.filter(folder => group === "all" || selectedScope.has(folder.name)).map(folder => folder.name),
+      visibleProfilePage === 0 && !q.trim() && profileStatus === "all",
+    ), [visibleProfiles, filtered, tree, group, selectedScope, visibleProfilePage, q, profileStatus]);
+    const selectableProfiles = profileSections.flatMap(section => profileGroupCollapsed(section, groupDisclosure, revealGroupMatches) ? [] : section.profiles);
+    const saveGroupDisclosure = (next: Map<string, boolean>) => {
+      const value = serializeGroupDisclosure(next);
+      setGroupDisclosure(readGroupDisclosure(value));
+      writeSetting(GROUP_DISCLOSURE_KEY, value);
+    };
+    const toggleProfileGroup = (name: string, collapsed: boolean) => {
+      const next = new Map(groupDisclosure);
+      next.delete(name);
+      next.set(name, !collapsed);
+      saveGroupDisclosure(next);
+    };
+    const editSerial = editId ? profiles.find((profile) => profile.id === editId)?.serial ?? null : null;
+    const editRunning = editId ? profiles.find((profile) => profile.id === editId)?.running === true : false;
+    const createHasProxy = !!(form.host.trim() || form.port.trim() || form.user.trim() || form.pass);
+    const editHasProxy = !!(editForm.proxy ?? "").trim();
+    const editProxyChanged = (editForm.proxy ?? "") !== editInitialProxy.proxy ||
     (editHasProxy && editForm.proxyType !== editInitialProxy.proxyType);
+    const pastedRecordCount = bulkText.trim() ? countPastedRecords(bulkText) : null;
+    const folderMenuRef = useDismiss<HTMLSpanElement>(folderMenu !== null, () => setFolderMenu(null));
+    const colsRef = useDismiss<HTMLDivElement>(colsOpen, () => setColsOpen(false));
+    const groupManagerRef = useDismiss<HTMLDivElement>(groupManagerOpen, () => { setGroupManagerOpen(false); setFolderMenu(null); });
+    useEffect(() => { if (selected.size === 0) setBulkToolsOpen(false); }, [selected.size]);
 
-  const pastedRecordCount = bulkText.trim() ? countPastedRecords(bulkText) : null;
-
-  const folderMenuRef = useDismiss<HTMLSpanElement>(folderMenu !== null, () => setFolderMenu(null));
-  const colsRef = useDismiss<HTMLDivElement>(colsOpen, () => setColsOpen(false));
-  const nodesRef = useDismiss<HTMLDivElement>(nodesOpen, () => setNodesOpen(false));
-  const exportRef = useDismiss<HTMLDivElement>(exportOpen, () => setExportOpen(false));
-
-  const columnVisible = (key: ColumnKey) => !hiddenCols.has(key);
-  const toggleColumn = (key: ColumnKey) =>
+    const exportRef = useDismiss<HTMLDivElement>(exportOpen, () => setExportOpen(false));
+    const columnVisible = (key: ColumnKey) => !hiddenCols.has(key);
+    const toggleColumn = (key: ColumnKey) =>
     setHiddenCols((current) => {
       const next = new Set(current);
       if (next.has(key)) next.delete(key);
@@ -2367,48 +1171,45 @@ function App() {
       writeSetting(HIDDEN_COLUMNS_KEY, JSON.stringify([...next]));
       return next;
     });
-  const applyPageSize = (size: number) => { setPageSize(size); writeSetting(PAGE_SIZE_KEY, String(size)); };
-  const chooseTheme = (choice: ThemeChoice) => {
+    const applyPageSize = (size: number) => { setPageSize(size); writeSetting(PAGE_SIZE_KEY, String(size)); };
+    const chooseTheme = (choice: ThemeChoice) => {
     setTheme(choice);
     writeSetting(THEME_KEY, choice);
     try { document.cookie = themeCookie(choice); } catch {}
   };
-  const [servicesSettingErr, setServicesSettingErr] = useState("");
-  const showServices = async (shown: boolean) => {
-    setServicesSettingErr("");
-    setAppMode((current) => current ? { ...current, servicesHidden: !shown } : current);
-    try {
-      await saveServicesHidden(!shown);
-    } catch (error) {
-      setAppMode((current) => current ? { ...current, servicesHidden: shown } : current);
-      setServicesSettingErr(error instanceof Error ? error.message : String(error));
-    }
-  };
-  const toggleSidebar = () =>
+
+    const toggleSidebar = () =>
     setSidebarCollapsed((collapsed) => {
       writeSetting(SIDEBAR_KEY, collapsed ? "0" : "1");
       return !collapsed;
     });
-  const toggleSort = (key: SortKey) =>
+    const toggleSort = (key: SortKey) =>
     setSort((current) => (current.key === key ? { key, dir: current.dir === 1 ? -1 : 1 } : { key, dir: 1 }));
-  const refreshRoster = async () => {
-    setRefreshing(true);
-    try { await Promise.all([load(), isCloudMode ? loadTeam() : Promise.resolve()]); } finally { setRefreshing(false); }
-  };
-  useEffect(() => {
-    if (profilePage !== visibleProfilePage) setProfilePage(visibleProfilePage);
-  }, [profilePage, visibleProfilePage]);
+    const refreshRoster = async () => {
+        setRefreshing(true);
+        try {
+            await Promise.all([load(), Promise.resolve()]);
+        }
+        finally {
+            setRefreshing(false);
+        }
+    };
+    useEffect(() => {
+    const previous = previousProfileFilters.current;
+    const filtersChanged = previous.q !== q || previous.group !== group || previous.pageSize !== pageSize || previous.profileStatus !== profileStatus;
+    previousProfileFilters.current = { q, group, pageSize, profileStatus };
+    // A changed filter always starts on page one. Roster changes alone clamp a
+    // deleted last page; two separate effects can otherwise overwrite the reset.
+    const nextPage = filtersChanged ? 0 : visibleProfilePage;
+    if (profilePage !== nextPage) setProfilePage(nextPage);
+  }, [q, group, pageSize, profileStatus, profilePage, visibleProfilePage]);
+    const runningCount = profiles.filter((p) => p.running).length;
+    const selectedMobileCount = profiles.filter((p) => selected.has(p.id) && p.mobilePersona).length;
+    const existingGroups = groups.slice(1); // drop the "all" pseudo-group
 
-  const runningCount = profiles.filter((p) => p.running).length;
-  const selectedMobileCount = profiles.filter((p) => selected.has(p.id) && p.mobilePersona).length;
-  const existingGroups = groups.slice(1); // drop the "all" pseudo-group
-  const editableGroups = isCloudMode
-    ? existingGroups.filter((name) => team?.folders.some((folder) => folder.name === name && folder.permission === "edit" && !folder.archivedAt))
-    : existingGroups;
-  const selectedEditable = [...selected].every((id) => profiles.find((profile) => profile.id === id)?.permission === "edit");
-  const selectedProfilesSupportChromeExtensions = [...selected].every((id) =>
+    const selectedProfilesSupportChromeExtensions = [...selected].every((id) =>
     profiles.find((profile) => profile.id === id)?.engine === "chromium");
-  const folderCounts = useMemo(() => {
+    const folderCounts = useMemo(() => {
     const counts = new Map<string, number>();
     const byName = new Map(tree.map((folder) => [folder.name, folder]));
     for (const profile of profiles) {
@@ -2416,109 +1217,101 @@ function App() {
     }
     return counts;
   }, [tree, profiles]);
-  const countFor = (g: string) => folderCounts.get(g) ?? 0;
-  const canEditGroup = (name: string) => !isCloudMode ||
-    team?.folders.some((folder) => folder.name === name && folder.permission === "edit" && !folder.archivedAt) === true;
-  const selectedMovable = !isCloudMode || [...selected].every((id) => canEditGroup(profiles.find((profile) => profile.id === id)?.group ?? ""));
-  const editableDefaultGroups = groupExtensionDefaults.filter((item) => item.permission === "edit");
-  const installedExtensionIds = new Set(extensions.map((item) => item.id));
-  const storedGroupDefaultExts = groupExtensionDefaults.find((item) => item.name === groupDefaultName)?.extensions ?? [];
-  const editExtensionChoices = [
+    const countFor = (g: string) => folderCounts.get(g) ?? 0;
+    const editableDefaultGroups = groupExtensionDefaults;
+    const installedExtensionIds = new Set(extensions.map((item) => item.id));
+    const storedGroupDefaultExts = groupExtensionDefaults.find((item) => item.name === groupDefaultName)?.extensions ?? [];
+    const editExtensionChoices = [
     ...extensions.map((item) => ({ ...item, missing: false })),
     ...[...new Set([...editInitialExts, ...editExts])]
       .filter((id) => !installedExtensionIds.has(id))
       .map((id) => ({ id, name: id, missing: true })),
   ];
-  const groupDefaultExtensionChoices = [
+    const groupDefaultExtensionChoices = [
     ...extensions.map((item) => ({ ...item, missing: false })),
     ...[...new Set([...storedGroupDefaultExts, ...groupDefaultExts])]
       .filter((id) => !installedExtensionIds.has(id))
       .map((id) => ({ id, name: id, missing: true })),
   ];
-  const groupDefaultProfileCount = profiles.filter((profile) => profile.group === groupDefaultName).length;
-
-  const toggle = (id: string) =>
+    const groupDefaultProfileCount = profiles.filter((profile) => profile.group === groupDefaultName).length;
+    const toggle = (id: string) =>
     setSelected((s) => {
       const n = new Set(s);
       if (n.has(id)) n.delete(id);
       else n.add(id);
       return n;
     });
-  const allVisibleSelected = visibleProfiles.length > 0 && visibleProfiles.every((p) => selected.has(p.id));
-  const selectedFilteredCount = filtered.filter((p) => selected.has(p.id)).length;
-  const selectedOutsideFilter = selected.size - selectedFilteredCount;
-  const allFilteredSelected = filtered.length > 0 && selectedFilteredCount === filtered.length && selectedOutsideFilter === 0;
-  const selectionScope = `${filtered.length.toLocaleString()} ${q ? t("matching profiles") : t("profiles")}${group === "all" ? "" : ` in “${group}”`}`;
-  const selectAllFiltered = () => setSelected(new Set(filtered.map((p) => p.id)));
-  const toggleAll = () =>
+    const allVisibleSelected = selectableProfiles.length > 0 && selectableProfiles.every((p) => selected.has(p.id));
+    const selectedFilteredCount = filtered.filter((p) => selected.has(p.id)).length;
+    const selectedOutsideFilter = selected.size - selectedFilteredCount;
+    const allFilteredSelected = filtered.length > 0 && selectedFilteredCount === filtered.length && selectedOutsideFilter === 0;
+    const selectionKind = q ? t("matching profiles") : t("profiles");
+    const selectionScope = group === "all"
+      ? `${filtered.length.toLocaleString()} ${selectionKind}`
+      : t("{count} {kind} in “{group}”", { count: filtered.length.toLocaleString(), kind: selectionKind, group });
+    const selectAllFiltered = () => setSelected(new Set(filtered.map((p) => p.id)));
+    const toggleAll = () =>
     setSelected((s) => {
       const n = new Set(s);
-      if (allVisibleSelected) visibleProfiles.forEach((p) => n.delete(p.id));
-      else visibleProfiles.forEach((p) => n.add(p.id));
+      if (allVisibleSelected) selectableProfiles.forEach((p) => n.delete(p.id));
+      else selectableProfiles.forEach((p) => n.add(p.id));
       return n;
     });
-
-  const moveSelected = async () => {
-    const ids = [...selected];
-    const group = newMode ? newGroup.trim() : moveTarget;
-    if (ids.length === 0 || !group) return;
-    setActionErr(null);
-    try {
-      if (isCloudMode && newMode) await cloudWorkspaceAction("create-folder", { name: group });
-      const r = await moveProfiles(ids, group);
-      if (r.ok === false) {
+    const moveSelected = async () => {
+        const ids = [...selected];
+        const group = newMode ? newGroup.trim() : moveTarget;
+        if (ids.length === 0 || !group) return;
+        setActionErr(null);
+        try {
+            const r = await moveProfiles(ids, group);
+            if (r.ok === false) {
         setActionErr(r.error || "move failed");
         return;
       }
-      setSelected(new Set());
-      setNewMode(false);
-      setNewGroup("");
-      setMoveTarget("");
-      await load();
-    } catch (e) {
-      setActionErr(String(e));
-    }
-  };
-
-  const deleteSelected = async () => {
-    const ids = [...selected];
-    if (ids.length === 0 || deleteInFlight.current) return;
-    if (!confirm(appMode?.legacyRemote
-      ? `Delete ${ids.length} profile(s)? This removes them from the roster (and any saved session). This can't be undone.`
-      : `Move all ${ids.length.toLocaleString()} selected profiles to Trash? This includes every selected page. You can restore them with their saved data.`)) return;
-    deleteInFlight.current = true;
-    setDeleting(true);
-    setActionErr(null);
-    const generation = authGeneration.current;
-    try {
-      const r = await deleteProfiles(ids);
-      if (generation !== authGeneration.current) return;
-      if (r.ok === false) {
+            setSelected(new Set());
+            setNewMode(false);
+            setNewGroup("");
+            setMoveTarget("");
+            await load();
+        }
+        catch (e) {
+            setActionErr(String(e));
+        }
+    };
+    const deleteSelected = async () => {
+        const ids = [...selected];
+        if (ids.length === 0 || deleteInFlight.current) return;
+        if (!confirm(t("Move all {count} selected environments to Trash? This includes every selected page. You can restore them with their saved data.", { count: ids.length.toLocaleString() })))
+            return;
+        deleteInFlight.current = true;
+        setDeleting(true);
+        setActionErr(null);
+        try {
+            const r = await deleteProfiles(ids);
+            if (r.ok === false) {
         setActionErr(r.error || "delete failed");
         return;
       }
-      const problems = [
+            const problems = [
         r.locked?.length && `${r.locked.length} in use, not deleted`,
         r.failed?.length && `${r.failed.length} failed`,
       ].filter(Boolean);
-      if (problems.length) setActionErr(`${problems.join("; ")}. These profiles remain selected.`);
-      setSelected(new Set([...(r.locked ?? []), ...(r.failed ?? [])]));
-      flash(`${r.deleted.toLocaleString()} profiles ${appMode?.legacyRemote ? "deleted" : "moved to Trash"}`);
-      await load();
-    } catch (e) {
-      if (generation === authGeneration.current) setActionErr(String(e));
-    } finally {
-      deleteInFlight.current = false;
-      setDeleting(false);
-    }
-  };
+            if (problems.length) setActionErr(`${problems.join("; ")}. These profiles remain selected.`);
+            setSelected(new Set([...(r.locked ?? []), ...(r.failed ?? [])]));
+            flash(`${r.deleted.toLocaleString()} profiles ${"moved to Trash"}`);
+            await load();
+        }
+        catch (e) {
+            setActionErr(String(e));
+        }
+        finally {
+            deleteInFlight.current = false;
+            setDeleting(false);
+        }
+    };
+    const actionWarning = (r: any): string => r.warning ?? "";
 
-  /** A Cloud close whose final capture failed gets a translated notice instead of the server's English one. */
-  const actionWarning = (r: any): string => r.captureFailed
-    ? t("Browser closed, but its latest session could not be read. Cloud keeps the last saved copy, and this device saves the newer session to Cloud the next time you open the profile here.")
-    : r.warning;
-  const fingerprintPage = language.startsWith("ru") ? "ru" : language.startsWith("zh") ? "zh-cn" : "en";
-  const act = async (id: string, fn: (id: string) => Promise<any>) => {
+    const act = async (id: string, fn: (id: string) => Promise<any>) => {
     setActionErr(null);
     setBusy((b) => ({ ...b, [id]: true }));
     try {
@@ -2533,45 +1326,28 @@ function App() {
       setBusy((b) => ({ ...b, [id]: false }));
     }
   };
-
-  /** While a profile opens, its Open button shows the browser download it waits for. */
-  const openLabel = (profile: UiProfile) => {
-    if (!busy[profile.id]) return t("Open");
+    /** While a profile opens, its Open button shows the browser download it waits for. */
+    const openLabel = (profile: UiProfile) => {
+    if (!busy[profile.id]) return t("Start");
     const waiting = profileDownloads(profile, runtimeDownloads);
     return waiting.length > 0
       ? t("Downloading browser… {percent}%", { percent: String(downloadPercent(waiting)) })
       : t("Opening…");
   };
 
-  /**
-   * A session Cloud refused is kept encrypted here. Restoring writes it back as
-   * the profile's current session, replacing the logins Cloud holds now.
-   */
-  const restoreSession = (profile: UiProfile) => {
-    const savedAt = profile.parkedSession
-      ? new Date(profile.parkedSession.savedAt).toLocaleString()
-      : "";
-    if (!confirm(
-      `Restore the session saved on this device for ${profile.name} (${savedAt})?\n\n` +
-      "Its cookies and logins replace the ones Cloud has for this profile. " +
-      "Everything else keeps its current Cloud values.",
-    )) return;
-    void act(profile.id, restoreParkedSession);
-  };
-
-  const openCookie = (targets: UiProfile[]) => {
+    const openCookie = (targets: UiProfile[]) => {
     setCookieTargets(targets);
     setCookieForm({ ...BLANK_COOKIE_FORM, domain: targets.length === 1 ? targets[0]!.platform : "" });
     setCookieText("");
     setCookieErr(null);
   };
-  const closeCookie = () => {
+    const closeCookie = () => {
     setCookieTargets(null);
     setCookieForm(BLANK_COOKIE_FORM);
     setCookieText("");
     setCookieErr(null);
   };
-  const openPendingCookies = async (profile: UiProfile) => {
+    const openPendingCookies = async (profile: UiProfile) => {
     setPendingView({ profile, cookies: null, error: null, busy: false });
     try {
       const result = await fetchPendingCookies(profile.id);
@@ -2580,7 +1356,7 @@ function App() {
       setPendingView((view) => view && { ...view, cookies: [], error: error instanceof Error ? error.message : t("Cookies could not be loaded.") });
     }
   };
-  const removePendingCookies = async () => {
+    const removePendingCookies = async () => {
     if (!pendingView) return;
     setPendingView({ ...pendingView, busy: true, error: null });
     try {
@@ -2593,9 +1369,9 @@ function App() {
       setPendingView((view) => view && { ...view, busy: false, error: error instanceof Error ? error.message : t("Cookies could not be removed.") });
     }
   };
-  const setCookieField = (key: keyof typeof BLANK_COOKIE_FORM, value: string) =>
+    const setCookieField = (key: keyof typeof BLANK_COOKIE_FORM, value: string) =>
     setCookieForm((current) => ({ ...current, [key]: value }));
-  const submitCookie = async () => {
+    const submitCookie = async () => {
     if (!cookieTargets) return;
     setCookieSaving(true);
     setCookieErr(null);
@@ -2621,9 +1397,7 @@ function App() {
       setCookieSaving(false);
     }
   };
-
-
-  const doUpload = async (files: FileList | File[]) => {
+    const doUpload = async (files: FileList | File[]) => {
     setActionErr(null);
     try {
       const list = Array.from(files);
@@ -2639,70 +1413,72 @@ function App() {
       setActionErr(String(e));
     }
   };
-
-  // ---- Bulk add accounts from provider export files or AdsPower text ----
-  const openBulk = () => {
-    setBulkFiles([]);
-    setBulkText("");
-    setBulkGroup(group !== "all" && (!isCloudMode || editableGroups.includes(group)) ? group : "");
-    setBulkPlatform("");
-    setBulkErr(null);
-    setBulkSource("file");
-    setShowBulk(true);
-  };
-  const closeBulk = () => {
+    // ---- Bulk add accounts from provider export files or AdsPower text ----
+    const openBulk = () => {
+        setBulkFiles([]);
+        setBulkText("");
+        setBulkGroup(group !== "all" ? group : "");
+        setBulkPlatform("");
+        setBulkErr(null);
+        setBulkSource("file");
+        setShowBulk(true);
+    };
+    const closeBulk = () => {
     setShowBulk(false);
     setBulkFiles([]);
     setBulkText("");
     setBulkErr(null);
   };
-  const submitBulk = async () => {
-    if ((!bulkFiles.length && !bulkText.trim()) || (isCloudMode && !bulkGroup.trim())) return;
-    setBulkBusy(true);
-    setBulkErr(null);
-    try {
-      const uploads = [...bulkFiles];
-      if (bulkText.trim()) uploads.push(new File([bulkText], "pasted-adspower.txt", { type: "text/plain" }));
-      if (!uploads.length) throw new Error("no rows found in the file(s)");
-      const r = await uploadExports(uploads, { group: bulkGroup.trim(), platform: bulkPlatform });
-      if (r.ok) {
-        closeBulk();
-        await load();
-        setShowImportOffer(true);
-        const issues = r.errors?.length ? ` Reported ${r.errors.length} invalid record(s); invalid proxies were quarantined for repair.` : "";
-        alert(`Imported ${r.profiles} profile(s) from ${r.files} file(s).${issues}`);
-      }
-      else setBulkErr(r.error || "import failed");
-    } catch (e) {
-      setBulkErr(String(e));
-    } finally {
-      setBulkBusy(false);
-    }
-  };
+    const submitBulk = async () => {
+        if ((!bulkFiles.length && !bulkText.trim()))
+            return;
+        setBulkBusy(true);
+        setBulkErr(null);
+        try {
+            const uploads = [...bulkFiles];
+            if (bulkText.trim()) uploads.push(new File([bulkText], "pasted-adspower.txt", { type: "text/plain" }));
+            if (!uploads.length) throw new Error("no rows found in the file(s)");
+            const r = await uploadExports(uploads, { group: bulkGroup.trim(), platform: bulkPlatform });
+            if (r.ok) {
+                closeBulk();
+                await load();
 
-  const resetCreateProxyCheck = () => {
+                const issues = r.errors?.length ? ` Reported ${r.errors.length} invalid record(s); invalid proxies were quarantined for repair.` : "";
+                alert(`Imported ${r.profiles} profile(s) from ${r.files} file(s).${issues}`);
+            }
+            else
+                setBulkErr(r.error || "import failed");
+        }
+        catch (e) {
+            setBulkErr(String(e));
+        }
+        finally {
+            setBulkBusy(false);
+        }
+    };
+    const resetCreateProxyCheck = () => {
     createProxyCheckGeneration.current++;
     setCreateProxyCheck(EMPTY_PROXY_CHECK);
   };
-  const setF = (k: keyof typeof BLANK_FORM, v: string) => {
+    const setF = (k: keyof typeof BLANK_FORM, v: string) => {
     if (k === "proxyType" || k === "host" || k === "port" || k === "user" || k === "pass") {
       resetCreateProxyCheck();
     }
     setForm((f) => ({ ...f, [k]: v }));
   };
-  // Open prefilled with the folder you're browsing; close always resets so a
-  // cancelled draft never leaks into the next open.
-  const openCreate = () => {
-    resetCreateProxyCheck();
-    setForm({ ...BLANK_FORM, engine: appMode?.defaultEngine ?? "chromium", chromiumRuntime: appMode?.defaultChromiumRuntime ?? "", group: group !== "all" && (!isCloudMode || editableGroups.includes(group)) ? group : "" });
-    setProxyPaste("");
-    setProxyPasteOk(null);
-    setCreateErr(null);
-    // A first profile needs no proxy, so the section starts closed until profiles use one.
-    setCreateProxyOpen(profiles.some((profile) => !!profile.proxy));
-    setShowCreate(true);
-  };
-  const closeCreate = () => {
+    // Open prefilled with the folder you're browsing; close always resets so a
+    // cancelled draft never leaks into the next open.
+    const openCreate = () => {
+        resetCreateProxyCheck();
+        setForm({ ...BLANK_FORM, engine: appMode?.defaultEngine ?? "chromium", chromiumRuntime: appMode?.defaultChromiumRuntime ?? "", group: group !== "all" ? group : "" });
+        setProxyPaste("");
+        setProxyPasteOk(null);
+        setCreateErr(null);
+        // A first profile needs no proxy, so the section starts closed until profiles use one.
+        setCreateProxyOpen(profiles.some((profile) => !!profile.proxy));
+        setShowCreate(true);
+    };
+    const closeCreate = () => {
     resetCreateProxyCheck();
     setShowCreate(false);
     setForm(BLANK_FORM);
@@ -2710,7 +1486,7 @@ function App() {
     setProxyPasteOk(null);
     setCreateErr(null);
   };
-  const applyProxyPaste = (raw: string) => {
+    const applyProxyPaste = (raw: string) => {
     try {
       const parsed = parsePastedProxy(raw, form.proxyType === "socks5" ? "socks5" : "http");
       resetCreateProxyCheck();
@@ -2730,7 +1506,7 @@ function App() {
       setCreateErr(error instanceof Error ? error.message : String(error));
     }
   };
-  const checkCreateProxy = async () => {
+    const checkCreateProxy = async () => {
     const generation = ++createProxyCheckGeneration.current;
     if (form.proxyType === "https") {
       setCreateProxyCheck({ checking: false, result: null, error: "unavailable" });
@@ -2759,54 +1535,58 @@ function App() {
       }
     }
   };
-  const submitCreate = async () => {
-    setCreating(true);
-    setCreateErr(null);
-    try {
-      const r = await createProfile({
-        name: form.name,
-        engine: form.engine,
-        ...(form.engine === "chromium" && !appMode?.legacyRemote ? { chromiumRuntime: form.chromiumRuntime || "cloakbrowser" } : {}),
-        group: form.group,
-        platform: form.platform,
-        screen: form.screen,
-        ...(form.platformOs ? { platformOs: form.platformOs } : {}),
-        ...(isCloudMode ? {} : { customNo: form.customNo }),
-        username: form.username,
-        password: form.password,
-        email: form.email,
-        emailPassword: form.emailPassword,
-        twofa: form.twofa,
-        proxy: form.host.trim() ? { type: form.proxyType, host: form.host, port: form.port, user: form.user, pass: form.pass } : null,
-      });
-      if (r.ok) {
+    const submitCreate = async () => {
+        setCreating(true);
+        setCreateErr(null);
+        try {
+            const r = await createProfile({
+                name: form.name,
+                engine: form.engine,
+                ...(form.engine === "chromium" ? { chromiumRuntime: form.chromiumRuntime || "cloakbrowser" } : {}),
+                group: form.group,
+                platform: form.platform,
+                screen: form.screen,
+                ...(form.platformOs ? { platformOs: form.platformOs } : {}),
+                ...({ customNo: form.customNo }),
+                username: form.username,
+                password: form.password,
+                email: form.email,
+                emailPassword: form.emailPassword,
+                twofa: form.twofa,
+                proxy: form.host.trim() ? { type: form.proxyType, host: form.host, port: form.port, user: form.user, pass: form.pass } : null,
+            });
+            if (r.ok) {
+        const next = new Map(groupDisclosure);
+        next.set(form.group, false);
+        saveGroupDisclosure(next);
         closeCreate();
         await load();
       } else {
         setCreateErr(r.error || "create failed"); // shown inside the modal
       }
-    } catch (e) {
-      setCreateErr(String(e));
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  // ---- Edit one profile (full detail) ----
-  const resetEditProxyCheck = () => {
+        }
+        catch (e) {
+            setCreateErr(String(e));
+        }
+        finally {
+            setCreating(false);
+        }
+    };
+    // ---- Edit one profile (full detail) ----
+    const resetEditProxyCheck = () => {
     editProxyCheckGeneration.current++;
     setEditProxyCheck(EMPTY_PROXY_CHECK);
   };
-  const setEF = (k: string, v: string) => {
+    const setEF = (k: string, v: string) => {
     if (k === "proxy" || k === "proxyType") {
       resetEditProxyCheck();
       setTimezoneBusy(false);
     }
     setEditForm((f) => ({ ...f, [k]: v }));
   };
-  // The dialog opens on the click; the detail fetch fills it in when it lands.
-  // The ref discards a stale response if the operator has moved on meanwhile.
-  const openEdit = (id: string) => {
+    // The dialog opens on the click; the detail fetch fills it in when it lands.
+    // The ref discards a stale response if the operator has moved on meanwhile.
+    const openEdit = (id: string) => {
     resetEditProxyCheck();
     setActionErr(null);
     editFetchId.current = id;
@@ -2816,8 +1596,7 @@ function App() {
     setEditExts([]);
     setEditInitialExts([]);
     setEditMobile(null);
-    setEditExpectedVersion(null);
-    setEditLive(false);
+
     setEditEngine(null);
     setEditChromiumRuntime("");
     setEditHardware(undefined);
@@ -2853,8 +1632,7 @@ function App() {
         setEditExts(p.extensions ?? []);
         setEditInitialExts(p.extensions ?? []);
         setEditMobile(p.desktopConversion ?? null);
-        setEditExpectedVersion(p.expectedVersion ?? null);
-        setEditLive(p.liveEdit === true);
+
       } catch (e) {
         if (editFetchId.current === id) setEditErr(String(e));
       } finally {
@@ -2862,12 +1640,11 @@ function App() {
       }
     })();
   };
-  const closeEdit = () => {
+    const closeEdit = () => {
     resetEditProxyCheck();
     editFetchId.current = null;
     setEditId(null);
-    setEditExpectedVersion(null);
-    setEditLive(false);
+
     setEditEngine(null);
     setEditChromiumRuntime("");
     setEditHardware(undefined);
@@ -2880,7 +1657,7 @@ function App() {
     setEditErr(null);
     setEditMobile(null);
   };
-  const checkEditedProxy = async () => {
+    const checkEditedProxy = async () => {
     const generation = ++editProxyCheckGeneration.current;
     const value = editForm.proxy ?? "";
     if (editForm.proxyType === "https" || /^\s*https:\/\//i.test(value)) {
@@ -2912,8 +1689,8 @@ function App() {
       }
     }
   };
-  const refreshEditedTimezone = async () => {
-    if (!editId || editProxyChanged || timezoneBusy || editSaving || editForm.proxyError || editLive || !confirm(t(FINGERPRINT_EDIT_WARNING))) return;
+    const refreshEditedTimezone = async () => {
+    if (!editId || editProxyChanged || timezoneBusy || editSaving || editForm.proxyError  || !confirm(t(FINGERPRINT_EDIT_WARNING))) return;
     const id = editId;
     const generation = editProxyCheckGeneration.current;
     setTimezoneBusy(true);
@@ -2930,42 +1707,45 @@ function App() {
       if (editFetchId.current === id && generation === editProxyCheckGeneration.current) setTimezoneBusy(false);
     }
   };
-  const saveEdit = async () => {
-    if (!editId) return;
-    const fingerprintEdits = Object.fromEntries(Object.entries(editInitialFingerprint)
+    const saveEdit = async () => {
+        if (!editId) return;
+        const fingerprintEdits = Object.fromEntries(Object.entries(editInitialFingerprint)
       .filter(([key, value]) => editForm[key] !== value)
       .map(([key]) => [key, editForm[key] ?? ""]));
-    if (Object.keys(fingerprintEdits).length && !confirm(t(FINGERPRINT_EDIT_WARNING))) return;
-    setEditSaving(true);
-    setEditErr(null);
-    try {
-      if (isCloudMode && !editLive && editExpectedVersion === null) throw new Error("Cloud profile version is missing; close and reopen Edit");
-      const r = await updateProfile(editId, {
-        name: editForm.name ?? "", group: editForm.group ?? "", platform: editForm.platform ?? "",
-        proxy: editForm.proxy ?? "", proxyType: editForm.proxyType ?? "http",
-        username: editForm.username ?? "", password: editForm.password ?? "",
-        email: editForm.email ?? "", emailPassword: editForm.emailPassword ?? "", twofa: editForm.twofa ?? "",
-        tags: editForm.tags ?? "", ...fingerprintEdits,
-        ...(!isCloudMode ? { customNo: editForm.customNo ?? "" } : {}),
-        ...(!sameExtensionSelection(editExts, editInitialExts) && editEngine === "chromium" ? { extensions: editExts } : {}),
-      }, isCloudMode && !editLive ? editExpectedVersion ?? undefined : undefined);
-      if (r.ok) {
+        if (Object.keys(fingerprintEdits).length && !confirm(t(FINGERPRINT_EDIT_WARNING))) return;
+        setEditSaving(true);
+        setEditErr(null);
+        try {
+            const r = await updateProfile(editId, {
+                name: editForm.name ?? "", group: editForm.group ?? "", platform: editForm.platform ?? "",
+                proxy: editForm.proxy ?? "", proxyType: editForm.proxyType ?? "http",
+                username: editForm.username ?? "", password: editForm.password ?? "",
+                email: editForm.email ?? "", emailPassword: editForm.emailPassword ?? "", twofa: editForm.twofa ?? "",
+                tags: editForm.tags ?? "", ...fingerprintEdits,
+                ...({ customNo: editForm.customNo ?? "" }),
+                ...(!sameExtensionSelection(editExts, editInitialExts) && editEngine === "chromium" ? { extensions: editExts } : {}),
+            });
+            if (r.ok) {
         closeEdit();
         await load();
         if (r.restartRequired) flash(t("Saved. The open browser keeps its current proxy and fingerprint until it restarts."));
       }
-      else if (r.status === 409) {
-        const message = r.error || "Cloud profile changed; reopen Edit before saving";
-        closeEdit();
-        setActionErr(message);
-      } else setEditErr(r.error || "save failed");
-    } catch (e) {
-      setEditErr(String(e));
-    } finally {
-      setEditSaving(false);
-    }
-  };
-  const convertEditedMobile = async () => {
+            else if (r.status === 409) {
+                const message = r.error || "Profile changed; reopen Edit before saving";
+                closeEdit();
+                setActionErr(message);
+            }
+            else
+                setEditErr(r.error || "save failed");
+        }
+        catch (e) {
+            setEditErr(String(e));
+        }
+        finally {
+            setEditSaving(false);
+        }
+    };
+    const convertEditedMobile = async () => {
     if (!editId || !editMobile) return;
     const platform = editMobile.platform === "macos" ? "macOS" : "Windows";
     const screenNote = editMobile.screenChanged ? ` Its mobile-sized screen will become ${editMobile.resolution}.` : " Its existing desktop-sized screen will be kept.";
@@ -2988,12 +1768,11 @@ function App() {
       setEditSaving(false);
     }
   };
-
-  // ---- Extensions manager (Store URL / upload / delete) ----
-  const reloadExtensions = async () => { try { setExtensions(await fetchExtensions()); } catch {} };
-  const toggleGroupDefaultExt = (id: string) =>
+    // ---- Extensions manager (Store URL / upload / delete) ----
+    const reloadExtensions = async () => { try { setExtensions(await fetchExtensions()); } catch {} };
+    const toggleGroupDefaultExt = (id: string) =>
     setGroupDefaultExts((ids) => (ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id]));
-  const applyGroupExtensionDefault = async () => {
+    const applyGroupExtensionDefault = async () => {
     if (!groupDefaultName) return;
     if (!confirm(
       `Apply this extension default to “${groupDefaultName}”?\n\n` +
@@ -3014,7 +1793,7 @@ function App() {
       setGroupDefaultBusy(false);
     }
   };
-  const doInstallWebStoreExtension = async () => {
+    const doInstallWebStoreExtension = async () => {
     const source = extSource.trim();
     if (!source) { setExtErr("Paste a Chrome Web Store URL or extension ID"); return; }
     setExtInstallBusy(true);
@@ -3031,7 +1810,7 @@ function App() {
       setExtInstallBusy(false);
     }
   };
-  const doUploadExtensions = async (files: FileList | File[]) => {
+    const doUploadExtensions = async (files: FileList | File[]) => {
     const list = Array.from(files);
     if (!list.length) return;
     setExtBusy(true);
@@ -3046,13 +1825,11 @@ function App() {
       setExtBusy(false);
     }
   };
-  const doRemoveExtension = async (id: string, name: string) => {
-    const message = isCloudMode
-      ? `Remove extension "${name}" from this device? Cloud assignments remain and will show as not installed here.`
-      : `Remove extension "${name}"? It will be unassigned from all profiles.`;
-    if (!confirm(message)) return;
-    setExtErr(null);
-    try {
+    const doRemoveExtension = async (id: string, name: string) => {
+        const message = `Remove extension "${name}"? It will be unassigned from all profiles.`;
+        if (!confirm(message)) return;
+        setExtErr(null);
+        try {
       const r = await removeExtension(id);
       if (!r.ok) setExtErr(r.error || "remove failed");
       setEditExts((xs) => xs.filter((x) => x !== id));
@@ -3060,10 +1837,10 @@ function App() {
     } catch (e) {
       setExtErr(String(e));
     }
-  };
-  const toggleEditExt = (id: string) =>
+    };
+    const toggleEditExt = (id: string) =>
     setEditExts((xs) => (xs.includes(id) ? xs.filter((x) => x !== id) : [...xs, id]));
-  const bulkAssignExt = async (op: "add" | "remove") => {
+    const bulkAssignExt = async (op: "add" | "remove") => {
     const ids = [...selected];
     if (!ids.length || !bulkExt) return;
     setActionErr(null);
@@ -3077,9 +1854,8 @@ function App() {
       setActionErr(String(e));
     }
   };
-
-  // ---- 2FA quick-copy (row authenticator button) ----
-  const copy2fa = async (id: string) => {
+    // ---- 2FA quick-copy (row authenticator button) ----
+    const copy2fa = async (id: string) => {
     setActionErr(null);
     try {
       const r = await fetchTotp(id);
@@ -3091,9 +1867,8 @@ function App() {
       setActionErr(String(e));
     }
   };
-
-  // ---- Bulk open / close (bounded concurrency) ----
-  const bulkRun = async (op: (id: string) => Promise<any>, pick: (p: UiProfile) => boolean) => {
+    // ---- Bulk open / close (bounded concurrency) ----
+    const bulkRun = async (op: (id: string) => Promise<any>, pick: (p: UiProfile) => boolean) => {
     const ids = [...selected].filter((id) => { const p = profiles.find((x) => x.id === id); return p && pick(p); });
     if (!ids.length) return;
     setActionErr(null);
@@ -3112,14 +1887,14 @@ function App() {
     setBusy((b) => { const n = { ...b }; ids.forEach((id) => delete n[id]); return n; });
     if (issues.length > 0) setActionErr(issues.join("; "));
   };
-  const openSelected = () => bulkRun(openProfile, (p) => !p.running && !p.mobilePersona);
-  const closeSelected = () => bulkRun(closeProfile, (p) => p.running);
-  const convertSelectedMobile = async () => {
+    const openSelected = () => bulkRun(openProfile, (p) => !p.running && !p.mobilePersona);
+    const closeSelected = () => bulkRun(closeProfile, (p) => p.running);
+    const convertSelectedMobile = async () => {
     const ids = [...selected].filter((id) => profiles.find((p) => p.id === id)?.mobilePersona);
     if (!ids.length) return;
     if (!confirm(
       `Convert ${ids.length} selected mobile persona(s) to stable desktop personas?\n\n` +
-      "Account data, sessions, proxies, timezones and fingerprint seeds are preserved. Android keeps the Windows desktop family used by older AliasMode; iPhone/iPad keeps macOS. A website may request device verification on first launch.",
+      "Account data, sessions, proxies, timezones and fingerprint seeds are preserved. Android keeps the Windows desktop family used by earlier versions of the app; iPhone/iPad keeps macOS. A website may request device verification on first launch.",
     )) return;
     setActionErr(null);
     setBusy((b) => { const n = { ...b }; ids.forEach((id) => (n[id] = true)); return n; });
@@ -3137,9 +1912,8 @@ function App() {
     if (failed.length) setActionErr(`${ids.length - failed.length} converted; ${failed.length} failed — ${failed.join("; ")}`);
     else flash(`Converted ${ids.length} mobile persona(s) to stable desktop personas`);
   };
-
-  // ---- Export selected → file ----
-  const exportSelected = async (format: ExportFormat) => {
+    // ---- Export selected → file ----
+    const exportSelected = async (format: ExportFormat) => {
     setExportOpen(false);
     if (!selected.size || exportProgress) return;
     const ids = [...selected];
@@ -3154,13 +1928,11 @@ function App() {
       setExportProgress(null);
     }
   };
-
-  // ---- Transient success banner ----
-  const flash = (m: string) => { setNotice(m); setTimeout(() => setNotice((cur) => (cur === m ? null : cur)), 3500); };
-
-  // ---- File-based bulk update (export → edit → re-upload, matched by id) ----
-  const openUpdate = () => { setShowUpdate(true); setUpdateFile(null); setUpdateErr(null); setUpdateResult(null); };
-  const submitUpdate = async () => {
+    // ---- Transient success banner ----
+    const flash = (m: string) => { setNotice(m); setTimeout(() => setNotice((cur) => (cur === m ? null : cur)), 3500); };
+    // ---- File-based bulk update (export → edit → re-upload, matched by id) ----
+    const openUpdate = () => { setShowUpdate(true); setUpdateFile(null); setUpdateErr(null); setUpdateResult(null); };
+    const submitUpdate = async () => {
     if (!updateFile) return;
     setUpdateBusy(true); setUpdateErr(null); setUpdateResult(null);
     try {
@@ -3182,552 +1954,276 @@ function App() {
       setUpdateBusy(false);
     }
   };
-
-  // ---- Group create / rename / delete ----
-  const createSidebarGroup = async () => {
-    const name = sidebarGroupName.trim();
-    if (!name) return;
-    if (name === "all") {
+    // ---- Group create / rename / delete ----
+    const createSidebarGroup = async () => {
+        const name = sidebarGroupName.trim();
+        if (!name) return;
+        if (name === "all") {
       setActionErr("This name is reserved.");
       return;
     }
-    setActionErr(null);
-    try {
-      const result = isCloudMode
-        ? await cloudWorkspaceAction("create-folder", { name, parentName: newFolderParent })
-        : await createGroup(name, newFolderParent);
-      if (result.ok === false) {
+        setActionErr(null);
+        try {
+            const result = await createGroup(name, newFolderParent);
+            if (result.ok === false) {
         setActionErr(result.error || "create failed");
         return;
       }
-      await Promise.all([load(), isCloudMode ? loadTeam() : Promise.resolve()]);
-      selectFolder(result.folder?.name ?? name);
-      setCollapsedFolders((current) => new Set([...current].filter((folder) => folder !== newFolderParent)));
-      setSidebarGroupName("");
-      setAddingGroup(false);
-    } catch (error) {
-      setActionErr(error instanceof Error ? error.message : String(error));
-    }
-  };
-  const startRename = (g: string) => { setRenaming(g); setRenameVal(folderLabel(g)); };
-  const remapSelectedFolder = (from: string, to: string) => {
+            await Promise.all([load(), Promise.resolve()]);
+            selectFolder(result.folder?.name ?? name);
+            setCollapsedFolders((current) => new Set([...current].filter((folder) => folder !== newFolderParent)));
+            setSidebarGroupName("");
+            setAddingGroup(false);
+        }
+        catch (error) {
+            setActionErr(error instanceof Error ? error.message : String(error));
+        }
+    };
+    const startRename = (g: string) => { setRenaming(g); setRenameVal(folderLabel(g)); };
+    const remapSelectedFolder = (from: string, to: string) => {
     if (folderScope(folders, from).has(group)) selectFolder(to + group.slice(from.length));
-  };
-  const commitFolderMove = async () => {
-    if (!movingFolder) return;
-    setFolderMoveBusy(true);
-    setFolderMoveErr(null);
-    try {
-      const result = isCloudMode
-        ? await cloudWorkspaceAction("move-folder", { name: movingFolder, parentName: folderParent || null })
-        : await moveGroup(movingFolder, folderParent || null);
-      if (result.ok === false) throw new Error(result.error || "Move failed");
-      remapSelectedFolder(movingFolder, result.folder.name);
-      setMovingFolder(null);
-      await Promise.all([load(), isCloudMode ? loadTeam() : Promise.resolve()]);
-    } catch (error) {
-      setFolderMoveErr(error instanceof Error ? error.message : String(error));
-    } finally { setFolderMoveBusy(false); }
-  };
-  const openAccess = (target: NonNullable<typeof accessTarget>) => {
-    setAccessTarget(target);
-    void loadTeam();
-  };
-  const commitRename = async () => {
-    const from = renaming, to = renameVal.trim();
-    setRenaming(null);
-    if (!from || !to || to === folderLabel(from)) return;
-    setActionErr(null);
-    try {
-      const r = await renameGroup(from, to);
-      if (r.ok === false) setActionErr(r.error || "rename failed");
-      else {
-        remapSelectedFolder(from, r.folder?.name ?? to);
-        await Promise.all([load(), isCloudMode ? loadTeam() : Promise.resolve()]);
-      }
-    } catch (e) {
-      setActionErr(String(e));
+    const next = new Map(groupDisclosure);
+    let changed = false;
+    for (const [name, collapsed] of groupDisclosure) if (name === from || name.startsWith(from + "/")) {
+      next.delete(name); next.set(to + name.slice(from.length), collapsed); changed = true;
     }
+    if (changed) saveGroupDisclosure(next);
   };
-  const removeGroup = async (g: string) => {
-    const n = countFor(g);
-    const prompt = isCloudMode
-      ? `Permanently delete folder "${g}"? Only an empty folder can be deleted.`
-      : `Delete group "${g}"?${n ? ` Its ${n} profile(s) move to Ungrouped (not deleted).` : ""}`;
-    if (!confirm(prompt)) return;
-    setActionErr(null);
-    try {
-      const r = isCloudMode
-        ? await cloudWorkspaceAction("delete-folder", { name: g })
-        : await deleteGroup(g);
-      if (r.ok === false) setActionErr(r.error || "delete failed");
-      else {
-        if (group === g) setGroup("all");
-        await Promise.all([load(), isCloudMode ? loadTeam() : Promise.resolve()]);
-      }
-    } catch (e) {
-      setActionErr(e instanceof Error ? e.message : String(e));
-    }
-  };
-
-  const desktopUpdateResultSummary = desktopUpdateResult
-    ? describeDesktopUpdateResult(desktopUpdateResult, t)
-    : null;
-
-  if (!appMode || !workspaceReady || restartRequired) {
-    return (
-      <>
-        <main className="onboarding">
-        <section className="onboarding-card" aria-labelledby="onboarding-title">
-          <div className="onboarding-brand"><AliasLoop />AliasMode <span>by Xreacher</span></div>
-          {restartRequired ? (
-            <>
-              <h1 id="onboarding-title">{appMode?.mode === "cloud" ? t("Switching to Cloud mode") : t("Switching to Local mode")}</h1>
-              {desktopInvoke() ? (
-                <>
-                  <p role="status">{t("AliasMode restarts to finish the switch.")}</p>
-                  {modeErr && <div className="mode-error" role="alert">{modeErr}</div>}
-                  <button className="mode-primary" type="button" onClick={() => void desktopInvoke()?.("restart_after_mode_change").catch((error) => setModeErr(String(error)))}>{t("Restart AliasMode")}</button>
-                </>
-              ) : (
-                <>
-                  <p>{t("Quit and reopen AliasMode to finish the switch.")}</p>
-                  {modeErr && <div className="mode-error" role="alert">{modeErr}</div>}
-                  <button className="mode-primary" type="button" onClick={() => window.close()}>{t("Quit AliasMode")}</button>
-                </>
-              )}
-            </>
-          ) : appMode?.mode === "cloud" ? (
-            cloudAuth?.authenticated ? (
-              <>
-                <h1 id="onboarding-title">{t("Review the Cloud terms")}</h1>
-                <p>{t("Accept the terms to start using AliasMode Cloud.")}</p>
-                <div className="auth-actions">
-                  <a href="https://aliasmode.com/terms/" target="_blank" rel="noreferrer">{t("Terms")}</a>
-                  <a href="https://aliasmode.com/privacy/" target="_blank" rel="noreferrer">{t("Privacy")}</a>
-                  <a href="https://aliasmode.com/acceptable-use/" target="_blank" rel="noreferrer">{t("Acceptable Use")}</a>
-                </div>
-                {authErr && <div className="mode-error" role="alert">{authErr}</div>}
-                <button
-                  className="mode-primary"
-                  type="button"
-                  disabled={authBusy || !cloudAuth.legal}
-                  onClick={() => void acceptCurrentLegal()}
-                >
-                  {authBusy ? t("Working…") : cloudAuth.legal ? t("Accept and continue to Cloud") : t("Checking workspace…")}
-                </button>
-                {modeErr && <div className="mode-error" role="alert">{modeErr}</div>}
-              </>
-            ) : savedSessionPhase === "restoring" ? (
-              <>
-                <h1 id="onboarding-title">{t("Restoring saved session")}</h1>
-                <p role="status">{t("Checking the saved Cloud session on this device…")}</p>
-              </>
-            ) : savedSessionPhase === "retryable-failure" ? (
-              <>
-                <h1 id="onboarding-title">{t("Restoring saved session")}</h1>
-                <p>{t("The saved session is still on this device. Reconnect and try again.")}</p>
-                {authErr && <div className="mode-error" role="alert">{authErr}</div>}
-                <div className="auth-actions">
-                  <button className="mode-primary" type="button" disabled={authBusy} onClick={() => void restoreSavedSession(true)}>{t("Try again")}</button>
-                  <button className="mode-secondary" type="button" disabled={authBusy} onClick={() => void signInInstead()}>{t("Sign in instead")}</button>
-                </div>
-              </>
-            ) : localPrompt ? (
-              <>
-                <h1 id="onboarding-title">{t("Continue without Cloud?")}</h1>
-                <p>{t("Local profiles stay on this computer only. They do not sync across your devices. You can switch to Cloud later in Settings.")}</p>
-                {modeErr && <div className="mode-error" role="alert">{modeErr}</div>}
-                <div className="local-choice">
-                  <button className="mode-primary" type="button" disabled={modeBusy} onClick={() => { setModeErr(null); setLocalPrompt(false); }}>{t("Back to Cloud sign-in")}</button>
-                  <button className="mode-secondary" type="button" disabled={modeBusy} onClick={() => void chooseMode("local")}>{modeBusy ? t("Switching…") : t("Continue locally")}</button>
-                </div>
-              </>
-            ) : authView === "verify" ? (
-              <>
-                <h1 id="onboarding-title">{t("Check your email")}</h1>
-                <p>{t("Enter the 6-digit code we sent to {email}.", { email: confirmationEmail })}</p>
-                <form className="auth-form" onSubmit={(event) => { event.preventDefault(); void submitCloudAuth(); }}>
-                  <label>{t("Confirmation code")}
-                    <input
-                      className="code-input"
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      autoFocus
-                      required
-                      value={authCode}
-                      onChange={(event) => setAuthCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
-                    />
-                  </label>
-                  {authErr && <div className="mode-error" role="alert">{authErr}</div>}
-                  {authNotice && <div className="auth-notice" role="status">{authNotice}</div>}
-                  <button className="mode-primary" type="submit" disabled={authBusy || authCode.length !== 6}>{authBusy ? t("Working…") : t("Confirm and sign in")}</button>
-                </form>
-                <div className="auth-actions">
-                  <button type="button" disabled={authBusy} onClick={() => void resendConfirmation()}>{t("Send a new code")}</button>
-                  <button type="button" disabled={authBusy} onClick={() => { setAuthErr(null); setAuthNotice(null); setAuthView("signin"); }}>{t("Back to sign in")}</button>
-                </div>
-                <p className="auth-hint">{t("Did not get it? Check your spam folder, or send a new code. If the email has a link instead of a code, open it, then sign in.")}</p>
-              </>
-            ) : (
-              <>
-                <h1 id="onboarding-title">{authView === "signin" ? t("Sign in to AliasMode Cloud") : t("Create your Cloud account")}</h1>
-                <p>{t("Sync your profiles across your computers and work with your team.")}</p>
-                <form className="auth-form" onSubmit={(event) => { event.preventDefault(); void submitCloudAuth(); }}>
-                  <label>{t("Email")}<input type="email" autoComplete="email" required value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} /></label>
-                  <label>{t("Password")}<input type="password" autoComplete={authView === "signin" ? "current-password" : "new-password"} required value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} /></label>
-                  {authErr && <div className="mode-error" role="alert">{authErr}</div>}
-                  {authNotice && <div className="auth-notice" role="status">{authNotice}</div>}
-                  <button className="mode-primary" type="submit" disabled={authBusy}>{authBusy ? t("Working…") : authView === "signin" ? t("Sign in") : t("Create account")}</button>
-                </form>
-                <div className="auth-actions">
-                  <button type="button" onClick={() => { setAuthErr(null); setAuthNotice(null); setAuthView(authView === "signin" ? "signup" : "signin"); }}>
-                    {authView === "signin" ? t("Create an account") : t("Back to sign in")}
-                  </button>
-                  {authView === "signin" && <button type="button" disabled={authBusy} onClick={() => void forgotPassword()}>{t("Forgot password?")}</button>}
-                </div>
-                {modeErr && <div className="mode-error" role="alert">{modeErr}</div>}
-                <button type="button" className="continue-local" disabled={authBusy} onClick={() => { setModeErr(null); setLocalPrompt(true); }}>{t("Continue locally instead")}</button>
-              </>
-            )
-          ) : appMode ? (
-            <>
-              <h1 id="onboarding-title">{t("How do you want to use AliasMode?")}</h1>
-              <p>{t("Choose where browser profiles live for this installation.")}</p>
-              <div className="mode-options">
-                <button className="mode-option primary" type="button" disabled={modeBusy} onClick={() => chooseMode("cloud")}>
-                  <span className="badge"><Icon name="cloud" className="lg" /></span>
-                  <strong>AliasMode Cloud</strong>
-                  <span>{t("Sync your profiles across your computers and work with your team.")}</span>
-                </button>
-                <button className="mode-option" type="button" disabled={modeBusy} onClick={() => chooseMode("local")}>
-                  <span className="badge"><Icon name="laptop" className="lg" /></span>
-                  <strong>AliasMode Local</strong>
-                  <span>{t("No account. Profile data stays on this computer and analytics is off.")}</span>
-                </button>
-              </div>
-              {modeErr && <div className="mode-error" role="alert">{modeErr}</div>}
-            </>
-          ) : (
-            <>
-              <h1 id="onboarding-title">{t("Starting AliasMode")}</h1>
-              <p>{connErr ?? t("Loading your configuration…")}</p>
-              {connErr && <button className="mode-primary" type="button" onClick={() => window.location.reload()}>{t("Try again")}</button>}
-            </>
-          )}
-          </section>
-        </main>
-        {pendingMode && (
-          <ModeSwitchConfirmation
-            mode={pendingMode}
-            busy={modeBusy}
-            error={modeErr}
-            onConfirm={() => void confirmModeSwitch()}
-            onCancel={() => { if (!modeBusy) setPendingMode(null); }}
-          />
-        )}
-      </>
-    );
-  }
-
-  const diagWhen = diag ? new Date(diag.generatedAt).toLocaleTimeString() : null;
-  const shownColumns = COLUMNS.filter((column) => columnVisible(column.key));
-  const visibleColumnCount = 1 + shownColumns.length;
-  // Sum of what is actually on screen: below this the wrapper scrolls rather
-  // than letting the browser crush Name down to "mia.h…".
-  const tableMinWidth = CHECKBOX_COLUMN_WIDTH + shownColumns.reduce((total, column) => total + column.width, 0);
-  const columnHead = (column: (typeof COLUMNS)[number]) => {
-    // The Action column carries no header text: its buttons explain themselves,
-    // and a floating "ACTION" label over a right-aligned cluster read as an
-    // empty column. The column chooser still lists it by its registry label.
-    const label = column.key === "action" ? "" : column.key === "group" && isCloudMode ? t("Folder") : t(column.label);
-    // Every column declares its width, so a wide window's extra space spreads
-    // proportionally across all of them — an even layout, no dead gap.
-    const style = { width: column.width } as CSSProperties;
-    if (!column.sort) return <th key={column.key} className={`col-${column.key}`} style={style}>{label}</th>;
-    const key = column.key as SortKey;
-    return (
-      <th
-        key={column.key}
-        className={`col-${column.key} sortable${sort.key === key ? " sorted" : ""}`}
-        style={style}
-        aria-sort={sort.key === key ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
-        onClick={() => toggleSort(key)}
-      >
-        <span className="th-inner">
-          {label}
-          <Icon className="sortglyph sm" name={sort.key === key ? (sort.dir === 1 ? "sortUp" : "sortDown") : "sort"} />
-        </span>
-      </th>
-    );
-  };
-
-  return (
-    <ProxyStoreContext.Provider value={storeSnapshot ? openStore : null}>
-    <div
-      className="app"
-      onDragOver={(e) => { e.preventDefault(); if (isCloudMode) return; if (!dragging) setDragging(true); }}
-      onDragLeave={(e) => { e.preventDefault(); if (isCloudMode) return; if (e.currentTarget === e.target) setDragging(false); }}
-      onDrop={(e) => {
-        e.preventDefault();
-        if (isCloudMode) return;
-        setDragging(false);
-        if (e.dataTransfer.files?.length) doUpload(e.dataTransfer.files);
-      }}
-    >
-      {!isCloudMode && dragging && (
-        <div className="dropzone">
-          <Icon name="fileImport" />
-          <span>Drop TXT, CSV, JSON, or XLSX profile exports to import</span>
-        </div>
-      )}
-
-      <aside className={`sidebar${sidebarCollapsed || railForced ? " collapsed" : ""}`}>
-        {/* A too-narrow window forces the rail; the toggle would be a no-op. */}
-        {!railForced && (
-          <button
-            type="button"
-            className="rail-toggle tip"
-            data-tip={sidebarCollapsed ? t("Expand sidebar") : t("Collapse sidebar")}
-            aria-label={sidebarCollapsed ? t("Expand sidebar") : t("Collapse sidebar")}
-            aria-expanded={!sidebarCollapsed}
-            onClick={toggleSidebar}
-          >
-            <Icon name={sidebarCollapsed ? "chevronRight" : "chevronLeft"} className="sm" />
-          </button>
-        )}
-        <div className="brandrow">
-          <div className="brand"><AliasLoop />AliasMode</div>
-          {appVersion && <span className="appversion" title={appVersion}>{appVersion}</span>}
-        </div>
-        <div className="newrow">
-          <button className="btn primary newbtn" data-tip={t("New profile")} title={t("New profile")} disabled={!canEditCloud} onClick={openCreate}>
-            <Icon name="plus" /><span className="navlabel">{t("New Profile")}</span>
-          </button>
-          <button
-            className="btn importbtn tip"
-            data-tip={t("Import profiles")}
-            aria-label={t("Import profiles")}
-            disabled={!canEditCloud}
-            title={t("Import profiles from AdsPower, GoLogin, Multilogin, Donut, and other readable exports")}
-            onClick={openBulk}
-          ><Icon name="fileImport" /><span className="navlabel">{t("Import profiles")}</span></button>
-        </div>
-
-        <nav className="sidenav" aria-label={t("Sections")}>
-          <button
-            type="button"
-            className={`navitem${view === "profiles" && group === "all" && !sharedOnly ? " active" : ""}`}
-            data-tip={t("All profiles")}
-            title={t("All profiles")}
-            onClick={() => selectFolder("all")}
-          >
-            <Icon name="profiles" /><span className="navlabel">{t("All profiles")}</span>
-            <span className="cnt">{profiles.length}</span>
-          </button>
-          {isCloudMode && sharedProfiles.length > 0 && <button type="button" className={`navitem${view === "profiles" && sharedOnly ? " active" : ""}`} title={t("Shared with me")} onClick={() => { setGroup("all"); setSharedOnly(true); setView("profiles"); }}>
-            <Icon name="user" /><span className="navlabel">{t("Shared with me")}</span><span className="cnt">{sharedProfiles.length}</span>
-          </button>}
-          {!appMode?.legacyRemote && <>
-            <div className="navrow">
-              <button type="button" className={`navitem${view === "proxies" ? " active" : ""}`} data-tip={t("Proxies")} title={t("Proxies")} onClick={() => { setView("proxies"); if (storeSnapshot) { enterStore("proxies-tab"); void cloudStore.reload(); } }}>
-                <Icon name="activity" /><span className="navlabel">{t("Proxies")}</span>
-              </button>
-              {storeSnapshot ? (
-                <button type="button" className="navbuy" title={t("Buy proxies")} aria-label={t("Buy proxies")} onClick={() => openStore(0, "sidebar-cart")}><CartIcon /></button>
-              ) : (
-                <a
-                  className="navbuy"
-                  href={proxyOfferUrl("sidebar-cart", language)}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={t("Buy proxies at the AliasMode price")}
-                  aria-label={t("Buy proxies from NobleProxy at the AliasMode user price (opens externally)")}
-                ><CartIcon /></a>
-              )}
-            </div>
-            <button type="button" className={`navitem${view === "trash" ? " active" : ""}`} data-tip={t("Trash")} title={t("Trash")} onClick={() => setView("trash")}>
-              <Icon name="trash" /><span className="navlabel">{t("Trash")}</span>
-            </button>
-          </>}
-          <button
-            type="button"
-            className={`navitem${view === "scripts" ? " active" : ""}`}
-            data-tip={t("Scripts")}
-            title={t("Scripts")}
-            onClick={() => setView("scripts")}
-          >
-            <Icon name="file" /><span className="navlabel">{t("Scripts")}</span>
-          </button>
-          <button
-            type="button"
-            className={`navitem${view === "extensions" ? " active" : ""}`}
-            data-tip={t("Manage extensions")}
-            title={t("Manage extensions")}
-            onClick={() => { setExtErr(null); setView("extensions"); }}
-          >
-            <Icon name="puzzle" /><span className="navlabel">{t("Manage extensions")}</span>
-            {extensions.length > 0 && <span className="cnt">{extensions.length}</span>}
-          </button>
-          {!appMode?.servicesHidden && <button type="button" className={`navitem${view === "services" ? " active" : ""}`} data-tip={t("Services")} title={t("Services")} onClick={() => setView("services")}>
-            <Icon name="services" /><span className="navlabel">{t("Services")}</span>
-          </button>}
-        </nav>
-
-        <div className="sidesection">
+    const commitFolderMove = async () => {
+        if (!movingFolder) return;
+        setFolderMoveBusy(true);
+        setFolderMoveErr(null);
+        try {
+            const result = await moveGroup(movingFolder, folderParent);
+            if (result.ok === false) throw new Error(result.error || "Move failed");
+            remapSelectedFolder(movingFolder, result.folder.name);
+            setMovingFolder(null);
+            await Promise.all([load(), Promise.resolve()]);
+        }
+        catch (error) {
+            setFolderMoveErr(error instanceof Error ? error.message : String(error));
+        }
+        finally {
+            setFolderMoveBusy(false);
+        }
+    };
+    const commitRename = async () => {
+        const from = renaming, to = renameVal.trim();
+        setRenaming(null);
+        if (!from || !to || to === folderLabel(from)) return;
+        setActionErr(null);
+        try {
+            const r = await renameGroup(from, to);
+            if (r.ok === false)
+                setActionErr(r.error || "rename failed");
+            else {
+                remapSelectedFolder(from, r.folder?.name ?? to);
+                await Promise.all([load(), Promise.resolve()]);
+            }
+        }
+        catch (e) {
+            setActionErr(String(e));
+        }
+    };
+    const removeGroup = async (g: string) => {
+        const n = countFor(g);
+        const prompt = `Delete group "${g}"?${n ? ` Its ${n} profile(s) move to Ungrouped (not deleted).` : ""}`;
+        if (!confirm(prompt)) return;
+        setActionErr(null);
+        try {
+            const r = await deleteGroup(g);
+            if (r.ok === false)
+                setActionErr(r.error || "delete failed");
+            else {
+                if (group === g) setGroup("all");
+                await Promise.all([load(), Promise.resolve()]);
+            }
+        }
+        catch (e) {
+            setActionErr(e instanceof Error ? e.message : String(e));
+        }
+    };
+    if (!appMode)
+        return <div className={`desktop-loading-shell${windowChrome.enabled ? " desktop-frameless" : ""}`}><DesktopStartupBar chrome={windowChrome}><MaobuMark />猫步·千境</DesktopStartupBar><WindowActionError chrome={windowChrome} /><main className="onboarding"><section className="onboarding-card"><h1>猫步·千境</h1><p>{connErr ?? t("Loading your configuration…")}</p>{connErr && <button className="btn" onClick={() => window.location.reload()}>{t("Try again")}</button>}</section></main></div>;
+    const diagWhen = diag ? new Date(diag.generatedAt).toLocaleTimeString() : null;
+    const shownColumns = COLUMNS.filter((column) => columnVisible(column.key));
+    const visibleColumnCount = 1 + shownColumns.length;
+    // Sum of what is actually on screen: below this the wrapper scrolls rather
+    // than letting the browser crush Name down to "mia.h…".
+    const tableMinWidth = CHECKBOX_COLUMN_WIDTH + shownColumns.reduce((total, column) => total + column.width, 0);
+    const renderDevicePanel = (variant: "header" | "rail") => (<DevicePanel variant={variant} runningCount={runningCount} downloads={runtimeDownloads} connection={loaded && !connErr} connectionLoading={!loaded} version={appVersion ?? ""} theme={theme} chooseTheme={chooseTheme} language={language} setLanguage={setLanguage} onShowRunning={showRunningProfiles} onSettings={(section) => { setSettingsTab(section === "advanced" ? "advanced" : "account"); setView("settings"); }} onViewLogs={() => { setLogErr(null); fetchLogs().then(setLogView).catch((error) => setLogErr(error instanceof Error ? error.message : String(error))); }} onRetryConnection={refreshRoster} />);
+    const groupNavigation = (<div className="sidesection group-management">
           <button className="sidehead" onClick={() => setGroupsOpen((o) => !o)}>
             <span className={`chev${groupsOpen ? " open" : ""}`}><Icon name="chevronRight" className="sm" /></span>
-            <span>{isCloudMode ? t("Folders") : t("Groups")}</span>
+            <span>{t("Groups")}</span>
             <span className="grow" />
             <span className="cnt">{existingGroups.length}</span>
           </button>
           {groupsOpen && <>
             <div className="folders">
-            {existingGroups.length === 0 && <div className="folders-empty">{isCloudMode ? t("No folders yet") : t("No groups yet")}</div>}
-            {tree.filter((folder) => !folder.ancestors.some((name) => collapsedFolders.has(name))).map(({ name: g, label, depth }) => (
-              <div
-                key={g}
-                style={{ paddingLeft: 10 + depth * 16 }}
-                className={`folder${view === "profiles" && !sharedOnly && group === g ? " active" : ""}`}
-                onClick={() => { if (renaming !== g) selectFolder(g); }}
-              >
-                {renaming === g ? (
-                  <input
-                    className="renameinput"
-                    autoFocus
-                    value={renameVal}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => setRenameVal(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") commitRename(); else if (e.key === "Escape") setRenaming(null); }}
-                    onBlur={commitRename}
-                  />
-                ) : (
-                  <>
+            {existingGroups.length === 0 && <div className="folders-empty">{t("No groups yet")}</div>}
+            {tree.filter((folder) => !folder.ancestors.some((name) => collapsedFolders.has(name))).map(({ name: g, label, depth }) => (<div key={g} style={{ paddingLeft: 10 + depth * 16 }} className={`folder${view === "profiles" && group === g ? " active" : ""}`} onClick={() => { if (renaming !== g) selectFolder(g); }}>
+                {renaming === g ? (<input className="renameinput" autoFocus value={renameVal} onClick={(e) => e.stopPropagation()} onChange={(e) => setRenameVal(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") commitRename(); else if (e.key === "Escape") setRenaming(null); }} onBlur={commitRename}/>) : (<>
                     {folders.some((folder) => folder.parentName === g) ? <button className="folder-toggle" type="button" aria-label={t("Expand or collapse {folder}", { folder: g })} aria-expanded={!collapsedFolders.has(g)} onClick={(event) => {
-                      event.stopPropagation(); setCollapsedFolders((current) => { const next = new Set(current); if (next.has(g)) next.delete(g); else next.add(g); return next; });
-                    }}><Icon name={collapsedFolders.has(g) ? "chevronRight" : "chevronDown"} className="sm" /></button> : <Icon name="folder" className="sm" />}
+                            event.stopPropagation();
+                            setCollapsedFolders((current) => { const next = new Set(current); if (next.has(g)) next.delete(g); else next.add(g); return next; });
+                        }}><Icon name={collapsedFolders.has(g) ? "chevronRight" : "chevronDown"} className="sm" /></button> : <Icon name="folder" className="sm" />}
                     <button className="fname folder-select" title={g} onClick={() => selectFolder(g)}>{label ?? g}</button>
-                    {!appMode?.legacyRemote && (canEditGroup(g) || canManageCloudFolders) && (
-                      <span className="gactions menuwrap" ref={folderMenu === g ? folderMenuRef : undefined} onClick={(event) => event.stopPropagation()}>
-                        <button type="button" title={t("Folder actions")} aria-label={t("Actions for {folder}", { folder: g })} aria-expanded={folderMenu === g} onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setFolderMenuPosition({ left: rect.right + 8, top: Math.min(rect.top, window.innerHeight - 220) }); setFolderMenu(folderMenu === g ? null : g); }}><Icon name="more" className="sm" /></button>
+                    {(<span className="gactions menuwrap" ref={folderMenu === g ? folderMenuRef : undefined} onClick={(event) => event.stopPropagation()}>
+                        <button type="button" title={t("Folder actions")} aria-label={t("Actions for {folder}", { folder: g })} aria-expanded={folderMenu === g} onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setFolderMenuPosition({ left: Math.max(8, Math.min(rect.right + 8, window.innerWidth - 230)), top: Math.max(8, Math.min(rect.top, window.innerHeight - 240)) }); setFolderMenu(folderMenu === g ? null : g); }}><Icon name="more" className="sm" /></button>
                         {folderMenu === g && <span className="popover folder-menu" style={folderMenuPosition} onClick={() => setFolderMenu(null)}>
-                          {canEditGroup(g) && <>
+                          {<>
                             <button className="pop-item" onClick={() => { setNewFolderParent(g); setSidebarGroupName(""); setAddingGroup(true); }}><Icon name="plus" className="sm" />{t("New subfolder")}</button>
                             <button className="pop-item" onClick={() => startRename(g)}><Icon name="edit" className="sm" />{t("Rename")}</button>
                           </>}
-                          {(!isCloudMode || canManageCloudFolders) && <>
+                          {<>
                             <button className="pop-item" onClick={() => { setMovingFolder(g); setFolderParent(folders.find((folder) => folder.name === g)?.parentName ?? ""); setFolderMoveErr(null); }}><Icon name="move" className="sm" />{t("Move to…")}</button>
                             <button className="pop-item danger" disabled={folders.some((folder) => folder.parentName === g)} onClick={() => void removeGroup(g)}><Icon name="trash" className="sm" />{t("Delete")}</button>
                           </>}
-                          {isCloudMode && canManageCloudFolders && <button className="pop-item" onClick={() => openAccess({ kind: "folder", id: g, name: g, folder: g })}><Icon name="user" className="sm" />{t("Manage access")}</button>}
+
                         </span>}
-                      </span>
-                    )}
+                      </span>)}
                     <span className="cnt">{countFor(g)}</span>
-                  </>
-                )}
-              </div>
-            ))}
+                  </>)}
+              </div>))}
             </div>
-            {addingGroup ? (
-              <div className="newgroup" title={newFolderParent ?? undefined}>
+            {addingGroup ? (<div className="newgroup" title={newFolderParent ?? undefined}>
                 {newFolderParent && <small>{t("In {folder}", { folder: folderLabel(newFolderParent) })}</small>}
-                <input
-                  autoFocus
-                  aria-label={isCloudMode ? t("New folder name") : t("New group name")}
-                  value={sidebarGroupName}
-                  onChange={(event) => setSidebarGroupName(event.target.value)}
-                  onKeyDown={(event) => {
+                <input autoFocus aria-label={t("New group name")} value={sidebarGroupName} onChange={(event) => setSidebarGroupName(event.target.value)} onKeyDown={(event) => {
                     if (event.key === "Enter") void createSidebarGroup();
                     else if (event.key === "Escape") { setAddingGroup(false); setSidebarGroupName(""); }
-                  }}
-                />
+                  }}/>
                 <button type="button" title={t("Create")} onClick={() => void createSidebarGroup()}><Icon name="check" className="sm" /></button>
                 <button type="button" title={t("Cancel")} onClick={() => { setAddingGroup(false); setSidebarGroupName(""); }}><Icon name="close" className="sm" /></button>
-              </div>
-            ) : (
-              <button className="newgroup" type="button" disabled={!canEditCloud || appMode?.legacyRemote} onClick={() => { setNewFolderParent(null); setAddingGroup(true); }}>
-                <Icon name="plus" className="sm" />{isCloudMode ? t("New folder") : t("New group")}
-              </button>
-            )}
+              </div>) : (<button className="newgroup" type="button" onClick={() => { setNewFolderParent(null); setAddingGroup(true); }}>
+                <Icon name="plus" className="sm" />{t("New group")}
+              </button>)}
           </>}
-        </div>
+        </div>);
+    const columnHead = (column: (typeof COLUMNS)[number]) => {
+        const label = t(column.label);
+        // Every column declares its width, so a wide window's extra space spreads
+        // proportionally across all of them — an even layout, no dead gap.
+        const style = { width: column.width } as CSSProperties;
+        if (!column.sort) return <th key={column.key} className={`col-${column.key}`} style={style}>{label}</th>;
+        const key = column.key as SortKey;
+        return (<th key={column.key} className={`col-${column.key} sortable${sort.key === key ? " sorted" : ""}`} style={style} aria-sort={sort.key === key ? (sort.dir === 1 ? "ascending" : "descending") : "none"}>
+        <button type="button" className="th-inner" onClick={() => toggleSort(key)}>
+          {label}
+          <Icon className="sortglyph sm" name={sort.key === key ? (sort.dir === 1 ? "sortUp" : "sortDown") : "sort"} />
+        </button>
+      </th>);
+    };
+    return (<>
+    <WindowActionError chrome={windowChrome} />
+    <div className={`app airy-workbench folded-workbench${windowChrome.enabled ? " desktop-frameless" : ""}${windowChrome.enabled && !windowChrome.focused ? " is-window-unfocused" : ""}`} onDragOver={(e) => { e.preventDefault(); if (!dragging) setDragging(true); }} onDragLeave={(e) => { e.preventDefault(); if (e.currentTarget === e.target) setDragging(false); }} onDrop={(e) => {
+            e.preventDefault();
+            setDragging(false);
+            if (e.dataTransfer.files?.length) doUpload(e.dataTransfer.files);
+        }}>
+      {dragging && (<div className="dropzone">
+          <Icon name="fileImport" />
+          <span>Drop TXT, CSV, JSON, or XLSX profile exports to import</span>
+        </div>)}
+
+      <aside className={`sidebar${sidebarCollapsed || railForced ? " collapsed" : ""}`}>
+        {/* Copy sits inside the field rather than beside it: a separate bordered
+          button per credential turned the dialog into a grid of grey boxes. */}
+        {!railForced && (<button type="button" className="rail-toggle tip" data-tip={sidebarCollapsed ? t("Expand sidebar") : t("Collapse sidebar")} aria-label={sidebarCollapsed ? t("Expand sidebar") : t("Collapse sidebar")} aria-expanded={!sidebarCollapsed} onClick={toggleSidebar}>
+            <Icon name={sidebarCollapsed ? "chevronRight" : "chevronLeft"} className="sm" />
+          </button>)}
+        <nav className="sidenav" aria-label={t("Sections")}>
+          <button type="button" className={`navitem${view === "profiles" && group === "all" ? " active" : ""}`} data-tip={t("All profiles")} title={t("All profiles")} onClick={() => selectFolder("all")}>
+            <Icon name="profiles" /><span className="navlabel">{t("All profiles")}</span>
+            <span className="cnt">{profiles.length}</span>
+          </button>
+
+          {<>
+            <div className="navrow">
+              <button type="button" className={`navitem${view === "proxies" ? " active" : ""}`} data-tip={t("Proxies")} title={t("Proxies")} onClick={() => { setView("proxies"); }}>
+                <Icon name="activity" /><span className="navlabel">{t("Proxies")}</span>
+              </button>
+              {(null)}
+            </div>
+          </>}
+          <button type="button" className={`navitem${view === "scripts" ? " active" : ""}`} data-tip={t("Scripts")} title={t("Scripts")} onClick={() => setView("scripts")}>
+            <Icon name="file" /><span className="navlabel">{t("Scripts")}</span>
+          </button>
+          <button type="button" className={`navitem${view === "extensions" ? " active" : ""}`} data-tip={t("Manage extensions")} title={t("Manage extensions")} onClick={() => { setExtErr(null); setView("extensions"); }}>
+            <Icon name="puzzle" /><span className="navlabel">{t("Manage extensions")}</span>
+            {extensions.length > 0 && <span className="cnt">{extensions.length}</span>}
+          </button>
+
+        </nav>
 
         <div className="sidefoot">
-          <a
-            className="navitem"
-            href="https://aliasmode.com/support/"
-            target="_blank"
-            rel="noreferrer"
-            data-tip={t("Support")}
-            title={t("Support — chat with the AliasMode team")}
-          >
-            <Icon name="help" /><span className="navlabel">{t("Support")}</span>
-          </a>
-          <button type="button" className={`navitem${view === "settings" ? " active" : ""}`} data-tip={t("Settings")} title={t("Settings")} onClick={openAccountSettings}>
+          <button type="button" className={`navitem${view === "workspaces" ? " active" : ""}`} data-tip={t("Workspace management")} title={t("Workspace management")} onClick={() => openWorkspaceManagement({ mode: "manage" })}>
+            <Icon name="folders" /><span className="navlabel">{t("Workspace management")}</span>
+          </button>
+          <button type="button" className={`navitem${view === "trash" ? " active" : ""}`} data-tip={t("Trash")} title={t("Trash")} onClick={() => setView("trash")}>
+            <Icon name="trash" /><span className="navlabel">{t("Trash")}</span>
+          </button>
+          <button type="button" className={`navitem${view === "settings" ? " active" : ""}`} data-tip={t("Settings")} title={t("Settings")} onClick={openSettings}>
             <Icon name="settings" /><span className="navlabel">{t("Settings")}</span>
           </button>
-          <div className="sidecredit">
-            {/* Only the name is a link, and it points at its owner: "Developed by
-                Xreacher" goes to Xreacher, not to AliasMode. The project's own
-                links are the GitHub and Telegram marks beside it. */}
-            <span className="watermark">
-              {t("Developed by")}
-              <a href="https://xreacher.com/" target="_blank" rel="noreferrer" title="xreacher.com">Xreacher</a>
-            </span>
-            <div className="projectlinks">
-              {PROJECT_LINKS.map((link) => (
-                <a
-                  key={link.label}
-                  className="projectlink tip"
-                  href={link.href}
-                  target="_blank"
-                  rel="noreferrer"
-                  data-tip={link.label}
-                  aria-label={t("AliasMode on {name}", { name: link.label })}
-                >
-                  <svg className="brandmark" viewBox="0 0 24 24" aria-hidden="true"><path d={link.path} /></svg>
-                </a>
-              ))}
-            </div>
-            <p className="footer-mark" aria-hidden="true">AliasMode</p>
-          </div>
+          {renderDevicePanel("rail")}
         </div>
         {modeErr && <div className="mode-error" role="alert">{modeErr}</div>}
       </aside>
 
       <div className="main">
-      <header className="pagehead">
-        <h1>{t(PAGE_TITLES[view])}</h1>
-        {view === "profiles" && (
-          <span className="pagesub">
-            {filtered.length === profiles.length ? t("{count} total", { count: profiles.length }) : t("{filtered} of {total}", { filtered: filtered.length, total: profiles.length })}
-          </span>
-        )}
-        <span className="spacer" />
-        <div className="headactions">
-          {view === "profiles" && <>
-          {/* Health snapshots are pushed by automation workers through the hub, so
-              in Local mode this list is always empty (see ui.ts: the local roster
-              returns healthSources: []). Show the control only when something
-              actually reports, instead of a button that can only say "none". */}
-          {healthSources.length > 0 && (
-          <div className="menuwrap" ref={nodesRef}>
-            <button
-              type="button"
-              className={`iconbtn tip${nodesOpen ? " on" : ""}`}
-              data-tip={t("Automation nodes")}
-              aria-label={t("Automation node freshness")}
-              onClick={() => setNodesOpen((o) => !o)}
-            ><Icon name="activity" /></button>
-            {nodesOpen && (
-              <div className="popover below-right">
-                <div className="pop-head">{t("Automation nodes")}</div>
-                <HealthSources sources={healthSources} />
-              </div>
-            )}
-          </div>
-          )}
+      <header className="workspace-header" onMouseDown={windowChrome.onMouseDown}>
+        <div className="desktop-brand"><MaobuMark /><strong>猫步·千境</strong>{appVersion && <span className="appversion" title={appVersion}>{appVersion}</span>}</div>
+        <div className="topbar-actions">
+          {renderDevicePanel("header")}
+          <button type="button" className="iconbtn tip topbar-settings" data-tip={t("Settings")} aria-label={t("Settings")} onClick={openSettings}><Icon name="settings" /></button>
+          <WindowControls chrome={windowChrome} />
+        </div>
+      </header>
+      <div className="workspace-content" role="main" aria-label={t(PAGE_TITLES[view])}>
+      <div className="workspace-context" role="navigation" aria-label={t("Workspaces")}>
+        <WorkspaceSwitcher variant="context" profileCount={profiles.length} runningCount={runningCount} connection={loaded && !connErr} onShowRunning={showRunningProfiles} onSettings={() => { setSettingsTab("account"); setView("settings"); }} onOpenManagement={openWorkspaceManagement} managementActive={view === "workspaces"} />
+      </div>
+      <WorkspaceActivity hidden={view === "workspaces"} onOpen={() => openWorkspaceManagement({ mode: "backups" })} />
+      {(actionErr ?? (!connectionAlertDismissed ? connErr : null)) && (<div className="error">
+          <Icon name="alert" />
+          <span>{actionErr ?? connErr}</span>
+          <button className="dismiss" aria-label={t("Dismiss error")} onClick={() => { setActionErr(null); if (connErr) setConnectionAlertDismissed(true); }}><Icon name="close" className="sm" /></button>
+        </div>)}
+      {notice && (<div className="notice" role="status" onClick={() => setNotice(null)}><Icon name="check" className="sm" />{notice}</div>)}
+      {exportProgress && (<div className="notice" role="status"><Icon name="export" className="sm" />{exportProgress.completed >= exportProgress.total ? t("Building export file…") : t("Preparing export: {completed} / {total} profiles", { completed: exportProgress.completed.toLocaleString(), total: exportProgress.total.toLocaleString() })}</div>)}
+      {diskSpace?.low && diskSpace.freeBytes !== null && !diskWarningDismissed && (<div className="update-banner update-result warning" role="alert">
+          <Icon name="warning" />
+          <div className="update-copy"><strong>{t("Low disk space: {free} GB free on the drive that holds your profiles.", { free: (diskSpace.freeBytes / 1024 ** 3).toFixed(1) })}</strong><span>{t("When the disk is almost full, browsers delete saved site data, which can log profiles out. Free up space on this drive.")}</span></div>
+          <button className="update-result-dismiss" type="button" aria-label={t("Dismiss disk space warning")} onClick={() => setDiskWarningDismissed(true)}><Icon name="close" className="sm" /></button>
+        </div>)}
+      <ProxiesPage key="local-proxies" active={view === "proxies"} groups={["", ...groups.slice(1)]} folders={folders} onChanged={load}/>
+      <TrashPage key="local-trash" active={view === "trash"} onChanged={load} folderTree={folders}/>
+      <WorkspaceManagementPage key="local-workspaces" active={view === "workspaces"} request={workspacePageRequest} onBack={() => setView("profiles")} onShowRunning={showRunningProfiles} />
+      {view === "profiles" ? (<div className="workspace profiles-workspace">
+        <div className="page-heading">
+          <div className="profile-heading-copy"><h1>{t("Environments")}</h1><span className="profile-total">{t("{count} environments", { count: profiles.length })}</span></div>
+          <div className="searchfield heading-search"><Icon name="search" className="sm" /><input className="input search" placeholder={t("Search name, No., tag or proxy…")} aria-label={t("Search profiles")} value={q} onChange={(e) => setQ(e.target.value)} />{q && <button type="button" className="clear" aria-label={t("Clear search")} onClick={() => setQ("")}><Icon name="close" className="sm" /></button>}</div>
+          <div className="page-actions">
+          <button className="btn" title={t("Import profiles from AdsPower, GoLogin, Multilogin, Donut, and other readable exports")} onClick={openBulk}><Icon name="fileImport" className="sm" />{t("Import profiles")}</button>
+          <button className="btn primary" onClick={openCreate}><Icon name="plus" className="sm" />{t("New Profile")}</button>
+        </div>
+        </div>
+        {breadcrumb && <nav className="folder-breadcrumb" aria-label={t("Folder path")}><button className="btn ghost xs" onClick={() => selectFolder("all")}>{t("All profiles")}</button>{[...breadcrumb.ancestors, group].map((name) => <span key={name}> / <button className="btn ghost xs" onClick={() => selectFolder(name)}>{folderLabel(name)}</button></span>)}</nav>}
+        <div className="profile-filter-row">
+          <nav className="profile-group-tabs" aria-label={t("Group filter")}>
+            <button type="button" className={`profile-group-tab${group === "all" ? " active" : ""}`} aria-pressed={group === "all"} onClick={() => selectFolder("all")}>{t("All groups")}<span>{profiles.length}</span></button>
+            {tree.filter(folder => folder.depth === 0 || folder.name === group).map(folder => <button type="button" key={folder.name} className={`profile-group-tab${group === folder.name ? " active" : ""}`} title={folder.name} aria-pressed={group === folder.name} onClick={() => selectFolder(folder.name)}>{folder.label ?? folder.name}<span>{countFor(folder.name)}</span></button>)}
+            {profiles.some(profile => !profile.group) && <button type="button" className={`profile-group-tab${group === "" ? " active" : ""}`} aria-pressed={group === ""} onClick={() => selectFolder("")}>{t("Ungrouped")}<span>{profiles.filter(profile => !profile.group).length}</span></button>}
+          </nav>
+          <div className="profile-status-filter"><div className="profile-status-tabs" role="group" aria-label={t("Filter by status")}>
+          <button type="button" className={profileStatus === "all" ? "active" : ""} aria-pressed={profileStatus === "all"} onClick={() => setProfileStatus("all")}>{t("All environments")}<span>{matchingProfiles.length}</span></button>
+          <button type="button" className={profileStatus === "running" ? "active" : ""} aria-pressed={profileStatus === "running"} onClick={() => setProfileStatus("running")}>{t("Running")}<span>{matchingRunningCount}</span></button>
+          <button type="button" className={profileStatus === "stopped" ? "active" : ""} aria-pressed={profileStatus === "stopped"} onClick={() => setProfileStatus("stopped")}>{t("Stopped")}<span>{matchingProfiles.length - matchingRunningCount}</span></button>
+        </div></div>
+          <div className="profile-view-tools">
+            <select className="select group-filter" aria-label={t("Group filter")} value={group} onChange={(e) => selectFolder(e.target.value)}><option value="all">{t("All groups")}</option><option value="">{t("Ungrouped")}</option>{existingGroups.map((g) => <option key={g} value={g}>{g}</option>)}</select>
+            <div className="headactions">
           <button
             type="button"
             className="iconbtn tip"
@@ -3744,179 +2240,47 @@ function App() {
               aria-label={t("Choose visible columns")}
               onClick={() => setColsOpen((o) => !o)}
             ><Icon name="columns" /></button>
-            {colsOpen && (
-              <div className="popover below-right">
+            {colsOpen && (<div className="popover below-right">
                 <div className="pop-head">{t("Visible columns")}</div>
-                {COLUMNS.map((column) => (
-                  <label className="pop-item" key={column.key}>
+                {COLUMNS.map((column) => (<label className="pop-item" key={column.key}>
                     <input type="checkbox" checked={columnVisible(column.key)} onChange={() => toggleColumn(column.key)} />
                     {t(column.label)}
-                  </label>
-                ))}
-              </div>
-            )}
+                  </label>))}
+              </div>)}
           </div>
-          </>}
-          <button
-            className="account-button"
-            type="button"
-            aria-label={t("Open Account and Settings")}
-            title={t("Account & Settings")}
-            onClick={openAccountSettings}
-          >
-            <span className="avatar"><Icon name="user" /></span>
-            <span className="who">
-              <b>{isCloudMode ? cloudAuth?.user?.email ?? "Cloud account" : "Local workspace"}</b>
-              <span>{isCloudMode ? cloudAuth?.workspace?.role ?? "member" : "No account"}</span>
-            </span>
-            <Icon name="chevronRight" className="sm" />
-          </button>
+          </div>
+            <div className="profile-group-manager menuwrap" ref={groupManagerRef}>
+              <button type="button" className={`iconbtn tip${groupManagerOpen ? " on" : ""}`} aria-label={t("Manage groups")} data-tip={t("Manage groups")} aria-expanded={groupManagerOpen} onClick={() => setGroupManagerOpen(open => !open)}><Icon name="folders" /></button>
+              {groupManagerOpen && <div className="popover group-manager-panel"><div className="pop-head">{t("Manage groups")}</div>{groupNavigation}</div>}
+            </div>
+          </div>
         </div>
-      </header>
+        {runtimeDownloads.length > 0 && <RuntimeDownloadProgressView downloads={runtimeDownloads} />}
 
-      {(actionErr ?? connErr) && (
-        <div className="error">
-          <Icon name="alert" />
-          <span>{actionErr ?? connErr}</span>
-          <button className="dismiss" aria-label={t("Dismiss error")} onClick={() => { setActionErr(null); setConnErr(null); }}>
-            <Icon name="close" className="sm" />
-          </button>
-        </div>
-      )}
-      {notice && (
-        <div className="notice" role="status" onClick={() => setNotice(null)}>
-          <Icon name="check" className="sm" />{notice}
-        </div>
-      )}
-      {exportProgress && (
-        <div className="notice" role="status">
-          <Icon name="export" className="sm" />
-          {exportProgress.completed >= exportProgress.total
-            ? "Building export file…"
-            : `Preparing export: ${exportProgress.completed.toLocaleString()} / ${exportProgress.total.toLocaleString()} profiles`}
-        </div>
-      )}
-      {diskSpace?.low && diskSpace.freeBytes !== null && !diskWarningDismissed && (
-        <div className="update-banner update-result warning" role="alert">
-          <Icon name="warning" />
-          <div className="update-copy">
-            <strong>{t("Low disk space: {free} GB free on the drive that holds your profiles.", { free: (diskSpace.freeBytes / 1024 ** 3).toFixed(1) })}</strong>
-            <span>{t("When the disk is almost full, browsers delete saved site data, which can log profiles out. Free up space on this drive.")}</span>
-          </div>
-          <button className="update-result-dismiss" type="button" aria-label={t("Dismiss disk space warning")} onClick={() => setDiskWarningDismissed(true)}>
-            <Icon name="close" className="sm" />
-          </button>
-        </div>
-      )}
-      {desktopUpdateResultSummary && !desktopUpdateResultDismissed && (
-        <div
-          className={`update-banner update-result ${desktopUpdateResultSummary.tone}`}
-          role={desktopUpdateResultSummary.tone === "success" ? "status" : "alert"}
-        >
-          <Icon name={desktopUpdateResultSummary.tone === "success" ? "check" : desktopUpdateResultSummary.tone === "warning" ? "warning" : "alert"} />
-          <div className="update-copy">
-            <strong>{desktopUpdateResultSummary.title}</strong>
-            <span>{desktopUpdateResultSummary.detail}</span>
-          </div>
-          <button
-            className="update-result-dismiss"
-            type="button"
-            aria-label={t("Dismiss last update result")}
-            onClick={() => setDesktopUpdateResultDismissed(true)}
-          >
-            <Icon name="close" className="sm" />
-          </button>
-        </div>
-      )}
-      {desktopUpdate?.state === "available" && (
-        <div className="update-banner">
-          <Icon name="import" />
-          <div className="update-copy">
-            <span role="status"><strong>{t("AliasMode {version} is available.", { version: desktopUpdate.version })}</strong> {t("The update will save active browsers and restart the app.")}</span>
-            <UpdateHighlights version={desktopUpdate.version} highlights={desktopUpdate.highlights} />
-            {desktopUpdateProgress && <DesktopUpdateProgressView progress={desktopUpdateProgress} />}
-            {desktopUpdateErr && <span className="modal-err" role="alert">{t(desktopUpdateErr)}</span>}
-          </div>
-          <button className="btn primary" type="button" disabled={desktopUpdateChecking || desktopUpdateInstalling} onClick={() => void installDesktopUpdate()}>
-            {desktopUpdateInstalling ? t("Updating…") : t("Update now")}
-          </button>
-        </div>
-      )}
-
-      {!appMode?.legacyRemote && <>
-        <ProxiesPage profilesWithoutProxy={profilesWithoutProxy} key={`proxies:${appMode?.mode}:${cloudAuth?.user?.id ?? ""}:${cloudAuth?.workspace?.id ?? ""}`}
-          active={view === "proxies"} groups={[...(isCloudMode ? [] : [""]), ...groups.slice(1)]} folders={folders} onChanged={load}
-          store={storeSnapshot ? (tools) => <StorePage state={storeSnapshot} role={cloudAuth?.workspace?.role} tools={tools}
-            selectedProfileIds={profiles.filter((profile) => selected.has(profile.id)).map((profile) => profile.id)}
-            requestedQuantity={storeRequest.quantity} focusKey={storeRequest.key} active={view === "proxies"} src={storeEntry.src} entryKey={storeEntry.key}
-            onEnter={enterStore} onReload={cloudStore.reload} onProfilesChanged={load} /> : undefined} />
-        <TrashPage key={`trash:${appMode?.mode}:${cloudAuth?.user?.id ?? ""}:${cloudAuth?.workspace?.id ?? ""}`}
-          active={view === "trash"} onChanged={load} folderTree={folders} />
-      </>}
-      <ServicesPage active={view === "services"} />
-      {view === "profiles" ? (
-      <div className="workspace">
-        {(breadcrumb || sharedOnly) && <nav className="folder-breadcrumb" aria-label={t("Folder path")}>
-          <button className="btn ghost xs" onClick={() => selectFolder("all")}>{t("All profiles")}</button>
-          {sharedOnly ? <span>{t("Shared with me")}</span> : [...(breadcrumb?.ancestors ?? []), group].map((name) => <span key={name}> / <button className="btn ghost xs" onClick={() => selectFolder(name)}>{folderLabel(name)}</button></span>)}
-        </nav>}
-        <div className="filterbar">
-          <select
-            className="select group-filter"
-            aria-label={isCloudMode ? "Folder filter" : "Group filter"}
-            value={group}
-            onChange={(e) => selectFolder(e.target.value)}
-          >
-            <option value="all">All {isCloudMode ? "folders" : "groups"}</option>
-            {existingGroups.map((g) => <option key={g} value={g}>{g}</option>)}
-          </select>
-          <div className="searchfield">
-            <Icon name="search" className="sm" />
-            <input
-              className="input search"
-              placeholder={t("Search by No., id, name or tag…")}
-              aria-label={t("Search profiles")}
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
-            {q && <button type="button" className="clear" aria-label={t("Clear search")} onClick={() => setQ("")}><Icon name="close" className="sm" /></button>}
-          </div>
-          {runtimeDownloads.length > 0 && <RuntimeDownloadProgressView downloads={runtimeDownloads} />}
-        </div>
-
-        {showImportOffer && profilesWithoutProxy > 0 && (
-          <div className="import-offer">
-            <ProxyProviderOffer placement="import-no-proxy" missing={profilesWithoutProxy} />
-            <button type="button" className="iconbtn" aria-label={t("Dismiss")} onClick={() => setShowImportOffer(false)}><Icon name="close" className="sm" /></button>
-          </div>
-        )}
-
-        {filtered.length > 0 && (
-          <div className="toolbar" role="status">
+        {filtered.length > 0 && selected.size > 0 && (<div className="toolbar" role="status">
             <button type="button" className="btn" disabled={deleting || allFilteredSelected} onClick={selectAllFiltered}>
               {allFilteredSelected ? t("All {scope} selected", { scope: selectionScope }) : t("Select all {scope}", { scope: selectionScope })}
             </button>
             <span className="muted">{deleting ? t("Moving selected profiles…") : t("Across all pages")}</span>
             {!allFilteredSelected && selectedOutsideFilter > 0 && <span className="muted">{t("This replaces your selection, excluding {count} outside this view.", { count: selectedOutsideFilter })}</span>}
-          </div>
-        )}
+          </div>)}
 
-        {/* Bulk actions only exist once there is a selection to act on — an
-            always-present strip of disabled buttons read as clutter. */}
-        {selected.size > 0 && (
-        <div className="toolbar active">
+        {/* Copy sits inside the field rather than beside it: a separate bordered
+          button per credential turned the dialog into a grid of grey boxes. */}
+        {selected.size > 0 && (<div className="toolbar active">
           <span className="selcount">
             <Icon name="check" className="sm" />
             {t("{count} selected", { count: selected.size })}
           </span>
           <button type="button" className="btn ghost" aria-label={t("Clear selection")} onClick={() => setSelected(new Set())}>{t("Clear selection")}</button>
           <button className="btn primary tip" data-tip={t("Open selected browsers")} disabled={!selected.size} onClick={openSelected}>
-            <Icon name="play" className="sm" />{t("Open")}
+            <Icon name="play" className="sm" />{t("Start")}
           </button>
           <button className="btn solid-danger tip" data-tip={t("Close selected browsers")} disabled={!selected.size} onClick={closeSelected}>
-            <Icon name="power" className="sm" />{t("Close")}
+            <Icon name="power" className="sm" />{t("Stop")}
           </button>
-          {(!isCloudMode || selectedEditable) && <>
+          <button type="button" className="btn ghost bulk-tools-toggle" aria-expanded={bulkToolsOpen} onClick={() => setBulkToolsOpen(open => !open)}>{t(bulkToolsOpen ? "Fewer actions" : "More actions")}<Icon name={bulkToolsOpen ? "chevronUp" : "chevronDown"} className="sm" /></button>
+          <div className="bulk-advanced" hidden={!bulkToolsOpen}>
           <button
             className="btn"
             type="button"
@@ -3932,56 +2296,35 @@ function App() {
             onClick={() => openCookie(profiles.filter((profile) => selected.has(profile.id)))}
           ><Icon name="cookie" className="sm" />{t("Add cookies")}</button>
           <span className="vsep" />
-          {!isCloudMode && selectedMobileCount > 0 && (
-            <button className="btn warn" onClick={convertSelectedMobile}>
+          {selectedMobileCount > 0 && (<button className="btn warn" onClick={convertSelectedMobile}>
               <Icon name="laptop" className="sm" />Convert mobile ({selectedMobileCount})
-            </button>
-          )}
-          {/* Export and file edits work in Cloud; mobile conversion remains Local-only. */}
+            </button>)}
           <div className="menuwrap" ref={exportRef}>
             <button className="btn tip" data-tip={t("Export selected profiles")} disabled={!selected.size || !!exportProgress} onClick={() => setExportOpen((o) => !o)}>
               <Icon name="export" className="sm" />{t("Export")}<Icon name="chevronDown" className="sm" />
             </button>
-            {exportOpen && selected.size > 0 && !exportProgress && (
-              <div className="exportmenu popover below-left" onMouseLeave={() => setExportOpen(false)}>
+            {exportOpen && selected.size > 0 && !exportProgress && (<div className="exportmenu popover below-left" onMouseLeave={() => setExportOpen(false)}>
                 <button className="pop-item" onClick={() => exportSelected("csv")}><Icon name="file" className="sm" />{t("Export as CSV (credentials)")}</button>
                 <button className="pop-item" onClick={() => exportSelected("txt")}><Icon name="file" className="sm" />{t("Export as .txt (full profile)")}</button>
                 <button className="pop-item" onClick={() => exportSelected("xlsx")}><Icon name="file" className="sm" />{t("Export as Excel (full profile)")}</button>
-              </div>
-            )}
+              </div>)}
           </div>
           <button className="btn tip" data-tip={t("Export → edit → re-upload")} disabled={!selected.size || !!exportProgress} onClick={openUpdate} title={t("Export → edit → re-upload to change credentials in bulk")}>
             <Icon name="edit" className="sm" />{t("Edit from file")}
           </button>
           <span className="vsep" />
           <div className="movewrap">
-            {newMode ? (
-              <input className="input" autoFocus placeholder={t("new group name")} value={newGroup} onChange={(e) => setNewGroup(e.target.value)} />
-            ) : (
-              <select
-                className="select move-group"
-                aria-label={t("Move to group")}
-                title={moveTarget || "Choose group"}
-                disabled={!selected.size || !selectedMovable}
-                value={moveTarget}
-                onChange={(e) => (e.target.value === "__new__" ? setNewMode(true) : setMoveTarget(e.target.value))}
-              >
+            {newMode ? (<input className="input" autoFocus placeholder={t("new group name")} value={newGroup} onChange={(e) => setNewGroup(e.target.value)} />) : (<select className="select move-group" aria-label={t("Move to group")} title={moveTarget || "Choose group"} disabled={!selected.size} value={moveTarget} onChange={(e) => (e.target.value === "__new__" ? setNewMode(true) : setMoveTarget(e.target.value))}>
                 <option value="">{t("Move to…")}</option>
-                {editableGroups.map((g) => (
-                  <option key={g} value={g}>{g}</option>
-                ))}
+                {existingGroups.map((g) => (<option key={g} value={g}>{g}</option>))}
                 <option value="__new__">{t("+ new group…")}</option>
-              </select>
-            )}
-            {newMode && (
-              <button className="btn ghost" onClick={() => { setNewMode(false); setNewGroup(""); }}>{t("cancel")}</button>
-            )}
-            <button className="btn accent" disabled={!selected.size || !selectedMovable || (newMode ? !newGroup.trim() : !moveTarget)} onClick={moveSelected}>
+              </select>)}
+            {newMode && (<button className="btn ghost" onClick={() => { setNewMode(false); setNewGroup(""); }}>{t("cancel")}</button>)}
+            <button className="btn accent" disabled={!selected.size || (newMode ? !newGroup.trim() : !moveTarget)} onClick={moveSelected}>
               <Icon name="move" className="sm" />{t("Move")}
             </button>
           </div>
-          {!isCloudMode && extensions.length > 0 && selectedProfilesSupportChromeExtensions && (
-            <>
+          {extensions.length > 0 && selectedProfilesSupportChromeExtensions && (<>
               <span className="vsep" />
               <div className="extctl">
                 <span className="extctl-lbl"><Icon name="puzzle" className="sm" />{t("Extension")}</span>
@@ -3992,258 +2335,152 @@ function App() {
                 <button className="btn xs" disabled={!selected.size || !bulkExt} onClick={() => bulkAssignExt("add")}>{t("Add")}</button>
                 <button className="btn xs" disabled={!selected.size || !bulkExt} onClick={() => bulkAssignExt("remove")}>{t("Remove")}</button>
               </div>
-            </>
-          )}
+            </>)}
           <span className="spacer" />
-          {(!isCloudMode || selectedEditable) && (
-            <button className="btn danger tip" data-tip={appMode?.legacyRemote ? t("Delete selected profiles") : t("Move selected profiles to Trash")} disabled={!selected.size || deleting} onClick={deleteSelected}>
-              <Icon name="trash" className="sm" />{deleting ? t("Processing…") : appMode?.legacyRemote ? t("Delete") : t("Move {count} to Trash", { count: selected.size.toLocaleString() })}
-            </button>
-          )}
-          </>}
-        </div>
-        )}
+          {(<button className="btn danger tip" data-tip={t("Move selected profiles to Trash")} disabled={!selected.size || deleting} onClick={deleteSelected}>
+              <Icon name="trash" className="sm" />{deleting ? t("Processing…") : t("Move {count} to Trash", { count: selected.size.toLocaleString() })}
+            </button>)}
+          </div>
+        </div>)}
 
-        <div
-          className={`tablewrap${tableScrolled ? " scrolled" : ""}`}
-          onScroll={(event) => setTableScrolled(event.currentTarget.scrollLeft > 0)}
-        >
-          <table className="profile-table" style={{ minWidth: tableMinWidth }}>
+        <div className={`tablewrap${tableScrolled ? " scrolled" : ""}`} onScroll={(event) => setTableScrolled(event.currentTarget.scrollLeft > 0)}>
+          <table className="profile-table" aria-busy={!loaded} style={{ minWidth: tableMinWidth }}>
             <thead>
               <tr>
                 <th className="chk" style={{ width: CHECKBOX_COLUMN_WIDTH }}>
-                  <input type="checkbox" aria-label={t("Select all visible profiles")} checked={allVisibleSelected} onChange={toggleAll} />
+                  <input type="checkbox" aria-label={t("Select all visible profiles")} checked={allVisibleSelected} disabled={!selectableProfiles.length} onChange={toggleAll} />
                 </th>
                 {shownColumns.map(columnHead)}
               </tr>
             </thead>
             <tbody>
-              {visibleProfiles.map((p) => {
+              {!loaded && <tr><td colSpan={visibleColumnCount} className="empty"><div className="emptystate" role="status">{t("Loading environments…")}</div></td></tr>}
+</tbody>
+            {profileSections.map(section => {
+              const collapsed = profileGroupCollapsed(section, groupDisclosure, revealGroupMatches);
+              const groupName = section.name ? folderLabel(section.name) : t("Ungrouped");
+              const selectedInGroup = section.matches.filter(profile => selected.has(profile.id)).length;
+              const groupPanelId = `profile-group-${section.orderIndex}`;
+              return <React.Fragment key={section.name}><tbody className="profile-group-header">
+                <tr className="profile-group-row"><td colSpan={visibleColumnCount}><div className="profile-group-heading">
+                  <input className="profile-group-check" type="checkbox" aria-label={t("Select all {count} profiles in {group}", { count: section.matches.length, group: groupName })} disabled={!section.matches.length} checked={section.matches.length > 0 && selectedInGroup === section.matches.length} ref={element => { if (element) element.indeterminate = selectedInGroup > 0 && selectedInGroup < section.matches.length; }} onChange={() => setSelected(current => toggleProfileSelection(current, section.matches))} />
+                  <button type="button" className="profile-group-toggle" aria-expanded={!collapsed} aria-controls={groupPanelId} aria-label={t(collapsed ? "Expand {group}" : "Collapse {group}", { group: groupName })} disabled={revealGroupMatches} onClick={() => toggleProfileGroup(section.name, collapsed)}><Icon name={collapsed ? "chevronRight" : "chevronDown"} className="sm" /><span className="profile-group-name" title={section.name}>{groupName}</span><span className="profile-group-count">{t("{count} environments", { count: section.matches.length })}</span><span className="profile-group-running">{t("{count} running", { count: section.running })}</span>{section.profiles.length < section.matches.length && <span className="profile-group-page-hint">{t("{count} on this page", { count: section.profiles.length })}</span>}</button>
+                  <button type="button" className="iconbtn tip profile-group-create" data-tip={t("New Profile")} aria-label={t("New profile in {group}", { group: groupName })} onClick={() => { openCreate(); setForm(form => ({ ...form, group: section.name })); const next = new Map(groupDisclosure); next.set(section.name, false); saveGroupDisclosure(next); }}><Icon name="plus" className="sm" /></button>
+                  <ProfileActionMenu label={t("Actions for {folder}", { folder: groupName })} icon={<Icon name="more" className="sm" />}>
+                    <button role="menuitem" className="pop-item" onClick={() => { selectFolder(section.name); setGroupManagerOpen(true); }}><Icon name="folders" className="sm" />{t("Manage groups")}</button>
+                    <button role="menuitem" className="pop-item" onClick={() => { setNewFolderParent(section.name || null); setSidebarGroupName(""); setAddingGroup(true); setGroupManagerOpen(true); }}><Icon name="plus" className="sm" />{t("New subfolder")}</button>
+                  </ProfileActionMenu>
+                </div></td></tr>
+              </tbody><tbody className="profile-group-body" id={groupPanelId} hidden={collapsed}>
+              {!collapsed && section.profiles.map((p) => {
                 // The numbering memo covers every roster profile, so this
                 // lookup cannot miss; a silent fallback here would renumber
                 // rows wrongly if that invariant ever broke.
                 const no = numbering.get(p.id)!;
-                // Running rows are editable too: an open Cloud profile is edited
                 // live through the local cache. Only rows locked by ANOTHER
                 // session stay read-only — that writer owns the profile.
-                const canEditRow = !isCloudMode || (p.permission === "edit" && !p.lockedBy);
-                return (
-                <tr key={p.id} className={`${p.running ? "running" : ""}${selected.has(p.id) ? " selected" : ""}`}>
+                const canEditRow = true;
+                return (<tr key={p.id} className={`${p.running ? "running" : ""}${selected.has(p.id) ? " selected" : ""}`}>
                   <td className="chk">
-                    <input type="checkbox" aria-label={`Select ${p.name}`} checked={selected.has(p.id)} onChange={() => toggle(p.id)} />
+                    <input type="checkbox" aria-label={t("Select {profile}", { profile: p.name })} checked={selected.has(p.id)} onChange={() => toggle(p.id)} />
                   </td>
-                  {columnVisible("no") && (
-                    <td className="col-no">
+                  {columnVisible("no") && (<td className="col-no">
                       <span className={`no-text${no.custom ? " custom" : ""}`} title={`${no.custom ? t("Custom NO.") : "Serial"} ${no.value}`}>{no.value}</span>
-                    </td>
-                  )}
-                  {columnVisible("name") && (
-                    <td className="col-name" title={`${p.name}\n${p.id}`}>
+                    </td>)}
+                  {columnVisible("name") && (<td className="col-name" title={`${p.name}\n${p.id}`}>
                       <span className="name-cell">
-                        <span className="n">{p.name}<FingerprintBadge p={p} /></span>
+                        <button type="button" className="n profile-name-button" aria-label={t("Edit {profile}", { profile: p.name })} onClick={() => openEdit(p.id)}>{p.name}<FingerprintBadge p={p} /></button>
                         <span className="sub">
-                          {p.id}
+                          <span className="profile-serial" title={p.id}>#{no.value}</span>
                           <span title={p.engine === "firefox" ? "Native Firefox profile · no CDP, PDF, or Chrome extensions" : `${browserLabel(p.engine, p.chromiumRuntime)} · CDP, PDF, and Chrome extensions`}>
                             {browserLabel(p.engine, p.chromiumRuntime)}
                           </span>
-                          {p.running && <span className="live"><StatusDot running />running</span>}
-                          {p.lockedBy && (
-                            <span className="lockedby" title={`in use by ${p.lockedBy}`}>
-                              <Icon name="lock" className="sm" />{p.lockedBy}
-                            </span>
-                          )}
-                          {p.cloudUnsavedSince && (
-                            <span className="unsaved" title={p.running
-                              ? t("Cloud has an older copy since {time}. This device keeps the latest session and retries.", { time: new Date(p.cloudUnsavedSince).toLocaleString() })
-                              : t("Closed at {time} without its latest session in Cloud. This device saves it to Cloud the next time the profile opens here.", { time: new Date(p.cloudUnsavedSince).toLocaleString() })}>
-                              <Icon name="warning" className="sm" />{t("not saved to Cloud yet")}
-                            </span>
-                          )}
+
                         </span>
-                        {(p.restartPending || !!p.pendingCookieCount) && (
-                          <span className="status">
-                            {p.restartPending && (
-                              <button
+                        {(p.restartPending || !!p.pendingCookieCount) && (<span className="status">
+                            {p.restartPending && (<button
                                 type="button"
                                 className="status-chip warn tip"
                                 data-tip={t("Saved proxy or fingerprint changes apply when this browser restarts. Click to restart it now.")}
                                 aria-label={t("Restart {profile} so the saved changes apply", { profile: p.name })}
                                 disabled={busy[p.id]}
                                 onClick={() => act(p.id, restartProfile)}
-                              ><Icon name="refresh" className="sm" />{t("Applies at next start")}</button>
-                            )}
-                            {!!p.pendingCookieCount && (
-                              <button
+                              ><Icon name="refresh" className="sm" />{t("Applies at next start")}</button>)}
+                            {!!p.pendingCookieCount && (<button
                                 type="button"
                                 className="status-chip tip"
                                 data-tip={t("The browser sets these cookies the next time it starts. Click to see or remove them.")}
                                 onClick={() => void openPendingCookies(p)}
-                              ><Icon name="cookie" className="sm" />{t("{count} cookie(s) at next start", { count: String(p.pendingCookieCount) })}</button>
-                            )}
-                          </span>
-                        )}
+                              ><Icon name="cookie" className="sm" />{t("{count} cookie(s) at next start", { count: String(p.pendingCookieCount) })}</button>)}
+                          </span>)}
                       </span>
-                    </td>
-                  )}
-                  {columnVisible("group") && (
-                    <td className="col-group" title={p.group}>
+                    </td>)}
+                  {columnVisible("group") && (<td className="col-group" title={p.group}>
                       {p.group ? <span className="chip">{p.group}</span> : <span className="muted">—</span>}
-                    </td>
-                  )}
+                    </td>)}
                   {columnVisible("platform") && <td className="col-platform"><PlatformPill platform={p.platform} /></td>}
-                  {columnVisible("tags") && (
-                    <td className="col-tags" title={p.tags?.length ? p.tags.join(", ") : "No tags"}>
+                  {columnVisible("tags") && (<td className="col-tags" title={p.tags?.length ? p.tags.join(", ") : "No tags"}>
                       {p.tags?.length ? p.tags.map((t) => <span key={t} className="chip">{t}</span>) : <span className="muted">—</span>}
-                    </td>
-                  )}
-                  {columnVisible("proxy") && (
-                    <td className="col-proxy" title={p.proxyError || p.proxy || "no proxy"}>
+                    </td>)}
+                  {columnVisible("proxy") && (<td className="col-proxy" title={p.proxyError || p.proxy || "no proxy"}>
                       {p.proxyError
-                        ? <span className="proxy-cell bad"><Icon name="warning" className="sm" />invalid — edit</span>
+                        ? <span className="proxy-cell bad"><Icon name="warning" className="sm" />{t("Invalid proxy — edit to fix")}</span>
                         : p.proxy
                           ? <span className="proxy-cell">{p.proxy}</span>
                           : <span className="muted">—</span>}
-                    </td>
-                  )}
-                  {columnVisible("action") && (
-                    <td className="col-action">
-                      <span className="rowactions">
-                        {!isCloudMode && p.has2fa && (
-                          <button
-                            className={`iconbtn twofa tip${twoFaFlash?.id === p.id ? " flash" : ""}`}
-                            data-tip={twoFaFlash?.id === p.id ? `Copied ${twoFaFlash.code}` : "Copy current 2FA code"}
-                            aria-label={t("Copy current 2FA code")}
-                            onClick={() => copy2fa(p.id)}
-                          >
-                            <Icon name={twoFaFlash?.id === p.id ? "check" : "key"} className="sm" />
-                          </button>
-                        )}
-                        {isCloudMode && canManageCloudFolders && <button className="iconbtn tip" data-tip={t("Manage access")} aria-label={t("Manage access for {profile}", { profile: p.name })} onClick={() => openAccess({ kind: "profile", id: p.id, name: p.name, folder: p.group })}><Icon name="user" className="sm" /></button>}
-                        {canEditRow && (
-                          <button className="iconbtn tip" data-tip={t("Edit profile")} aria-label={`Edit ${p.name}`} onClick={() => openEdit(p.id)}>
-                            <Icon name="edit" className="sm" />
-                          </button>
-                        )}
-                        {canEditRow && (
-                          <button
-                            className="iconbtn tip"
-                            data-tip={t("Add cookies")}
-                            aria-label={t("Add cookies to {profile}", { profile: p.name })}
-                            onClick={() => openCookie([p])}
-                          ><Icon name="cookie" className="sm" /></button>
-                        )}
-                        {p.running ? (
-                          <>
-                            {p.engine === "chromium" && <>
-                              <button
-                                className="iconbtn tip"
-                                data-tip={t("Bring to front")}
-                                aria-label={t("Bring this browser window to the front")}
-                                disabled={busy[p.id]}
-                                onClick={() => act(p.id, raiseProfile)}
-                              ><Icon name="raise" className="sm" /></button>
-                            </>}
-                            <button
-                              className="iconbtn tip"
-                              data-tip={t("Check fingerprint")}
-                              aria-label={t("Open the fingerprint test in {profile}", { profile: p.name })}
-                              disabled={busy[p.id]}
-                              onClick={() => act(p.id, (id) => checkFingerprint(id, fingerprintPage))}
-                            ><Icon name="fingerprint" className="sm" /></button>
-                            <button className="btn sm solid-danger" aria-label={`Close ${p.name}`} disabled={busy[p.id]} onClick={() => act(p.id, closeProfile)}>
-                              <Icon name="power" className="sm" />{t("Close")}
-                            </button>
-                          </>
-                        ) : p.mobilePersona ? (
-                          !p.lockedBy && (!isCloudMode || p.permission === "edit") ? (
-                            <button className="btn sm warn" disabled={busy[p.id]} title={t("Convert this mobile persona to a desktop device")} onClick={() => openEdit(p.id)}>
-                              <Icon name="laptop" className="sm" />Convert
-                            </button>
-                          ) : null
-                        ) : p.parkedSession && p.permission === "edit" ? (
-                          <>
-                            <button
-                              className="btn sm warn tip"
-                              data-tip={`Saved on this device ${new Date(p.parkedSession.savedAt).toLocaleString()}`}
-                              aria-label={`Restore the saved session of ${p.name}`}
-                              disabled={busy[p.id]}
-                              onClick={() => restoreSession(p)}
-                            >
-                              <Icon name="refresh" className="sm" />Restore session
-                            </button>
-                            <button
-                              className="btn sm primary"
-                              aria-label={`Open ${p.name}`}
-                              disabled={busy[p.id]}
-                              onClick={() => act(p.id, openProfile)}
-                            >
-                              <Icon name="play" className="sm" />{openLabel(p)}
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            className="btn sm primary"
-                            aria-label={`Open ${p.name}`}
-                            title={p.lockedBy ? `Open — session writer: ${p.lockedBy}; this browser will not save its session back` : undefined}
-                            disabled={busy[p.id]}
-                            onClick={() => act(p.id, openProfile)}
-                          >
-                            <Icon name="play" className="sm" />{openLabel(p)}
-                          </button>
-                        )}
-                      </span>
-                    </td>
-                  )}
-                </tr>
-                );
-              })}
-              {loaded && filtered.length === 0 && (
-                <tr>
+                    </td>)}
+                  {columnVisible("status") && <td className="col-status"><span className={`profile-status${p.running ? " running" : ""}`}><StatusDot running={p.running} />{p.running ? t("Running") : t("Stopped")}</span></td>}
+                  {columnVisible("action") && (<td className="col-action"><span className="rowactions">
+                    {p.running ? <button className="btn sm row-stop" aria-label={t("Stop {profile}", { profile: p.name })} disabled={busy[p.id]} onClick={() => act(p.id, closeProfile)}><Icon name="power" className="sm" />{t("Stop")}</button>
+                      : p.mobilePersona ? <button className="btn sm warn" disabled={busy[p.id]} title={t("Convert this mobile persona to a desktop device")} onClick={() => openEdit(p.id)}><Icon name="laptop" className="sm" />{t("Convert")}</button>
+                      : <button className="btn sm primary row-start" aria-label={t("Start {profile}", { profile: p.name })} disabled={busy[p.id]} onClick={() => act(p.id, openProfile)}><Icon name="play" className="sm" />{openLabel(p)}</button>}
+                    <ProfileActionMenu label={t("Actions for {profile}", { profile: p.name })} icon={<Icon name="more" className="sm" />}>
+                      {canEditRow && <button role="menuitem" className="pop-item" onClick={() => openEdit(p.id)}><Icon name="edit" className="sm" />{t("Edit profile")}</button>}
+                      {canEditRow && <button role="menuitem" className="pop-item" onClick={() => openCookie([p])}><Icon name="cookie" className="sm" />{t("Add cookies")}</button>}
+                      {p.has2fa && <button role="menuitem" className="pop-item" onClick={() => copy2fa(p.id)}><Icon name={twoFaFlash?.id === p.id ? "check" : "key"} className="sm" />{twoFaFlash?.id === p.id ? t("Copied") : t("Copy current 2FA code")}</button>}
+                      {p.running && p.engine === "chromium" && <button role="menuitem" className="pop-item" disabled={busy[p.id]} onClick={() => act(p.id, raiseProfile)}><Icon name="raise" className="sm" />{t("Bring to front")}</button>}
+                    </ProfileActionMenu>
+                  </span></td>)}
+                </tr>);
+            })}
+              </tbody></React.Fragment>;
+            })}
+            <tbody>
+              {loaded && filtered.length === 0 && (<tr>
                   <td colSpan={visibleColumnCount} className="empty">
                     <div className="emptystate">
                       <span className="glyph"><Icon name="profiles" /></span>
-                      {profiles.length === 0 ? (
-                        <>
+                      {profiles.length === 0 ? (<>
                           <b>{t("No profiles yet")}</b>
                           <p>{t("Create a profile or import a readable export from another browser.")}</p>
                           <div className="empty-actions">
-                            <button className="btn primary" disabled={!canEditCloud} onClick={openCreate}><Icon name="plus" className="sm" />{t("New Profile")}</button>
-                            <button className="btn" disabled={!canEditCloud} onClick={openBulk}><Icon name="fileImport" className="sm" />{t("Import profiles")}</button>
+                            <button className="btn primary" onClick={openCreate}><Icon name="plus" className="sm" />{t("New Profile")}</button>
+                            <button className="btn" onClick={openBulk}><Icon name="fileImport" className="sm" />{t("Import profiles")}</button>
                           </div>
-                        </>
-                      ) : (
-                        <>
+                        </>) : (<>
                           <b>{t("No matches")}</b>
                           <p>{t("No profiles match the current filters.")}</p>
-                          <button className="btn" onClick={() => { setQ(""); setGroup("all"); }}>{t("Clear filters")}</button>
-                        </>
-                      )}
+                          <button className="btn" onClick={() => { setQ(""); setGroup("all"); setProfileStatus("all"); }}>{t("Clear filters")}</button>
+                        </>)}
                     </div>
                   </td>
-                </tr>
-              )}
-            </tbody>
+                </tr>)}
+</tbody>
           </table>
         </div>
 
-        {showDiag && diag && (
-          <div className="diagpanel">
+        {showDiag && diag && (<div className="diagpanel">
             <div className="when">Last diagnose: {diagWhen}</div>
-            {diag.analysis.verdicts.map((v, i) => (
-              <div className="v" key={i}>{v}</div>
-            ))}
-          </div>
-        )}
+            {diag.analysis.verdicts.map((v, i) => (<div className="v" key={i}>{v}</div>))}
+          </div>)}
 
         <footer className="statusbar">
           <span className="stat"><b>{profiles.length}</b> {t("profiles")}</span>
           <span className="stat"><StatusDot running={runningCount > 0} /><b>{runningCount}</b> {t("running")}</span>
-          {diag && (
-            <span className="diag" onClick={() => setShowDiag((s) => !s)}>
+          {diag && (<span className="diag" onClick={() => setShowDiag((s) => !s)}>
               Diagnose · last {diagWhen}
               <Icon name={showDiag ? "chevronDown" : "chevronRight"} className="sm" />
-            </span>
-          )}
+            </span>)}
           <span className="pager">
             <button
               type="button"
@@ -4265,13 +2502,9 @@ function App() {
             </select>
           </span>
         </footer>
-      </div>
-      ) : view === "scripts" ? (
-      <ScriptsPage onViewRun={() => setScriptRunOpen(true)} />
-      ) : view === "extensions" ? (
-      <div className="workspace">
+      </div>) : view === "scripts" ? (<ScriptsPage onViewRun={() => setScriptRunOpen(true)} />) : view === "extensions" ? (<div className="workspace extensions-workspace">
+        <div className="page-heading"><div><h1>{t("Extensions")}</h1><p className="page-subtitle">{t("Keep your tools close to every environment.")}</p></div><button className="btn primary" type="button" disabled={extBusy || extInstallBusy} onClick={() => extFileRef.current?.click()}><Icon name="plus" className="sm" />{extBusy ? t("Uploading…") : t("Upload ZIP/CRX")}</button></div>
         <div className="settingspage">
-          <h2 className="sect-title">{t("Extensions")}</h2>
           {extErr && <div className="modal-err"><Icon name="alert" className="sm" />{extErr}</div>}
           <section className="settings-card">
             <header><Icon name="puzzle" className="sm" /><h2>{t("Install from Chrome Web Store")}</h2></header>
@@ -4295,394 +2528,119 @@ function App() {
           <p className="formnote">{t("The in-browser Store button does not work in CloakBrowser. Paste the Store link above, or upload a ZIP/CRX archive. Chrome extensions apply only to CloakBrowser profiles.")}</p>
           <ol className="steps">
             <li>{t("Install the extension here. New installs stay unassigned.")}</li>
-            <li>{t("Use")} <b>{t("Edit > Extensions")}</b> {isCloudMode ? t("to assign it to a profile.") : t("to assign it to a profile, or assign many at once from the roster toolbar.")}</li>
-            <li>{t("Reopen the profile. AliasMode loads the extension when the browser starts.")}</li>
+            <li>{t("Use")} <b>{t("Edit > Extensions")}</b> {t("to assign it to a profile, or assign many at once from the roster toolbar.")}</li>
+            <li>{t("Reopen the profile. The app loads the extension when the browser starts.")}</li>
           </ol>
           <section className="settings-card">
             <header><Icon name="folder" className="sm" /><h2>{t("Group defaults")}</h2></header>
             <div className="card-body">
               <p>{t("Choose the exact extensions assigned to this group.")}</p>
-              {editableDefaultGroups.length === 0 ? (
-                <p className="formnote">{t("Create an editable group before setting its extension defaults.")}</p>
-              ) : (
-                <>
+              {editableDefaultGroups.length === 0 ? (<p className="formnote">{t("Create an editable group before setting its extension defaults.")}</p>) : (<>
                   <label className="fld">
                     <span>{t("Group")}</span>
-                    <select
-                      aria-label={t("Extension default group")}
-                      value={groupDefaultName}
-                      onChange={(event) => {
+                    <select aria-label={t("Extension default group")} value={groupDefaultName} onChange={(event) => {
                         const name = event.target.value;
                         setGroupDefaultName(name);
                         setGroupDefaultExts(groupExtensionDefaults.find((item) => item.name === name)?.extensions ?? []);
-                      }}
-                    >
+                      }}>
                       {editableDefaultGroups.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}
                     </select>
                   </label>
-                  {groupDefaultExtensionChoices.length > 0 ? (
-                    <div className="extassign">
-                      {groupDefaultExtensionChoices.map((item) => (
-                        <label key={item.id} className="extchk">
+                  {groupDefaultExtensionChoices.length > 0 ? (<div className="extassign">
+                      {groupDefaultExtensionChoices.map((item) => (<label key={item.id} className="extchk">
                           <input
                             type="checkbox"
                             checked={groupDefaultExts.includes(item.id)}
                             onChange={() => toggleGroupDefaultExt(item.id)}
                           />
                           <span>{item.name}{item.missing && <span className="muted">{t(" · Not installed on this device")}</span>}</span>
-                        </label>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="formnote">{t("No extensions are installed. Apply an empty selection to clear this default.")}</p>
-                  )}
+                        </label>))}
+                    </div>) : (<p className="formnote">{t("No extensions are installed. Apply an empty selection to clear this default.")}</p>)}
                   <p className="formnote">
                     {t("Applying replaces assignments on {count} current profile(s). New and moved profiles inherit it.", { count: groupDefaultProfileCount })}
                     {t("Individual profiles can differ later. Reopen browsers to apply changes.")}
                   </p>
-                  <button
-                    type="button"
-                    className="btn primary"
-                    disabled={groupDefaultBusy || !groupDefaultName}
-                    onClick={applyGroupExtensionDefault}
-                  >
+                  <button type="button" className="btn primary" disabled={groupDefaultBusy || !groupDefaultName} onClick={applyGroupExtensionDefault}>
                     {groupDefaultBusy ? t("Applying…") : t("Apply group default")}
                   </button>
-                </>
-              )}
+                </>)}
             </div>
           </section>
-          {extensions.length === 0 ? (
-            <div className="emptystate">
+          {extensions.length === 0 ? (<div className="emptystate">
               <span className="glyph"><Icon name="puzzle" /></span>
               <b>{t("No extensions yet")}</b>
               <p>{t("Uploaded extensions appear here, ready to assign to any profile.")}</p>
               <button className="btn primary" disabled={extBusy || extInstallBusy} onClick={() => extFileRef.current?.click()}>
                 <Icon name="plus" className="sm" />{extBusy ? t("Uploading…") : t("Upload ZIP/CRX")}
               </button>
-            </div>
-          ) : (
-            <div className="extlist">
-              {extensions.map((x) => (
-                <div key={x.id} className="extrow">
+            </div>) : (<div className="extlist">
+              {extensions.map((x) => (<div key={x.id} className="extrow">
                   <Icon name="puzzle" className="sm" />
                   <span className="extname">{x.name}</span>
                   <span className="spacer" />
                   <button className="btn xs danger" onClick={() => doRemoveExtension(x.id, x.name)}>{t("Remove")}</button>
-                </div>
-              ))}
-            </div>
-          )}
-          <input
-            ref={extFileRef}
-            type="file"
-            multiple
-            accept=".zip,.crx,application/zip,application/x-chrome-extension"
-            style={{ display: "none" }}
-            onChange={(e) => { if (e.target.files) doUploadExtensions(e.target.files); e.target.value = ""; }}
-          />
+                </div>))}
+            </div>)}
+          <input ref={extFileRef} type="file" multiple accept=".zip,.crx,application/zip,application/x-chrome-extension" style={{ display: "none" }} onChange={(e) => { if (e.target.files) doUploadExtensions(e.target.files); e.target.value = ""; }}/>
         </div>
         <footer className="pagefoot">
           <span className="spacer" />
-          {extensions.length > 0 && (
-            <button className="btn primary" type="button" disabled={extBusy || extInstallBusy} onClick={() => extFileRef.current?.click()}>
+          {extensions.length > 0 && (<button className="btn primary" type="button" disabled={extBusy || extInstallBusy} onClick={() => extFileRef.current?.click()}>
               <Icon name="plus" className="sm" />{extBusy ? t("Uploading…") : t("Upload ZIP/CRX")}
-            </button>
-          )}
+            </button>)}
         </footer>
-      </div>
-      ) : view === "settings" ? (
-      <div className="workspace">
+      </div>) : view === "settings" ? (<div className="workspace settings-workspace">
+        <div className="page-heading"><div><h1>{t("Settings")}</h1><p className="page-subtitle">{t("Make this workspace feel like yours.")}</p></div></div>
         <div className="tabs" role="tablist" aria-label={t("Settings sections")}>
-          {SETTINGS_TABS.map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              role="tab"
-              aria-selected={settingsTab === tab.key}
-              className={`tab${settingsTab === tab.key ? " active" : ""}`}
-              onClick={() => setSettingsTab(tab.key)}
-            >
-              {tab.key === "team" && isCloudMode ? t("Team") : t(tab.label)}
-            </button>
-          ))}
+          {SETTINGS_TABS.map((tab) => (<button key={tab.key} type="button" role="tab" aria-selected={settingsTab === tab.key} className={`tab${settingsTab === tab.key ? " active" : ""}`} onClick={() => setSettingsTab(tab.key)}>
+              {t(tab.label)}
+            </button>))}
         </div>
         <div className="settingspage">
-          {settingsTab === "account" && (
-            <>
-              <h2 className="sect-title">{t("Account information")}</h2>
+          {settingsTab === "account" && (<>
+              <h2 className="sect-title">{t("Local workspace")}</h2>
               <div className="identity-card">
                 <span className="identity-avatar"><Icon name="user" className="lg" /></span>
                 <span className="identity-lines">
-                  <b>{isCloudMode ? cloudAuth?.user?.email ?? t("Cloud account") : t("Local workspace")}</b>
+                  <b>{currentName}</b>
                   <span>
-                    {isCloudMode
-                      ? `${t(cloudAuth?.workspace?.role ?? "member")} · ${cloudAuth?.workspace?.name ?? t("Cloud workspace")}`
-                      : t("No account · profile data stays on this computer")}
+                    {t("No account · profile data stays on this computer")}
                   </span>
                 </span>
-                <span className="chip">{isCloudMode ? t("Cloud") : t("Local")}</span>
+                <span className="chip">{t("Local")}</span>
               </div>
-<section className="settings-card">
-            <header><Icon name="user" className="sm" /><h2>{t("Account")}</h2></header>
+            <section className="settings-card">
+            <header><Icon name="user" className="sm" /><h2>{t("Local data")}</h2></header>
             <div className="card-body">
-            <div className="settings-row"><span>{t("Signed in as")}</span><strong>{isCloudMode ? cloudAuth?.user?.email ?? t("Cloud account") : t("Local · no account")}</strong></div>
+            <div className="settings-row"><span>{t("Mode")}</span><strong>{t("Local · no account")}</strong></div>
             <div className="settings-row"><span>{t("Profiles stored")}</span><strong>{profiles.length}</strong></div>
-            {isCloudMode && cloudAuth?.authenticated && (
-              <button className="btn danger" type="button" disabled={authBusy} onClick={() => void signOut()}>
-                <Icon name="power" className="sm" />{authBusy ? t("Signing out…") : t("Sign out / Switch account")}
-              </button>
-            )}
-            {authErr && <p className="modal-err" role="alert">{authErr}</p>}
+
             </div>
           </section>
 
-          {isCloudMode && cloudAuth?.authenticated && (
-            <section className="settings-card remote-mcp-settings">
-              <header>
-                <Icon name="cloud" className="sm" /><h2>{t("Remote MCP")}</h2>
-                <span className={`remote-mcp-status ${remoteMcp.state}`}>
-                  {remoteMcp.state === "active" ? t("Ready") : remoteMcp.state === "disabled" ? t("Disabled") : remoteMcp.state === "loading" ? t("Preparing") : remoteMcp.state === "error" ? t("Unavailable") : t("Not ready")}
-                </span>
-              </header>
-              <div className="card-body">
-                <p>{t("Connect an AI client on another computer. Browser windows open on this Windows PC, so keep AliasMode running.")}</p>
-                {remoteMcp.state === "loading" && <p className="hint" role="status">{t("Preparing your secure connection…")}</p>}
-                {remoteMcp.state === "active" && remoteMcp.url && remoteMcp.token && (
-                  <>
-                    <label className="fld remote-mcp-field">
-                      <span>{t("MCP server URL")}</span>
-                      <span className="remote-mcp-value">
-                        <input className="mono" value={remoteMcp.url} readOnly />
-                        <button className="btn" type="button" disabled={authBusy} onClick={() => void copyRemoteMcp("url", remoteMcp.url!)}>{remoteMcpCopied === "url" ? t("Copied") : t("Copy")}</button>
-                      </span>
-                    </label>
-                    <label className="fld remote-mcp-field">
-                      <span>{t("Access key")}</span>
-                      <span className="remote-mcp-value">
-                        <input className="mono" value={remoteMcpTokenVisible ? remoteMcp.token : "••••••••••••••••••••••••"} readOnly aria-label={t("Remote MCP access key")} />
-                        <button className="btn" type="button" disabled={authBusy} onClick={() => setRemoteMcpTokenVisible((visible) => !visible)}>{remoteMcpTokenVisible ? t("Hide") : t("Reveal")}</button>
-                        <button className="btn" type="button" disabled={authBusy} onClick={() => void copyRemoteMcp("token", remoteMcp.token!)}>{remoteMcpCopied === "token" ? t("Copied") : t("Copy")}</button>
-                      </span>
-                    </label>
-                    <div className="hint remote-mcp-guide">
-                      <strong>{t("Connect Claude.ai or ChatGPT")}</strong>
-                      <ol>
-                        <li>{t("Add a custom MCP connector or app.")}</li>
-                        <li>{t("Paste the MCP server URL and select Connect.")}</li>
-                        <li>{t("Sign into AliasMode and select Allow.")}</li>
-                      </ol>
-                      <details>
-                        <summary>{t("Claude Code and other clients")}</summary>
-                        <p>{t("Claude Code uses an HTTP entry in {file}. Keep the access key in an environment variable. Other bearer-capable MCP clients can use the same URL and secret header.", { file: ".mcp.json" })}</p>
-                        <p>{t("Claude.ai and ChatGPT use OAuth and do not need the access key.")}</p>
-                      </details>
-                    </div>
-                    <div className="update-actions">
-                      <button className="btn" type="button" disabled={authBusy} onClick={() => void regenerateRemoteMcp()}>{t("Regenerate key")}</button>
-                      <button className="btn danger" type="button" disabled={authBusy} onClick={() => void disableRemoteMcp()}>{t("Disable")}</button>
-                    </div>
-                  </>
-                )}
-                {remoteMcp.state === "disabled" && (
-                  <>
-                    <p>{t("Remote connections are disabled for this Windows device.")}</p>
-                    <button className="btn" type="button" disabled={authBusy} onClick={() => void enableRemoteMcp()}>{t("Enable Remote MCP")}</button>
-                  </>
-                )}
-                {remoteMcp.error && <div className="modal-err" role="alert">{t(remoteMcp.error)}</div>}
-                {remoteMcp.state === "error" && <button className="btn" type="button" disabled={authBusy} onClick={() => void loadRemoteMcp()}>{t("Try again")}</button>}
-              </div>
-            </section>
-          )}
-
-<section className="settings-card">
+            <section className="settings-card">
             <header><Icon name="sun" className="sm" /><h2>{t("Appearance")}</h2></header>
             <div className="card-body">
-              <p>{t("Choose how AliasMode looks. System follows your operating system setting.")}</p>
+              <p>{t("System follows your operating system setting.")}</p>
               <label className="fld"><span>{t("language.label")}</span>
-                <select className="select" value={language} onChange={(event) => setLanguage(event.target.value)}>
-                  {availableLanguages().map((lang) => (
-                    <option key={lang} value={lang}>{languageNativeName(lang)}</option>
-                  ))}
+                <select className="select" value={language} onChange={(event) => { void setLanguage(event.target.value).catch((error) => setActionErr(error instanceof Error ? error.message : String(error))); }}>
+                  {availableLanguages().map((lang) => (<option key={lang} value={lang}>{languageNativeName(lang)}</option>))}
                 </select>
               </label>
               <div className="segmented" role="radiogroup" aria-label={t("Theme")}>
-                {THEMES.map((option) => (
-                  <button
-                    key={option.key}
-                    type="button"
-                    role="radio"
-                    aria-checked={theme === option.key}
-                    className={theme === option.key ? "active" : ""}
-                    onClick={() => chooseTheme(option.key)}
-                  >
+                {THEMES.map((option) => (<button key={option.key} type="button" role="radio" aria-checked={theme === option.key} className={theme === option.key ? "active" : ""} onClick={() => chooseTheme(option.key)}>
                     <Icon name={option.icon} className="sm" />{t(option.label)}
-                  </button>
-                ))}
+                  </button>))}
               </div>
-              {appMode && <label className="extchk">
-                <input type="checkbox" checked={!appMode.servicesHidden} onChange={(event) => void showServices(event.target.checked)} />
-                <span>{t("Show Services in the sidebar")}</span>
-              </label>}
-              {servicesSettingErr && <p className="modal-err" role="alert">{t(servicesSettingErr)}</p>}
+
             </div>
           </section>
-          <section className="settings-card">
-            <header><Icon name={isCloudMode ? "laptop" : "cloud"} className="sm" /><h2>{t("Switch mode")}</h2></header>
-            <div className="card-body settings-mode">
-              <p>{isCloudMode ? t("Local mode keeps this installation offline from AliasMode Cloud.") : t("Cloud mode requires an account and does not upload Local profiles automatically.")}</p>
-              <button className="btn" type="button" disabled={modeBusy || desktopUpdateInstalling} onClick={() => requestModeSwitch(isCloudMode ? "local" : "cloud")}>
-                <Icon name={isCloudMode ? "laptop" : "cloud"} className="sm" />
-                {t("Switch to {target}", { target: isCloudMode ? t("Local") : t("Cloud") })}
-              </button>
-            </div>
-          </section>
-          
-            </>
-          )}
-          {settingsTab === "team" && (
-            <>
-              <h2 className="sect-title">{isCloudMode ? t("Team and folder access") : t("Workspace")}</h2>
-<section className="settings-card">
-            <header><Icon name="folders" className="sm" /><h2>{isCloudMode ? t("Team") : t("Workspace")}</h2></header>
-            <div className="card-body">
-            {isCloudMode ? (
-              <>
-                <div className="settings-row"><span>{t("Workspace")}</span><strong>{cloudAuth?.workspace?.name ?? t("Cloud workspace")}</strong></div>
-                <div className="settings-row"><span>{t("Role")}</span><strong>{t(cloudAuth?.workspace?.role ?? "member")}</strong></div>
-                {teamBusy && !team && <p className="hint" role="status">{t("Loading team…")}</p>}
-                <h3 className="settings-subhead">{t("Members")}</h3>
-                {team?.members.map((member) => (
-                  <div className="team-member" key={member.accountId}>
-                    <div className="settings-row">
-                      <span>{member.email}<small> · {member.grants.map((grant) => `${grant.folderName}: ${grant.permission}`).join(", ") || t("No folder access")}</small></span>
-                      {member.role === "owner" || cloudAuth?.workspace?.role !== "owner" ? <strong>{t(member.role)}</strong> : (
-                        <select className="select" aria-label={t("Role for {email}", { email: member.email })} value={member.role} disabled={teamBusy} onChange={(event) => void runTeamAction("role", { accountId: member.accountId, role: event.target.value })}>
-                          <option value="member">{t("member")}</option><option value="admin">{t("admin")}</option>
-                        </select>
-                      )}
-                      {member.role !== "owner" && (cloudAuth?.workspace?.role === "owner" || (cloudAuth?.workspace?.role === "admin" && member.role === "member")) && (
-                        <button className="btn xs" type="button" aria-label={t("Send password reset to {email}", { email: member.email })} disabled={teamBusy} onClick={() => void runTeamAction("reset-password", { accountId: member.accountId }, t("Password reset email sent to {email}", { email: member.email }))}>{t("Reset password")}</button>
-                      )}
-                    </div>
-                    {member.role === "member" && (cloudAuth?.workspace?.role === "owner" || cloudAuth?.workspace?.role === "admin") && (
-                      <div className="team-grants">
-                        {team.folders.filter((folder) => !folder.archivedAt).map((folder) => {
-                          const permission = member.grants.find((grant) => grant.folderName === folder.name)?.permission ?? "";
-                          return <GrantControl key={folder.name} label={t("{folder} access for {email}", { folder: folder.name, email: member.email })} direct={permission} inherited={folderGrantPermission(team.folders, member.grants, folder.name, false)} busy={teamBusy} onChange={(permission) => void runTeamAction(permission ? "grant" : "remove-grant", { folderName: folder.name, accountId: member.accountId, permission })} />;
-                        })}
-                        <button className="btn xs danger" type="button" aria-label={t("Remove {email}", { email: member.email })} disabled={teamBusy} onClick={() => void runTeamAction("remove-member", { accountId: member.accountId }, t("Removed {email}", { email: member.email }))}>{t("Remove")}</button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-                {(cloudAuth?.workspace?.role === "owner" || cloudAuth?.workspace?.role === "admin") && (
-                  <>
-                    <h3 className="settings-subhead">{t("Invitations")}</h3>
-                    <form className="team-code" onSubmit={(event) => { event.preventDefault(); void inviteTeamMember(); }}>
-                      <input className="input" type="email" aria-label={t("Invite email")} aria-describedby="invite-team-help" placeholder={t("Staff email address")} value={teamEmail} disabled={teamBusy} onChange={(event) => setTeamEmail(event.target.value)} />
-                      {cloudAuth?.workspace?.role === "owner" && <select className="select" aria-label={t("Invitation role")} value={teamRole} disabled={teamBusy} onChange={(event) => setTeamRole(event.target.value as "admin" | "member")}><option value="member">{t("Member")}</option><option value="admin">{t("Admin")}</option></select>}
-                      <button className="btn primary" type="submit" disabled={teamBusy || !teamEmail.trim()}>{t("Send invite")}</button>
-                    </form>
-                    <p className="hint" id="invite-team-help">{t("Invitations go to that exact verified email. New members see no folders until you grant access here.")}</p>
-                    {team?.invitations.filter((invite) => !invite.acceptedAt && !invite.revokedAt).map((invite) => {
-                      const statusCode = invite.expiresAt <= Date.now() ? "expired" : "pending";
-                      const status = t(statusCode === "expired" ? "Expired" : "Pending");
-                      return <div className="settings-row" key={invite.id}>
-                        <span>{invite.email}<small>{invite.role}</small></span>
-                        <span>
-                          <span className={`team-tag ${statusCode}`}>{status}</span>
-                          {(cloudAuth?.workspace?.role === "owner" || invite.role === "member") && <> <button className="btn xs" type="button" aria-label={t("Resend invitation to {email}", { email: invite.email })} disabled={teamBusy} onClick={() => void runTeamAction("resend", { id: invite.id }, t("Invitation resent"))}>{t("Resend")}</button> <button className="btn xs danger" type="button" aria-label={t("Revoke invitation to {email}", { email: invite.email })} disabled={teamBusy} onClick={() => void runTeamAction("revoke", { id: invite.id }, t("Invitation revoked"))}>{t("Revoke")}</button></>}
-                        </span>
-                      </div>;
-                    })}
-                  </>
-                )}
-                {teamErr && <p className="modal-err" role="alert">{t(teamErr)}</p>}
-                <h3 className="settings-subhead">{t("Join another workspace")}</h3>
-                <form className="team-code" onSubmit={(event) => { event.preventDefault(); void acceptInvitation(); }}>
-                  <input className="input" aria-label={t("Invitation code")} placeholder={t("Paste invitation code")} value={invitationCode} onChange={(event) => setInvitationCode(event.target.value)} />
-                  <button className="btn primary" type="submit" disabled={authBusy || !invitationCode.trim()}>{t("Accept")}</button>
-                </form>
-                <p className="hint">{t("Paste the code from your invitation email. It works only for the email you signed in with.")}</p>
-                {authNotice && <p className="hint" role="status">{t(authNotice)}</p>}
-                {authErr && <p className="modal-err" role="alert">{t(authErr)}</p>}
-              </>
-            ) : <p>{t("Local mode has no Cloud workspace.")}</p>}
-            </div>
-          </section>
-          
-            </>
-          )}
-          {settingsTab === "advanced" && (
-            <>
-              <h2 className="sect-title">{t("Updates and diagnostics")}</h2>
-<section className="settings-card update-settings">
-            <header><Icon name="import" className="sm" /><h2>{t("Updates")}</h2></header>
-            <div className="card-body">
-            <div className="settings-row"><span>{t("Installed version")}</span><strong className="mono">{appVersion || desktopUpdate?.currentVersion || "—"}</strong></div>
-            {desktopUpdateResultSummary && (
-              <div
-                className={`update-last-result ${desktopUpdateResultSummary.tone}`}
-                role={desktopUpdateResultSummary.tone === "success" ? "status" : "alert"}
-              >
-                <strong>{t(desktopUpdateResultSummary.title)}</strong>
-                <span>{t(desktopUpdateResultSummary.detail)}</span>
-              </div>
-            )}
-            {desktopUpdate?.state === "upToDate" && <p role="status">{t("AliasMode is up to date.")}</p>}
-            {desktopUpdate?.state === "available" && (
-              <>
-                <p role="status">{t("Version {version} is ready. Active browsers will be saved and closed.", { version: desktopUpdate.version })}</p>
-                <UpdateHighlights version={desktopUpdate.version} highlights={desktopUpdate.highlights} />
-              </>
-            )}
-            {!desktopUpdate && !desktopUpdateChecking && <p>{t("AliasMode checks for updates when it starts.")}</p>}
-            {desktopUpdateProgress && <DesktopUpdateProgressView progress={desktopUpdateProgress} />}
-            {desktopUpdateErr && <div className="modal-err" role="alert">{t(desktopUpdateErr)}</div>}
-            <div className="update-actions">
-              <button className="btn" type="button" disabled={desktopUpdateChecking || desktopUpdateInstalling} onClick={() => void checkDesktopUpdate(true)}>
-                <Icon name="refresh" className="sm" />{desktopUpdateChecking ? t("Checking…") : t("Check for updates")}
-              </button>
-              {desktopUpdate?.state === "available" && (
-                <button className="btn primary" type="button" disabled={desktopUpdateChecking || desktopUpdateInstalling} onClick={() => void installDesktopUpdate()}>
-                  {desktopUpdateInstalling ? t("Updating…") : t("Update now")}
-                </button>
-              )}
-            </div>
-            </div>
-          </section>
-          
-{isCloudMode && (
-            <section className="settings-card diagnostics-section">
-              <header>
-                <Icon name="activity" className="sm" /><h2>{t("Recent diagnostics")}</h2>
-                <button className="btn xs" type="button" disabled={cloudEventsBusy} onClick={() => void loadCloudEvents()}>
-                  {cloudEventsBusy ? t("Loading…") : t("Refresh")}
-                </button>
-              </header>
-              <div className="card-body">
-              {cloudEventsErr && <div className="diagnostics-error" role="alert">{t(cloudEventsErr)}</div>}
-              {!cloudEventsErr && cloudEvents.length === 0 && (
-                <p>{cloudEventsBusy ? t("Loading recent Cloud events…") : t("No Cloud lifecycle events in this run.")}</p>
-              )}
-              {cloudEvents.length > 0 && (
-                <div className="diagnostics-list" role="log" aria-label={t("Recent Cloud diagnostics")}>
-                  {cloudEvents.map((event, index) => (
-                    <div className={`diagnostics-row${cloudDiagnosticFailed(event.type) ? " failed" : ""}`} key={`${event.timestamp}-${index}`}>
-                      <time dateTime={new Date(event.timestamp).toISOString()}>{new Date(event.timestamp).toLocaleTimeString()}</time>
-                      <span>{t(CLOUD_DIAGNOSTIC_LABELS[event.type])}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <p>{t("Diagnostics contain fixed lifecycle labels only. They exclude profile data and credentials.")}</p>
-              </div>
-            </section>
-          )}
-          {/* Logs are not a Cloud feature — a Local install needs them just as
-              much, so this card is the one part of Advanced that always shows. */}
+
+            </>)}
+
+          {settingsTab === "advanced" && (<>
+              <h2 className="sect-title">{t("Diagnostics")}</h2>
+
           <section className="settings-card">
             <header><Icon name="logs" className="sm" /><h2>{t("Logs")}</h2></header>
             <div className="card-body">
@@ -4695,48 +2653,33 @@ function App() {
               {logDir && <p className="cardnote">{t("File")}: {logDir}</p>}
             </div>
           </section>
-          
-            </>
-          )}
+
+            </>)}
           {modeErr && <div className="modal-err" role="alert"><Icon name="alert" className="sm" />{t(modeErr)}</div>}
         </div>
         <footer className="pagefoot">
           <span className="spacer" />
           <button className="btn primary" type="button" onClick={() => setView("profiles")}>{t("Done")}</button>
         </footer>
+      </div>) : null}
       </div>
-      ) : null}
+      <footer className="workspace-footer"><span><Icon name="laptop" className="sm" />{t("Data stays on this device")}</span><span>猫步·千境{appVersion ? ` · ${appVersion}` : ""}</span></footer>
       </div>
 
-      {(logView || logErr) && (
-        <div className="modal-backdrop" onClick={() => { setLogView(null); setLogErr(null); }}>
-          <div className="modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+      {(logView || logErr) && (<div className="modal-backdrop" onClick={() => { setLogView(null); setLogErr(null); }}>
+          <div className="modal" role="dialog" aria-modal="true" aria-label={t("Detailed logs")} onClick={(event) => event.stopPropagation()}>
             <div className="modal-head">{t("Detailed logs")}<button type="button" className="modal-close" aria-label={t("Close")} onClick={() => { setLogView(null); setLogErr(null); }}><Icon name="close" className="sm" /></button></div>
             <div className="modal-body">
               {logErr && <p className="hint">{logErr}</p>}
-              {logView && (
-                <pre className="logpre">
+              {logView && (<pre className="logpre">
                   {logView.file + "\n" + logView.content}
-                </pre>
-              )}
+                </pre>)}
             </div>
             <div className="modal-foot"><button className="btn ghost" type="button" onClick={() => { setLogView(null); setLogErr(null); }}>{t("Close")}</button></div>
           </div>
-        </div>
-      )}
+        </div>)}
 
-      {pendingMode && (
-        <ModeSwitchConfirmation
-          mode={pendingMode}
-          busy={modeBusy}
-          error={modeErr}
-          onConfirm={() => void confirmModeSwitch()}
-          onCancel={() => { if (!modeBusy) setPendingMode(null); }}
-        />
-      )}
-
-      {pendingView && (
-        <div className="modal-backdrop" onClick={() => { if (!pendingView.busy) setPendingView(null); }}>
+      {pendingView && (<div className="modal-backdrop" onClick={() => { if (!pendingView.busy) setPendingView(null); }}>
           <div className="modal" role="dialog" aria-modal="true" aria-labelledby="pending-cookie-title" onClick={(event) => event.stopPropagation()}>
             <div className="modal-head" id="pending-cookie-title">
               <Icon name="cookie" />{t("Cookies at next start")}<span className="mono muted">{pendingView.profile.name}</span>
@@ -4758,18 +2701,10 @@ function App() {
               </button>
             </div>
           </div>
-        </div>
-      )}
+        </div>)}
 
-      {cookieTargets && (
-        <div className="modal-backdrop">
-          <form
-            className="modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="add-cookie-title"
-            onSubmit={(event) => { event.preventDefault(); void submitCookie(); }}
-          >
+      {cookieTargets && (<div className="modal-backdrop">
+          <form className="modal" role="dialog" aria-modal="true" aria-labelledby="add-cookie-title" onSubmit={(event) => { event.preventDefault(); void submitCookie(); }}>
             <div className="modal-head" id="add-cookie-title">
               <Icon name="cookie" />{t("Add cookies")}
               <span className="mono muted">{cookieTargets.length === 1 ? cookieTargets[0]!.name : t("{count} profiles", { count: String(cookieTargets.length) })}</span>
@@ -4817,8 +2752,7 @@ function App() {
               </button>
             </div>
           </form>
-        </div>
-      )}
+        </div>)}
 
       {movingFolder && <div className="modal-backdrop" onClick={() => { if (!folderMoveBusy) setMovingFolder(null); }}>
         <div className="modal mode-confirm" role="dialog" aria-modal="true" aria-labelledby="folder-move-title" onClick={(event) => event.stopPropagation()}>
@@ -4828,37 +2762,18 @@ function App() {
               <option value="">{t("Top level")}</option>
               {tree.filter((folder) => folder.name !== movingFolder && !folder.ancestors.includes(movingFolder)).map((folder) => <option key={folder.name} value={folder.name}>{folder.name}</option>)}
             </select></label>
-            {isCloudMode && <p className="hint">{t("Inherited access follows the new parent folder.")}</p>}
+
             {folderMoveErr && <div className="modal-err" role="alert">{folderMoveErr}</div>}
           </div>
           <div className="modal-foot"><button className="btn ghost" disabled={folderMoveBusy} onClick={() => setMovingFolder(null)}>{t("Cancel")}</button><button className="btn primary" disabled={folderMoveBusy} onClick={() => void commitFolderMove()}>{t("Move")}</button></div>
         </div>
       </div>}
 
-      {accessTarget && isCloudMode && canManageCloudFolders && <div className="modal-backdrop" onClick={() => { if (!teamBusy) setAccessTarget(null); }}>
-        <div className="modal mode-confirm" role="dialog" aria-modal="true" aria-labelledby="manage-access-title" onClick={(event) => event.stopPropagation()}>
-          <div className="modal-head" id="manage-access-title">{t("Manage access")} · {accessTarget.name}</div>
-          <div className="modal-body">
-            <p className="hint">{t("Owners and admins have access to all folders and profiles.")}</p>
-            <p className="hint">{accessTarget.kind === "folder" ? t("Folder access includes all subfolders. The strongest grant applies.") : t("Profile access shares only this profile and follows it when moved.")}</p>
-            {team?.members.filter((member) => member.role === "member").map((member) => {
-              const profile = accessTarget.kind === "profile";
-              const direct = profile ? member.profileGrants?.find((grant) => grant.profileId === accessTarget.id)?.permission ?? ""
-                : member.grants.find((grant) => grant.folderName === accessTarget.id)?.permission ?? "";
-              return <GrantControl key={member.accountId} label={member.email} direct={direct} inherited={folderGrantPermission(team.folders, member.grants, accessTarget.folder, profile)} busy={teamBusy} onChange={(permission) => void runTeamAction(profile ? permission ? "profile-grant" : "remove-profile-grant" : permission ? "grant" : "remove-grant", { ...(profile ? { profileId: accessTarget.id } : { folderName: accessTarget.id }), accountId: member.accountId, permission })} />;
-            })}
-            {team && !team.members.some((member) => member.role === "member") && <p>{t("Invite members in Settings → Team to share access.")}</p>}
-            {teamErr && <div className="modal-err" role="alert">{teamErr}</div>}
-          </div>
-          <div className="modal-foot"><button className="btn" disabled={teamBusy} onClick={() => setAccessTarget(null)}>{t("Close")}</button></div>
-        </div>
-      </div>}
-
       {showCreate && (
         /* Form dialog: a stray backdrop click must not discard typed input —
            close via Cancel, the X, or Escape (the backdrop has no onClick). */
-        <div className="modal-backdrop">
-          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="create-profile-title" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-backdrop profile-editor-backdrop">
+          <div ref={createEditorRef} tabIndex={-1} className="modal profile-editor" role="dialog" aria-modal="true" aria-labelledby="create-profile-title" onClick={(e) => e.stopPropagation()}>
             <div className="modal-head" id="create-profile-title">
               <Icon name="plus" />{t("New profile")}
               <button type="button" className="modal-close" aria-label={t("Close")} onClick={closeCreate}><Icon name="close" className="sm" /></button>
@@ -4870,8 +2785,7 @@ function App() {
                   <span>{t("Name")}</span>
                   <input value={form.name} placeholder={t("auto if blank")} onChange={(e) => setF("name", e.target.value)} />
                 </label>
-                {!isCloudMode && (
-                  <label className="fld no">
+                {(<label className="fld no">
                     <span>{t("Custom NO.")}</span>
                     <input
                       value={form.customNo}
@@ -4880,13 +2794,12 @@ function App() {
                       placeholder="auto"
                       onChange={(e) => setF("customNo", e.target.value.replace(/\D/g, "").slice(0, MAX_CUSTOM_NO))}
                     />
-                  </label>
-                )}
+                  </label>)}
               </div>
               <div className="fld-row">
                 <label className="fld grow">
                   <span>{t("Folder")}</span>
-                  <GroupPicker value={form.group} onChange={(v) => setF("group", v)} groups={editableGroups} allowCreate={!isCloudMode} />
+                  <GroupPicker value={form.group} onChange={(v) => setF("group", v)} groups={existingGroups} allowCreate/>
                 </label>
                 <label className="fld grow">
                   <span>{t("Platform")}</span>
@@ -4895,42 +2808,38 @@ function App() {
               </div>
               <div className="browser-options" role="radiogroup" aria-label={t("Browser")}>
                 {([
-                  {
+                {
                     engine: "chromium", label: "Chrome",
                     path: "M12 0C8.21 0 4.831 1.757 2.632 4.501l3.953 6.848A5.454 5.454 0 0 1 12 6.545h10.691A12 12 0 0 0 12 0zM1.931 5.47A11.943 11.943 0 0 0 0 12c0 6.012 4.42 10.991 10.189 11.864l3.953-6.847a5.45 5.45 0 0 1-6.865-2.29zm13.342 2.166a5.446 5.446 0 0 1 1.45 7.09l.002.001h-.002l-5.344 9.257c.206.01.413.016.621.016 6.627 0 12-5.373 12-12 0-1.54-.29-3.011-.818-4.364zM12 16.364a4.364 4.364 0 1 1 0-8.728 4.364 4.364 0 0 1 0 8.728Z",
-                  },
-                  {
+                },
+                {
                     engine: "firefox", label: "Firefox",
                     path: "M8.824 7.287c.008 0 .004 0 0 0zm-2.8-1.4c.006 0 .003 0 0 0zm16.754 2.161c-.505-1.215-1.53-2.528-2.333-2.943.654 1.283 1.033 2.57 1.177 3.53l.002.02c-1.314-3.278-3.544-4.6-5.366-7.477-.091-.147-.184-.292-.273-.446a3.545 3.545 0 01-.13-.24 2.118 2.118 0 01-.172-.46.03.03 0 00-.027-.03.038.038 0 00-.021 0l-.006.001a.037.037 0 00-.01.005L15.624 0c-2.585 1.515-3.657 4.168-3.932 5.856a6.197 6.197 0 00-2.305.587.297.297 0 00-.147.37c.057.162.24.24.396.17a5.622 5.622 0 012.008-.523l.067-.005a5.847 5.847 0 011.957.222l.095.03a5.816 5.816 0 01.616.228c.08.036.16.073.238.112l.107.055a5.835 5.835 0 01.368.211 5.953 5.953 0 012.034 2.104c-.62-.437-1.733-.868-2.803-.681 4.183 2.09 3.06 9.292-2.737 9.02a5.164 5.164 0 01-1.513-.292 4.42 4.42 0 01-.538-.232c-1.42-.735-2.593-2.121-2.74-3.806 0 0 .537-2 3.845-2 .357 0 1.38-.998 1.398-1.287-.005-.095-2.029-.9-2.817-1.677-.422-.416-.622-.616-.8-.767a3.47 3.47 0 00-.301-.227 5.388 5.388 0 01-.032-2.842c-1.195.544-2.124 1.403-2.8 2.163h-.006c-.46-.584-.428-2.51-.402-2.913-.006-.025-.343.176-.389.206-.406.29-.787.616-1.136.974-.397.403-.76.839-1.085 1.303a9.816 9.816 0 00-1.562 3.52c-.003.013-.11.487-.19 1.073-.013.09-.026.181-.037.272a7.8 7.8 0 00-.069.667l-.002.034-.023.387-.001.06C.386 18.795 5.593 24 12.016 24c5.752 0 10.527-4.176 11.463-9.661.02-.149.035-.298.052-.448.232-1.994-.025-4.09-.753-5.844z",
-                  },
-                ] as const).map(({ engine, label, path }) => {
-                  // The help text names the engine that this computer and this form create.
-                  const runtime = browserLabel(engine, appMode?.legacyRemote ? "" : appMode?.chromiumRuntime ?? form.chromiumRuntime);
-                  return (
-                  <div className="browser-option" key={engine}>
+                },
+            ] as const).map(({ engine, label, path }) => {
+                // The help text names the engine that this computer and this form create.
+                const runtime = browserLabel(engine, appMode?.chromiumRuntime ?? form.chromiumRuntime);
+                return (<div className="browser-option" key={engine}>
                     <label className="browser-card">
                       <input type="radio" name="browser-engine" value={engine} checked={form.engine === engine} onChange={() => setF("engine", engine)} />
                       <svg className="browser-logo" viewBox="0 0 24 24" aria-hidden="true"><path d={path} /></svg>
                       <span>{label}</span>
                     </label>
                     <button type="button" className="browser-info tip" data-tip={runtime} aria-label={`${label}: ${runtime}`}><Icon name="help" className="sm" /></button>
-                  </div>
-                  );
-                })}
+                  </div>);
+            })}
               </div>
-              {form.engine === "chromium" && !appMode?.legacyRemote && !appMode?.chromiumRuntime && (
-                <label className="fld">
+              {form.engine === "chromium" && !appMode?.chromiumRuntime && (<label className="fld">
                   <span>{t("Chrome version")}</span>
                   <select value={form.chromiumRuntime} onChange={(e) => setF("chromiumRuntime", e.target.value as "" | "aliasmode")}>
                     {appMode?.defaultChromiumRuntime
-                      ? <><option value="aliasmode">{t("AliasMode Chromium 155 (default)")}</option><option value="">{t("CloakBrowser 146")}</option></>
-                      : <><option value="">{t("CloakBrowser 146 (default)")}</option><option value="aliasmode">{t("AliasMode Chromium 155")}</option></>}
+                      ? <><option value="aliasmode">{t("Chromium 155 (default)")}</option><option value="">{t("CloakBrowser 146")}</option></>
+                      : <><option value="">{t("CloakBrowser 146 (default)")}</option><option value="aliasmode">{t("Chromium 155")}</option></>}
                   </select>
                   <small>{!form.chromiumRuntime
                     ? t(CLOAKBROWSER_NOTE)
                     : t("Downloads once (about 190 MB) on each computer that opens it.")}</small>
-                </label>
-              )}
+                </label>)}
               <details className="fingerprint-settings" open={createProxyOpen} onToggle={(event) => setCreateProxyOpen(event.currentTarget.open)}>
                 <summary>
                   <span>{t("Proxy")}</span>
@@ -4940,18 +2849,10 @@ function App() {
                   <div className="proxy-paste-row">
                     <label className="fld grow">
                       <span>{t("Paste proxy to autofill")} <span className="muted">{t("(select type first · host:port:username:password)")}</span></span>
-                      <input
-                        type="password"
-                        autoComplete="off"
-                        value={proxyPaste}
-                        placeholder={t("Paste here — credentials stay hidden")}
-                        onChange={(e) => { setProxyPaste(e.target.value); setProxyPasteOk(null); }}
-                        onPaste={(e) => {
+                      <input type="password" autoComplete="off" value={proxyPaste} placeholder={t("Paste here — credentials stay hidden")} onChange={(e) => { setProxyPaste(e.target.value); setProxyPasteOk(null); }} onPaste={(e) => {
                           const pasted = e.clipboardData.getData("text");
                           if (pasted) { e.preventDefault(); applyProxyPaste(pasted); }
-                        }}
-                        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); applyProxyPaste(proxyPaste); } }}
-                      />
+                        }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); applyProxyPaste(proxyPaste); } }}/>
                     </label>
                     <button type="button" className="btn accent" disabled={!proxyPaste.trim()} onClick={() => applyProxyPaste(proxyPaste)}>{t("Autofill")}</button>
                   </div>
@@ -4979,13 +2880,7 @@ function App() {
                     <label className="fld grow"><span>{t("Proxy pass")}</span><input type="password" value={form.pass} onChange={(e) => setF("pass", e.target.value)} /></label>
                   </div>
                   <div className="proxy-check-actions">
-                    <button
-                      type="button"
-                      className="btn proxy-check-btn"
-                      disabled={createProxyCheck.checking || !createHasProxy}
-                      aria-busy={createProxyCheck.checking}
-                      onClick={checkCreateProxy}
-                    >
+                    <button type="button" className="btn proxy-check-btn" disabled={createProxyCheck.checking || !createHasProxy} aria-busy={createProxyCheck.checking} onClick={checkCreateProxy}>
                       <Icon name="activity" className="sm" />
                       {createProxyCheck.checking ? t("Checking…") : t("Check proxy")}
                     </button>
@@ -4993,44 +2888,35 @@ function App() {
                 </div>
               </details>
               <ProxyCheckFeedback hasProxy={createHasProxy} state={createProxyCheck} />
-              <FingerprintSettings engine={form.engine} chromiumRuntime={appMode?.legacyRemote ? "" : appMode?.chromiumRuntime ?? form.chromiumRuntime} screen={form.screen} onScreenChange={(value) => setF("screen", value)} platformOs={form.platformOs} onPlatformOsChange={(value) => setF("platformOs", value)} />
+              <FingerprintSettings engine={form.engine} chromiumRuntime={appMode?.chromiumRuntime ?? form.chromiumRuntime} screen={form.screen} onScreenChange={(value) => setF("screen", value)} platformOs={form.platformOs} onPlatformOsChange={(value) => setF("platformOs", value)}/>
             </div>
             <div className="modal-foot">
               <button className="btn ghost" onClick={closeCreate}>{t("Cancel")}</button>
               <button className="btn primary" disabled={creating} onClick={submitCreate}>{creating ? t("Creating…") : t("Create profile")}</button>
             </div>
           </div>
-        </div>
-      )}
+        </div>)}
 
       {editId && (
         /* Form dialog: a stray backdrop click must not discard typed input —
            close via Cancel, the X, or Escape (the backdrop has no onClick). */
-        <div className="modal-backdrop">
-          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="edit-profile-title" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-backdrop profile-editor-backdrop">
+          <div ref={editEditorRef} tabIndex={-1} className="modal profile-editor" role="dialog" aria-modal="true" aria-labelledby="edit-profile-title" onClick={(e) => e.stopPropagation()}>
             <div className="modal-head" id="edit-profile-title">
               <Icon name="edit" />{t("Edit profile")}<span className="mono muted">{editId}</span>
-              <button type="button" className="modal-close" aria-label="Close" onClick={closeEdit}><Icon name="close" className="sm" /></button>
+              <button type="button" className="modal-close" aria-label={t("Close")} onClick={closeEdit}><Icon name="close" className="sm" /></button>
             </div>
             <div className="modal-body">
               {editErr && <div className="modal-err"><Icon name="alert" className="sm" />{editErr}</div>}
-              {editLoading ? (
-                <p className="hint" role="status">{t("Loading profile…")}</p>
-              ) : (
-                <>
+              {editLoading ? (<p className="hint" role="status">{t("Loading profile…")}</p>) : (<>
                   {editForm.proxyError && <div className="modal-err"><Icon name="alert" className="sm" />Stored proxy quarantined: {editForm.proxyError}. Replace it below or clear the field.</div>}
-                  {(editLive || (!isCloudMode && editRunning)) && (
-                    <p className="hint" role="status">
-                      {editLive
-                        ? t("This browser is open. Changes save to this device now and sync to Cloud when it closes. Proxy and fingerprint changes apply at the next start.")
-                        : t("This browser is open. Changes save now. Proxy and fingerprint changes apply at the next start.")}
-                    </p>
-                  )}
-                  {!isCloudMode && editMobile && (
-                    <div className="persona-warning">
+                  {editRunning && (<p className="hint" role="status">
+                      {t("This browser is open. Changes save now. Proxy and fingerprint changes apply at the next start.")}
+                    </p>)}
+                  {editMobile && (<div className="persona-warning">
                       <strong><Icon name="warning" className="sm" />{t("Imported mobile persona cannot open safely")}</strong>
                       <span>
-                        Older AliasMode opened it as a desktop browser anyway: Android became Windows; iPhone/iPad became macOS. That looked usable, but it was not coherent mobile emulation.
+                        {t("Earlier versions of the app opened it as a desktop browser anyway: Android became Windows; iPhone/iPad became macOS. That looked usable, but it was not coherent mobile emulation.")}
                       </span>
                       <span>
                         Convert it once to {editMobile.platform === "macos" ? "macOS" : "Windows"} desktop. Cookies, login/session, proxy, timezone, credentials and fingerprint seed stay intact
@@ -5039,15 +2925,13 @@ function App() {
                       <button className="btn persona-convert" disabled={editSaving} onClick={convertEditedMobile}>
                         {editSaving ? t("Converting…") : `Convert to ${editMobile.platform === "macos" ? "macOS" : "Windows"} desktop`}
                       </button>
-                    </div>
-                  )}
+                    </div>)}
                   <div className="fld-row">
                     <label className="fld grow">
                       <span>{t("Name")}</span>
                       <input value={editForm.name ?? ""} onChange={(e) => setEF("name", e.target.value)} />
                     </label>
-                    {!isCloudMode && (
-                      <label className="fld no">
+                    {(<label className="fld no">
                         <span>{t("Custom NO.")}</span>
                         <input
                           value={editForm.customNo ?? ""}
@@ -5057,31 +2941,19 @@ function App() {
                           onChange={(e) => setEF("customNo", e.target.value.replace(/\D/g, "").slice(0, MAX_CUSTOM_NO))}
                         />
                         <small>{t("Digits only · blank uses the serial")}</small>
-                      </label>
-                    )}
+                      </label>)}
                   </div>
                   <div className="fld-row">
                     <label className="fld grow">
                       <span>{t("Folder")}</span>
-                      {canEditGroup(profiles.find((profile) => profile.id === editId)?.group ?? "")
-                        ? <GroupPicker value={editForm.group ?? ""} onChange={(v) => setEF("group", v)} groups={editableGroups} allowCreate={!isCloudMode} />
-                        : <input value={editForm.group ?? ""} readOnly />}
+                      <GroupPicker value={editForm.group ?? ""} onChange={(v) => setEF("group", v)} groups={existingGroups} allowCreate/>
                     </label>
                     <label className="fld grow">
                       <span>{t("Platform")}</span>
                       <PlatformPicker value={editForm.platform ?? ""} onChange={(v) => setEF("platform", v)} />
                     </label>
                   </div>
-                  {!outreachOfferDismissed && ["x.com", "linkedin.com", "telegram.org"].includes(editForm.platform ?? "") && (
-                    <div className="outreach-offer hint">
-                      <span>{t("Need outreach campaigns?")}</span>
-                      <a href="https://xreacher.com/?utm_source=aliasmode&utm_medium=app&utm_campaign=outreach&utm_content=profile-editor" target="_blank" rel="noreferrer">{t("Run outreach with Xreacher ↗")}</a>
-                      <button type="button" className="btn xs ghost" aria-label={t("Dismiss Xreacher offer")} onClick={() => {
-                        setOutreachOfferDismissed(true);
-                        writeSetting("aliasmode.offers.xreacherDismissed", "1");
-                      }}><Icon name="close" className="sm" /></button>
-                    </div>
-                  )}
+
                   <label className="fld">
                     <span>{t("Browser")}</span>
                     <input value={editEngine ? browserLabel(editEngine, editChromiumRuntime) : ""} readOnly className="ro" />
@@ -5104,33 +2976,21 @@ function App() {
                       </select>
                     </label>
                     <label className="fld grow">
-                      <span>Proxy</span>
+                      <span>{t("Proxy")}</span>
                       <input value={editForm.proxy ?? ""} placeholder="host:port:username:password" onChange={(e) => setEF("proxy", e.target.value)} />
                       <small>{t("Leave blank to launch on a direct connection.")}</small>
                     </label>
                   </div>
                   <div className="proxy-check-actions">
-                    <button
-                      type="button"
-                      className="btn proxy-check-btn"
-                      disabled={editProxyCheck.checking || timezoneBusy || !editHasProxy}
-                      aria-busy={editProxyCheck.checking}
-                      onClick={checkEditedProxy}
-                    >
+                    <button type="button" className="btn proxy-check-btn" disabled={editProxyCheck.checking || timezoneBusy || !editHasProxy} aria-busy={editProxyCheck.checking} onClick={checkEditedProxy}>
                       <Icon name="activity" className="sm" />
-                      {editProxyCheck.checking ? "Checking…" : t("Check proxy")}
+                      {editProxyCheck.checking ? t("Checking…") : t("Check proxy")}
                     </button>
                   </div>
                   <ProxyCheckFeedback hasProxy={editHasProxy} state={editProxyCheck} />
-                  {!isCloudMode && !appMode?.legacyRemote && (
-                    <>
+                  {(<>
                       <div className="proxy-check-actions">
-                        <button
-                          type="button"
-                          className="btn proxy-check-btn"
-                          disabled={timezoneBusy || editSaving || editProxyChanged || !!editForm.proxyError || editLive}
-                          onClick={refreshEditedTimezone}
-                        >
+                        <button type="button" className="btn proxy-check-btn" disabled={timezoneBusy || editSaving || editProxyChanged || !!editForm.proxyError } onClick={refreshEditedTimezone}>
                           <Icon name="activity" className="sm" />
                           {timezoneBusy ? t("Looking up timezone and language…") : editHasProxy ? t("Set timezone and language from proxy") : t("Use current connection timezone and language")}
                         </button>
@@ -5138,11 +2998,8 @@ function App() {
                       <p className="hint">{editProxyChanged
                         ? t("Save proxy changes before setting the timezone.")
                         : t("This action saves the timezone immediately. It applies the next time this profile opens.")}</p>
-                    </>
-                  )}
-                  {editForm.locale && localeTimezoneMismatch(editForm.locale, editForm.timezone ?? "") && (
-                    <p className="hint">{t("This language does not match the timezone's country. Use “Set timezone and language from proxy” to match them.")}</p>
-                  )}
+                    </>)}
+                  {editForm.locale && localeTimezoneMismatch(editForm.locale, editForm.timezone ?? "") && (<p className="hint">{t("This language does not match the timezone's country. Use “Set timezone and language from proxy” to match them.")}</p>)}
                   <div className="fld-row">
                     <CopyField label={t("Username")} value={editForm.username ?? ""} onChange={(value) => setEF("username", value)} />
                     <CopyField label={t("Password")} value={editForm.password ?? ""} onChange={(value) => setEF("password", value)} />
@@ -5152,16 +3009,14 @@ function App() {
                     <CopyField label={t("Email password")} value={editForm.emailPassword ?? ""} onChange={(value) => setEF("emailPassword", value)} />
                   </div>
                   <CopyField label={t("2FA secret")} value={editForm.twofa ?? ""} onChange={(value) => setEF("twofa", value)} />
-                  {!isCloudMode && editTotp && (
-                    <div className="authrow">
+                  {editTotp && (<div className="authrow">
                       <span className="authlabel">{t("Authenticator")}</span>
                       <span className="authcode">{editTotp.code.slice(0, 3)} {editTotp.code.slice(3)}</span>
                       <span className="authsecs" title={t("seconds until it refreshes")}>{editTotp.secs}s</span>
                       <button className="btn xs" onClick={() => navigator.clipboard?.writeText(editTotp.code)}>
-                        <Icon name="copy" className="sm" />Copy
+                        <Icon name="copy" className="sm" />{t("Copy")}
                       </button>
-                    </div>
-                  )}
+                    </div>)}
                   {editEngine && <FingerprintSettings
                     engine={editEngine} chromiumRuntime={editChromiumRuntime} screen={editForm.resolution ?? ""} onScreenChange={(value) => setEF("resolution", value)}
                     platformOs={editForm.platformOs ?? ""} onPlatformOsChange={editEngine === "chromium" ? (value) => setEF("platformOs", value) : undefined}
@@ -5173,41 +3028,35 @@ function App() {
                     onUndo={() => setEditForm((form) => ({ ...form, ...editInitialFingerprint }))}
                     hardware={editHardware}
                   />}
-                  {editEngine === "chromium" && editExtensionChoices.length > 0 && (
-                    <div className="fld">
+                  {editEngine === "chromium" && editExtensionChoices.length > 0 && (<div className="fld">
                       <span>{t("Extensions")}</span>
                       <div className="extassign">
-                        {editExtensionChoices.map((x) => (
-                          <label key={x.id} className="extchk">
+                        {editExtensionChoices.map((x) => (<label key={x.id} className="extchk">
                             <input type="checkbox" checked={editExts.includes(x.id)} onChange={() => toggleEditExt(x.id)} />
                             <span>{x.name}{x.missing && <span className="muted">{t(" · Not installed on this device")}</span>}</span>
-                          </label>
-                        ))}
+                          </label>))}
                       </div>
-                    </div>
-                  )}
+                    </div>)}
                   <p className="formnote">
                     {t("Cookies and locked fingerprint values are preserved. Only editable fields change.")}
                     {editEngine === "chromium" && t(" Extensions load when the browser opens.")}
                   </p>
-                </>
-              )}
+                </>)}
             </div>
             <div className="modal-foot">
               <button className="btn ghost" onClick={closeEdit}>{t("Cancel")}</button>
               <button className="btn primary" disabled={editSaving || editLoading || timezoneBusy} onClick={saveEdit}>{editSaving ? t("Saving…") : t("Save changes")}</button>
             </div>
           </div>
-        </div>
-      )}
+        </div>)}
 
       {showBulk && (
         /* Form dialog: a stray backdrop click must not discard typed input —
            close via Cancel, the X, or Escape (the backdrop has no onClick). */
         <div className="modal-backdrop">
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal" role="dialog" aria-modal="true" aria-label={t("Import profiles")} onClick={(e) => e.stopPropagation()}>
             <div className="modal-head">
-              <Icon name="fileImport" />Import profiles
+              <Icon name="fileImport" />{t("Import profiles")}
               <button type="button" className="modal-close" aria-label={t("Close")} onClick={closeBulk}><Icon name="close" className="sm" /></button>
             </div>
             <div className="modal-body">
@@ -5220,43 +3069,22 @@ function App() {
               <p className="hint">{t("Encrypted or proprietary profile archives cannot be imported. Use a readable export instead.")}</p>
 
               <div className="segmented" role="tablist" aria-label={t("Import source")}>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={bulkSource === "file"}
-                  className={bulkSource === "file" ? "active" : ""}
-                  onClick={() => { setBulkSource("file"); setBulkText(""); }}
-                >
+                <button type="button" role="tab" aria-selected={bulkSource === "file"} className={bulkSource === "file" ? "active" : ""} onClick={() => { setBulkSource("file"); setBulkText(""); }}>
                   <Icon name="fileImport" className="sm" />{t("From file")}
                 </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={bulkSource === "paste"}
-                  className={bulkSource === "paste" ? "active" : ""}
-                  onClick={() => { setBulkSource("paste"); setBulkFiles([]); }}
-                >
+                <button type="button" role="tab" aria-selected={bulkSource === "paste"} className={bulkSource === "paste" ? "active" : ""} onClick={() => { setBulkSource("paste"); setBulkFiles([]); }}>
                   <Icon name="copy" className="sm" />{t("Paste text")}
                 </button>
               </div>
 
-              {bulkSource === "file" ? (
-                <>
-                  <div
-                    className={`bulkdrop${bulkOver ? " over" : ""}`}
-                    onClick={() => bulkFileRef.current?.click()}
-                    onDragOver={(e) => { e.preventDefault(); if (!bulkOver) setBulkOver(true); }}
-                    onDragLeave={(e) => { e.preventDefault(); setBulkOver(false); }}
-                    onDrop={(e) => { e.preventDefault(); setBulkOver(false); if (e.dataTransfer.files?.length) setBulkFiles(Array.from(e.dataTransfer.files)); }}
-                  >
+              {bulkSource === "file" ? (<>
+                  <div className={`bulkdrop${bulkOver ? " over" : ""}`} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); bulkFileRef.current?.click(); } }} onClick={() => bulkFileRef.current?.click()} onDragOver={(e) => { e.preventDefault(); if (!bulkOver) setBulkOver(true); }} onDragLeave={(e) => { e.preventDefault(); setBulkOver(false); }} onDrop={(e) => { e.preventDefault(); setBulkOver(false); if (e.dataTransfer.files?.length) setBulkFiles(Array.from(e.dataTransfer.files)); }}>
                     <Icon name="fileImport" />
-                    <b>{t("Drag &amp; drop files, or click to choose")}</b>
+                    <b>{t("Drag & drop files, or click to choose")}</b>
                     <div className="sub">{t("Readable TXT, CSV, JSON, or XLSX exports from AdsPower, GoLogin, Multilogin, Dolphin Anty, HideMyAcc, Incogniton, Donut, and similar browsers")}</div>
                   </div>
-                  {bulkFiles.length > 0 && (
-                    <div className="filelist">
-                      {bulkFiles.map((file) => (
-                        <span className="filechip" key={file.name}>
+                  {bulkFiles.length > 0 && (<div className="filelist">
+                      {bulkFiles.map((file) => (<span className="filechip" key={file.name}>
                           <Icon name="file" className="sm" />
                           <span className="fname">{file.name}</span>
                           <button
@@ -5264,14 +3092,10 @@ function App() {
                             aria-label={`Remove ${file.name}`}
                             onClick={() => setBulkFiles((files) => files.filter((candidate) => candidate !== file))}
                           ><Icon name="close" className="sm" /></button>
-                        </span>
-                      ))}
+                        </span>))}
                       <button type="button" className="btn xs ghost" onClick={() => setBulkFiles([])}>{t("Clear all")}</button>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <label className="fld">
+                    </div>)}
+                </>) : (<label className="fld">
                   <span>{t("AdsPower TXT records")}</span>
                   <textarea
                     rows={9}
@@ -5284,22 +3108,14 @@ function App() {
                     : pastedRecordCount === 1
                       ? t("1 record detected — each one starts with its own id= line.")
                       : t("{count} records detected — each one starts with its own id= line.", { count: pastedRecordCount })}</small>
-                </label>
-              )}
+                </label>)}
 
-              <input
-                ref={bulkFileRef}
-                type="file"
-                multiple
-                accept=".csv,.txt,.json,.xlsx,text/plain,text/csv,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                style={{ display: "none" }}
-                onChange={(e) => { if (e.target.files) setBulkFiles(Array.from(e.target.files)); e.target.value = ""; }}
-              />
+              <input ref={bulkFileRef} type="file" multiple accept=".csv,.txt,.json,.xlsx,text/plain,text/csv,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style={{ display: "none" }} onChange={(e) => { if (e.target.files) setBulkFiles(Array.from(e.target.files)); e.target.value = ""; }}/>
 
               <div className="fld-row">
                 <label className="fld grow">
-                  <span>{isCloudMode ? t("Destination folder") : t("Assign to group")}</span>
-                  <GroupPicker value={bulkGroup} onChange={setBulkGroup} groups={isCloudMode ? editableGroups : existingGroups} allowCreate={!isCloudMode} />
+                  <span>{t("Assign to group")}</span>
+                  <GroupPicker value={bulkGroup} onChange={setBulkGroup} groups={existingGroups} allowCreate/>
                 </label>
                 <label className="fld grow">
                   <span>{t("Platform")}</span>
@@ -5312,108 +3128,86 @@ function App() {
                 {t("Anything chosen above overrides that field on every imported record, including provider exports that already carry a group.")}
               </p>
               <p className="formnote">
-                {t("An AliasMode export also carries")} <code>seed</code>{t("(seed)")}、<code>timezone</code>{t("(timezone)")}{t(" and ")}{" "}
+                {t("A profile export also carries")} <code>seed</code>{t("(seed)")}、<code>timezone</code>{t("(timezone)")}{t(" and ")}{" "}
                 <code>platform_os</code>{t("(operating system)")}{t(", which recreate the exact browser fingerprint. Its")}{" "}
                 <code>fp_*</code> {t("columns are a")} <b>{t("record")}</b>{" "}
                 {t("of the fingerprint that was measured, not settings — they are checked after the browser opens, never applied to it.")}
               </p>
             </div>
             <div className="modal-foot">
-              <button className="tlink" onClick={() => downloadText("aliasmode-template.csv", CSV_TEMPLATE, "text/csv")}>
+              <button className="tlink" onClick={() => downloadText("maobu-qianjing-template.csv", CSV_TEMPLATE, "text/csv")}>
                 <Icon name="export" className="sm" />{t("CSV template")}
               </button>
-              <button className="tlink" onClick={() => downloadText("aliasmode-example.txt", TXT_EXAMPLE, "text/plain")}>
+              <button className="tlink" onClick={() => downloadText("maobu-qianjing-example.txt", TXT_EXAMPLE, "text/plain")}>
                 <Icon name="export" className="sm" />{t(".txt example")}
               </button>
               <span className="spacer" />
               <button className="btn ghost" onClick={closeBulk}>{t("Cancel")}</button>
-              <button className="btn primary" disabled={bulkBusy || (!bulkFiles.length && !bulkText.trim()) || (isCloudMode && !bulkGroup)} onClick={submitBulk}>
+              <button className="btn primary" disabled={bulkBusy || (!bulkFiles.length && !bulkText.trim())} onClick={submitBulk}>
                 <Icon name="fileImport" className="sm" />{bulkBusy ? t("Importing…") : t("Import profiles")}
               </button>
             </div>
           </div>
-        </div>
-      )}
+        </div>)}
 
       {showUpdate && (
         /* Form dialog: a stray backdrop click must not discard typed input —
            close via Cancel, the X, or Escape (the backdrop has no onClick). */
         <div className="modal-backdrop">
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal" role="dialog" aria-modal="true" aria-label={t("Update profiles from file")} onClick={(e) => e.stopPropagation()}>
             <div className="modal-head">{t("Update profiles from file")}<button type="button" className="modal-close" aria-label={t("Close")} onClick={() => setShowUpdate(false)}><Icon name="close" className="sm" /></button></div>
             <div className="modal-body">
               {updateErr && <div className="modal-err"><Icon name="alert" className="sm" />{updateErr}</div>}
               {updateResult && <div className="modal-ok"><Icon name="check" className="sm" />{updateResult}</div>}
               <ol className="steps">
-                <li><b>{t("Export")}</b> {t("the profiles you want to change — that gives you a file with each profile's")} — that gives you a file with each profile's <code>id</code> {t("(how rows are matched).")}</li>
+                <li><b>{t("Export")}</b> {t("the profiles you want to change — that gives you a file with each profile's")} <code>id</code> {t("(how rows are matched).")}</li>
                 <li><b>{t("Edit")}</b> {t("the columns you want (name, username, password, 2FA, proxy…). Keep the")} <code>id</code> {t("column; delete any column you don't want to touch.")}</li>
-                {!isCloudMode && <li>{t("Add a")} <code>custom_no</code> {t("column to renumber profiles in bulk — that number shows in the roster and in the launched browser's window title.")}</li>}
-                <li><b>{t("Re-upload")}</b> {t("the edited file below. IDs in the file determine which profiles change, not the current selection. Cookies &amp; fingerprints are preserved — editing a")} <code>cookie</code> or <code>ua</code> {t("column has no effect.")}</li>
-                {isCloudMode && <li>{t("Close profiles before updating. Each Cloud profile saves separately; successful updates remain saved if other profiles fail.")}</li>}
+                {<li>{t("Add a")} <code>custom_no</code> {t("column to renumber profiles in bulk — that number shows in the roster and in the launched browser's window title.")}</li>}
+                <li><b>{t("Re-upload")}</b> {t("the edited file below. IDs in the file determine which profiles change, not the current selection. Cookies & fingerprints are preserved — editing a")} <code>cookie</code> {t("or")} <code>ua</code> {t("column has no effect.")}</li>
+
               </ol>
               <div className="updexport">
-                {selected.size > 0 ? (
-                  <span>
+                {selected.size > 0 ? (<span>
                     {t("Export {count} selected:", { count: selected.size })}&nbsp;
                     <button className="tlink" onClick={() => exportSelected("csv")}><Icon name="export" className="sm" />{t("CSV")}</button>
                     &nbsp;·&nbsp;
                     <button className="tlink" onClick={() => exportSelected("txt")}><Icon name="export" className="sm" />{t(".txt")}</button>
                     &nbsp;·&nbsp;
                     <button className="tlink" onClick={() => exportSelected("xlsx")}><Icon name="export" className="sm" />{t("Excel")}</button>
-                  </span>
-                ) : (
-                  <span className="hint">{t("Tip: select profiles first, then export here to get an editable file.")}</span>
-                )}
+                  </span>) : (<span className="hint">{t("Tip: select profiles first, then export here to get an editable file.")}</span>)}
                 <span className="grow" />
-                <button className="tlink" onClick={() => downloadText("aliasmode-update-template.csv", UPDATE_TEMPLATE_CSV, "text/csv")}><Icon name="export" className="sm" />{t("example sheet")}</button>
+                <button className="tlink" onClick={() => downloadText("maobu-qianjing-update-template.csv", UPDATE_TEMPLATE_CSV, "text/csv")}><Icon name="export" className="sm" />{t("example sheet")}</button>
               </div>
-              <div
-                className={`bulkdrop${updateOver ? " over" : ""}`}
-                onClick={() => updateFileRef.current?.click()}
-                onDragOver={(e) => { e.preventDefault(); if (!updateOver) setUpdateOver(true); }}
-                onDragLeave={(e) => { e.preventDefault(); setUpdateOver(false); }}
-                onDrop={(e) => { e.preventDefault(); setUpdateOver(false); if (e.dataTransfer.files?.[0]) setUpdateFile(e.dataTransfer.files[0]); }}
-              >
+              <div className={`bulkdrop${updateOver ? " over" : ""}`} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); updateFileRef.current?.click(); } }} onClick={() => updateFileRef.current?.click()} onDragOver={(e) => { e.preventDefault(); if (!updateOver) setUpdateOver(true); }} onDragLeave={(e) => { e.preventDefault(); setUpdateOver(false); }} onDrop={(e) => { e.preventDefault(); setUpdateOver(false); if (e.dataTransfer.files?.[0]) setUpdateFile(e.dataTransfer.files[0]); }}>
                 <Icon name="export" />
-                <b>{t("Drag &amp; drop the edited file, or click to choose")}</b>
-                <div className="sub">CSV, <code>.txt</code> or Excel <code>.xlsx</code> with an <code>id</code> column</div>
+                <b>{t("Drag & drop the edited file, or click to choose")}</b>
+                <div className="sub">{t("CSV, TXT, or Excel XLSX files with an id column")}</div>
               </div>
-              <input
-                ref={updateFileRef}
-                type="file"
-                accept=".csv,.txt,.xlsx,text/plain,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                style={{ display: "none" }}
-                onChange={(e) => { if (e.target.files?.[0]) setUpdateFile(e.target.files[0]); e.target.value = ""; }}
-              />
+              <input ref={updateFileRef} type="file" accept=".csv,.txt,.xlsx,text/plain,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style={{ display: "none" }} onChange={(e) => { if (e.target.files?.[0]) setUpdateFile(e.target.files[0]); e.target.value = ""; }}/>
               {updateFile && <div className="bulkfiles"><Icon name="file" className="sm" />{t("Selected:")} <b>{updateFile.name}</b></div>}
             </div>
             <div className="modal-foot">
-              <button className="btn ghost" onClick={() => setShowUpdate(false)}>Close</button>
+              <button className="btn ghost" onClick={() => setShowUpdate(false)}>{t("Close")}</button>
               <button className="btn primary" disabled={updateBusy || !updateFile} onClick={submitUpdate}>{updateBusy ? t("Updating…") : t("Update profiles")}</button>
             </div>
           </div>
-        </div>
-      )}
+        </div>)}
       <ScriptRunPanel
         open={scriptRunOpen}
         selectedProfiles={scriptRunProfiles}
         onClose={() => setScriptRunOpen(false)}
       />
     </div>
-    </ProxyStoreContext.Provider>
-  );
+    </>);
 }
-
 const rootElement = document.getElementById("root")!;
 // The desktop shell opens outside links itself, from its allowlist. Its shell plugin also listens on
-// <body>: it cancels the click and asks for a command that AliasMode does not grant, so the link does
+// <body>: it cancels the click and asks for a command that the app does not grant, so the link does
 // nothing. Stop the click here, so every outside link takes the allowlist path.
 rootElement.addEventListener("click", (event) => {
   if (event.target instanceof Element && event.target.closest('a[target="_blank"]')) event.stopPropagation();
 });
 const root = createRoot(rootElement);
-root.render(
-  <I18nProvider>
-    <App />
-  </I18nProvider>
-);
+root.render(<I18nProvider>
+    <WorkspaceProvider><App /></WorkspaceProvider>
+  </I18nProvider>);

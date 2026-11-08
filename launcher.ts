@@ -65,11 +65,12 @@ import {
   type FirefoxFontPack,
 } from "./firefox-fonts.ts";
 import { renameWhenUnlocked, windowsSystemTool } from "./browser-install.ts";
+import { FIREFOX_RUNTIME_BUILDS } from "./firefox-install.ts";
+import { ensureManagedFirefox } from "./firefox-managed.ts";
 import {
   ALIASMODE_CHROMIUM_EXECUTABLE_SHA256,
   ALIASMODE_CHROMIUM_HOST_SCALE,
   ALIASMODE_CHROMIUM_WEBRTC_IP,
-  ALIASMODE_CHROMIUM_KEEP_ALIVE,
   ALIASMODE_CHROMIUM_WINDOW_LABEL,
   chromiumComponentsDir,
   chromiumDeviceScale,
@@ -102,7 +103,6 @@ function needsProxyRelay(profile: Profile): boolean {
 
 const SEARCH_PROVIDER_BOOTSTRAP_REVISION = 2;
 const SEARCH_PROVIDER_BOOTSTRAP_MARKER = `.aliasmode-search-bootstrap-v${SEARCH_PROVIDER_BOOTSTRAP_REVISION}`;
-const CLOUD_SESSION_AUTHORITY_MARKER = ".aliasmode-cloud-session-authority-v1";
 const UNGOOGLED_FIRST_RUN_URL = "chrome://ungoogled-first-run/";
 const NATIVE_SESSION_ARTIFACTS = [
   "Default/Sessions",
@@ -254,29 +254,30 @@ export type BrowserLaunchFailure =
   | "cdp_readiness";
 
 const PREFLIGHT_GUIDANCE = {
-  chromium_setup: "Chrome runtime approval is missing or invalid. Run bun cli.ts setup, then restart AliasMode.",
-  firefox_setup: "Firefox runtime approval is missing or invalid. Run bun cli.ts setup, then restart AliasMode.",
+  chromium_setup: "Chrome runtime approval is missing or invalid. Run bun cli.ts setup, then restart 猫步·千境.",
+  firefox_setup: "Firefox runtime approval is missing or invalid. Run bun cli.ts setup, then restart 猫步·千境.",
   proxy_invalid: "Saved proxy settings are invalid. Edit or clear this profile's proxy.",
   proxy_https_auth: "Authenticated HTTPS proxies are unsupported. Use HTTP or SOCKS5.",
   persona_mobile: "This profile has a mobile user agent. Use a desktop browser profile.",
   persona_unsupported: "This profile's user agent has no recognized desktop platform. Check its saved browser identity.",
-  firefox_configuration: "The saved Firefox configuration is missing or incompatible with this runtime. Use a matching AliasMode runtime and profile export.",
+  firefox_configuration: "The saved Firefox configuration is missing or incompatible with this runtime. Use a matching 猫步·千境 runtime and profile export.",
   firefox_extensions: "This Firefox profile contains Chrome extensions. Remove them before opening it.",
   firefox_host: "Firefox requires macOS, Linux x64, or Windows x64.",
   firefox_arguments: "Firefox profiles cannot use Chromium launch arguments.",
   firefox_fonts_download: "The fonts for this profile's operating system could not be downloaded. Check your internet connection, then open the profile again.",
+  firefox_download: "Firefox could not be downloaded or verified. Check your internet connection, then open the profile again.",
   cloakbrowser_download: "CloakBrowser could not be downloaded. Check your internet connection, then open the profile again.",
-  chromium155_host: "AliasMode Chromium requires Windows x64, Apple Silicon macOS, or Linux x64.",
-  chromium155_macos_on_windows: "AliasMode Chromium cannot open a macOS profile on Windows. Open it on a Mac, or set its operating system to Windows.",
-  chromium_sandbox: "This Linux computer blocks the Chrome sandbox. Run the AliasMode install command again. It asks for your password once to allow Chrome.",
-  chromium155_download: "AliasMode Chromium could not be downloaded. Check your internet connection, then open the profile again.",
+  chromium155_host: "Chromium requires Windows x64, Apple Silicon macOS, or Linux x64.",
+  chromium155_macos_on_windows: "Chromium cannot open a macOS profile on Windows. Open it on a Mac, or set its operating system to Windows.",
+  chromium_sandbox: "This Linux computer blocks the Chrome sandbox. Run the 猫步·千境 install command again. It asks for your password once to allow Chrome.",
+  chromium155_download: "Chromium could not be downloaded. Check your internet connection, then open the profile again.",
   stored_identity: "The saved browser launch does not match this profile's current identity. Close the existing browser, then reopen the profile.",
   profile_missing: "This profile is not on this computer. Refresh the profile list, then open it again.",
   profile_changed: "This profile's settings changed while it was opening. Open it again.",
-  browser_unresponsive: "This profile's browser is still running but does not answer. Close the profile in AliasMode, then open it again.",
+  browser_unresponsive: "This profile's browser is still running but does not answer. Close the profile in 猫步·千境, then open it again.",
   firefox_unresponsive: "The Firefox browser stopped answering while the profile was opening. Open the profile again.",
-  unexpected: "AliasMode could not open this profile because of an unexpected error. The app log names it in the line \"rejected before launch\".",
-  cookie_key_unreadable: "AliasMode did not open this profile. This Windows account cannot read its saved cookies " +
+  unexpected: "猫步·千境 could not open this profile because of an unexpected error. The app log names it in the line \"rejected before launch\".",
+  cookie_key_unreadable: "猫步·千境 did not open this profile. This Windows account cannot read its saved cookies " +
     "(they were saved on another computer or Windows account, or before a Windows password reset), and opening it would delete them. " +
     "A copy is in the cookie-backups folder inside the profile's folder. Open the profile on the computer and Windows account that saved it, " +
     "or delete the Local State file in the profile's folder to open it here and log in again.",
@@ -528,6 +529,9 @@ export interface LauncherOptions {
   expectedBinarySha256?: string;
   firefoxBinaryPath?: string;
   expectedFirefoxBinarySha256?: string;
+  /** Windows local bundles download Firefox on the first explicit open. */
+  manageFirefox?: boolean;
+  ensureDownloadedFirefox?: (root: string) => Promise<string>;
   /** Install root for the downloaded Chromium 155 beta. Defaults beside dataRoot. */
   chromiumRuntimeRoot?: string;
   /** Injectable Chromium 155 installer for tests. Returns chrome.exe. */
@@ -569,7 +573,7 @@ export interface LauncherOptions {
   /** Sets the cookies added while the profile was closed. Defaults to Playwright's addCookies. */
   setCookies?: CookieSetter;
   /**
-   * Adds the session cookies of Firefox's own last session. Cloud mode turns ensureCookies off;
+   * Adds the session cookies of Firefox's own last session. Explicit restore callers can turn ensureCookies off;
    * this stays on, because this device's session is kept only when its cookies came back.
    */
   addNativeSessionCookies?: CookieEnsurer;
@@ -652,13 +656,6 @@ export interface LauncherOptions {
   applySession?: typeof applySessionToEndpoint;
   /** Budget for the graceful close above before falling through to the force-kill. */
   gracefulStopMs?: number;
-  /**
-   * When true, reset the volatile per-profile stores (Local Storage / IndexedDB / …) after detecting
-   * an UNCLEAN exit, so a store a crash left corrupt can't wedge the next launch with Chromium's
-   * "Something went wrong opening your profile" dialog. Safe ONLY when the login is re-injected from
-   * elsewhere (remote/hub mode) — off by default so standalone mode never discards local session state.
-   */
-  resetStorageOnUncleanExit?: boolean;
   /** Poll budget for the CDP /json/version endpoint after spawn. */
   cdpReadyTimeoutMs?: number;
   log?: (msg: string) => void;
@@ -670,17 +667,12 @@ export interface BrowserOpenOptions {
 
 export interface LaunchStartOptions extends BrowserOpenOptions {
   autoNavigate?: boolean;
-  /** Cloud/remote coordinators own their session restore instead. */
+  /** Set false only when the caller supplies local session state itself. */
   restoreLocalSession?: boolean;
   /** Use Chromium's on-disk last session. Defaults on for Local launches. */
   restoreLastSession?: boolean;
-  resetStorage?: boolean;
   /** Override the launcher's default mode for this launch generation. */
   headless?: boolean;
-  /** Hub session version the browser is being opened from; persisted for safe survivor reattach. */
-  sessionBaseVersion?: number;
-  /** Keep the browser running after its last window closes, so the Cloud coordinator can save and stop it. */
-  keepAliveWithoutWindows?: boolean;
 }
 
 export interface LaunchStartResult {
@@ -829,7 +821,7 @@ export function readSnapshotChildBounded(
  * Rebuildable caches safe to remove automatically after a browser has fully
  * stopped. The whole Service Worker tree goes: CacheStorage has no Chromium
  * size cap and X.com's SW asset cache reached ~75 MB per profile (166 GB across
- * 2267 Cloud profiles on one operator machine). Registrations, ScriptCache and
+ * thousands of profiles on one machine). Registrations, ScriptCache and
  * CacheStorage are removed together so the SW database never points at cache
  * names that no longer exist. Sites re-register on the next page load; cookies,
  * Local Storage and IndexedDB carry the login and are untouched.
@@ -878,27 +870,6 @@ const FIREFOX_SITE_CACHE_DIRS = ["cache2"];
 /** Firefox rebuilds its own startupCache (browser code, never site data) at every start without it. */
 const FIREFOX_POST_STOP_CACHE_DIRS = ["shader-cache"];
 
-/**
- * Volatile per-profile stores that commonly get left half-written by an UNCLEAN kill (all leveldb-
- * backed), after which Chromium pops "Something went wrong opening your profile. Some features may be
- * unavailable." on the next launch. In remote/hub mode the session is re-injected over CDP on open, so
- * these are disposable — clearStaleProfileState resets them after an unclean exit so Chromium
- * regenerates them clean and writeSession repopulates the login. Local Storage is included because it
- * holds Telegram's login, which writeSession re-injects from the hub bundle right after launch. Never
- * includes Local State (the cookie-encryption key), Preferences, or fingerprint state.
- */
-const RESETTABLE_SESSION_STORES = [
-  "Default/Local Storage",
-  "Default/Session Storage",
-  "Default/IndexedDB",
-  "Default/Service Worker",
-  "Default/Sessions",
-  "Default/Current Session",
-  "Default/Current Tabs",
-  "Default/Last Session",
-  "Default/Last Tabs",
-];
-
 export class Launcher {
   private store: ProfileStore;
   private autofill?: AutofillBridge;
@@ -908,6 +879,8 @@ export class Launcher {
   private binaryPath: string;
   private expectedBinarySha256: string;
   private firefoxBinaryPath: string;
+  private manageFirefox: boolean;
+  private ensureDownloadedFirefoxFn: (root: string) => Promise<string>;
   private expectedFirefoxBinarySha256: string;
   private chromiumRuntimeRoot: string;
   private ensureAliasmodeChromiumFn: (root: string) => Promise<string>;
@@ -969,7 +942,6 @@ export class Launcher {
   private browserCloseFn: (ws: string, timeoutMs: number) => Promise<boolean>;
   private gracefulStopMs: number;
   private cdpReadyTimeoutMs: number;
-  private resetStorageOnUncleanExit: boolean;
   private log: (msg: string) => void;
 
   /** Live process handles keyed by profileId, for authoritative in-process kills. */
@@ -1024,8 +996,15 @@ export class Launcher {
       ?? process.env.CLOAKBROWSER_BINARY_SHA256
       ?? ""
     ).trim().toLowerCase();
+    this.manageFirefox = opts.manageFirefox ?? process.env.MAOBU_MANAGED_FIREFOX === "1";
     this.firefoxBinaryPath = opts.firefoxBinaryPath ?? process.env.ALIASMODE_FIREFOX_BINARY_PATH ?? "";
-    this.expectedFirefoxBinarySha256 = (opts.expectedFirefoxBinarySha256 ?? process.env.ALIASMODE_FIREFOX_BINARY_SHA256 ?? "").trim().toLowerCase();
+    const firefoxHost = opts.hostPlatform ?? process.platform;
+    const firefoxArch = opts.hostArch ?? process.arch;
+    const managedFirefoxHash = this.manageFirefox
+      ? FIREFOX_RUNTIME_BUILDS.find((build) => build.platform === firefoxHost && build.arch === firefoxArch)?.executableSha256 ?? ""
+      : "";
+    this.expectedFirefoxBinarySha256 = ((opts.expectedFirefoxBinarySha256 ?? process.env.ALIASMODE_FIREFOX_BINARY_SHA256 ?? "") || managedFirefoxHash).trim().toLowerCase();
+    this.ensureDownloadedFirefoxFn = opts.ensureDownloadedFirefox ?? ((root) => ensureManagedFirefox(root, firefoxHost, firefoxArch));
     this.firefoxRuntime = opts.firefoxRuntime ?? {
       reserve: reserveFirefoxOwner, start: startFirefoxOwner, call: callFirefoxOwner, close: closeFirefoxOwner,
     };
@@ -1094,7 +1073,6 @@ export class Launcher {
     this.browserCloseFn = opts.browserClose ?? defaultBrowserClose;
     this.gracefulStopMs = opts.gracefulStopMs ?? 4000;
     this.cdpReadyTimeoutMs = opts.cdpReadyTimeoutMs ?? DEFAULT_CDP_READY_TIMEOUT_MS;
-    this.resetStorageOnUncleanExit = opts.resetStorageOnUncleanExit ?? false;
     this.log = opts.log ?? ((m) => console.log(`[aliasmode] ${m}`));
   }
 
@@ -1190,7 +1168,7 @@ export class Launcher {
       this.prefetchRuntime("CloakBrowser", this.ensureDownloadedCloakBrowserFn);
     }
     if (chromium.some((profile) => profile.chromiumRuntime) && supportsChromium155Host(this.hostPlatform, this.hostArch)) {
-      this.prefetchRuntime("AliasMode Chromium", this.ensureAliasmodeChromiumFn, (executable) => this.shareStoppedProfilesComponents(executable));
+      this.prefetchRuntime("Chromium", this.ensureAliasmodeChromiumFn, (executable) => this.shareStoppedProfilesComponents(executable));
     }
   }
 
@@ -1251,11 +1229,19 @@ export class Launcher {
   private async verifyConfiguredBinary(forceHash = false, engine: BinaryKind = "chromium"): Promise<{ path: string; sha256: string }> {
     const expected = this.approvedBinarySha256(engine);
     let binaryPath = engine === "firefox" ? this.firefoxBinaryPath : this.binaryPath;
-    if (engine === "aliasmode") {
+    if (engine === "firefox" && !binaryPath && this.manageFirefox) {
+      try {
+        binaryPath = await this.ensureDownloadedFirefoxFn(this.chromiumRuntimeRoot);
+        this.firefoxBinaryPath = binaryPath;
+      } catch (error) {
+        this.log(`Firefox install failed: ${error instanceof Error ? error.message : String(error)}`);
+        throw new BrowserLaunchError("preflight", "firefox_download");
+      }
+    } else if (engine === "aliasmode") {
       try {
         binaryPath = await this.ensureAliasmodeChromiumFn(this.chromiumRuntimeRoot);
       } catch (error) {
-        this.log(`AliasMode Chromium install failed: ${error instanceof Error ? error.message : String(error)}`);
+        this.log(`Chromium install failed: ${error instanceof Error ? error.message : String(error)}`);
         throw new BrowserLaunchError("preflight", "chromium155_download");
       }
     } else if (engine === "chromium" && this.downloadsCloakBrowser()) {
@@ -1441,7 +1427,6 @@ export class Launcher {
     headless = this.headless,
     restoreLastSession = false,
     webRtcIp?: string,
-    keepAlive = false,
   ): string[] {
     const { chromeArgs } = splitLaunchUrls(launchArgs);
     const forwardedArgs = validateForwardedLaunchArgs(chromeArgs);
@@ -1473,7 +1458,7 @@ export class Launcher {
       `--disable-background-mode`,
       `--disable-renderer-backgrounding`,
       // Cap the per-profile HTTP disk cache. Chromium otherwise sizes it from free disk,
-      // and across thousands of Cloud profiles that reached 166 GB on one operator's
+      // and across thousands of profiles that reached 166 GB on one operator's
       // machine. Cookies/site data are separate stores; this only trims asset caching.
       `--disk-cache-size=${20 * 1024 * 1024}`,
       ...deriveFingerprintFlags(screen),
@@ -1513,11 +1498,6 @@ export class Launcher {
     // Headful matches AdsPower (real windows) and avoids the headless signal.
     if (headless) args.push("--headless=new");
     if (restoreLastSession) args.push("--restore-last-session");
-    // Only AliasMode's own builds keep running after the last window closes with a usable browser
-    // context. On macOS the process stays without it, but reading cookies then fails.
-    if (keepAlive && profile.chromiumRuntime && ALIASMODE_CHROMIUM_KEEP_ALIVE) {
-      args.push("--aliasmode-keep-alive");
-    }
     // Relayed proxies use a loopback HTTP endpoint. Everything else uses the
     // upstream proxy flag directly.
     if (relayPort) args.push(`--proxy-server=http://127.0.0.1:${relayPort}`);
@@ -1555,7 +1535,7 @@ export class Launcher {
     // it crashes even when this long-running manager remains alive. Keep base
     // args before caller-supplied ephemeral args as the general override order.
     // Chromium 155 binds a Google login to the computer's TPM chip (Device Bound Session Credentials).
-    // Its cookies then cannot renew on another device or after the Cloud copy replaces them, and Google
+    // Its cookies then cannot renew on another device or after an imported session replaces them, and Google
     // signs the account out. CloakBrowser 146 ships with this binding off. Chromium reads only the last
     // --disable-features, so a forwarded one joins this list.
     const disableFeatures = "--disable-features=";
@@ -1799,6 +1779,7 @@ export class Launcher {
     launchArgs: string[] = [],
     opts: LaunchStartOptions = {},
   ): Promise<LaunchStartResult> {
+    this.workspaceMaintenanceGuard?.();
     const stopping = this.stopsInFlight.get(profileId);
     const inFlight = this.startsInFlight.get(profileId);
     const requestedHeadless = opts.headless ?? this.headless;
@@ -1983,16 +1964,6 @@ export class Launcher {
             existing = { ...existing, ws: currentWs };
             this.store.recordLaunch(existing);
           }
-          // Remote restore uses a sentinel base to mark this survivor
-          // provisional. Persist it before any later await or successful return
-          // so a manager crash cannot leave an old lineage looking current.
-          if (
-            opts.sessionBaseVersion !== undefined
-            && existing.sessionBaseVersion !== opts.sessionBaseVersion
-          ) {
-            existing = { ...existing, sessionBaseVersion: opts.sessionBaseVersion };
-            this.store.recordLaunch(existing);
-          }
           // A browser surviving a manager restart lost its in-memory relay;
           // rebind it on the recorded port so the running browser's
           // --proxy-server keeps working. The browser was verified at its
@@ -2127,7 +2098,7 @@ export class Launcher {
     if (existingUserDataDir) await this.reapForeignProfileDirHolders(profileId, userDataDir);
 
     // Windows Chromium deletes every cookie it cannot decrypt and writes a new key. A Local
-    // profile has no other copy of them, so keep a copy and stop. Cloud opens and a pending session
+    // profile has no other copy of them, so keep a copy and stop. Explicit restore calls and a pending session
     // bundle restore their own copy.
     if (this.hostPlatform === "win32" && opts.restoreLocalSession !== false && !pendingSession
       && existsSync(join(userDataDir, "Default", "Network", "Cookies")) && !await this.nativeSessionReadable(profileId)) {
@@ -2157,10 +2128,7 @@ export class Launcher {
     // a hung reconnect comes up WEDGED every launch, so every reconnect on it hangs — which then
     // force-kills it again: a self-perpetuating loop. Only runs on the fresh-launch path, where
     // aliasmode has already established no live browser holds this profile, so these ARE leftovers.
-    // resetStorage gates the crash-corruption storage reset for THIS launch (default true for direct
-    // callers; remote mode passes false when the bundle it's about to inject can't restore the login —
-    // e.g. a first-migration Telegram open with no hub session — so we never wipe the only local auth).
-    await this.clearStaleProfileState(profileId, opts.resetStorage ?? true);
+    await this.clearStaleProfileState(profileId);
 
     // Only existence is inspected. Chromium owns the opaque session bytes. Check
     // after stale-state cleanup because remote recovery can delete those files.
@@ -2219,7 +2187,7 @@ export class Launcher {
         profile = this.requireUnchangedProfile(profileId, profileSnapshot, "proxy relay startup");
       }
       const args = this.buildArgs(
-        profile, port, userDataDir, chromeArgs, relayPort, headless, restoreLastSession, webRtcIp, opts.keepAliveWithoutWindows,
+        profile, port, userDataDir, chromeArgs, relayPort, headless, restoreLastSession, webRtcIp,
       );
       this.log(`launching ${profileId} on port ${port} (seed ${profile.fingerprintSeed})`);
       launchStartedAt = Date.now();
@@ -2254,7 +2222,7 @@ export class Launcher {
         ws: "",
         startedAt: launchStartedAt,
         relayPort,
-        sessionBaseVersion: opts.sessionBaseVersion,
+
         binaryPath: spawnVerifiedBinary.path,
         userDataDir,
         binarySha256: spawnVerifiedBinary.sha256,
@@ -2322,12 +2290,12 @@ export class Launcher {
         profile = this.store.getProfile(profileId)!;
         profileSnapshot = JSON.stringify(profile);
         // The browser already shows these cores, so the launch is recorded with them; otherwise
-        // the next identity check (Cloud's session restore, a reattach) reads it as a changed persona.
+        // the next identity check (a session restore or reattach) reads it as a changed persona.
         persona = launchPersona(profile);
         personaDigest = this.launchPersonaDigest(profile, verifiedBinary.sha256, headless);
       }
 
-      // Only a caller that navigates by itself (Cloud) and the Windows session launch use a late
+      // Only a caller that navigates by itself and the Windows session launch use a late
       // restored page; a Local open reads the targets once instead of waiting up to 3 s for one.
       const startupTargets = restoreLastSession || SESSION_LAUNCH
         ? await this.startupPageTargets(
@@ -2495,7 +2463,7 @@ export class Launcher {
         ws,
         startedAt: launchStartedAt,
         relayPort,
-        sessionBaseVersion: opts.sessionBaseVersion,
+
         binaryPath: launchBinaryPath,
         userDataDir,
         binarySha256: verifiedBinary.sha256,
@@ -2530,7 +2498,7 @@ export class Launcher {
           ws: "",
           startedAt: launchStartedAt,
           relayPort,
-          sessionBaseVersion: opts.sessionBaseVersion,
+
           binaryPath: launchBinaryPath,
           userDataDir,
           binarySha256: verifiedBinary.sha256,
@@ -2617,7 +2585,10 @@ export class Launcher {
     const webRtcIp = this.webRtcExitIp(profile, exit);
     let binary: { path: string; sha256: string };
     try { binary = await this.verifyConfiguredBinary(true, "firefox"); }
-    catch { throw new BrowserLaunchError("binary_verification"); }
+    catch (error) {
+      if (error instanceof BrowserLaunchError) throw error;
+      throw new BrowserLaunchError("binary_verification");
+    }
     await this.cacheClears.get(profileId);
     // A profile of another OS never opens without that OS's fonts: it would show this
     // computer's font list. The first open waits for the download when no prefetch did it.
@@ -2637,7 +2608,7 @@ export class Launcher {
       binaryPath: binary.path, binarySha256: binary.sha256, userDataDir, headless,
       personaDigest: this.launchPersonaDigest(profile, binary.sha256, headless),
       persona: launchPersona(profile),
-      sessionBaseVersion: opts.sessionBaseVersion,
+
     };
     if (existsSync(userDataDir)) {
       const processes = await this.firefoxProcesses(launch);
@@ -2699,7 +2670,7 @@ export class Launcher {
           ...firefoxStartupPrefs(profile, this.hostPlatform, this.hostArch),
           ...(fontsDir ? firefoxFontPackPrefs(fontsDir, this.hostPlatform) : {}),
           // Firefox outlives its last window on macOS anyway; elsewhere the engine keeps running for this pref.
-          ...(opts.keepAliveWithoutWindows && this.hostPlatform !== "darwin" ? { "aliasmode.keepAliveWithoutWindows": true } : {}),
+
         },
         sessionGeneration: `${launch.debugPort}:${launch.startedAt}`,
         timeoutMs: this.cdpReadyTimeoutMs,
@@ -2747,7 +2718,7 @@ export class Launcher {
       // Before any saved page loads, so the pages open logged in.
       if (sessionCookies.length) {
         await this.addNativeSessionCookiesFn(launch.ws, sessionCookies).catch(() => {
-          // A Cloud open then writes its copy instead of keeping a session without these cookies.
+          // An explicit session restore replaces the imported state.
           nativeSessionLoaded = false;
           this.log(`${profileId}: session cookies from the last Firefox session could not be restored`);
         });
@@ -3076,18 +3047,6 @@ export class Launcher {
     );
   }
 
-  /** Whether this profile's native state belongs to the supplied Cloud session. */
-  public matchesCloudSession(profileId: string, signature: string): boolean {
-    const base = this.containedUserDataDir(profileId, "matchesCloudSession");
-    if (!base) return false;
-    try {
-      const marker = readFileSync(join(base, CLOUD_SESSION_AUTHORITY_MARKER), "utf8");
-      return /^[a-f0-9]{64}$/.test(marker) && marker === signature;
-    } catch {
-      return false;
-    }
-  }
-
   /**
    * False only when Windows proves this account cannot decrypt the profile's
    * cookie key (written under another Windows account), so its native session
@@ -3104,38 +3063,6 @@ export class Launcher {
     if (readable === undefined) return true;
     this.cookieKeyReadable.set(key, readable);
     return readable;
-  }
-
-  /** Record the Cloud session authorized to reuse this profile's native state. */
-  public recordCloudSession(profileId: string, signature: string | null): void {
-    const base = this.containedUserDataDir(profileId, "recordCloudSession");
-    if (!base) throw new Error(`cannot record Cloud session for unsafe profile id ${JSON.stringify(profileId)}`);
-    const marker = join(base, CLOUD_SESSION_AUTHORITY_MARKER);
-    if (signature === null) {
-      try {
-        rmSync(marker, { force: true });
-      } catch (error) {
-        throw new Error(`cannot invalidate Cloud session for ${profileId}: ${error instanceof Error ? error.message : error}`);
-      }
-      return;
-    }
-    if (!/^[a-f0-9]{64}$/.test(signature)) throw new Error(`invalid Cloud session signature for ${profileId}`);
-
-    const temporary = `${marker}.${process.pid}.${randomUUID()}.tmp`;
-    try {
-      mkdirSync(base, { recursive: true });
-      writeFileSync(temporary, signature, { flag: "wx" });
-      renameSync(temporary, marker);
-    } catch (error) {
-      try { rmSync(temporary, { force: true }); } catch {}
-      try {
-        rmSync(marker, { force: true });
-      } catch (invalidationError) {
-        throw new Error(`cannot invalidate Cloud session for ${profileId}: ${invalidationError instanceof Error ? invalidationError.message : invalidationError}`);
-      }
-      this.log(`Cloud session marker failed for ${profileId}; invalidated it instead: ${error instanceof Error ? error.message : error}`);
-      return;
-    }
   }
 
   private writeSearchBootstrapMarker(profileId: string, userDataDir: string): boolean {
@@ -3443,7 +3370,7 @@ export class Launcher {
    * Recreate a restart-survivor's proxy relay only after the
    * caller has established lifecycle ownership and checked its durable persona.
    * reconcileOrphans deliberately never calls this: merely discovering a live
-   * process must not restore its account network before hub claim/certification.
+   * process must not restore its account network before local ownership certification.
    */
   /** True when this call reattached the relay. */
   private async ensureSurvivorRelay(stored: Profile, launch: LaunchInfo): Promise<boolean> {
@@ -3679,7 +3606,12 @@ export class Launcher {
     ];
   }
 
-  /** Start a proxy exit lookup early (Cloud does while its open request runs); start() reuses it. */
+  private workspaceMaintenanceGuard: (() => void) | null = null;
+
+  /** Also protects launches submitted over an already-connected agent socket. */
+  setWorkspaceMaintenanceGuard(guard: (() => void) | null): void { this.workspaceMaintenanceGuard = guard; }
+
+  /** Start a proxy exit lookup early; start() reuses it. */
   prefetchProxyExit(proxy: ProxySpec): void {
     void this.lookupExitLocationFn?.(proxy).catch(() => null);
   }
@@ -3705,7 +3637,7 @@ export class Launcher {
       || this.store.getLaunch(profileId) !== null;
   }
 
-  /** Native-close URLs; Cloud capture accepts only the exact launch generation. */
+  /** Native-close URLs are bound to the exact launch generation. */
   closedFirefoxTabs(profileId: string, launch?: { debugPort: number | null; startedAt: number | null }): string[] | undefined {
     if (this.store.getProfile(profileId)?.engine !== "firefox") return undefined;
     try {
@@ -3863,7 +3795,7 @@ export class Launcher {
       throw new Error(`cannot verify survivor ${profileId}: launch generation changed during relay restoration`);
     }
     this.markIdentityCertified(profileId);
-    // Cloud checks a running profile before each checkpoint; only a real restoration is news.
+    // Repeated running-profile checks log only an actual relay restoration.
     if (reattached || !wasCertified) this.log(`survivor identity verified for ${profileId}: host persona + relay restored`);
     void this.watchSurvivorWindow(profileId);
   }
@@ -4303,13 +4235,9 @@ export class Launcher {
    * confirming no in-proc handle and a dead recorded CDP port, so anything below is leftover, not
    * in use. Best-effort throughout: a locked/unreadable file must never block a launch.
    */
-  private async clearStaleProfileState(profileId: string, resetStorageSafe = true): Promise<void> {
+  private async clearStaleProfileState(profileId: string): Promise<void> {
     const base = this.containedUserDataDir(profileId, "clearStaleProfileState");
     if (!base) return;
-
-    // Track whether the last run ended UNCLEANLY. Either signal below implies a crash/force-kill, which
-    // is also exactly when the volatile leveldb stores get left corrupt (see step 3).
-    let uncleanExit = false;
 
     // 1) Stale process-singleton files (profile root). A clean shutdown removes these; a
     // force-kill leaves them, and the next Chrome then stalls trying to reach the dead singleton
@@ -4321,7 +4249,7 @@ export class Launcher {
         const file = join(base, rel);
         if (existsSync(file)) {
           rmSync(file, { force: true });
-          uncleanExit = true;
+
           this.log(`cleared stale ${rel} for ${profileId}`);
         }
       } catch (error) {
@@ -4344,7 +4272,7 @@ export class Launcher {
           prof.exit_type = "Normal";
           prof.exited_cleanly = true;
           await writeFileAtomic(file, JSON.stringify(parsed));
-          uncleanExit = true;
+
           this.log(`reset unclean-exit marker (exit_type=${JSON.stringify(was)}) in Default/Preferences for ${profileId}`);
         }
       }
@@ -4352,39 +4280,6 @@ export class Launcher {
       /* best-effort: unparseable prefs were already handled by repairCorruptPrefs */
     }
 
-    // 3) After an unclean exit, a half-written leveldb store (Local Storage / IndexedDB / …) makes
-    // Chromium pop "Something went wrong opening your profile. Some features may be unavailable." on the
-    // next launch — and repairCorruptPrefs/step 2 don't cover those stores. When the login is re-injected
-    // from the hub (remote mode → resetStorageOnUncleanExit), reset them so Chromium regenerates them
-    // clean; writeSession then repopulates cookies + origin storage. This auto-heals a profile a crash
-    // corrupted, with no manual folder-deleting. Best-effort; a locked file must never block a launch.
-    if (this.resetStorageOnUncleanExit) {
-      if (uncleanExit && !resetStorageSafe) {
-        // Unclean exit, but the bundle we're about to inject can't restore the login (e.g. a first-
-        // migration Telegram open with no hub session). Resetting would delete the only local copy of a
-        // localStorage-based (Telegram) login, so we DON'T — better a possible restore prompt than a wipe.
-        this.log(`${profileId}: unclean prior exit but no restorable session to inject — keeping volatile storage (won't risk wiping a local login)`);
-      } else if (uncleanExit) {
-        let reset = 0;
-        for (const rel of RESETTABLE_SESSION_STORES) {
-          try {
-            const target = join(base, ...rel.split("/"));
-            if (existsSync(target)) {
-              rmSync(target, { recursive: true, force: true });
-              reset++;
-            }
-          } catch {
-            /* best-effort */
-          }
-        }
-        this.log(`${profileId}: unclean prior exit — reset ${reset} volatile store(s) so Chromium starts clean (login re-injected from the hub)`);
-      } else {
-        // Logged so we can tell, per profile, whether a "something went wrong" launch was preceded by a
-        // detectable crash. If a profile pops the dialog but this says "clean", the corruption arrived
-        // without a signal we key on — the trigger needs widening.
-        this.log(`${profileId}: clean prior exit — volatile storage kept`);
-      }
-    }
   }
 
   /**

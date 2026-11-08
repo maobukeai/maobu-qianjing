@@ -90,7 +90,6 @@ export class ProfileStore {
         ws TEXT NOT NULL,
         started_at INTEGER NOT NULL,
         relay_port INTEGER,
-        session_base_version INTEGER,
         binary_path TEXT,
         user_data_dir TEXT,
         binary_sha256 TEXT,
@@ -107,12 +106,6 @@ export class ProfileStore {
     // Migration for stores predating the proxy-auth relay (nullable: only authed-proxy launches set it).
     try {
       this.db.exec(`ALTER TABLE launches ADD COLUMN relay_port INTEGER`);
-    } catch {
-      /* column already exists */
-    }
-    // Migration for stores predating persisted optimistic-concurrency bases for survivor reattach.
-    try {
-      this.db.exec(`ALTER TABLE launches ADD COLUMN session_base_version INTEGER`);
     } catch {
       /* column already exists */
     }
@@ -318,7 +311,7 @@ export class ProfileStore {
 
   /** Insert or replace a profile's identity. Preserves the existing seeded flag. */
   upsertProfile(p: Profile): void {
-    // Defense in depth for direct hub/API/remote callers that bypass the import
+    // Defense in depth for direct local API callers that bypass the import
     // parser. Invalid full-profile JSON must never reach persistent identity.
     assertValidProfile(p);
     const existing = this.db
@@ -436,7 +429,7 @@ export class ProfileStore {
         // before this column stay 0 (creation time was never recorded then).
         $created: Date.now(),
       });
-    // An edit or re-import that omits the display scale keeps it; a Cloud copy that carries one sets it.
+    // An edit or re-import that omits the display scale keeps the stored value.
     if (p.displayScale !== undefined) this.setDisplayScale(p.id, p.displayScale);
     if (p.group) this.registerGroup(p.group);
     this.onProfileSaved?.(p);
@@ -502,23 +495,6 @@ export class ProfileStore {
 
   listProfiles(): Profile[] {
     return this.db.query<any, []>(`SELECT * FROM profiles WHERE trashed_at = 0 ORDER BY id`).all().map(rowToProfile);
-  }
-
-  /** What a Cloud roster row shows from the local copy, read in one query without parsing whole profiles. */
-  listRosterFields(): Map<string, Pick<Profile, "engine" | "chromiumRuntime" | "proxy" | "proxyError">> {
-    const rows = this.db.query<any, []>(
-      `SELECT id, engine, chromium_runtime, proxy_json, proxy_error FROM profiles WHERE trashed_at = 0`,
-    ).all();
-    return new Map(rows.map((row) => {
-      const engine = storedProfileEngine(row.engine);
-      const stored = readStoredProxy(row.proxy_json, row.proxy_error);
-      return [row.id, {
-        engine,
-        ...(engine === "chromium" && row.chromium_runtime === "aliasmode" ? { chromiumRuntime: "aliasmode" as const } : {}),
-        proxy: stored.proxy,
-        ...(stored.error ? { proxyError: stored.error } : {}),
-      }];
-    }));
   }
 
   count(): number {
@@ -988,15 +964,15 @@ export class ProfileStore {
     this.db
       .query(
         `INSERT INTO launches
-           (profile_id, pid, debug_port, ws, started_at, relay_port, session_base_version,
+           (profile_id, pid, debug_port, ws, started_at, relay_port,
             binary_path, user_data_dir, binary_sha256, persona_digest, headless,
             search_bootstrap_revision, process_group_id, root_start_time,
             engine, firefox_owner_json, owner_binary_path, persona_json)
-         VALUES ($id,$pid,$port,$ws,$at,$relay,$base,$binary,$data,$binary_sha,$persona,$headless,$search_bootstrap,$pgid,$root_start,
+         VALUES ($id,$pid,$port,$ws,$at,$relay,$binary,$data,$binary_sha,$persona,$headless,$search_bootstrap,$pgid,$root_start,
                  $engine,$firefox_owner,$owner_binary,$persona_json)
          ON CONFLICT(profile_id) DO UPDATE SET
            pid=$pid, debug_port=$port, ws=$ws, started_at=$at, relay_port=$relay,
-           session_base_version=$base, binary_path=$binary, user_data_dir=$data,
+           binary_path=$binary, user_data_dir=$data,
            binary_sha256=$binary_sha, persona_digest=$persona, headless=$headless,
            search_bootstrap_revision=$search_bootstrap,
            process_group_id=$pgid, root_start_time=$root_start,
@@ -1010,7 +986,6 @@ export class ProfileStore {
         $ws: info.ws,
         $at: info.startedAt,
         $relay: info.relayPort ?? null,
-        $base: info.sessionBaseVersion ?? null,
         $binary: info.binaryPath ?? null,
         $data: info.userDataDir ?? null,
         $binary_sha: info.binarySha256 ?? null,
@@ -1033,10 +1008,6 @@ export class ProfileStore {
   setLaunchPersona(profileId: string, startedAt: number, persona: LaunchPersona): void {
     this.db.query(`UPDATE launches SET persona_json = ? WHERE profile_id = ? AND started_at = ? AND persona_json IS NULL`)
       .run(JSON.stringify(persona), profileId, startedAt);
-  }
-
-  updateLaunchSessionBaseVersion(profileId: string, version: number): void {
-    this.db.query(`UPDATE launches SET session_base_version = ? WHERE profile_id = ?`).run(version, profileId);
   }
 
   getLaunch(profileId: string): LaunchInfo | null {
@@ -1174,7 +1145,6 @@ function rowToLaunch(row: any): LaunchInfo {
     ws: row.ws,
     startedAt: row.started_at,
     relayPort: row.relay_port ?? undefined,
-    sessionBaseVersion: row.session_base_version ?? undefined,
     binaryPath: row.binary_path ?? undefined,
     userDataDir: row.user_data_dir ?? undefined,
     binarySha256: row.binary_sha256 ?? undefined,

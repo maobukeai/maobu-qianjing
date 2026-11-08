@@ -17,7 +17,7 @@ const FIREFOX_EXECUTABLE_NAME: &str = if cfg!(windows) {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BrowserMetadata {
-    firefox: FirefoxMetadata,
+    firefox: Option<FirefoxMetadata>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -101,25 +101,32 @@ fn verify_resource(
     Ok((executable, actual))
 }
 
-pub fn verify_firefox_resource(resource_dir: &Path) -> Result<FirefoxRuntime, String> {
+pub fn verify_firefox_resource(resource_dir: &Path) -> Result<Option<FirefoxRuntime>, String> {
     let metadata = embedded_metadata()?;
-    if metadata.firefox.version != FIREFOX_VERSION
-        || Path::new(&metadata.firefox.executable)
+    let Some(firefox) = metadata.firefox else {
+        return if cfg!(windows) {
+            Ok(None)
+        } else {
+            Err("this platform requires bundled Firefox".to_owned())
+        };
+    };
+    if firefox.version != FIREFOX_VERSION
+        || Path::new(&firefox.executable)
             .file_name()
             .is_none_or(|name| name != FIREFOX_EXECUTABLE_NAME)
-        || !is_sha256(&metadata.firefox.sha256)
-        || !is_sha256(&metadata.firefox.archive_sha256)
+        || !is_sha256(&firefox.sha256)
+        || !is_sha256(&firefox.archive_sha256)
     {
-        return Err("packaged AliasMode Firefox metadata is not approved".to_owned());
+        return Err("packaged Firefox metadata is not approved".to_owned());
     }
     let (executable, sha256) = verify_resource(
         resource_dir,
         "firefox",
-        &metadata.firefox.executable,
-        &metadata.firefox.sha256,
-        "AliasMode Firefox",
+        &firefox.executable,
+        &firefox.sha256,
+        "Firefox",
     )?;
-    Ok(FirefoxRuntime { executable, sha256 })
+    Ok(Some(FirefoxRuntime { executable, sha256 }))
 }
 
 fn is_sha256(value: &str) -> bool {
@@ -137,7 +144,13 @@ mod tests {
     fn reads_firefox_metadata() {
         let firefox = r#""firefox":{"executable":"aliasmode","sha256":"aa","version":"1","archiveSha256":"bb"}"#;
         let metadata: BrowserMetadata = serde_json::from_str(&format!("{{{firefox}}}")).unwrap();
-        assert_eq!(metadata.firefox.executable, "aliasmode");
+        assert_eq!(metadata.firefox.unwrap().executable, "aliasmode");
+    }
+
+    #[test]
+    fn reads_explicit_on_demand_metadata() {
+        let metadata: BrowserMetadata = serde_json::from_str(r#"{"firefox":null}"#).unwrap();
+        assert!(metadata.firefox.is_none());
     }
 
     #[test]

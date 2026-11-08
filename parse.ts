@@ -33,7 +33,7 @@ import { normalizeProfileLocale } from "./profile-locale.ts";
 /** Full export transport; session state never belongs in the roster profile. */
 export interface ProfileExport extends Profile {
   sessionBundle?: string;
-  sessionSource?: "live" | "saved" | "cloud" | "stored-cookies";
+  sessionSource?: "live" | "saved" | "stored-cookies";
 }
 
 /** Cookies on these domains belong to AdsPower's browser extension, not the account. */

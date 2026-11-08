@@ -1,6 +1,7 @@
 import { accessSync, constants, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
+import { trackRuntimeDownload } from "./runtime-download.ts";
 import { browserEnvText, sha256File, windowsSystemTool } from "./browser-install.ts";
 
 export interface FirefoxRuntimeBuild {
@@ -46,7 +47,7 @@ export function firefoxBuildForHost(
   const build = builds.find((candidate) => candidate.platform === platform && candidate.arch === arch);
   if (!build) {
     const host = platform === "darwin" ? "macOS" : platform === "linux" ? "Linux" : platform;
-    throw new Error(`No approved AliasMode Firefox archive is available for ${host} ${arch}`);
+    throw new Error(`No approved Firefox archive is available for ${host} ${arch}`);
   }
   return build;
 }
@@ -61,7 +62,7 @@ export function firefoxReleaseArchiveUrl(build: FirefoxRuntimeBuild): string {
         : build.platform === "win32" && build.arch === "x64"
           ? `aliasmode-${FIREFOX_RUNTIME_VERSION}-win.x86_64.zip`
           : "";
-  if (!name) throw new Error(`No approved AliasMode Firefox release archive is available for ${build.platform} ${build.arch}`);
+  if (!name) throw new Error(`No approved Firefox release archive is available for ${build.platform} ${build.arch}`);
   return `${FIREFOX_RELEASE_BASE}/${name}`;
 }
 
@@ -74,9 +75,10 @@ async function downloadFirefoxArchive(
   const archive = join(directory, firefoxReleaseArchiveUrl(build).split("/").at(-1)!);
   try {
     const response = await fetcher(firefoxReleaseArchiveUrl(build));
-    if (!response.ok) throw new Error("approved AliasMode Firefox release download failed");
+    if (!response.ok) throw new Error("approved Firefox release download failed");
     // Bun 1.2.21 can leave Bun.write(Response) pending for streamed redirects.
-    await pipeline(response.body as unknown as import("node:stream/web").ReadableStream, createWriteStream(archive));
+    await trackRuntimeDownload("firefox", archive, Number(response.headers.get("content-length")) || 0,
+      () => pipeline(response.body as unknown as import("node:stream/web").ReadableStream, createWriteStream(archive)));
     return { archive, cleanup: () => rmSync(directory, { recursive: true, force: true }) };
   } catch (error) {
     rmSync(directory, { recursive: true, force: true });
@@ -90,7 +92,7 @@ async function extractFirefoxArchive(archive: string, destination: string, platf
       : ["unzip", "-q", archive, "-d", destination];
   if (!(platform === "win32" ? existsSync(command[0]!) : Bun.which(command[0]!))) throw new Error(`Firefox setup requires ${command[0]}`);
   const child = Bun.spawn(command, { stdout: "ignore", stderr: "inherit" });
-  if (await child.exited !== 0) throw new Error("AliasMode Firefox archive extraction failed");
+  if (await child.exited !== 0) throw new Error("Firefox archive extraction failed");
 }
 
 export async function installFirefox(
@@ -106,11 +108,11 @@ export async function installFirefox(
   const cwd = resolve(options.cwd ?? process.cwd());
   const downloaded = options.archive
     ? undefined
-    : await downloadFirefoxArchive(build, cwd, dependencies.fetch ?? fetch);
+    : await downloadFirefoxArchive(build, cwd, dependencies.fetch ?? ((url) => fetch(url, { signal: AbortSignal.timeout(180_000) })));
   const archive = options.archive ? resolve(options.archive) : downloaded!.archive;
   try {
     if (await sha256File(archive) !== build.archiveSha256) {
-      throw new Error("AliasMode Firefox archive does not match the approved host build SHA-256");
+      throw new Error("Firefox archive does not match the approved host build SHA-256");
     }
     const cache = join(cwd, "browser");
     mkdirSync(cache, { recursive: true });
@@ -120,7 +122,7 @@ export async function installFirefox(
       await (dependencies.extract ?? extractFirefoxArchive)(archive, root, platform);
       const path = join(root, build.executablePath);
       const sha256 = await sha256File(path);
-      if (sha256 !== build.executableSha256) throw new Error("AliasMode Firefox executable does not match its approved SHA-256");
+      if (sha256 !== build.executableSha256) throw new Error("Firefox executable does not match its approved SHA-256");
       if (platform !== "win32") accessSync(path, constants.X_OK);
       if (options.writeEnv !== false) {
         const envPath = join(cwd, ".env");

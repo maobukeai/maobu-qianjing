@@ -29,7 +29,6 @@ import { runtimeDownloads } from "./runtime-download.ts";
 const WINDOWS_155 = aliasmodeChromiumArchive("win32");
 import { buildNewProfile } from "./create.ts";
 import { parseExport, serializeAdsTxt, serializeXlsxRows } from "./parse.ts";
-import { decodePortableProfile, encodePortableProfile } from "./portable-profile.ts";
 import { ProfileStore } from "./store.ts";
 
 /** Fake archive whose files carry their pinned hashes by content. */
@@ -243,7 +242,7 @@ test("rejects an archive or executable that does not match its pin", async () =>
   }
 });
 
-test("new profiles keep their Chromium runtime fixed locally and in Cloud payloads", () => {
+test("new profiles keep their Chromium runtime fixed in local storage", () => {
   const store = new ProfileStore(":memory:");
   const beta = buildNewProfile({ chromiumRuntime: "aliasmode" }, () => false);
   const standard = buildNewProfile({ chromiumRuntime: "cloakbrowser" }, () => false);
@@ -261,21 +260,6 @@ test("new profiles keep their Chromium runtime fixed locally and in Cloud payloa
     .toThrow("Chromium runtime cannot change in place");
   expect(store.getProfile(standard.id)!.chromiumRuntime).toBeUndefined();
 
-  // Cloud carries the runtime in schema V3, which older clients reject
-  // instead of opening it on CloakBrowser. Default profiles stay V1.
-  const payload = encodePortableProfile(beta);
-  expect(payload.schemaVersion).toBe(3);
-  expect(payload.profile).toMatchObject({ chromiumRuntime: "aliasmode" });
-  expect(decodePortableProfile(payload).profile.chromiumRuntime).toBe("aliasmode");
-  // A profile without stored hardware (made before it existed) stays V1.
-  const { hardware: _hardware, ...legacy } = standard;
-  const standardPayload = encodePortableProfile(legacy);
-  expect(standardPayload.schemaVersion).toBe(1);
-  expect("chromiumRuntime" in standardPayload.profile).toBe(false);
-  expect(decodePortableProfile(standardPayload).profile.chromiumRuntime).toBeUndefined();
-  expect(() => decodePortableProfile({ ...standardPayload, profile: { ...standardPayload.profile, chromiumRuntime: "aliasmode" } } as any))
-    .toThrow("unsupported portable profile payload");
-  expect(() => decodePortableProfile({ ...standardPayload, schemaVersion: 3 } as any)).toThrow("unsupported portable profile payload");
   store.close();
 });
 

@@ -30,7 +30,7 @@ export interface PreparedFirefoxMetadata {
 
 /** CloakBrowser is not bundled: the app downloads it on first use. */
 export interface PreparedBrowserMetadata {
-  firefox: PreparedFirefoxMetadata;
+  firefox: PreparedFirefoxMetadata | null;
 }
 
 export interface FirefoxArchive {
@@ -48,6 +48,8 @@ export interface PrepareWindowsBundleOptions {
   downloadNode?: () => Promise<Uint8Array>;
   installNode?: (playwrightRoot: string) => Promise<void>;
   firefoxArchive?: FirefoxArchive;
+  /** Optional offline bundle. Standard Windows builds install engines on demand. */
+  bundleFirefox?: boolean;
 }
 
 async function sha256File(path: string): Promise<string> {
@@ -203,6 +205,8 @@ function copyRuntimePackage(
 
 /** Copies the worker scripts, agent files and their Node packages; every desktop bundle needs them. */
 export function stageAgentRuntime(cwd: string, playwrightRoot: string): void {
+  mkdirSync(playwrightRoot, { recursive: true });
+  writeFileSync(join(playwrightRoot, "package.json"), `${JSON.stringify({ name: "maobu-browser-runtime", version: ALIASMODE_VERSION, type: "module", private: true }, null, 2)}\n`);
   cpSync(join(cwd, "playwright-worker.mjs"), join(playwrightRoot, "worker.mjs"));
   cpSync(join(cwd, "playwright-worker.mjs"), join(playwrightRoot, "playwright-worker.mjs"));
   cpSync(join(cwd, "firefox-worker.mjs"), join(playwrightRoot, "firefox-worker.mjs"));
@@ -259,12 +263,16 @@ export async function prepareWindowsBundle(
   await (options.compileSidecar ?? ((output) => compileSidecar(cwd, output)))(sidecar);
   if (!statSync(sidecar).isFile()) throw new Error("sidecar compiler did not create the expected Windows executable");
 
-  const firefox = await installFirefoxRuntime(
-    options.firefoxArchive ?? configuredFirefoxArchive(),
-    staging,
-    firefoxRoot,
-    options.hashFile ?? sha256File,
-  );
+  mkdirSync(firefoxRoot, { recursive: true });
+  const firefox = options.firefoxArchive || (options.bundleFirefox ?? process.env.MAOBU_BUNDLE_FIREFOX === "1")
+    ? await installFirefoxRuntime(
+        options.firefoxArchive ?? configuredFirefoxArchive(),
+        staging,
+        firefoxRoot,
+        options.hashFile ?? sha256File,
+      )
+    : null;
+  if (!firefox) writeFileSync(join(firefoxRoot, "ON-DEMAND.txt"), "Firefox is downloaded and verified when a Firefox profile is opened.\n");
 
   if (options.installNode) {
     await options.installNode(playwrightRoot);
@@ -295,7 +303,9 @@ export async function prepareWindowsBundle(
 if (import.meta.main) {
   try {
     const metadata = await prepareWindowsBundle();
-    console.log(`prepared AliasMode Windows bundle with Firefox SHA-256 ${metadata.firefox.sha256}`);
+    console.log(metadata.firefox
+      ? `prepared Maobu Windows bundle with verified offline Firefox ${metadata.firefox.sha256}`
+      : "prepared Maobu Windows bundle; browser engines install on demand");
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);

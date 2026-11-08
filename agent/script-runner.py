@@ -44,7 +44,7 @@ async def run_script(input_value: dict) -> None:
             browser = await playwright.chromium.connect_over_cdp(input_value["endpoint"], timeout=30_000)
         context = browser.contexts[0] if browser.contexts else None
         if context is None:
-            raise RuntimeError("AliasMode browser context is unavailable")
+            raise RuntimeError("猫步·千境 browser context is unavailable")
         page = context.pages[0] if context.pages else await context.new_page()
         run = load_script(sys.argv[1])
         await run(

@@ -1,7 +1,7 @@
 /**
  * Canonical proxy parsing and rendering.
  *
- * Every proxy ingress (UI, AdsPower import/API, hub, and persisted profiles)
+ * Every proxy ingress (UI, AdsPower import/API, MCP, and persisted profiles)
  * must pass through this module. Launch routing must never guess a protocol
  * from an arbitrary string: a malformed/unknown type is rejected before any
  * account traffic can start.

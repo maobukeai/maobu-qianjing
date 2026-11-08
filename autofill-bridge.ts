@@ -230,7 +230,7 @@ export class AutofillBridge {
     if (request.method !== "POST") return json({ ok: false }, 405);
     const authorization = request.headers.get("authorization") ?? "";
     const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
-    if (!this.tokens.has(token)) return json({ ok: false, error: "Open AliasMode to use autofill." }, 401);
+    if (!this.tokens.has(token)) return json({ ok: false, error: "Open 猫步·千境 to use autofill." }, 401);
     let body: { url?: unknown; page?: unknown; field?: unknown; target?: unknown } | null;
     try { body = await request.json(); } catch { return json({ ok: false }, 400); }
     // Recheck after reading the body: a stop or replacement may have happened meanwhile.
@@ -252,7 +252,7 @@ export class AutofillBridge {
     if (!FIELDS.includes(field as typeof FIELDS[number]) || typeof target !== "string") return json({ ok: false }, 400);
     const key = field as typeof FIELDS[number];
     const value = key === "totp" ? generateTotp(profile.twofa)?.code : profile[key];
-    if (!value) return json({ ok: false, error: "No saved value for this field. Edit the profile in AliasMode." }, 404);
+    if (!value) return json({ ok: false, error: "No saved value for this field. Edit the profile in 猫步·千境." }, 404);
     if (this.typing.has(binding.profileId)) return json({ ok: false, error: "Autofill is still typing." }, 409);
     this.typing.add(binding.profileId);
     try {

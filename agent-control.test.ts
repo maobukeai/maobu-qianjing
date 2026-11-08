@@ -7,10 +7,7 @@ import {
   parseAgentControlRequest,
   validAgentAuthorization,
 } from "./agent-control.ts";
-import type { ProxyReplacementsRequest } from "./contracts/cloud-v1.ts";
-import { CloudApiError } from "./cloud-client.ts";
 import { buildNewProfile } from "./create.ts";
-import { encodePortableProfile } from "./portable-profile.ts";
 
 function wire(method: string, params: Record<string, unknown> = {}, id = 1): string {
   return JSON.stringify({ protocol: AGENT_CONTROL_PROTOCOL, id, method, params });
@@ -293,240 +290,94 @@ test("an unconfirmed close retains the temporary profile marker", async () => {
   expect(h.profileExists()).toBe(true);
 });
 
-test("Cloud close reports retained sync and preserves temporary profiles", async () => {
-  for (const sync of ["pending", "conflict"] as const) {
-    const h = harness({ active: true, temporary: true });
-    const session = new AgentControlSession({
-      ...h.deps,
-      cloudBrowser: {
-        async close() { return { closed: true as const, sync }; },
-      } as any,
-    });
-
-    const response = await session.enqueue(wire("browser.close", { profileId: "profile1" }));
-
-    expect(response).toEqual({
-      protocol: AGENT_CONTROL_PROTOCOL,
-      id: 1,
-      ok: true,
-      result: { profileId: "profile1", closed: true, sync, deleted: false },
-    });
-    expect(h.events).toEqual([]);
-    expect(h.temporary()).toBe(true);
-    expect(h.profileExists()).toBe(true);
-  }
-});
-
-test("Cloud teardown uncertainty retains agent ownership", async () => {
-  const h = harness({ active: true, temporary: true });
-  const session = new AgentControlSession({
-    ...h.deps,
-    cloudBrowser: {
-      async close() { return { closed: false as const, reason: "teardown_unconfirmed" as const }; },
-    } as any,
-  });
-
-  const response = await session.enqueue(wire("browser.close", { profileId: "profile1" }));
-
-  expect(response).toMatchObject({ ok: false, error: { code: "close_unconfirmed" } });
-  expect(h.temporary()).toBe(true);
-  expect(h.profileExists()).toBe(true);
-});
-
-test("MCP connector methods return the token once and use the current device URL", async () => {
-  const h = harness();
-  const calls: string[] = [];
-  const connector = {
-    id: "connector-id",
-    deviceId: "device-id",
-    label: "Linux Claude",
-    createdAt: 1,
-    lastUsedAt: null,
-    revokedAt: null,
-  };
-  const session = new AgentControlSession({
-    ...h.deps,
-    cloudConnection: {
-      deviceId: () => "device-id",
-      client: {
-        createMcpConnector: async (label: string) => {
-          calls.push(`create:${label}`);
-          return { ok: true, connector, token: "returned-once" };
-        },
-        listMcpConnectors: async () => ({ ok: true, connectors: [connector] }),
-        revokeMcpConnector: async (id: string) => { calls.push(`revoke:${id}`); return { ok: true }; },
-        remoteMcpUrl: (id: string) => `https://cloud.example.test/v1/mcp/devices/${id}`,
-      },
-    } as any,
-  });
-
-  const created = await session.enqueue(wire("mcp.connectors.create", { label: "Linux Claude" }));
-  expect(created).toMatchObject({
-    ok: true,
-    result: {
-      connectorId: "connector-id",
-      deviceId: "device-id",
-      url: "https://cloud.example.test/v1/mcp/devices/device-id",
-      token: "returned-once",
-    },
-  });
-  const listed = await session.enqueue(wire("mcp.connectors.list"));
-  expect(JSON.stringify(listed)).not.toContain("returned-once");
-  expect(listed).toMatchObject({ ok: true, result: { connectors: [connector] } });
-  const revoked = await session.enqueue(wire("mcp.connectors.revoke", { connectorId: "connector-id" }));
-  expect(revoked).toMatchObject({ ok: true, result: { connectorId: "connector-id", revoked: true } });
-  expect(calls).toEqual(["create:Linux Claude", "revoke:connector-id"]);
-});
-
-function cloudEditHarness() {
-  const h = harness();
-  const profile = buildNewProfile({ name: "Cloud account", group: "accounts" }, () => false);
+function localEditHarness(active = false) {
+  const h = harness({ active });
+  const profile = buildNewProfile({ name: "Local account", group: "accounts" }, () => false);
   profile.id = "profile1";
+  profile.username = "exact-user";
   profile.password = "old-password";
   profile.email = "keep@example.test";
   profile.cookies = [{ name: "auth_token", value: "session-secret", domain: ".x.com", path: "/" }];
-  const payload = encodePortableProfile(profile);
-  const authoritative = {
-    profile: { id: profile.id, name: profile.name, group: profile.group, platform: "x.com", tags: [], version: 7, permission: "edit", activeOpens: [] as unknown[] },
-    payload,
-  };
-  const updates: any[] = [];
-  const client = {
-    getProfile: async () => authoritative,
-    updateProfile: async (profileId: string, request: unknown) => { updates.push({ profileId, request }); },
-  };
+  const saved = new Map([[profile.id, profile]]);
   const deps = {
     ...h.deps,
+    store: {
+      ...h.deps.store,
+      listProfiles: () => [...saved.values()],
+      getProfile: (id: string) => saved.get(id) ?? null,
+      upsertProfile: (next: typeof profile) => { saved.set(next.id, structuredClone(next)); },
+    } as any,
     launcher: { ...h.deps.launcher, reconcileOrphans: async () => {} },
-    cloudBrowser: { listRoster: async () => ({ profiles: [authoritative.profile] }) } as any,
-    cloudConnection: { deviceId: () => "device-id", client } as any,
+
   };
-  return { ...h, deps, client, authoritative, updates, session: new AgentControlSession(deps) };
+  return { ...h, saved, profile, session: new AgentControlSession(deps) };
 }
 
-test("Cloud profile edits use roster versions and preserve unedited credentials and sessions", async () => {
-  const h = cloudEditHarness();
-  const listed = await h.session.enqueue(wire("profiles.list"));
-  expect(listed).toMatchObject({ ok: true, result: { profiles: [{ id: "profile1", expectedVersion: 7, permission: "edit" }] } });
-  expect(JSON.stringify(listed)).not.toContain("old-password");
+test("unsupported Agent Control methods are rejected", async () => {
+  const h = localEditHarness();
+  for (const method of ["unsupported.operation"]) {
+    expect(await h.session.enqueue(wire(method))).toMatchObject({ ok: false, error: { code: "unknown_method" } });
+  }
+});
 
+test("local profile edits retain untouched credentials, cookies, and fingerprint without a server version", async () => {
+  const h = localEditHarness();
+  const listed = await h.session.enqueue(wire("profiles.list"));
+  expect(listed).toMatchObject({ ok: true, result: { profiles: [{ id: "profile1", name: "Local account" }] } });
+  expect(JSON.stringify(listed)).not.toContain("old-password");
   const result = await h.session.enqueue(wire("profiles.update", {
-    profileId: "profile1", expectedVersion: 7,
-    set: { username: "matched-user", password: "new-password", twofa: "", tags: ["backfilled"] },
+    profileId: "profile1", set: { username: "changed-user", password: "new-password", twofa: "", tags: ["backfilled"] },
   }));
   expect(result).toMatchObject({ ok: true, result: { profileId: "profile1", updated: true } });
-  expect(h.updates).toHaveLength(1);
-  expect(h.updates[0].request.expectedVersion).toBe(7);
-  expect(h.updates[0].request.payload.profile).toMatchObject({ username: "matched-user", password: "new-password", email: "keep@example.test", twofa: "", tags: ["backfilled"], fingerprintSeed: h.authoritative.payload.profile.fingerprintSeed });
-  expect(h.updates[0].request.payload.session).toEqual(h.authoritative.payload.session);
+  const updated = h.saved.get("profile1")!;
+  expect(updated).toMatchObject({ username: "changed-user", password: "new-password", email: "keep@example.test", twofa: "", tags: ["backfilled"], fingerprintSeed: h.profile.fingerprintSeed });
+  expect(updated.cookies).toEqual(h.profile.cookies);
   expect(JSON.stringify(result)).not.toContain("new-password");
   expect(JSON.stringify(result)).not.toContain("session-secret");
 });
 
-test("Cloud profile edits reject open, stale, unsupported and malformed updates before PATCH", async () => {
-  const h = cloudEditHarness();
-  for (const params of [
-    { expectedVersion: 6, set: { password: "new-password" } },
-    { expectedVersion: -1, set: { password: "new-password" } },
-    { expectedVersion: 7, set: {} },
-    { expectedVersion: 7, set: { cookies: [] } },
-    { expectedVersion: 7, set: { password: 123 } },
-    { expectedVersion: 7, set: { extensions: "not-an-array" } },
-  ]) {
-    expect((await h.session.enqueue(wire("profiles.update", { profileId: "profile1", ...params }))).ok).toBe(false);
+test("local profile edits reject active profiles and malformed changes without writing", async () => {
+  const h = localEditHarness();
+  for (const set of [{}, { cookies: [] }, { password: 123 }, { extensions: "invalid" }, { resolution: "broken" }, { name: "" }]) {
+    expect(await h.session.enqueue(wire("profiles.update", { profileId: "profile1", set }))).toMatchObject({ ok: false, error: { code: "invalid_request" } });
   }
-  h.authoritative.profile.activeOpens = [{}];
-  expect((await h.session.enqueue(wire("profiles.update", { profileId: "profile1", expectedVersion: 7, set: { password: "new-password" } }))).ok).toBe(false);
-  expect(h.updates).toEqual([]);
-  expect((await harness().session.enqueue(wire("profiles.update", { profileId: "profile1", expectedVersion: 7, set: { password: "new-password" } })))).toMatchObject({ ok: false, error: { code: "cloud_unavailable" } });
+  expect(h.saved.get("profile1")).toEqual(h.profile);
+  expect(await localEditHarness(true).session.enqueue(wire("profiles.update", {
+    profileId: "profile1", set: { password: "new-password" },
+  }))).toMatchObject({ ok: false, error: { code: "profile_open" } });
 });
 
-test("Cloud profile edits preserve Cloud error codes without retrying", async () => {
-  for (const [code, status] of [["version_conflict", 409], ["folder_access_denied", 403]] as const) {
-    const h = cloudEditHarness();
-    let calls = 0;
-    h.client.updateProfile = async () => { calls++; throw new CloudApiError("Cloud edit rejected", code, status); };
-    const result = await h.session.enqueue(wire("profiles.update", { profileId: "profile1", expectedVersion: 7, set: { password: "new-password" } }));
-    expect(result).toMatchObject({ ok: false, error: { code } });
-    expect(calls).toBe(1);
-    expect(JSON.stringify(result)).not.toContain("new-password");
-  }
-});
-
-test("proxy replacement Agent Control method is Cloud-only and returns safe results", async () => {
-  const h = harness();
-  const calls: ProxyReplacementsRequest[] = [];
-  const session = new AgentControlSession({
-    ...h.deps,
-    cloudBrowser: {} as any,
-    cloudConnection: {
-      deviceId: () => "device-id",
-      client: {
-        replaceProfileProxies: async (request: ProxyReplacementsRequest) => {
-          calls.push(structuredClone(request));
-          return {
-            ok: true as const,
-            dryRun: true,
-            counts: { received: 1, matched: 1, ready: 1, updated: 0, unchanged: 0, missing: 0, skipped: 0 },
-            results: [{ index: 0, status: "ready" as const, profileId: "profile-1", currentVersion: 4 }],
-            missingUsernames: [],
-          };
-        },
-      },
-    } as any,
-  });
+test("local proxy replacements preview by default and apply without leaking credentials", async () => {
+  const h = localEditHarness();
   const replacement = {
     username: "exact-user",
     proxy: { type: "socks5" as const, host: "proxy.test", port: "1080", user: "proxy-user", pass: "private-pass" },
   };
-
-  const result = await session.enqueue(wire("profiles.replaceProxies", { replacements: [replacement] }));
-
-  expect(calls).toEqual([{ dryRun: true, replacements: [replacement] }]);
-  expect(result).toMatchObject({
-    ok: true,
-    result: {
-      dryRun: true,
-      counts: { ready: 1 },
-      results: [{ index: 0, status: "ready", profileId: "profile-1", currentVersion: 4 }],
-    },
-  });
-  expect(JSON.stringify(result)).not.toContain("private-pass");
+  const preview = await h.session.enqueue(wire("profiles.replaceProxies", { replacements: [replacement] }));
+  expect(preview).toMatchObject({ ok: true, result: { dryRun: true, counts: { ready: 1 }, results: [{ index: 0, status: "ready", profileId: "profile1" }] } });
+  expect(h.saved.get("profile1")!.proxy).toBeNull();
+  const applied = await h.session.enqueue(wire("profiles.replaceProxies", { dryRun: false, replacements: [replacement] }));
+  expect(applied).toMatchObject({ ok: true, result: { dryRun: false, counts: { updated: 1 } } });
+  expect(h.saved.get("profile1")!.proxy).toEqual(replacement.proxy);
+  expect(h.saved.get("profile1")!.cookies).toEqual(h.profile.cookies);
+  expect(JSON.stringify(applied)).not.toContain("private-pass");
+  expect(await h.session.enqueue(wire("profiles.replaceProxies", { replacements: [replacement] }))).toMatchObject({ ok: true, result: { counts: { unchanged: 1 } } });
 });
 
-test("proxy replacement Agent Control method rejects non-Cloud and malformed calls", async () => {
-  const h = harness();
-  let calls = 0;
-  const connection = {
-    deviceId: () => "device-id",
-    client: {
-      replaceProfileProxies: async () => {
-        calls++;
-        throw new Error("must not call Cloud");
-      },
-    },
-  } as any;
-  for (const deps of [
-    h.deps,
-    { ...h.deps, cloudConnection: connection },
-    { ...h.deps, cloudBrowser: {} as any },
-  ]) {
-    const result = await new AgentControlSession(deps).enqueue(wire("profiles.replaceProxies", {
-      replacements: [{ username: "user", proxy: {} }],
-    }));
-    expect(result).toMatchObject({ ok: false, error: { code: "cloud_unavailable" } });
-  }
-
-  const malformed = await new AgentControlSession({
-    ...h.deps,
-    cloudBrowser: {} as any,
-    cloudConnection: connection,
-  }).enqueue(wire("profiles.replaceProxies", {
-    dryRun: "false",
-    replacements: [{ username: "user", proxy: {} }],
-  }));
-  expect(malformed).toMatchObject({ ok: false, error: { code: "invalid_request" } });
-  expect(calls).toBe(0);
+test("local proxy replacements skip open and duplicate targets and support CSV", async () => {
+  const replacement = { profileId: "profile1", proxy: { type: "http", host: "proxy.test", port: "8080", user: "", pass: "" } };
+  const h = localEditHarness();
+  expect(await h.session.enqueue(wire("profiles.replaceProxies", { dryRun: false, replacements: [replacement, replacement] }))).toMatchObject({
+    ok: true, result: { counts: { skipped: 2, updated: 0 }, results: [{ code: "duplicate_target" }, { code: "duplicate_target" }] },
+  });
+  expect(h.saved.get("profile1")!.proxy).toBeNull();
+  expect(await localEditHarness(true).session.enqueue(wire("profiles.replaceProxies", { dryRun: false, replacements: [replacement] }))).toMatchObject({
+    ok: true, result: { counts: { skipped: 1, updated: 0 }, results: [{ code: "profile_open" }] },
+  });
+  const csv = "username,type,host,port,user,pass\nexact-user,http,proxy.test,8080,user,private-csv-pass";
+  expect(await h.session.enqueue(wire("profiles.replaceProxies", { csv, dryRun: false }))).toMatchObject({ ok: true, result: { counts: { updated: 1 } } });
+  expect(h.saved.get("profile1")!.proxy?.pass).toBe("private-csv-pass");
+  expect(await h.session.enqueue(wire("profiles.replaceProxies", { dryRun: "false", replacements: [replacement] }))).toMatchObject({ ok: false, error: { code: "invalid_request" } });
 });
 
 test("Local profiles.create sets the timezone from the proxy", async () => {

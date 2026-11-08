@@ -37,7 +37,7 @@ async function run(input) {
       ? await firefox.connect(input.endpoint, { timeout: 30_000 })
       : await chromium.connectOverCDP(input.endpoint, { timeout: 30_000 });
     const context = browser.contexts()[0];
-    if (!context) throw new Error("AliasMode browser context is unavailable");
+    if (!context) throw new Error("猫步·千境 browser context is unavailable");
     const page = context.pages()[0] ?? await context.newPage();
     const module = await import(pathToFileURL(scriptPath).href);
     if (typeof module.default !== "function") {

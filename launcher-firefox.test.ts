@@ -622,7 +622,7 @@ test("Firefox restores session cookies from the newest session file when native 
     const steps: unknown[] = [];
     const launcher = new Launcher({
       ...f.options,
-      // Cloud mode turns ensureCookies off; the native session cookies still come back.
+      // Explicit session restoration can turn ensureCookies off; the native session cookies still come back.
       ensureCookies: async () => ({ injected: false }),
       addNativeSessionCookies: async (_ws, added) => { steps.push(["cookies", added]); return { injected: true }; },
       navigate: async (_ws, urls) => { steps.push(["navigate", urls]); },
@@ -644,12 +644,12 @@ test("Firefox does not claim its session loaded when its session cookies could n
     cookies: [{ host: "app.example", name: "sid", value: "lost", originAttributes: {} }],
   }));
   const launcher = new Launcher({ ...f.options, addNativeSessionCookies: async () => { throw new Error("cookie rejected"); } });
-  // A Cloud open then writes its copy, which still has these cookies.
+  // A pending local session can then replace the saved cookies.
   expect((await launcher.start(f.profile.id, [], { autoNavigate: false })).nativeSessionLoaded).toBeUndefined();
   expect(await launcher.stop(f.profile.id)).toBe(true);
 });
 
-test("Firefox leaves session cookies to Firefox or the Cloud copy when it does not turn native restore off", async () => {
+test("Firefox retains its session cookies unless native restore is explicitly disabled", async () => {
   const cookies = [{ host: "app.example", name: "sid", value: "native", originAttributes: {} }];
   for (const options of [{}, { restoreLastSession: false }]) {
     const f = fixture();
@@ -662,7 +662,7 @@ test("Firefox leaves session cookies to Firefox or the Cloud copy when it does n
     const launcher = new Launcher({ ...f.options, addNativeSessionCookies: async (_ws, added) => { ensured.push(added); return { injected: true }; } });
     const opened = await launcher.start(f.profile.id, [], { autoNavigate: false, ...options });
     expect(ensured).toEqual([]);
-    // Startup page 3 loads this device's session; the Cloud coordinator's request for its copy does not.
+    // Startup page 3 loads this device's session; an explicit caller-provided session does not.
     expect(opened.nativeSessionLoaded).toBe(options.restoreLastSession === false ? undefined : true);
     expect(await launcher.stop(f.profile.id)).toBe(true);
   }
@@ -682,7 +682,7 @@ test("Firefox natively restores a saved session with a web page", async () => {
   expect(await f.launcher.stop(f.profile.id)).toBe(true);
 });
 
-test("Firefox disables native restore when the Cloud coordinator requests portable state", async () => {
+test("Firefox disables native restore when a caller explicitly requests a fresh session", async () => {
   const f = fixture();
   const root = f.launcher.userDataDir(f.profile.id);
   mkdirSync(root, { recursive: true });
@@ -697,7 +697,7 @@ test("Firefox disables native restore when the Cloud coordinator requests portab
   expect(await f.launcher.stop(f.profile.id)).toBe(true);
 });
 
-test("Firefox disables native restore before applying a pending Cloud bundle", async () => {
+test("Firefox disables native restore before applying a pending local session bundle", async () => {
   const f = fixture();
   const root = f.launcher.userDataDir(f.profile.id);
   mkdirSync(root, { recursive: true });
@@ -789,17 +789,6 @@ function macosPersona(f: ReturnType<typeof fixture>): Profile {
   return f.store.getProfile(profile.id)!;
 }
 
-test("a Cloud Firefox launch on Windows and Linux keeps the browser after its last window; Local and macOS do not ask", async () => {
-  for (const [platform, arch, keep, expected] of [
-    ["win32", "x64", true, true], ["linux", "x64", true, true], ["darwin", "arm64", true, false], ["win32", "x64", false, false],
-  ] as const) {
-    const f = fixture(platform, arch);
-    await f.launcher.start(f.profile.id, [], { keepAliveWithoutWindows: keep });
-    expect((f.prefs() as Record<string, unknown>)["aliasmode.keepAliveWithoutWindows"] === true).toBe(expected);
-    await f.launcher.stop(f.profile.id);
-  }
-});
-
 test("a Firefox profile of this computer's own OS opens without a font pack", async () => {
   const f = fixture("win32", "x64");
   await f.launcher.start(f.profile.id);
@@ -876,4 +865,42 @@ test("the first background fetch removes font packs that are no longer pinned", 
   mkdirSync(join(packs, "macos-0000000000000000", "fonts"), { recursive: true });
   f.launcher.prefetchFirefoxFontPacks([]);
   expect(existsSync(join(packs, "macos-0000000000000000"))).toBe(false);
+});
+
+test("managed Firefox installs only at the first explicit open", async () => {
+  const f = fixture();
+  let installs = 0;
+  const launcher = new Launcher({ ...f.options, firefoxBinaryPath: "", manageFirefox: true,
+    ensureDownloadedFirefox: async () => { installs++; return "/fake/firefox.exe"; } });
+  expect(installs).toBe(0);
+  expect(f.launches()).toBe(0);
+  await launcher.start(f.profile.id);
+  expect(installs).toBe(1);
+  expect(f.launches()).toBe(1);
+  expect(await launcher.stop(f.profile.id)).toBe(true);
+});
+
+test("a failed on-demand Firefox install does not spawn or claim a browser", async () => {
+  const f = fixture();
+  const launcher = new Launcher({ ...f.options, firefoxBinaryPath: "", manageFirefox: true,
+    ensureDownloadedFirefox: async () => { throw new Error("offline"); } });
+  const error = await launcher.start(f.profile.id).catch((value) => value);
+  expect(error).toBeInstanceOf(BrowserLaunchError);
+  expect(error.preflightReason).toBe("firefox_download");
+  expect(f.launches()).toBe(0);
+  expect(f.store.getLaunch(f.profile.id)).toBeNull();
+});
+
+test("on-demand Firefox still rejects an executable that fails its approved hash", async () => {
+  const f = fixture();
+  const binary = join(f.options.dataRoot!, "downloaded-firefox.exe");
+  writeFileSync(binary, "tampered");
+  const launcher = new Launcher({ ...f.options, firefoxBinaryPath: "", manageFirefox: true,
+    unsafeDisableIdentityGates: false, expectedFirefoxBinarySha256: "a".repeat(64),
+    ensureDownloadedFirefox: async () => binary });
+  const error = await launcher.start(f.profile.id).catch((value) => value);
+  expect(error).toBeInstanceOf(BrowserLaunchError);
+  expect(error.failure).toBe("binary_verification");
+  expect(f.launches()).toBe(0);
+  expect(f.store.getLaunch(f.profile.id)).toBeNull();
 });

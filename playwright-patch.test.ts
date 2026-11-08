@@ -271,15 +271,24 @@ describe("Playwright CDP compatibility patch", () => {
   test("stalled and repeated closes force-terminate exactly once", async () => {
     const socket = new FakeSocket(false);
     const transport = fakeTransport(WebSocketTransport, socket);
+    // A real socket keeps the event loop alive. This fake has no native handle,
+    // while the transport deliberately unrefs its fallback timer.
+    let deadline!: ReturnType<typeof setTimeout>;
+    const expired = new Promise<never>((_, reject) => {
+      deadline = setTimeout(() => reject(new Error("The stalled socket was not terminated")), 1000);
+    });
+    try {
+      const closed = transport.closeAndWait(5);
+      transport.close(5);
+      transport.close(5);
+      await Promise.race([closed, expired]);
+      transport._didClose();
 
-    const closed = transport.closeAndWait(5);
-    transport.close(5);
-    transport.close(5);
-    await closed;
-    transport._didClose();
-
-    expect(socket.closeCalls).toBe(1);
-    expect(socket.terminateCalls).toBe(1);
-    expect(transportStats()).toEqual({ opened: 1, closed: 1, forced: 1, active: 0 });
+      expect(socket.closeCalls).toBe(1);
+      expect(socket.terminateCalls).toBe(1);
+      expect(transportStats()).toEqual({ opened: 1, closed: 1, forced: 1, active: 0 });
+    } finally {
+      clearTimeout(deadline);
+    }
   });
 });

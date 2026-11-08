@@ -21,10 +21,17 @@ fn main() {
         println!("cargo:rustc-link-arg-bins=-Wl,-adhoc_codesign");
     }
 
-    let firefox = parsed
-        .get("firefox")
-        .and_then(|value| value.as_object())
-        .expect("browser metadata is missing firefox");
+    let firefox = parsed.get("firefox").and_then(|value| value.as_object());
+    if firefox.is_none() {
+        assert!(
+            windows && parsed.get("firefox").is_some_and(|value| value.is_null()),
+            "non-Windows bundles require verified Firefox metadata"
+        );
+        let out = PathBuf::from(env::var("OUT_DIR").expect("build output directory"));
+        fs::write(out.join("browser.json"), metadata).expect("write embedded browser metadata");
+        return;
+    }
+    let firefox = firefox.expect("validated Firefox metadata");
     for key in ["executable", "sha256", "archiveSha256", "version"] {
         assert!(
             firefox

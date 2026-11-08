@@ -1,15 +1,13 @@
-import { CloudApiError } from "./cloud-client.ts";
 import { syncFirefoxTimezone } from "./firefox-config.ts";
 import { attachTimezones } from "./geoip.ts";
 import { buildProxyPreview, checkProfileProxies, replacementState, selectProxyProfiles, ProxyToolsError, type PlannedProxyReplacement, type ProxyInventoryProfile } from "./proxy-bulk.ts";
-import { normalizeProxySpec, proxyHostPort, proxyIdentityKey } from "./proxy.ts";
-import { runProxyReplacements } from "./proxy-replacements.ts";
+import { proxyHostPort, proxyIdentityKey } from "./proxy.ts";
 import type { Launcher } from "./launcher.ts";
 import type { ProfileStore } from "./store.ts";
 import type { UiRuntimeOptions } from "./ui.ts";
 import type { ProxyPreview, ProxyPreviewInput, ProxyProgressEvent, ProxyScope } from "./proxy-tools-types.ts";
 
-type Preview = { id: string; owner: string; scope: ProxyScope; rows: PlannedProxyReplacement[]; unusedProxies: number };
+type Preview = { id: string; scope: ProxyScope; rows: PlannedProxyReplacement[]; unusedProxies: number };
 const states = new WeakMap<ProfileStore, { preview?: Preview; applying: boolean }>();
 
 function response(body: unknown, status = 200): Response {
@@ -22,42 +20,23 @@ function previewView(preview: Preview): ProxyPreview {
 
 function safeError(error: unknown): string {
   if (error instanceof ProxyToolsError) return error.message;
-  if (error instanceof CloudApiError && error.status === 404) return "Cloud bulk proxy tools are not available on this server yet";
   return "Proxy operation failed. Refresh and try again.";
 }
 
 export async function handleProxyToolsRequest(
-  req: Request, store: ProfileStore, launcher: Launcher, options: UiRuntimeOptions,
+  req: Request, launcher: Launcher, store: ProfileStore, options: UiRuntimeOptions,
 ): Promise<Response> {
   const state = states.get(store) ?? { applying: false };
   states.set(store, state);
-  const cloud = options.cloudBrowser ? options.cloudConnection?.client : undefined;
-  const transition = cloud ? await options.cloudAuth?.acquireTransition() : undefined;
-  let streaming = false;
+  const current = () => !req.signal.aborted;
+  const assertCurrent = () => { if (!current()) throw new ProxyToolsError("Operation cancelled", 409); };
   try {
-    const status = cloud ? await cloud.status() : undefined;
-    const owner = status ? JSON.stringify([status.account.id, status.workspace.id]) : "local";
-    const accountCurrent = () => (!transition || options.cloudAuth!.isTransitionCurrent(transition)) &&
-      (!status || options.cloudConnection?.accountId() === status.account.id);
-    const current = () => !req.signal.aborted && accountCurrent();
-    const assertCurrent = () => { if (!current()) throw new ProxyToolsError("Operation cancelled or account changed", 409); };
     assertCurrent();
-    if (state.preview?.owner !== owner) state.preview = undefined;
     const body = await req.json();
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new ProxyToolsError("Invalid request");
     const action = new URL(req.url).pathname.split("/").pop();
     const inventory = async (): Promise<ProxyInventoryProfile[]> => {
       assertCurrent();
-      if (cloud) {
-        const result = await cloud.listProfileProxies(req.signal);
-        await Promise.all(result.profiles.map((p) => launcher.cacheCleanupSettled(p.id)));
-        assertCurrent();
-        return result.profiles.map((p) => ({
-          id: p.id, name: p.name, group: p.group, version: p.version, permission: p.permission,
-          proxy: normalizeProxySpec(p.proxy), proxyError: p.proxyError,
-          running: p.activeOpens.length > 0 || launcher.profileDeletionBlocked(p.id),
-        }));
-      }
       const profiles = store.listProfiles();
       await Promise.all(profiles.map((p) => launcher.cacheCleanupSettled(p.id)));
       return profiles.map((p) => ({
@@ -67,14 +46,14 @@ export async function handleProxyToolsRequest(
     };
     const getPreview = (): Preview => {
       const preview = state.preview;
-      if (!preview || preview.owner !== owner || preview.id !== body.previewId) throw new ProxyToolsError("Preview expired. Preview the replacements again.", 409);
+      if (!preview || preview.id !== body.previewId) throw new ProxyToolsError("Preview expired. Preview the replacements again.", 409);
       return preview;
     };
     if (state.applying && action !== "check") throw new ProxyToolsError("Replacement is still running", 409);
     if (action === "preview") {
       const built = buildProxyPreview(await inventory(), body as ProxyPreviewInput);
       assertCurrent();
-      state.preview = { id: crypto.randomUUID(), owner, scope: structuredClone(body.scope), ...built };
+      state.preview = { id: crypto.randomUUID(), scope: structuredClone(body.scope), ...built };
       return response(previewView(state.preview));
     }
     if (action === "retry-preview") {
@@ -85,7 +64,7 @@ export async function handleProxyToolsRequest(
       const rows = previous.rows.filter((row) => row.view.profileId && ids.has(row.view.profileId) && ["skipped", "failed"].includes(row.view.status)).map((row) => {
         const profile = fresh.get(row.view.profileId!);
         if (!row.next || row.view.code === "duplicate_target") return { ...row, view: { ...row.view } };
-        return { ...row, originalKey: proxyIdentityKey(profile?.proxy ?? null), expectedVersion: profile?.version,
+        return { ...row, originalKey: proxyIdentityKey(profile?.proxy ?? null),
           view: { ...row.view, name: profile?.name ?? row.view.name, group: profile?.group ?? row.view.group,
             previousProxy: profile?.proxy ? `${profile.proxy.type}://${proxyHostPort(profile.proxy)}` : null,
             code: undefined, ...replacementState(profile, row.next) } };
@@ -100,7 +79,6 @@ export async function handleProxyToolsRequest(
     if (preview) state.applying = true;
     let clientGone = false;
     const cancelled = () => clientGone || !current();
-    streaming = true;
     return new Response(new ReadableStream<Uint8Array>({
       async start(controller) {
         const encoder = new TextEncoder();
@@ -124,7 +102,7 @@ export async function handleProxyToolsRequest(
             const byId = new Map(selectProxyProfiles(profiles, preview.scope).map((p) => [p.id, p]));
             let completed = 0;
             send({ type: "progress", phase: "applying", completed, total: rows.length });
-            // Match the existing Cloud export batch size; this is not a profile limit.
+            // Bound timezone lookups and writes per batch without limiting the profile count.
             for (let offset = 0; offset < rows.length && !cancelled(); offset += 16) {
               const batch = rows.slice(offset, offset + 16);
               const ready: PlannedProxyReplacement[] = [];
@@ -133,21 +111,12 @@ export async function handleProxyToolsRequest(
                 const status = replacementState(profile, row.next!);
                 if (!profile || profile.group !== row.view.group || profile.permission !== "edit") {
                   Object.assign(row.view, { status: "skipped", code: "no_editable_match" });
-                } else if (profile.version !== row.expectedVersion || proxyIdentityKey(profile.proxy) !== row.originalKey) {
+                } else if (proxyIdentityKey(profile.proxy) !== row.originalKey) {
                   Object.assign(row.view, { status: "skipped", code: "version_conflict" });
                 } else if (status.status !== "ready") Object.assign(row.view, { code: undefined, ...status });
                 else ready.push(row);
               }
-              if (cloud && ready.length && !cancelled()) {
-                try {
-                  const result = await runProxyReplacements({
-                    replaceProfileProxies(request) { assertCurrent(); return cloud.replaceProfileProxies(request); },
-                  }, { dryRun: false, replacements: ready.map((row) => ({ profileId: row.view.profileId!, expectedVersion: row.expectedVersion!, proxy: row.next! })) });
-                  for (const item of result.results) Object.assign(ready[item.index]!.view, { status: item.status, code: item.code });
-                } catch {
-                  for (const row of ready) Object.assign(row.view, { status: "failed", code: "update_unconfirmed" });
-                }
-              } else if (!cloud) {
+              {
                 for (const row of ready) {
                   if (cancelled()) break;
                   const id = row.view.profileId!;
@@ -185,14 +154,12 @@ export async function handleProxyToolsRequest(
         } catch (error) { send({ type: "error", error: safeError(error) }); }
         finally {
           if (preview) state.applying = false;
-          if (!accountCurrent()) state.preview = undefined;
-          transition?.release();
           try { controller.close(); } catch {}
         }
       },
       cancel() { clientGone = true; },
     }), { headers: { "Content-Type": "application/x-ndjson", "Cache-Control": "no-store", "X-Accel-Buffering": "no" } });
   } catch (error) {
-    return response({ ok: false, error: safeError(error) }, error instanceof ProxyToolsError ? error.status : error instanceof SyntaxError ? 400 : error instanceof CloudApiError ? error.status : 500);
-  } finally { if (!streaming) transition?.release(); }
+    return response({ ok: false, error: safeError(error) }, error instanceof ProxyToolsError ? error.status : error instanceof SyntaxError ? 400 : 500);
+  }
 }

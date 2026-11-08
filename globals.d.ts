@@ -9,6 +9,11 @@ declare module "*.svg" {
   export default url;
 }
 
+declare module "*.png" {
+  const url: string;
+  export default url;
+}
+
 declare const ALIASMODE_COMPILED: boolean;
 
 declare module "*playwright-core/lib/generated/storageScriptSource.js" {

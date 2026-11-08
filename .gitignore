@@ -8,6 +8,7 @@ src-tauri/generated/
 src-tauri/binaries/
 src-tauri/resources/cloakbrowser/
 src-tauri/resources/playwright/
+src-tauri/resources/firefox/
 *.msi
 *.exe
 *.dmg
@@ -21,10 +22,12 @@ src-tauri/resources/playwright/
 config.json
 pending-sync.sqlite*
 profiles.sqlite*
-pending-sync.sqlite*
 pending-sync.key
 pending-sync.key.*.tmp
 profiles/
+browser/
+cloud-cache/
+logs/
 inbox/*.txt
 reports/
 *.export.txt

@@ -2,7 +2,6 @@ import { test, expect } from "bun:test";
 import { join } from "node:path";
 import {
   applySessionToEndpoint,
-  bundleHasRestorableLogin,
   bundleLoggedInPlatforms,
   bundleTabUrls,
   bundleTelegramClient,
@@ -132,7 +131,7 @@ test("writeSessionToBrowser bounds a hung origin restore and disconnects", async
   expect(closes).toBe(1);
 });
 
-test("Cloud restore preserves every cookie name and domain", async () => {
+test("local session restore preserves every cookie name and domain", async () => {
   const cookies = [
     { name: "SID", value: "session", domain: ".google.com", path: "/", httpOnly: true, secure: true, sameSite: "None" },
     ...["bcookie", "bscookie", "li_rm"].flatMap((name) => [".linkedin.com", "example.org"].map((domain) => ({
@@ -435,27 +434,6 @@ test("session restore operation errors never expose raw failure text", async () 
   })), "cookie_add", "failed");
 });
 
-test("bundleHasRestorableLogin: true only when injecting the bundle can put a login back", () => {
-  expect(bundleHasRestorableLogin(JSON.stringify({ cookies: [{ name: "auth_token", value: "x", domain: ".x.com" }] }))).toBe(true); // X cookie
-  expect(bundleHasRestorableLogin(JSON.stringify({ cookies: [{ name: "sessionid", value: "x", domain: ".instagram.com" }] }))).toBe(true);
-  expect(bundleHasRestorableLogin(JSON.stringify({ cookies: [{ name: "c_user", value: "1", domain: ".facebook.com" }] }))).toBe(true);
-  expect(bundleHasRestorableLogin(JSON.stringify({ cookies: [{ name: "sessionid_ss", value: "x", domain: ".tiktok.com" }] }))).toBe(true);
-  expect(bundleHasRestorableLogin(JSON.stringify({ cookies: [{ name: "li_at", value: "x", domain: ".linkedin.com" }] }))).toBe(true); // LinkedIn cookie
-  expect(bundleHasRestorableLogin(JSON.stringify({ cookies: [{ name: "reddit_session", value: "x", domain: ".reddit.com" }] }))).toBe(true);
-  expect(
-    bundleHasRestorableLogin(JSON.stringify({ cookies: [], origins: [{ origin: "https://web.telegram.org", localStorage: [{ name: "dc2_auth_key", value: "live" }] }] })),
-  ).toBe(true); // Telegram origin storage
-  expect(bundleHasRestorableLogin(JSON.stringify({ cookies: [] }))).toBe(false); // Telegram first migration — nothing to restore
-  expect(bundleHasRestorableLogin(JSON.stringify({ cookies: [{ name: "auth_token", value: "" }] }))).toBe(false); // empty-valued cookie
-  expect(bundleHasRestorableLogin(JSON.stringify({ cookies: [{ name: "auth_token", value: "x", domain: ".x.com", expires: 1 }] }), 10_000)).toBe(false); // expired
-  expect(bundleHasRestorableLogin(JSON.stringify({ cookies: [{ name: "auth_token", value: "x", domain: ".evil.com" }] }))).toBe(false); // wrong domain
-  expect(
-    bundleHasRestorableLogin(JSON.stringify({ cookies: [], origins: [{ origin: "https://web.telegram.org", localStorage: [{ name: "theme", value: "dark" }] }] })),
-  ).toBe(false); // incidental Telegram storage, not auth
-  expect(bundleHasRestorableLogin(JSON.stringify({ cookies: [{ name: "stel_token", value: "x", domain: "web.telegram.org" }] }))).toBe(false); // Telegram cookies alone don't restore Web auth
-  expect(bundleHasRestorableLogin("not-json")).toBe(false);
-});
-
 test("bundleLoggedInPlatforms recognizes each supported auth marker", () => {
   const bundle = JSON.stringify({
     cookies: [
@@ -477,31 +455,6 @@ test("bundleLoggedInPlatforms recognizes each supported auth marker", () => {
     "tiktok.com",
     "x.com",
   ]);
-});
-
-test("bundleHasRestorableLogin: logged-OUT Telegram state must NOT read as restorable (no spurious reset/roam)", () => {
-  const tg = (localStorage: any[], indexedDB?: any[]) =>
-    JSON.stringify({ cookies: [], origins: [{ origin: "https://web.telegram.org", localStorage, ...(indexedDB ? { indexedDB } : {}) }] });
-  // Real auth → true (the MTProto auth key + signed-in user, stable across K/A/Z clients).
-  expect(bundleHasRestorableLogin(tg([{ name: "dc1_auth_key", value: "KEY" }]))).toBe(true);
-  expect(bundleHasRestorableLogin(tg([{ name: "user_auth", value: "42" }]))).toBe(false); // user marker without an MTProto key cannot reconnect
-  expect(bundleHasRestorableLogin(tg([{ name: "account1", value: JSON.stringify({ dcId: 2, dc2_auth_key: "KEY", userId: "42" }) }]))).toBe(true);
-  expect(bundleHasRestorableLogin(tg([{ name: "account1", value: JSON.stringify({ dcId: 2, userId: "42" }) }]))).toBe(false);
-  // Logged-out / incidental state that the old broad regex false-matched → must be false.
-  expect(bundleHasRestorableLogin(tg([{ name: "last_error", value: "unauthorized" }]))).toBe(false); // "auth" in "unauthorized"
-  expect(bundleHasRestorableLogin(tg([{ name: "tt-global-state", value: '{"lastAuthorMenu":true}' }]))).toBe(false); // "auth" in "author"
-  expect(bundleHasRestorableLogin(tg([{ name: "dc1_server_salt", value: "abc" }]))).toBe(false); // salt present pre-login, not auth
-  expect(bundleHasRestorableLogin(tg([{ name: "ux_session_shown", value: "1" }]))).toBe(false); // "session" substring, analytics flag
-  expect(bundleHasRestorableLogin(tg([{ name: "note", value: "my auth_key is secret" }]))).toBe(false); // token only in a VALUE, not a key
-  // IndexedDB cache-only store (records but no auth key) → false; auth key in IndexedDB → true.
-  expect(bundleHasRestorableLogin(tg([], [{ name: "tweb", version: 1, stores: [{ name: "cache", records: [{ key: "theme", value: "dark" }] }] }]))).toBe(false);
-  expect(bundleHasRestorableLogin(tg([], [{ name: "tweb", version: 1, stores: [{ name: "session", records: [{ key: "dc2_auth_key", value: "K" }] }] }]))).toBe(true);
-  expect(bundleHasRestorableLogin(tg([], [{ name: "tt-passcode", version: 1, stores: [{ name: "store", records: [
-    { key: "sessionEncrypted", value: [1, 2] }, { key: "globalEncrypted", value: [3, 4] },
-  ] }] }]))).toBe(true); // Web A local-passcode session
-  expect(bundleHasRestorableLogin(tg([], [{ name: "tweb-common", version: 8, stores: [{ name: "localStorage__encrypted", records: [
-    { key: "data", valueEncoded: { ta: { b: "AQI=", k: "ui8" } } },
-  ] }] }]))).toBe(true); // Web K local-passcode session
 });
 
 test("Telegram client/signature recognizes current accountN storage and preserves A/K", () => {

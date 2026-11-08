@@ -13,11 +13,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { AppConfigStore } from "./app-config.ts";
+import { parseAppConfig } from "./app-config.ts";
 import { dpapiKeysReadable, localStateDpapiKey } from "./dpapi.ts";
 import { readHostProcessSnapshot, type HostProcessSnapshot } from "./launcher.ts";
 import { isSafeProfileId } from "./profile-id.ts";
-import { statePaths, type StatePaths } from "./paths.ts";
+import { legacyStatePaths, statePaths, type StatePaths } from "./paths.ts";
 
 export interface LegacyMigrationResult {
   status: "not_found" | "migrated";
@@ -48,7 +48,7 @@ function userTables(db: Database): string[] {
   ).all().map((row) => row.name);
 }
 
-function databaseHasRows(path: string, label = "AliasMode destination database"): boolean {
+function databaseHasRows(path: string, label = "猫步·千境 destination database"): boolean {
   if (!existsSync(path) || statSync(path).size === 0) return false;
   const db = new Database(path, { readonly: true });
   try {
@@ -69,32 +69,37 @@ function hasContent(path: string): boolean {
 
 function validateDestination(destination: StatePaths): void {
   if (!existsSync(destination.root)) return;
+  const legacy = legacyStatePaths(destination.root);
   if (existsSync(destination.config)) {
-    // A Cloud-mode install with no Cloud state (the checks below) imports as Local.
+    // Validate old selections without rewriting the original configuration.
     try {
-      JSON.parse(readFileSync(destination.config, "utf8"));
+      parseAppConfig(JSON.parse(readFileSync(destination.config, "utf8")));
     } catch {
-      throw new Error("AliasMode destination config is unreadable");
+      throw new Error("猫步·千境 destination config is unreadable");
     }
   }
   if (databaseHasRows(destination.database) || hasContent(destination.profiles) || hasContent(destination.extensions)) {
-    throw new Error("AliasMode destination already contains local profile data");
+    throw new Error("猫步·千境 destination already contains local profile data");
   }
-  if (databaseHasRows(destination.pendingSync, "AliasMode pending synchronization database")) {
-    throw new Error("AliasMode destination contains pending Cloud synchronization state");
+  const names = readdirSync(destination.root);
+  if (existsSync(legacy.pendingSyncKey) || names.some((name) => name.startsWith("pending-sync.key.") && name.endsWith(".tmp"))) {
+    throw new Error("Destination contains legacy Cloud credentials; keep these files and explicitly export the local profiles you need before importing");
   }
-  const cloudRoot = join(destination.root, "cloud-cache");
-  if (databaseHasRows(destination.cloudDatabase, "AliasMode Cloud cache database") || hasContent(destination.cloudProfiles)) {
-    throw new Error("AliasMode destination contains Cloud cache state");
+  if (databaseHasRows(legacy.pendingSync, "猫步·千境 pending synchronization database")) {
+    throw new Error("猫步·千境 destination contains pending Cloud synchronization state");
+  }
+  const cloudRoot = legacy.cloudRoot;
+  if (databaseHasRows(legacy.cloudDatabase, "猫步·千境 Cloud cache database") || hasContent(legacy.cloudProfiles)) {
+    throw new Error("猫步·千境 destination contains Cloud cache state");
   }
   if (existsSync(cloudRoot)) {
     const allowed = new Set(["profiles", "profiles.sqlite", "profiles.sqlite-wal", "profiles.sqlite-shm"]);
     if (readdirSync(cloudRoot).some((name) => !allowed.has(name) && hasContent(join(cloudRoot, name)))) {
-      throw new Error("AliasMode destination contains Cloud cache state");
+      throw new Error("猫步·千境 destination contains Cloud cache state");
     }
   }
   if (hasContent(destination.browser)) {
-    throw new Error("AliasMode destination contains browser state");
+    throw new Error("猫步·千境 destination contains browser state");
   }
   const allowed = new Set([
     "profiles.sqlite", "profiles.sqlite-wal", "profiles.sqlite-shm", "profiles", "extensions",
@@ -104,7 +109,7 @@ function validateDestination(destination: StatePaths): void {
   const allowedName = (name: string) => allowed.has(name)
     || (name.startsWith("pending-sync.key.") && name.endsWith(".tmp"));
   if (readdirSync(destination.root).some((name) => !allowedName(name) && hasContent(join(destination.root, name)))) {
-    throw new Error("AliasMode destination contains unsupported existing state");
+    throw new Error("猫步·千境 destination contains unsupported existing state");
   }
 }
 
@@ -286,7 +291,7 @@ function copyPreservedDestination(destination: StatePaths, staging: StatePaths):
     const source = join(destination.root, name);
     if (existsSync(source)) cpSync(source, join(staging.root, name), { recursive: true, errorOnExist: true });
   }
-  for (const path of [destination.config, destination.operatorId, destination.pendingSyncKey]) {
+  for (const path of [destination.config, legacyStatePaths(destination.root).operatorId]) {
     if (existsSync(path)) cpSync(path, join(staging.root, basename(path)), { errorOnExist: true });
   }
 }
@@ -309,12 +314,12 @@ export async function migrateLegacyState(
   mkdirSync(dirname(destination.root), { recursive: true });
   if (existsSync(backup)) {
     if (existsSync(destination.root)) {
-      throw new Error(`AliasMode destination and recovery backup both exist; resolve ${backup} before importing`);
+      throw new Error(`猫步·千境 destination and recovery backup both exist; resolve ${backup} before importing`);
     }
     rename(backup, destination.root);
   }
   if (existsSync(destination.migration)) {
-    throw new Error("AliasMode destination already contains imported local profile data");
+    throw new Error("猫步·千境 destination already contains imported local profile data");
   }
   validateDestination(destination);
 
@@ -365,9 +370,6 @@ export async function migrateLegacyState(
     const sourceExtensions = join(source, "extensions");
     if (existsSync(sourceExtensions)) assertNoLinks(sourceExtensions);
     if (existsSync(destination.root)) copyPreservedDestination(destination, staging);
-    // Imported profiles are Local: a desktop first run starts on Cloud sign-in, which would hide them.
-    const stagedConfig = new AppConfigStore(staging.config);
-    if (stagedConfig.read().mode !== "local") stagedConfig.setMode("local");
     const stagedDb = new Database(staging.database);
     try {
       integrityCheck(stagedDb);
@@ -386,8 +388,6 @@ export async function migrateLegacyState(
 
     for (const [id, path] of selected.selected) cpSync(path, join(staging.profiles, id), { recursive: true, errorOnExist: true });
     if (existsSync(sourceExtensions)) cpSync(sourceExtensions, staging.extensions, { recursive: true, errorOnExist: true });
-    const sourceOperator = join(source, ".operator-id");
-    if (existsSync(sourceOperator)) cpSync(sourceOperator, staging.operatorId, { force: true });
     const requiredLocalStates = [...selected.selected.keys()].map((id) => join(staging.profiles, id, "Local State"));
     dpapiKeys(requiredLocalStates);
     await (options.validateDpapi ?? validateWindowsDpapi)(requiredLocalStates);

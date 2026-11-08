@@ -3,7 +3,7 @@
 # next to the 1x file.
 files = [defines["app"]]
 symlinks = {"Applications": "/Applications"}
-hide_extensions = ["AliasMode.app"]
+hide_extensions = ["猫步·千境.app"]
 format = "UDZO"
 filesystem = "HFS+"
 background = defines["background"]
@@ -11,4 +11,4 @@ window_rect = ((360, 360), (660, 400))
 default_view = "icon-view"
 icon_size = 128
 text_size = 13
-icon_locations = {"AliasMode.app": (180, 185), "Applications": (480, 185)}
+icon_locations = {"猫步·千境.app": (180, 185), "Applications": (480, 185)}

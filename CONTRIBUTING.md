@@ -1,34 +1,33 @@
-# Contributing
+# 贡献说明
 
-AliasMode is in an early beta. Open an issue before starting a large change.
+本仓库维护猫步·千境本地版，当前版本为 `0.1.0-local.1`。大改动请先与本地版本维护者讨论范围。
 
-## Development
+## 开发与验证
 
-```sh
-bun install
-bun test
+Windows 环境与桌面构建流程见 [README.md](README.md)。本地 CI 使用 Bun 1.2.21；安装依赖与常规验证命令为：
+
+```powershell
+bun install --frozen-lockfile
+bun run typecheck
+bun test --timeout 10000
+bun run docs:public:check
 ```
 
-Keep changes small and focused. Add tests for behavior changes. Do not commit generated browser data, profile exports, credentials, environment files, diagnostics, or binaries.
+根据变更运行相关回归；修改本地 API 或 MCP 工具契约后，执行 `bun run docs:public` 并提交生成文档。桌面原生修改还应验证相应 Rust 测试和构建。
 
-## Release notes
+## 修改边界
 
-Each published GitHub Release must contain one to three important user-visible changes in this exact format:
+- 保持应用本地专用。Cloud、同步队列、远程 MCP、商城、推广和公共脚本发布源码已物理删除，请勿通过兼容层或回退地址重新引入。
+- 保留本地导入导出、会话、脚本、AdsPower API 与 MCP 的实际功能。兼容协议名和可执行文件名仍可能带有 `aliasmode`。
+- 浏览器引擎按需下载；保留固定版本和哈希校验。修改引擎来源或版本时同步核对校验值、平台约束和许可证。
+- 不提交环境数据库、浏览器用户目录、导出资料、密码、凭据、`.env`、未脱敏诊断或生成二进制。
+- 不自动删除或迁移旧版用户数据；已有云缓存只用于迁移保护和拒绝误用。
+- 保留 [LICENSE](LICENSE)、[NOTICE](NOTICE) 及第三方署名。
 
-```md
-## Highlights
-- First important change.
-- Second important change.
-```
+## 提交与版本
 
-AliasMode displays only the first three plain-text dash bullets from this section in the in-app updater.
+说明用户可见的行为变化、验证结果和已知限制，避免无关重构。版本变更需要同步项目包、桌面配置、Rust 包、本地 MCP 和公开文档。
 
-## Pull requests
+本地版没有应用内自动更新、上游发布或自动发布流水线。发布说明使用普通变更记录即可，无需沿用旧更新器的 `Highlights` 解析格式。分发修改后的程序时，应包含许可证、来源署名和必要的第三方许可说明。
 
-- Explain the user-visible change.
-- Include relevant test results.
-- Preserve Local mode's no-Cloud behavior.
-- Avoid unrelated refactors.
-- Do not add cloud-service implementation or production infrastructure to this repository.
-
-Security issues must follow [SECURITY.md](SECURITY.md).
+安全问题按 [SECURITY.md](SECURITY.md) 处理。

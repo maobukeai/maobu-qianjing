@@ -186,7 +186,7 @@ test("MCP profile creation forwards the selected browser engine", async () => {
       chromiumRuntime: { type: "string", enum: ["aliasmode", "cloakbrowser"] },
     },
   });
-  expect(tool?.description).toContain("Without engine, Windows creates an AliasMode Chromium profile, and macOS and Linux create an AliasMode Firefox profile.");
+  expect(tool?.description).toContain("Without engine, Windows creates a Chromium profile, and macOS and Linux create a Firefox profile.");
   const created = await client.callTool({ name: "aliasmode_profile_create", arguments: { name: "Firefox", engine: "firefox" } });
   expect(created.isError).not.toBe(true);
   expect(runtime.calls.at(-1)).toEqual({
@@ -204,7 +204,7 @@ test("MCP profile creation forwards the selected browser engine", async () => {
   await host.close();
 });
 
-test("MCP profile update forwards versioned edits without returning credentials", async () => {
+test("MCP profile update forwards local edits without returning credentials", async () => {
   const runtime = new FakeRuntime();
   const host = await createAliasModeMcp({ discovered: { client: runtime }, playwright: new FakePlaywright() });
   const client = new Client({ name: "test", version: "1" }, { capabilities: {} });
@@ -213,14 +213,14 @@ test("MCP profile update forwards versioned edits without returning credentials"
 
   const tool = (await client.listTools()).tools.find((tool) => tool.name === "aliasmode_profile_update");
   expect(tool?.annotations?.destructiveHint).toBe(true);
+  expect(tool?.inputSchema.properties).not.toHaveProperty("expectedVersion");
   expect(tool?.inputSchema).toMatchObject({
-    required: ["profileId", "expectedVersion", "set"], additionalProperties: false,
+    required: ["profileId", "set"], additionalProperties: false,
     properties: {
-      expectedVersion: { type: "integer", minimum: 0 },
       set: { type: "object", minProperties: 1, additionalProperties: false, properties: { password: { type: "string" }, extensions: { type: "array" } } },
     },
   });
-  const args = { profileId: "profile1", expectedVersion: 7, set: { username: "matched-user", password: "private-password", twofa: "private-totp" } };
+  const args = { profileId: "profile1", set: { username: "matched-user", password: "private-password", twofa: "private-totp" } };
   const result = await client.callTool({ name: "aliasmode_profile_update", arguments: args });
   expect(result.isError).not.toBe(true);
   expect(runtime.calls.at(-1)).toEqual({ method: "profiles.update", params: args });
@@ -254,6 +254,7 @@ test("MCP host exposes strict proxy replacement input and forwards safe results"
     additionalProperties: false,
   });
   expect((tool?.inputSchema as { oneOf?: unknown[] }).oneOf).toHaveLength(2);
+  expect((tool?.inputSchema.properties?.replacements as any)?.items.properties).not.toHaveProperty("expectedVersion");
 
   const replacement = {
     username: "exact-user",
@@ -414,7 +415,7 @@ test("browser actions require one selected profile", async () => {
 
   const result = await client.callTool({ name: "browser_snapshot", arguments: {} });
   expect(result.isError).toBe(true);
-  expect((result.content as Array<{ text?: string }>)[0]).toMatchObject({ text: "select an open AliasMode browser first" });
+  expect((result.content as Array<{ text?: string }>)[0]).toMatchObject({ text: "select an open 猫步·千境 browser first" });
 
   await client.close();
   await host.close();

@@ -15,17 +15,6 @@ import {
   sha256,
 } from "./generate-public-docs.mjs";
 
-const RELEASED_CATALOG_PATH = "mcp-tools/0.1.0-beta.42.json";
-const BETA42_ALIASMODE_TOOLS = [
-  "aliasmode_profiles_list",
-  "aliasmode_profile_create",
-  "aliasmode_profile_delete",
-  "aliasmode_browser_open",
-  "aliasmode_browser_select",
-  "aliasmode_browser_status",
-  "aliasmode_browser_close",
-  "browser_close",
-];
 const DOCUMENTED_ROUTES = [
   "get /status",
   "get /api/v1/status",
@@ -155,17 +144,12 @@ test("current-source MCP catalog is deterministic and committed", async () => {
 
 test("MCP catalogs list the expected tools", () => {
   const current = JSON.parse(read(CURRENT_CATALOG_PATH));
-  const released = JSON.parse(read(RELEASED_CATALOG_PATH));
-  expect(released.status).toBe("released");
-  expect(released.sourceRef).toBe("v0.1.0-beta.42");
-  expect(released.playwrightToolAvailability).toBe("after-browser-selection");
-  expect(released.aliasModeTools.map((tool: any) => tool.name)).toEqual(BETA42_ALIASMODE_TOOLS);
   expect(current.status).toBe("source");
   expect(current.playwrightToolAvailability).toBe("listed-before-selection");
   expect(current.aliasModeTools.length).toBe(10);
   expect(current.aliasModeTools.map((tool: any) => tool.name)).toContain("aliasmode_profiles_replace_proxies");
   expect(current.aliasModeTools.map((tool: any) => tool.name)).toContain("aliasmode_profile_update");
-  for (const catalog of [current, released]) {
+  for (const catalog of [current]) {
     const names = [...catalog.aliasModeTools, ...catalog.playwrightTools].map((tool: any) => tool.name);
     expect(new Set(names).size).toBe(names.length);
     expect(catalog.playwrightTools.length).toBeGreaterThan(0);
@@ -177,9 +161,9 @@ test("MCP catalogs list the expected tools", () => {
 
 test("manifest sha256 values match the committed files", () => {
   expect(manifest.productVersion).toBe(openapi.info.version);
-  expect(manifest.releasedVersions).toContain("0.1.0-beta.42");
+  expect(manifest).not.toHaveProperty("releasedVersions");
   expect(sha256(read(manifest.openapi.path))).toBe(manifest.openapi.sha256);
-  expect(Object.keys(manifest.mcpCatalogs)).toEqual(["current-source", ...manifest.releasedVersions]);
+  expect(Object.keys(manifest.mcpCatalogs)).toEqual(["current-source"]);
   for (const entry of Object.values<any>(manifest.mcpCatalogs)) {
     expect(sha256(read(entry.path))).toBe(entry.sha256);
   }

@@ -1,6 +1,6 @@
 {
   "catalogSchemaVersion": 1,
-  "aliasModeVersion": "0.1.0-beta.74",
+  "aliasModeVersion": "0.1.0-local.1",
   "status": "source",
   "sourceRef": "source",
   "playwrightMcpVersion": "0.0.56",
@@ -20,9 +20,9 @@
   "aliasModeTools": [
     {
       "name": "aliasmode_profiles_list",
-      "description": "List AliasMode profiles and their current browser state. Cloud profiles include expectedVersion and permission for editing.",
+      "description": "List local 猫步·千境 profiles and their current browser state.",
       "annotations": {
-        "title": "List AliasMode profiles",
+        "title": "List 猫步·千境 profiles",
         "readOnlyHint": false,
         "destructiveHint": false,
         "openWorldHint": false
@@ -35,9 +35,9 @@
     },
     {
       "name": "aliasmode_profiles_replace_proxies",
-      "description": "Dry-run or apply bulk proxy replacements to closed AliasMode Cloud profiles. Apply always preflights first.",
+      "description": "Preview or apply proxy replacements to closed local 猫步·千境 profiles. The default is a dry run; open and ambiguous profiles are skipped.",
       "annotations": {
-        "title": "Replace AliasMode profile proxies",
+        "title": "Replace 猫步·千境 profile proxies",
         "readOnlyHint": false,
         "destructiveHint": true,
         "openWorldHint": false
@@ -63,10 +63,6 @@
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 255
-                },
-                "expectedVersion": {
-                  "type": "integer",
-                  "minimum": 1
                 },
                 "proxy": {
                   "type": "object",
@@ -162,9 +158,9 @@
     },
     {
       "name": "aliasmode_profile_create",
-      "description": "Create a persistent AliasMode profile, or an explicit temporary profile. Without engine, Windows creates an AliasMode Chromium profile, and macOS and Linux create an AliasMode Firefox profile.",
+      "description": "Create a persistent 猫步·千境 profile, or an explicit temporary profile. Without engine, Windows creates a Chromium profile, and macOS and Linux create a Firefox profile.",
       "annotations": {
-        "title": "Create an AliasMode profile",
+        "title": "Create a 猫步·千境 profile",
         "readOnlyHint": false,
         "destructiveHint": false,
         "openWorldHint": false
@@ -194,7 +190,7 @@
               "aliasmode",
               "cloakbrowser"
             ],
-            "description": "Chromium profiles only. aliasmode (AliasMode Chromium 155) is the default where this computer can run it. CloakBrowser profiles on one computer can be linked to each other."
+            "description": "Chromium profiles only. aliasmode (Chromium 155) is the default where this computer can run it. CloakBrowser profiles on one computer can be linked to each other."
           },
           "screen": {
             "type": "string"
@@ -242,9 +238,9 @@
     },
     {
       "name": "aliasmode_profile_update",
-      "description": "Edit a closed AliasMode Cloud profile by ID using expectedVersion from aliasmode_profiles_list. Only supplied fields change; empty strings clear fields. Sessions and cookies are preserved. Returns confirmation, not credentials.",
+      "description": "Edit a closed local 猫步·千境 profile by ID. Only supplied fields change; empty strings clear fields. Sessions and cookies are preserved. Returns confirmation, not credentials.",
       "annotations": {
-        "title": "Edit an AliasMode Cloud profile",
+        "title": "Edit a local 猫步·千境 profile",
         "readOnlyHint": false,
         "destructiveHint": true,
         "openWorldHint": false
@@ -255,10 +251,6 @@
           "profileId": {
             "type": "string",
             "minLength": 1
-          },
-          "expectedVersion": {
-            "type": "integer",
-            "minimum": 0
           },
           "set": {
             "type": "object",
@@ -324,7 +316,6 @@
         },
         "required": [
           "profileId",
-          "expectedVersion",
           "set"
         ],
         "additionalProperties": false
@@ -332,9 +323,9 @@
     },
     {
       "name": "aliasmode_profile_delete",
-      "description": "Delete a closed AliasMode profile.",
+      "description": "Delete a closed 猫步·千境 profile.",
       "annotations": {
-        "title": "Delete an AliasMode profile",
+        "title": "Delete a 猫步·千境 profile",
         "readOnlyHint": false,
         "destructiveHint": true,
         "openWorldHint": false
@@ -355,9 +346,9 @@
     },
     {
       "name": "aliasmode_browser_open",
-      "description": "Open an AliasMode browser and select it for Playwright actions.",
+      "description": "Open a 猫步·千境 browser and select it for Playwright actions.",
       "annotations": {
-        "title": "Open an AliasMode browser",
+        "title": "Open a 猫步·千境 browser",
         "readOnlyHint": false,
         "destructiveHint": true,
         "openWorldHint": true
@@ -393,9 +384,9 @@
     },
     {
       "name": "aliasmode_browser_select",
-      "description": "Select an open AliasMode browser for subsequent Playwright actions.",
+      "description": "Select an open 猫步·千境 browser for subsequent Playwright actions.",
       "annotations": {
-        "title": "Select an AliasMode browser",
+        "title": "Select a 猫步·千境 browser",
         "readOnlyHint": false,
         "destructiveHint": true,
         "openWorldHint": false
@@ -418,7 +409,7 @@
       "name": "aliasmode_browser_status",
       "description": "Get the selected browser state, or the state of one profile.",
       "annotations": {
-        "title": "Get AliasMode browser status",
+        "title": "Get 猫步·千境 browser status",
         "readOnlyHint": false,
         "destructiveHint": true,
         "openWorldHint": false
@@ -436,9 +427,9 @@
     },
     {
       "name": "aliasmode_browser_close",
-      "description": "Safely capture and close one AliasMode browser.",
+      "description": "Safely capture and close one 猫步·千境 browser.",
       "annotations": {
-        "title": "Close an AliasMode browser",
+        "title": "Close a 猫步·千境 browser",
         "readOnlyHint": false,
         "destructiveHint": true,
         "openWorldHint": false
@@ -456,9 +447,9 @@
     },
     {
       "name": "browser_close",
-      "description": "Safely capture and close the selected AliasMode browser.",
+      "description": "Safely capture and close the selected 猫步·千境 browser.",
       "annotations": {
-        "title": "Close the selected AliasMode browser",
+        "title": "Close the selected 猫步·千境 browser",
         "readOnlyHint": false,
         "destructiveHint": true,
         "openWorldHint": false

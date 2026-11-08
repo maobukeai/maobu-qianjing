@@ -1,17 +1,25 @@
-# Security Policy
+# 安全说明
 
-## Reporting a vulnerability
+本说明适用于猫步·千境本地版 `0.1.0-local.1`。该修改版独立于上游；本仓库没有配置独立公开安全邮箱或自动更新通道。
 
-Do not open a public issue for a vulnerability.
+## 报告问题
 
-Email [security@aliasmode.com](mailto:security@aliasmode.com). Include the affected version, reproduction steps, and impact.
+请通过私下渠道向提供或维护此本地版本的人报告，不要把未修复漏洞的利用细节直接放入公开 issue。提供版本、最小复现步骤、受影响功能和影响范围；本地修改版问题不应默认发送给原作者的邮箱。
 
-Never send real cookies, passwords, proxy credentials, TOTP seeds, profile exports, private keys, or unredacted diagnostics.
+只使用虚构测试数据复现。不要发送真实 Cookie、密码、代理凭据、TOTP 种子、完整环境导出、私钥或未脱敏的诊断文件。
 
-## Supported versions
+## 当前边界
 
-AliasMode is currently in beta. Security fixes apply to the newest published release.
+- 原作者的 Cloud 鉴权、同步、远程隧道、商城、公共脚本发布、桌面自动更新及云凭据接口已删除。旧配置不能启用这些功能。
+- 桌面状态目录为 `%APPDATA%\com.maobu.local`，旧版数据保留原处。数据库未整体加密，环境和会话文件、导出及备份仍可能包含敏感资料。
+- 本地 AdsPower 兼容 API 只绑定回环地址，但没有账号鉴权；同机进程可以访问。浏览器 CDP 地址可控制已登录会话，不应泄露或转发到外网。
+- 本地 MCP、浏览器扩展和用户脚本可操作浏览器与会话。仅运行你信任的客户端、扩展与代码。
+- Windows 默认浏览器内核在首次打开对应环境时下载。浏览器、字体和语言运行时下载保留源码固定的版本与校验；它们与用户网站、代理检测仍可能联网。
 
-## Scope
+内核及依赖仍需要持续评估安全更新，固定哈希只验证下载是否符合当前源码的预期。CloakBrowser、Firefox/Camoufox、Chromium、Node 和其他第三方组件各自保留其安全报告与许可证流程。本地桌面应用不提供对这些组件的安全担保。
 
-Security reports may cover the desktop client, local API, installer, update notification, or interactions with AliasMode Cloud. The CloakBrowser runtime has its own security and reporting process.
+## 范围与维护
+
+本地版问题范围包括桌面壳、回环 API、MCP、档案和会话保存、导入导出、脚本运行及下载校验。原作者已经删除的云服务和更新服务不属于此修改版的运行范围。
+
+安全修复需要手动获取本地源码变更、核对版本并重新构建或替换程序。当前文档不承诺上游版本支持、本地维护期限或自动推送修复。

@@ -11,7 +11,7 @@ if (!endpoint || !scriptPath) {
   process.exit(1);
 }
 if (endpoint.startsWith("firefox://")) {
-  process.stdout.write(`${JSON.stringify({ ok: false, error: "Firefox scripts run through the AliasMode manager" })}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: false, error: "Firefox scripts run through the 猫步·千境 manager" })}\n`);
   process.exit(1);
 }
 
@@ -19,7 +19,7 @@ let browser;
 try {
   browser = await chromium.connectOverCDP(endpoint, { timeout: 30_000 });
   const context = browser.contexts()[0];
-  if (!context) throw new Error("AliasMode browser context is unavailable");
+  if (!context) throw new Error("猫步·千境 browser context is unavailable");
   const pages = context.pages();
   const page = pages[0] ?? await context.newPage();
   const module = await import(pathToFileURL(scriptPath).href);

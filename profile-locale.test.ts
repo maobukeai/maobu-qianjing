@@ -12,7 +12,6 @@ import { ProfileStore } from "./store.ts";
 import { parseExport, parseUpdateFile, rowsToUpdates, serializeAdsTxt, serializeXlsxRows } from "./parse.ts";
 import { importBuffers } from "./inbox.ts";
 import { parseImportFile } from "./import-formats.ts";
-import { encodePortableProfile, decodePortableProfile } from "./portable-profile.ts";
 import { writeXlsx } from "./xlsx.ts";
 
 test("locale defaults distinguish countries within the same timezone continent", () => {
@@ -76,14 +75,11 @@ test.each([['windows', 'win'], ['macos', 'mac'], ['linux', 'lin']] as const)(
   },
 );
 
-test.each(["chromium", "firefox"] as const)("%s locale survives exports, Cloud transfer, and sparse re-import", async (engine) => {
+test.each(["chromium", "firefox"] as const)("%s locale survives local exports and sparse re-import", async (engine) => {
   const profile = completeProfileFingerprint({ ...buildNewProfile({ engine }, () => false), locale: "fr-CA" });
   expect(parseExport(serializeAdsTxt([profile])).profiles[0]!.locale).toBe("fr-CA");
   const { headers, rows } = serializeXlsxRows([profile]);
   expect((await parseImportFile("profiles.xlsx", await writeXlsx(headers, rows))).profiles[0]!.locale).toBe("fr-CA");
-  const transferred = decodePortableProfile(encodePortableProfile(profile)).profile;
-  expect(transferred.locale).toBe("fr-CA");
-  expect(transferred.firefox).toEqual(profile.firefox);
   const store = new ProfileStore(":memory:");
   try {
     store.upsertProfile(profile);

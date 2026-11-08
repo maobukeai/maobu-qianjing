@@ -1,13 +1,11 @@
 mod browser;
 mod credentials;
-mod releases;
 mod runtime_descriptor;
 mod shutdown;
 mod sidecar;
-mod update_attempt;
-mod update_download;
+mod workspaces;
 
-use credentials::{credential_delete, credential_get, credential_set, CredentialOrigin};
+use credentials::CredentialOrigin;
 use rand::random;
 use std::{
     error::Error,
@@ -25,21 +23,8 @@ use tauri::{
     Manager, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
-use tauri_plugin_shell::ShellExt;
 
 const IMPORT_RESTRICTION: &str = "Windows DPAPI protects persisted browser secrets, so this import works only for the same Windows machine and account. Persisted persona fields are preserved, but runtime or browser differences can change the account-visible fingerprint.";
-
-const ALLOWED_EXTERNAL_URLS: [&str; 9] = [
-    "https://aliasmode.com/support/",
-    "https://aliasmode.com/terms/",
-    "https://aliasmode.com/privacy/",
-    "https://aliasmode.com/acceptable-use/",
-    "https://nobleproxy.com/t/aliasmode",
-    "https://t.me/aliasmode",
-    "https://github.com/aliasmode/aliasmode",
-    "https://xreacher.com/",
-    "https://xreacher.com/?utm_source=aliasmode&utm_medium=app&utm_campaign=outreach&utm_content=profile-editor",
-];
 
 const WINDOWS_ACCEPTANCE_BROWSER_ARGS: &str =
     "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
@@ -54,70 +39,26 @@ fn windows_acceptance_browser_args(enabled: bool, debug_port: Option<&str>) -> O
     ))
 }
 
-fn allowed_external_url(url: &str) -> bool {
-    ALLOWED_EXTERNAL_URLS.contains(&url)
-        || proxy_offer_url(url)
-        || stripe_checkout_url(url)
-        || nobleproxy_handoff_url(url)
-        || services_go_url(url)
-}
-
-/// A Visit button on the Services page opens aliasmode.com/go/<slug>, which counts the click and redirects.
-/// Only lowercase letters, digits and hyphens in the slug, with no query and no fragment.
-fn services_go_url(url: &str) -> bool {
-    let Some(slug) = url.strip_prefix("https://aliasmode.com/go/") else {
-        return false;
-    };
-    (1..=64).contains(&slug.len())
-        && !slug.starts_with('-')
-        && slug
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-}
-
-/// "Manage on NobleProxy" opens the short-lived sign-in link that AliasMode Cloud got from NobleProxy.
-/// Only this exact form: one `h` token of URL-safe characters, no other parameter and no fragment.
-fn nobleproxy_handoff_url(url: &str) -> bool {
-    let Some(token) = url.strip_prefix("https://nobleproxy.com/continue/aliasmode?h=") else {
-        return false;
-    };
-    token.len() >= 20
-        && token
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
-}
-
-/// A wallet top-up by card opens the Stripe Checkout page that AliasMode Cloud created.
-/// Only that host, with plain path and fragment characters, so no query can redirect elsewhere.
-fn stripe_checkout_url(url: &str) -> bool {
-    let Some(rest) = url.strip_prefix("https://checkout.stripe.com/") else {
-        return false;
-    };
-    (1..=2000).contains(&rest.len())
-        && rest
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"/_-.#%=+~".contains(&byte))
-}
-
-/// The proxy offer link can name the button that was clicked, a quantity and the app language.
-fn proxy_offer_url(url: &str) -> bool {
-    let Some(query) = url.strip_prefix("https://nobleproxy.com/t/aliasmode?") else {
-        return false;
-    };
-    query.split('&').all(|pair| {
-        pair.split_once('=').is_some_and(|(key, value)| {
-            matches!(key, "src" | "qty" | "lang")
-                && (1..=32).contains(&value.len())
-                && value
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-        })
-    })
-}
-
-#[allow(deprecated)]
-fn open_external_url(app: &tauri::AppHandle, url: &str) {
-    let _ = app.shell().open(url, None);
+fn trusted_loopback_capability(port: u16) -> CapabilityBuilder {
+    let capability = CapabilityBuilder::new(format!("loopback-{port}"))
+        .local(false)
+        .window("main")
+        .remote(format!("http://127.0.0.1:{port}/*"))
+        .permission("allow-credential-bridge")
+        .permission("allow-workspace-management")
+        .permission("allow-runtime-ready")
+        .permission("allow-script-capability");
+    #[cfg(windows)]
+    let capability = capability
+        .permission("core:window:allow-is-maximized")
+        .permission("core:window:allow-minimize")
+        .permission("core:window:allow-toggle-maximize")
+        .permission("core:window:allow-start-dragging")
+        .permission("core:window:allow-close")
+        .permission("core:window:allow-is-focused")
+        .permission("core:event:allow-listen")
+        .permission("core:event:allow-unlisten");
+    capability
 }
 
 #[derive(Default)]
@@ -181,16 +122,6 @@ fn packaged_node_package_version(root: &Path, package: &str) -> Result<String, B
             boxed(format!(
                 "packaged agent dependency has no version: {package}"
             ))
-        })
-}
-
-fn configured_local_mode(data_dir: &Path) -> bool {
-    fs::read(data_dir.join("config.json"))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-        .is_some_and(|config| {
-            config.get("version").and_then(|version| version.as_u64()) == Some(1)
-                && config.get("mode").and_then(|mode| mode.as_str()) == Some("local")
         })
 }
 
@@ -268,16 +199,60 @@ fn present_import_result(app: &tauri::AppHandle, ok: bool, message: &str) {
 #[cfg(test)]
 mod tests {
     use super::{
-        allowed_external_url, background_requested, cli_compatible_windows_path,
-        configured_local_mode, parse_cloakpit_import_args, windows_acceptance_browser_args,
-        CloakpitImportRequest, StartupCleanup,
+        background_requested, cli_compatible_windows_path, parse_cloakpit_import_args,
+        trusted_loopback_capability, windows_acceptance_browser_args, CloakpitImportRequest,
+        StartupCleanup,
     };
     use std::{
         cell::Cell,
         ffi::OsString,
-        fs,
         path::{Path, PathBuf},
     };
+    use tauri::{ipc::RuntimeCapability, utils::acl::capability::CapabilityFile};
+
+    #[test]
+    fn titlebar_capability_stays_bound_to_the_verified_main_origin() {
+        let CapabilityFile::Capability(capability) = trusted_loopback_capability(50401).build()
+        else {
+            panic!("one desktop capability is required");
+        };
+        assert!(!capability.local);
+        assert_eq!(capability.windows, ["main"]);
+        assert!(capability.webviews.is_empty());
+        assert_eq!(
+            capability.remote.unwrap().urls,
+            ["http://127.0.0.1:50401/*"]
+        );
+        let permissions = serde_json::to_value(capability.permissions).unwrap();
+        let permissions = permissions.as_array().unwrap();
+        #[cfg(windows)]
+        {
+            assert_eq!(permissions.len(), 12);
+            for permission in [
+                "core:window:allow-is-maximized",
+                "core:window:allow-minimize",
+                "core:window:allow-toggle-maximize",
+                "core:window:allow-start-dragging",
+                "core:window:allow-close",
+                "core:window:allow-is-focused",
+                "core:event:allow-listen",
+                "core:event:allow-unlisten",
+            ] {
+                assert!(permissions.iter().any(|entry| entry == permission));
+            }
+        }
+        #[cfg(not(windows))]
+        assert_eq!(permissions.len(), 4);
+        assert!(!permissions.iter().any(|permission| {
+            permission.as_str().is_some_and(|permission| {
+                permission.ends_with(":default")
+                    || permission.ends_with("allow-destroy")
+                    || permission.ends_with("allow-exit")
+                    || permission.ends_with("allow-emit")
+                    || permission.ends_with("allow-create")
+            })
+        }));
+    }
 
     #[test]
     fn startup_cleanup_runs_only_while_armed() {
@@ -305,109 +280,6 @@ mod tests {
     }
 
     #[test]
-    fn recognizes_configured_local_mode() {
-        let dir = tempfile::tempdir().unwrap();
-        assert!(!configured_local_mode(dir.path()));
-        fs::write(
-            dir.path().join("config.json"),
-            br#"{"version":1,"mode":"local","localAnalytics":false}"#,
-        )
-        .unwrap();
-        assert!(configured_local_mode(dir.path()));
-        fs::write(dir.path().join("config.json"), br#"{"mode":"local"}"#).unwrap();
-        assert!(!configured_local_mode(dir.path()));
-        fs::write(
-            dir.path().join("config.json"),
-            br#"{"version":1,"mode":"cloud"}"#,
-        )
-        .unwrap();
-        assert!(!configured_local_mode(dir.path()));
-    }
-
-    #[test]
-    fn allows_only_explicit_external_pages() {
-        for url in [
-            "https://aliasmode.com/support/",
-            "https://aliasmode.com/terms/",
-            "https://aliasmode.com/privacy/",
-            "https://aliasmode.com/acceptable-use/",
-            "https://nobleproxy.com/t/aliasmode",
-            "https://t.me/aliasmode",
-            "https://github.com/aliasmode/aliasmode",
-            "https://xreacher.com/",
-            "https://xreacher.com/?utm_source=aliasmode&utm_medium=app&utm_campaign=outreach&utm_content=profile-editor",
-            "https://nobleproxy.com/t/aliasmode?src=sidebar-cart",
-            "https://nobleproxy.com/t/aliasmode?src=proxies-no-proxy&qty=12",
-            "https://nobleproxy.com/t/aliasmode?src=profile-dialog&lang=zh-CN",
-            "https://nobleproxy.com/t/aliasmode?src=import-no-proxy&qty=3&lang=ru-RU",
-            "https://checkout.stripe.com/c/pay/cs_test_a1B2c3D4e5#fidkdWxOYHwnPyd1blpxYHZxWjA0SmZ%2FPWBWfQ%3D%3D",
-            "https://checkout.stripe.com/g/pay/cs_live_a1jR9tbRvftQTDnmkkEdu4o1ARCgIj9J3DTTo8l00zJaV7fDtKOBAig94s#fidkIqPtHjp%2FJquzcfcZx1PosH%2Bk1gj53e5bB%2FYEU9Qeax5zomqD%2BbPa6YlsAE%2BmL8aLtkhyX%3DK4spAcpw7fMm%2Bbs9vYnQYSD%2FwifHdJs%2BCcwEWQ5Ke%2Bl41LGRZa0Bt1%3DgVgfpLfu%2FzO89tc6XiCHUD%3DS5R5GSWN12T3%2B3Aqr9O%2FIhWPKNwrb%3DiJ2AdzHwM%2FZMNWNVJgF%3Da3J29nmKI%2BWnnH9Xl4iUX5%2BS5tRschFC3YGY%2F6XLgHVx7O5pQeG%2FCB%3D%3D",
-            "https://nobleproxy.com/continue/aliasmode?h=Ab3_x-Yz09Ab3_x-Yz09",
-            "https://nobleproxy.com/continue/aliasmode?h=hJ8kQ2mN5pR7sT9vW1xY3zA6bC8dE0fG",
-            "https://aliasmode.com/go/nobleproxy",
-            "https://aliasmode.com/go/sms-activate-2",
-        ] {
-            assert!(allowed_external_url(url));
-        }
-        for url in [
-            "http://aliasmode.com/terms/",
-            "https://cloud.aliasmode.com/terms/",
-            "https://aliasmode.com/terms/extra",
-            "https://aliasmode.com/terms/?continue=https://example.com",
-            "https://example.com/terms/",
-            "http://nobleproxy.com/t/aliasmode",
-            "https://nobleproxy.com/t/aliasmode/",
-            "https://nobleproxy.com/t/aliasmode?source=app",
-            "https://nobleproxy.com/t/aliasmode?",
-            "https://nobleproxy.com/t/aliasmode?src=",
-            "https://nobleproxy.com/t/aliasmode?src=sidebar-cart&next=https://example.com",
-            "https://nobleproxy.com/t/aliasmode?src=a%2Fb",
-            "https://nobleproxy.com/t/aliasmode?src=sidebar-cart#fragment",
-            "https://nobleproxy.com/t/aliasmode/?src=sidebar-cart",
-            "https://nobleproxy.com/t/other?src=sidebar-cart",
-            "https://nobleproxy.com/t/another-campaign",
-            "https://example.com/t/aliasmode",
-            "https://xreacher.com/?utm_source=aliasmode&utm_medium=app&utm_campaign=outreach&utm_content=profile-editor&profile=example",
-            "https://checkout.stripe.com/",
-            "http://checkout.stripe.com/c/pay/cs_test_a1",
-            "https://checkout.stripe.com.example.com/c/pay/cs_test_a1",
-            "https://checkout.stripe.com@example.com/c/pay/cs_test_a1",
-            "https://checkout.stripe.com/c/pay/cs_test_a1?redirect=https://example.com",
-            "https://checkout.stripe.com/c/pay/cs test",
-            "https://checkout.stripe.com/c/pay/cs_test\\@example.com",
-            "https://dashboard.stripe.com/c/pay/cs_test_a1",
-            "https://stripe.com/c/pay/cs_test_a1",
-            "https://nobleproxy.com/continue/aliasmode?h=",
-            "https://nobleproxy.com/continue/aliasmode?h=Ab3_x-Yz09Ab3_x-Yz0",
-            "https://nobleproxy.com/continue/aliasmode?h=Ab3_x-Yz09Ab3_x-Yz09&next=https://example.com",
-            "https://nobleproxy.com/continue/aliasmode?h=Ab3_x-Yz09Ab3_x-Yz09#fragment",
-            "https://nobleproxy.com/continue/aliasmode?next=x&h=Ab3_x-Yz09Ab3_x-Yz09",
-            "https://nobleproxy.com/continue/aliasmode?h=Ab3_x-Yz09Ab3_x-Yz09%2F",
-            "https://nobleproxy.com/continue/aliasmode?h=Ab3_x-Yz09.Ab3_x-Yz09",
-            "https://nobleproxy.com/continue/aliasmode/?h=Ab3_x-Yz09Ab3_x-Yz09",
-            "https://nobleproxy.com/continue/other?h=Ab3_x-Yz09Ab3_x-Yz09",
-            "http://nobleproxy.com/continue/aliasmode?h=Ab3_x-Yz09Ab3_x-Yz09",
-            "https://nobleproxy.com.example.com/continue/aliasmode?h=Ab3_x-Yz09Ab3_x-Yz09",
-            "https://nobleproxy.com@example.com/continue/aliasmode?h=Ab3_x-Yz09Ab3_x-Yz09",
-            "https://app.nobleproxy.com/continue/aliasmode?h=Ab3_x-Yz09Ab3_x-Yz09",
-            "https://aliasmode.com/go/",
-            "https://aliasmode.com/go/-nobleproxy",
-            "https://aliasmode.com/go/NobleProxy",
-            "https://aliasmode.com/go/nobleproxy/",
-            "https://aliasmode.com/go/nobleproxy?next=https://example.com",
-            "https://aliasmode.com/go/nobleproxy#fragment",
-            "https://aliasmode.com/go/a%2Fb",
-            "https://aliasmode.com/go/../terms/",
-            "http://aliasmode.com/go/nobleproxy",
-            "https://cloud.aliasmode.com/go/nobleproxy",
-            "https://aliasmode.com.example.com/go/nobleproxy",
-            "https://aliasmode.com@example.com/go/nobleproxy",
-        ] {
-            assert!(!allowed_external_url(url));
-        }
-    }
-
-    #[test]
     fn enables_webview_debugging_only_for_acceptance() {
         assert_eq!(windows_acceptance_browser_args(false, Some("50401")), None);
         assert_eq!(
@@ -423,8 +295,8 @@ mod tests {
     #[test]
     fn removes_windows_namespace_prefix_before_cli_use() {
         assert_eq!(
-            cli_compatible_windows_path(Path::new(r"\\?\C:\Users\AliasMode\playwright")),
-            PathBuf::from(r"C:\Users\AliasMode\playwright"),
+            cli_compatible_windows_path(Path::new(r"\\?\C:\Users\Maobu\playwright")),
+            PathBuf::from(r"C:\Users\Maobu\playwright"),
         );
         assert_eq!(
             cli_compatible_windows_path(Path::new(r"\\?\UNC\server\share\playwright")),
@@ -474,11 +346,10 @@ pub fn run() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
     let background = background_requested(std::env::args_os());
-    let update_relaunch = update_attempt::parse_relaunch_argument(std::env::args_os().skip(1));
     let import_request = parse_cloakpit_import_args(std::env::args_os().skip(1));
     let app = tauri::Builder::default()
         .manage(RevealRequested::default())
-        .manage(releases::UpdateCoordinator::default())
+        .manage(Arc::new(shutdown::CloseState::default()))
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             if background_requested(argv) {
                 return;
@@ -494,17 +365,13 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
-            credential_get,
-            credential_set,
-            credential_delete,
             runtime_descriptor::agent_runtime_ready,
             runtime_descriptor::script_capability,
             shutdown::restart_after_mode_change,
-            releases::check_for_updates,
-            releases::last_update_result,
-            releases::update_now,
+            shutdown::restart_workspace,
+            workspaces::open_workspace_location,
+            workspaces::export_workspace_backup,
         ])
         .setup(move |app| {
             let data_dir = app.path().app_data_dir()?;
@@ -543,14 +410,25 @@ pub fn run() {
                 }
                 Ok(None) => {}
             }
+            // Explicit legacy imports above retain their original global-home destination.
+            // Normal startup resolves the catalog without rewriting it or falling back
+            // from a damaged registered workspace to a fresh/default store.
+            let workspace_home = data_dir;
+            let active_workspace =
+                workspaces::resolve_active_workspace(&workspace_home).map_err(boxed)?;
+            let data_dir = active_workspace.root.clone();
+            app.manage(workspaces::WorkspaceRuntime {
+                home: workspace_home.clone(),
+                active: active_workspace.clone(),
+            });
             fs::create_dir_all(data_dir.join("profiles"))?;
             fs::create_dir_all(data_dir.join("inbox"))?;
-            #[cfg(not(windows))]
-            credentials::set_secret_dir(&data_dir);
 
             let resource_dir = app.path().resource_dir()?;
             let mut firefox = browser::verify_firefox_resource(&resource_dir).map_err(boxed)?;
-            firefox.executable = cli_compatible_windows_path(&firefox.executable);
+            if let Some(firefox) = firefox.as_mut() {
+                firefox.executable = cli_compatible_windows_path(&firefox.executable);
+            }
             let playwright_runtime = cli_compatible_windows_path(
                 &resource_dir
                     .join("playwright")
@@ -601,14 +479,14 @@ pub fn run() {
             if !cfg!(dev) {
                 let helper = std::env::current_exe()?
                     .parent()
-                    .ok_or_else(|| boxed("AliasMode installation directory is unavailable"))?
+                    .ok_or_else(|| boxed("猫步·千境安装目录不可用"))?
                     .join(if cfg!(windows) {
                         "aliasmode-mcp.exe"
                     } else {
                         "aliasmode-mcp"
                     });
                 if !helper.is_file() {
-                    return Err(boxed("installed AliasMode agent helper is unavailable"));
+                    return Err(boxed("猫步·千境已安装的智能体辅助程序不可用"));
                 }
             }
             let nonce = hex::encode(random::<[u8; 32]>());
@@ -617,7 +495,9 @@ pub fn run() {
             let (sidecar, port) = tauri::async_runtime::block_on(sidecar::launch_and_verify(
                 &handle,
                 &data_dir,
-                &firefox,
+                &workspace_home,
+                &active_workspace.id,
+                firefox.as_ref(),
                 &playwright_runtime,
                 &nonce,
                 &agent_nonce,
@@ -630,7 +510,10 @@ pub fn run() {
             });
 
             let runtime_descriptor = runtime_descriptor::RuntimeDescriptorState::new(
-                &data_dir,
+                // MCP discovers the single desktop process at the stable global
+                // home. Its port/nonce identify the active workspace's sidecar;
+                // browser state and the startup health proof still use data_dir.
+                &workspace_home,
                 nonce,
                 agent_nonce,
                 port,
@@ -642,28 +525,16 @@ pub fn run() {
             let origin = format!("http://127.0.0.1:{port}");
             app.manage(CredentialOrigin(origin.clone()));
             app.manage(sidecar.clone());
-            if let Err(error) = app.add_capability(
-                CapabilityBuilder::new(format!("loopback-{port}"))
-                    .local(false)
-                    .window("main")
-                    .remote(format!("{origin}/*"))
-                    .permission("allow-credential-bridge")
-                    .permission("allow-runtime-ready")
-                    .permission("allow-script-capability")
-                    .permission("allow-update-bridge"),
-            ) {
+            if let Err(error) = app.add_capability(trusted_loopback_capability(port)) {
                 return Err(error.into());
             }
 
             let allowed_port = port;
-            let shell_handle = handle.clone();
-            let navigation_shell_handle = handle.clone();
             let url = format!("{origin}/")
                 .parse()
                 .map_err(|error| boxed(format!("invalid sidecar URL: {error}")))?;
-            let readiness_data_dir = data_dir.clone();
             let webview_builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
-                .title("AliasMode")
+                .title("猫步·千境")
                 .visible(!background)
                 .inner_size(1280.0, 800.0)
                 .min_inner_size(960.0, 640.0)
@@ -687,12 +558,17 @@ pub fn run() {
                         .app_handle()
                         .state::<runtime_descriptor::RuntimeDescriptorState>();
                     runtime.activate();
-                    if configured_local_mode(&readiness_data_dir)
-                        && runtime.publish("local").is_err()
-                    {
+                    if runtime.publish("local").is_err() {
                         window.app_handle().exit(1);
                     }
                 });
+            #[cfg(windows)]
+            let webview_builder = webview_builder
+                .decorations(false)
+                .resizable(true)
+                .shadow(true)
+                // Appended to Tauri's existing document-start initialization.
+                .initialization_script("window.__MAOBU_FRAMELESS__ = true;");
             #[cfg(windows)]
             let webview_builder = if let Some(args) = windows_acceptance_browser_args(
                 matches!(
@@ -709,12 +585,6 @@ pub fn run() {
             };
             let window = match webview_builder
                 .on_navigation(move |url| {
-                    // WKWebView asks this rule before it asks for a new window, and a refusal
-                    // here ends the click. So on macOS the allowed outside links open from here.
-                    if cfg!(target_os = "macos") && allowed_external_url(url.as_str()) {
-                        open_external_url(&navigation_shell_handle, url.as_str());
-                        return false;
-                    }
                     (url.scheme() == "http"
                         && url.host_str() == Some("127.0.0.1")
                         && url.port() == Some(allowed_port))
@@ -722,12 +592,7 @@ pub fn run() {
                             && url.host_str() == Some("tauri.localhost"))
                         || (url.scheme() == "tauri" && url.host_str() == Some("localhost"))
                 })
-                .on_new_window(move |url, _| {
-                    if allowed_external_url(url.as_str()) {
-                        open_external_url(&shell_handle, url.as_str());
-                    }
-                    NewWindowResponse::Deny
-                })
+                .on_new_window(|_, _| NewWindowResponse::Deny)
                 .build()
             {
                 Ok(window) => window,
@@ -741,15 +606,11 @@ pub fn run() {
             } else if background {
                 window.hide()?;
             }
-            if let Err(error) = update_attempt::reconcile_after_startup(&data_dir, &update_relaunch)
-            {
-                eprintln!("AliasMode could not reconcile the previous update result: {error}");
-            }
             startup_cleanup.disarm();
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("AliasMode desktop failed");
+        .expect("猫步·千境桌面程序运行失败");
 
     let requested_exit_code = Arc::new(AtomicI32::new(0));
     let exit_code = Arc::clone(&requested_exit_code);

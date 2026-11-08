@@ -1,6 +1,6 @@
 //! `aliasmode-mcp` starts the MCP helper that ships inside the `aliasmode-sidecar` program.
 //!
-//! AI clients and Remote MCP start this file by its installed path. It keeps that path and passes
+//! Local AI clients start this file by its installed path. It keeps that path and passes
 //! the arguments, the environment, stdin, stdout, stderr and the exit code through unchanged.
 
 use std::{
@@ -44,10 +44,10 @@ fn main() {
         .ok()
         .and_then(|launcher| sidecar_command(&launcher, env::args_os().skip(1)));
     let Some(command) = command else {
-        fail("the AliasMode installation folder is unavailable");
+        fail("猫步·千境安装目录不可用");
     };
     let error = run(command);
-    fail(&format!("the AliasMode program could not start: {error}"));
+    fail(&format!("猫步·千境辅助程序无法启动：{error}"));
 }
 
 /// Replaces this process, so the process id, signals and stdio of the client reach the helper.

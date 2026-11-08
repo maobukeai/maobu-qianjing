@@ -57,7 +57,7 @@ export class PlaywrightToolProxy {
   async initialize() {
     if (this.tools.length) return;
     const official = await connectOfficial(this.version, async () => {
-      throw new Error("select an open AliasMode browser first");
+      throw new Error("select an open 猫步·千境 browser first");
     });
     this.tools = official.tools;
     await official.client.close().catch(() => {});
@@ -70,7 +70,7 @@ export class PlaywrightToolProxy {
     const context = browser.contexts()[0];
     if (!context) {
       await browser.close();
-      throw new Error("AliasMode browser did not expose a persistent context");
+      throw new Error("猫步·千境 browser did not expose a persistent context");
     }
 
     try {
@@ -93,8 +93,8 @@ export class PlaywrightToolProxy {
   }
 
   async callTool(name, args) {
-    if (!this.officialClient) throw new Error("select an open AliasMode browser first");
-    if (FILTERED_TOOLS.has(name)) throw new Error("AliasMode owns browser lifecycle operations");
+    if (!this.officialClient) throw new Error("select an open 猫步·千境 browser first");
+    if (FILTERED_TOOLS.has(name)) throw new Error("猫步·千境 owns browser lifecycle operations");
     return await this.officialClient.callTool({ name, arguments: args ?? {} });
   }
 
@@ -108,7 +108,7 @@ export class PlaywrightToolProxy {
     await client?.close().catch(() => {});
     await server?.close().catch(() => {});
     // A CDP-connected Browser closes only its Playwright transport. The guarded
-    // context close above prevents the official MCP server from closing AliasMode.
+    // context close above prevents the official MCP server from closing 猫步·千境.
     await browser?.close().catch(() => {});
   }
 }

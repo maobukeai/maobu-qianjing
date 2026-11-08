@@ -260,7 +260,7 @@ test("a proxy import sets the new proxy's timezone and keeps the saved one when 
     await importBuffers(store, [{
       name: "proxy.txt",
       bytes: new TextEncoder().encode(`id=${original.id}\nproxytype=http\nproxy=8.8.8.8:8080:user:pass\n******************`),
-    }], (message) => logs.push(message), {}, undefined, async () => ({ json: async () => row }));
+    }], (message) => logs.push(message), {}, async () => ({ json: async () => row }));
 
     expect(store.getProfile(original.id)).toMatchObject({
       proxy: { host: "8.8.8.8", port: "8080" },
@@ -278,7 +278,7 @@ test("re-importing an unchanged proxy keeps the saved timezone without a lookup"
   store.upsertProfile(original);
   let lookups = 0;
 
-  await importBuffers(store, [{ name: "refresh.txt", bytes: new TextEncoder().encode(REC("existing")) }], () => {}, {}, undefined, async () => {
+  await importBuffers(store, [{ name: "refresh.txt", bytes: new TextEncoder().encode(REC("existing")) }], () => {}, {}, async () => {
     lookups++;
     return { json: async () => ({ status: "success", timezone: "Europe/Paris" }) };
   });
@@ -455,22 +455,30 @@ test("an unsafe provider ID re-imports the same generated profile", async () => 
   store.close();
 });
 
-test("the pre-commit guard can abort an import without writing any prepared rows", async () => {
+test("a profile opened during timezone lookup aborts the entire local import", async () => {
   const store = new ProfileStore(":memory:");
-  const upload = "id=guarded\nname=must-not-land\n******************";
-  let guardedIds: string[] = [];
+  const original = parseExport(REC("opened-during-import")).profiles[0]!;
+  store.upsertProfile(original);
+  const saved = store.getProfile(original.id)!;
+  const upload = [
+    "id=new-profile\nname=must-not-land",
+    `id=${original.id}\nname=must-not-change\nproxytype=http\nproxy=8.8.8.8:8080:user:pass`,
+  ].join("\n******************\n");
+  let lookups = 0;
   await expect(importBuffers(
     store,
-    [{ name: "guarded.txt", bytes: new TextEncoder().encode(upload) }],
+    [{ name: "profiles.txt", bytes: new TextEncoder().encode(upload) }],
     () => {},
     {},
-    (profiles) => {
-      guardedIds = profiles.map((profile) => profile.id);
-      throw new Error("became locked");
+    async () => {
+      lookups++;
+      store.recordLaunch({ profileId: original.id, pid: 123, debugPort: 9333, ws: "ws://127.0.0.1:9333/devtools/browser/live", startedAt: Date.now() });
+      return { json: async () => ({ status: "success", timezone: "Europe/Paris" }) };
     },
-  )).rejects.toThrow("became locked");
-  expect(guardedIds).toEqual(["guarded"]);
-  expect(store.getProfile("guarded")).toBeNull();
+  )).rejects.toThrow("currently open; close them before importing");
+  expect(lookups).toBeGreaterThan(0);
+  expect(store.getProfile("new-profile")).toBeNull();
+  expect(store.getProfile(original.id)).toEqual(saved);
   store.close();
 });
 

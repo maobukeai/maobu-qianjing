@@ -2,58 +2,32 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { mkdirSync } from "node:fs";
 
-export type AppMode = "unconfigured" | "local" | "cloud";
-
 export interface AppConfig {
   version: 1;
-  mode: AppMode;
-  cloudUrl?: string;
-  localAnalytics: boolean;
-  /** Set when the user hid the Services page from the sidebar. */
-  servicesHidden?: boolean;
+  mode: "local";
+  localAnalytics: false;
 }
 
 const DEFAULT_CONFIG: AppConfig = {
   version: 1,
-  mode: "unconfigured",
+  mode: "local",
   localAnalytics: false,
 };
 
-export function normalizeSecureServiceUrl(value: string, label: string): string {
-  const parsed = new URL(value.trim());
-  const loopback = parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost" || parsed.hostname === "[::1]";
-  if (parsed.protocol !== "https:" && !loopback) throw new Error(`${label} URL must use HTTPS`);
-  return parsed.toString().replace(/\/$/, "");
-}
-
-function normalizeCloudUrl(value: unknown): string | undefined {
-  if (typeof value !== "string" || !value.trim()) return undefined;
-  return normalizeSecureServiceUrl(value, "Cloud");
-}
-
 export function parseAppConfig(value: unknown): AppConfig {
-  if (!value || typeof value !== "object") throw new Error("AliasMode config must be an object");
+  if (!value || typeof value !== "object") throw new Error("猫步·千境 config must be an object");
   const raw = value as Record<string, unknown>;
-  if (raw.version !== 1) throw new Error("unsupported AliasMode config version");
+  if (raw.version !== 1) throw new Error("unsupported 猫步·千境 config version");
   if (raw.mode !== "unconfigured" && raw.mode !== "local" && raw.mode !== "cloud") {
-    throw new Error("invalid AliasMode mode");
+    throw new Error("invalid 猫步·千境 mode");
   }
-  const cloudUrl = normalizeCloudUrl(raw.cloudUrl);
-  if (raw.mode === "cloud" && !cloudUrl) throw new Error("Cloud mode requires a Cloud URL");
+  // Older installations may have selected Cloud. Read them as Local without
+  // deleting, importing, or uploading the separate Cloud cache or credentials.
   return {
     version: 1,
-    mode: raw.mode,
-    ...(cloudUrl ? { cloudUrl } : {}),
-    localAnalytics: raw.localAnalytics === true,
-    ...(raw.servicesHidden === true ? { servicesHidden: true } : {}),
+    mode: "local",
+    localAnalytics: false,
   };
-}
-
-export function legacyHubUrl(
-  config: AppConfig,
-  env: Record<string, string | undefined> = process.env,
-): string | undefined {
-  return config.mode === "unconfigured" ? env.HUB_URL : undefined;
 }
 
 export class AppConfigStore {
@@ -77,8 +51,9 @@ export class AppConfigStore {
     return normalized;
   }
 
-  setMode(mode: Exclude<AppMode, "unconfigured">, cloudUrl?: string): AppConfig {
+  setMode(mode: "local"): AppConfig {
+    if (mode !== "local") throw new Error("Only local mode is supported");
     const current = this.read();
-    return this.write({ ...current, mode, ...(mode === "cloud" ? { cloudUrl } : { cloudUrl: undefined }) });
+    return this.write({ ...current, mode: "local" });
   }
 }

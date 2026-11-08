@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "./i18n.tsx";
 import { folderScope, type FolderInfo } from "../folders.ts";
-import { ProxyProviderOffer } from "./proxy-offer.tsx";
 import type {
   ProxyCheckView,
   ProxyPreview,
@@ -38,7 +37,7 @@ function getReasonLabel(t: (key: string) => string, reason: string): string {
     profile_trashed: t("Profile is in Trash"), invalid_row: t("Invalid input row"), invalid_proxy: t("Invalid proxy"),
     duplicate_selector: t("Duplicate input selector"), duplicate_target: t("Conflicting assignments"),
     no_editable_match: t("No editable profile matched"), ambiguous_username: t("More than one profile matched"),
-    expected_version_required: t("Preview this profile again"), unsupported: t("This proxy type cannot be checked"),
+    unsupported: t("This proxy type cannot be checked"),
     cancelled: t("Not completed"), folder_access_denied: t("Folder access denied"),
   };
   return reasons[reason] || t("Check could not complete");
@@ -182,15 +181,11 @@ function AffectedProfiles({ profiles }: { profiles: ProxyCheckView["profiles"] }
   </details>;
 }
 
-export function ProxiesPage({ groups, folders = [], onChanged, active, profilesWithoutProxy = 0, store }: {
+export function ProxiesPage({ groups, folders = [], onChanged, active }: {
   groups: string[];
   folders?: FolderInfo[];
   onChanged: () => Promise<void>;
   active: boolean;
-  /** Profiles with no proxy, or 0 when the count is unknown (Cloud mode). */
-  profilesWithoutProxy?: number;
-  /** The Cloud page with the in-app shop. It gets the proxy tools and shows them in its Tools tab. */
-  store?: (tools: ReactNode) => ReactNode;
 }) {
   const { t } = useTranslation();
   const [all, setAll] = useState(true);
@@ -313,9 +308,6 @@ export function ProxiesPage({ groups, folders = [], onChanged, active, profilesW
     } catch { if (controller.current === current) setError(t("The selected file could not be read.")); }
     finally { finish(current); }
   };
-
-  const hasFailedChecks = !busy && checks.some((row) => row.status === "failed" || row.status === "unstable");
-
   const tools = <>
     <div className="tools-tabs" aria-label={t("Proxy tools")}>
       <button className={task === "check" ? "selected" : ""} aria-pressed={task === "check"} onClick={() => setTask("check")}>{t("Check proxies")} <small>{t("Find connection problems")}</small></button>
@@ -411,14 +403,8 @@ export function ProxiesPage({ groups, folders = [], onChanged, active, profilesW
     </>}
   </>;
 
-  return <div className="workspace proxy-page" hidden={!active}>
-    {store ? store(tools) : <>
-      <div className="tools-intro"><div><span className="tools-eyebrow">{t("PROXY TOOLS")}</span><h2>{t("Keep your profiles connected.")}</h2><p>{t("Check saved connections or replace proxies across entire folders.")}</p></div></div>
-      {/* Local mode: one NobleProxy card, worded for what the page shows right now. */}
-      {profilesWithoutProxy > 0
-        ? <ProxyProviderOffer placement="proxies-no-proxy" missing={profilesWithoutProxy} />
-        : <ProxyProviderOffer placement={hasFailedChecks ? "proxies-check-failed" : "proxies-check"} replacement={hasFailedChecks} />}
-      {tools}
-    </>}
+  return <div className="workspace proxy-page" hidden={!active} aria-labelledby="proxy-page-title" aria-busy={!!busy}>
+    <header className="tools-intro page-heading"><div><h2 className="sect-title" id="proxy-page-title">{t("Proxy tools")}</h2><p className="page-subtitle">{t("Check saved connections or replace proxies across entire folders.")}</p></div></header>
+    {tools}
   </div>;
 }

@@ -5,8 +5,6 @@ import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { ProfileStore } from "./store.ts";
 import { AutofillBridge } from "./autofill-bridge.ts";
-import { CloudBrowserCoordinator } from "./cloud-browser.ts";
-import { PendingSyncQueue } from "./pending-sync.ts";
 import type { ExitLocation } from "./geoip.ts";
 import { autofillExtensionDir } from "./autofill-extension.ts";
 import {
@@ -353,74 +351,7 @@ test("autofill is retired after a post-spawn session restore failure", async () 
   }
 });
 
-for (const proxied of [false, true]) {
-  test(`Cloud login preserves a pre-autofill survivor without restarting it (proxied=${proxied})`, async () => {
-    const store = seeded();
-    if (!proxied) makeDirect(store);
-    const f = fleet();
-    const prior = newLauncher(store, f, []);
-    const autofill = new AutofillBridge(store);
-    const spawned: string[][] = [];
-    const killed: number[] = [];
-    const next = newLauncher(store, f, spawned, killed, undefined, { autofill });
-    const root = testDataRoot(store);
-    mkdirSync(root, { recursive: true });
-    const queue = new PendingSyncQueue(join(root, "pending.sqlite"), new Uint8Array(32).fill(7));
-    const id = "k1d0cd11";
-    try {
-      await prior.start(id, [], { sessionBaseVersion: 7 });
-      (prior as any).closeRelay(id);
-      const original = store.getLaunch(id)!;
-      const profile = store.getProfile(id)!;
-      queue.recordOpen({ accountId: "test-account", profileId: id, registrationId: "test-registration", expectedVersion: 7 });
-      queue.updateOpen(id, "test-account", "running", { debugPort: original.debugPort, startedAt: original.startedAt });
-      autofill.listen();
-      const coordinator = new CloudBrowserCoordinator({
-        cloud: {} as any,
-        launcher: next,
-        store,
-        queue: () => queue,
-        accountId: () => "test-account",
-        deviceId: () => "test-device",
-        readSession: async () => { throw new Error("healthy survivor must not be captured"); },
-        applySession: async () => { throw new Error("healthy survivor must not be restored"); },
-        heartbeatMs: 0,
-        storageCheckpoints: false,
-      });
-
-      await next.reconcileOrphans();
-      await coordinator.resumeAfterAuthentication();
-      await next.verifyRunningIdentity(id);
-      await next.start(id);
-
-      expect(spawned).toHaveLength(0);
-      expect(killed).toEqual([]);
-      expect(store.getLaunch(id)).toMatchObject({
-        pid: original.pid, debugPort: original.debugPort, startedAt: original.startedAt,
-        personaDigest: original.personaDigest, sessionBaseVersion: 7,
-      });
-      expect(store.getProfile(id)).toEqual(profile);
-      expect(queue.getOpen(id, "test-account")?.registrationId).toBe("test-registration");
-      expect(queue.list("test-account")).toEqual([]);
-      const manifest = join(autofillExtensionDir(next.userDataDir(id)), "manifest.json");
-      expect(existsSync(manifest)).toBe(false);
-      expect(await next.stop(id)).toBe(true);
-      await next.start(id);
-      expect(spawned).toHaveLength(1);
-      expect(existsSync(manifest)).toBe(true);
-      expect(store.getLaunch(id)!.personaDigest).not.toBe(original.personaDigest);
-    } finally {
-      await next.stop(id);
-      (prior as any).closeRelay(id);
-      autofill.close();
-      queue.close();
-      store.close();
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-}
-
-test("a proxied survivor logs its relay restoration once, not at every Cloud checkpoint check", async () => {
+test("a proxied survivor logs its relay restoration once, not at every repeated browser check", async () => {
   const store = seeded();
   const f = fleet();
   const prior = newLauncher(store, f, []);
@@ -542,7 +473,7 @@ test("a Local Telegram restore lands on Web K unless the session holds a Web A l
   }
 });
 
-test("failed Local restore stays pending for retry and Cloud/remote can disable it", async () => {
+test("failed local restoration stays pending for retry and explicit callers can disable it", async () => {
   const store = seeded();
   makeDirect(store);
   const id = "k1d0cd11";
@@ -635,7 +566,7 @@ test("after a restart, a bootstrapped browser reattaches without rerunning searc
     prepared.push(options.userDataDir);
     return { status: "configured", engine: "DuckDuckGo" };
   });
-  const a = await launcherA.start("k1d0cd11", [], { sessionBaseVersion: 7 });
+  const a = await launcherA.start("k1d0cd11", []);
   expect(argsA.length).toBe(1);
   expect(prepared).toEqual([launcherA.userDataDir("k1d0cd11")]);
   expect(store.getLaunch("k1d0cd11")?.searchBootstrapRevision).toBe(2);
@@ -646,13 +577,12 @@ test("after a restart, a bootstrapped browser reattaches without rerunning searc
     throw new Error("reattach reran search setup");
   });
   await launcherB.reconcileOrphans();
-  const b = await launcherB.start("k1d0cd11", [], { sessionBaseVersion: -1 });
-  const repeated = await launcherB.start("k1d0cd11", [], { sessionBaseVersion: -1 });
+  const b = await launcherB.start("k1d0cd11", []);
+  const repeated = await launcherB.start("k1d0cd11", []);
 
   expect(argsB.length).toBe(0);
   expect(b.port).toBe(a.port);
   expect(repeated).toEqual(b);
-  expect(store.getLaunch("k1d0cd11")?.sessionBaseVersion).toBe(-1);
   expect((launcherB as any).relays.has("k1d0cd11")).toBe(true);
 
   const changedWs = `ws://127.0.0.1:${b.port}/devtools/browser/restarted`;
@@ -807,8 +737,8 @@ for (const hostPlatform of ["darwin", "linux"] as const) {
   });
 }
 
-for (const caller of ["Local", "Cloud"] as const) {
-  test(`${caller} open of a native session ${caller === "Cloud" ? "waits for a delayed restored tab" : "reads the tabs once"} and opens no platform home`, async () => {
+for (const caller of ["automatic", "caller-managed"] as const) {
+  test(`${caller} open of a native session ${caller === "caller-managed" ? "waits for a delayed restored tab" : "reads the tabs once"} and opens no platform home`, async () => {
     const store = seeded();
     const profile = store.getProfile("k1d0cd11")!;
     store.upsertProfile({ ...profile, platform: "x.com" });
@@ -834,10 +764,10 @@ for (const caller of ["Local", "Cloud"] as const) {
       navigate: async (_ws, urls) => { navigated.push(urls); },
     });
 
-    // Only Cloud, which navigates by itself, uses the late restored tab.
-    const launched = await launcher.start("k1d0cd11", [], caller === "Cloud" ? { autoNavigate: false } : {});
+    // A caller managing navigation itself uses the late restored tab.
+    const launched = await launcher.start("k1d0cd11", [], caller === "caller-managed" ? { autoNavigate: false } : {});
 
-    if (caller === "Cloud") {
+    if (caller === "caller-managed") {
       expect(targetReads).toBeGreaterThanOrEqual(22);
       expect(launched.nativeSessionRestored).toBe(true);
     } else {
@@ -889,7 +819,7 @@ test("fresh launch reports false when native session restore has no artifacts or
   store.close();
 });
 
-test("stale cleanup prevents a deleted native session from being reported restored", async () => {
+test("stale lock cleanup retains the local native session artifacts", async () => {
   const store = seeded();
   const f = fleet();
   const spawnedArgs: string[][] = [];
@@ -898,13 +828,12 @@ test("stale cleanup prevents a deleted native session from being reported restor
   writeFileSync(join(userDataDir, "Default", "Sessions", "Tabs_1"), "native session bytes");
   writeFileSync(join(userDataDir, "SingletonLock"), "stale");
   const launcher = newLauncher(store, f, spawnedArgs, undefined, undefined, {
-    resetStorageOnUncleanExit: true,
   });
 
   const result = await launcher.start("k1d0cd11");
 
-  expect(existsSync(join(userDataDir, "Default", "Sessions"))).toBe(false);
-  expect(spawnedArgs[0]).not.toContain("--restore-last-session");
+  expect(existsSync(join(userDataDir, "Default", "Sessions"))).toBe(true);
+  expect(spawnedArgs[0]).toContain("--restore-last-session");
   expect(result.nativeSessionRestored).toBe(false);
   store.close();
 });
@@ -971,7 +900,7 @@ test("Windows Local keeps a copy of unreadable cookies and does not open the pro
       const error = await launcher.start("k1d0cd11").catch((caught) => caught);
       expect(error).toBeInstanceOf(BrowserLaunchError);
       expect(error.preflightReason).toBe("cookie_key_unreadable");
-      expect(error.guidance).toContain("AliasMode did not open this profile");
+      expect(error.guidance).toContain("猫步·千境 did not open this profile");
       expect(spawnedArgs).toEqual([]);
       expect(store.getLaunch("k1d0cd11")).toBeNull();
       const [dated] = readdirSync(join(dir, "cookie-backups"));
@@ -989,7 +918,7 @@ test("Windows Local keeps a copy of unreadable cookies and does not open the pro
   }
 });
 
-test("Cloud opens leave unreadable Windows cookies to the Cloud copy", async () => {
+test("explicit session restoration can skip the native cookie-key check", async () => {
   const store = seeded();
   const spawnedArgs: string[][] = [];
   let checks = 0;
@@ -1032,41 +961,6 @@ test("a Local Windows profile with no saved cookies or with a pending session op
     expect(await launcher.stop("k1d0cd11")).toBe(true);
     store.close();
   }
-});
-
-test("cloud session authority marker is durable and invalidatable", () => {
-  const store = seeded();
-  const f = fleet();
-  const signature = createHash("sha256").update("cloud session").digest("hex");
-  const otherSignature = createHash("sha256").update("other cloud session").digest("hex");
-  const first = newLauncher(store, f, []);
-
-  expect(first.matchesCloudSession("k1d0cd11", signature)).toBe(false);
-  first.recordCloudSession("k1d0cd11", signature);
-
-  const marker = join(first.userDataDir("k1d0cd11"), ".aliasmode-cloud-session-authority-v1");
-  expect(readFileSync(marker, "utf8")).toBe(signature);
-  const restarted = newLauncher(store, f, []);
-  expect(restarted.matchesCloudSession("k1d0cd11", signature)).toBe(true);
-  expect(restarted.matchesCloudSession("k1d0cd11", otherSignature)).toBe(false);
-
-  writeFileSync(marker, "malformed");
-  expect(restarted.matchesCloudSession("k1d0cd11", signature)).toBe(false);
-  restarted.recordCloudSession("k1d0cd11", signature);
-  restarted.recordCloudSession("k1d0cd11", null);
-  expect(existsSync(marker)).toBe(false);
-  expect(restarted.matchesCloudSession("k1d0cd11", signature)).toBe(false);
-  store.close();
-});
-
-test("Cloud session marker invalidation fails closed", () => {
-  const store = seeded();
-  const launcher = newLauncher(store, fleet(), []);
-  const marker = join(launcher.userDataDir("k1d0cd11"), ".aliasmode-cloud-session-authority-v1");
-  mkdirSync(marker, { recursive: true });
-
-  expect(() => launcher.recordCloudSession("k1d0cd11", null)).toThrow("cannot invalidate Cloud session");
-  store.close();
 });
 
 test("reattach safely migrates one revision-1 browser through managed search setup", async () => {
@@ -2900,7 +2794,7 @@ test("standalone Telegram launch preserves the historical Web K fallback", async
   store.close();
 });
 
-test("remote launch disables native restoration and startup navigation", async () => {
+test("a caller can explicitly disable native restoration and startup navigation", async () => {
   const store = seeded();
   const p = store.getProfile("k1d0cd11")!;
   store.upsertProfile({ ...p, platform: "x.com" });
@@ -4639,41 +4533,7 @@ test("start() clears an unclean-exit's stale Singleton lock and resets the Crash
   store.close();
 });
 
-test("start() resets a crash-corrupted profile's volatile storage after an unclean exit (remote mode)", async () => {
-  const store = seeded(); // id=k1d0cd11
-  const f = fleet();
-  const dataRoot = join(tmpdir(), `cloak-resetstore-${process.pid}`);
-  const profileDir = join(dataRoot, "k1d0cd11");
-  const defaultDir = join(profileDir, "Default");
-  mkdirSync(defaultDir, { recursive: true });
-  // Unclean-exit signal + leveldb stores a crash could leave corrupt (the "something went wrong" cause):
-  writeFileSync(join(profileDir, "SingletonLock"), "host-1234");
-  mkdirSync(join(defaultDir, "Local Storage", "leveldb"), { recursive: true });
-  writeFileSync(join(defaultDir, "Local Storage", "leveldb", "000003.log"), "half-written");
-  mkdirSync(join(defaultDir, "IndexedDB", "x.leveldb"), { recursive: true });
-  // Must NOT be touched — the cookie-encryption key lives here:
-  const localState = join(profileDir, "Local State");
-  writeFileSync(localState, JSON.stringify({ os_crypt: { encrypted_key: "keep" } }));
-
-  const launcher = new Launcher({
-    store, binaryPath: "/fake/cloak", dataRoot, portProbe: () => true,
-    spawn: f.spawn, fetch: f.fetchFn, ensureCookies: async () => ({ injected: false }),
-    navigate: async () => {}, labelWindow: async () => {}, killPid: async () => {},
-    browserClose: async () => false, cdpReadyTimeoutMs: 1000,
-    resetStorageOnUncleanExit: true,
-  });
-  await launcher.start("k1d0cd11");
-
-  expect(existsSync(join(defaultDir, "Local Storage"))).toBe(false); // corrupt leveldb reset → Chromium regenerates it
-  expect(existsSync(join(defaultDir, "IndexedDB"))).toBe(false);
-  expect(existsSync(join(profileDir, "SingletonLock"))).toBe(false); // stale lock still cleared
-  expect(existsSync(localState)).toBe(true); // encryption key never touched
-
-  rmSync(dataRoot, { recursive: true, force: true });
-  store.close();
-});
-
-test("start() leaves volatile storage intact when resetStorageOnUncleanExit is off (standalone mode)", async () => {
+test("start() leaves local site storage intact after an unclean exit", async () => {
   const store = seeded();
   const f = fleet();
   const dataRoot = join(tmpdir(), `cloak-noreset-${process.pid}`);
@@ -4686,7 +4546,7 @@ test("start() leaves volatile storage intact when resetStorageOnUncleanExit is o
     spawn: f.spawn, fetch: f.fetchFn, ensureCookies: async () => ({ injected: false }),
     navigate: async () => {}, labelWindow: async () => {}, killPid: async () => {},
     browserClose: async () => false, cdpReadyTimeoutMs: 1000,
-    // resetStorageOnUncleanExit defaults to false → standalone mode never discards local session state
+    // Local session state is retained even after a previous crash.
   });
   await launcher.start("k1d0cd11");
   expect(existsSync(join(defaultDir, "Local Storage"))).toBe(true);
@@ -4694,7 +4554,7 @@ test("start() leaves volatile storage intact when resetStorageOnUncleanExit is o
   store.close();
 });
 
-test("start() does NOT reset storage on a CLEAN exit, even with resetStorageOnUncleanExit on", async () => {
+test("start() retains local site storage after a clean exit", async () => {
   const store = seeded();
   const f = fleet();
   const dataRoot = join(tmpdir(), `cloak-cleanexit-${process.pid}`);
@@ -4708,7 +4568,6 @@ test("start() does NOT reset storage on a CLEAN exit, even with resetStorageOnUn
     spawn: f.spawn, fetch: f.fetchFn, ensureCookies: async () => ({ injected: false }),
     navigate: async () => {}, labelWindow: async () => {}, killPid: async () => {},
     browserClose: async () => false, cdpReadyTimeoutMs: 1000,
-    resetStorageOnUncleanExit: true,
   });
   await launcher.start("k1d0cd11");
   expect(existsSync(join(defaultDir, "Local Storage"))).toBe(true);
@@ -4728,7 +4587,7 @@ test("userDataDir is ABSOLUTE even when dataRoot is relative (so --user-data-dir
   store.close();
 });
 
-test("start() does NOT reset volatile storage on an unclean exit when the launch can't restore the login (resetStorage:false)", async () => {
+test("start() retains the only local login state when no session bundle is available", async () => {
   const store = seeded(); // id=k1d0cd11
   const f = fleet();
   const dataRoot = join(tmpdir(), `cloak-noresetsafe-${process.pid}`);
@@ -4741,9 +4600,8 @@ test("start() does NOT reset volatile storage on an unclean exit when the launch
     spawn: f.spawn, fetch: f.fetchFn, ensureCookies: async () => ({ injected: false }),
     navigate: async () => {}, labelWindow: async () => {}, killPid: async () => {},
     browserClose: async () => false, cdpReadyTimeoutMs: 1000,
-    resetStorageOnUncleanExit: true, // mode is on...
   });
-  await launcher.start("k1d0cd11", [], { resetStorage: false }); // ...but this launch has no restorable session to inject
+  await launcher.start("k1d0cd11");
   expect(existsSync(join(defaultDir, "Local Storage"))).toBe(true); // kept — never wipe the only local copy of a login
   rmSync(dataRoot, { recursive: true, force: true });
   store.close();
@@ -5416,7 +5274,7 @@ test("a Chromium 155 profile keeps the processor count of its first open", async
       watchWindowFit: () => ({ stop: () => {} }),
     });
     await launcher.start(profile.id);
-    // The launch is recorded with the kept count, so Cloud's identity check after the open passes.
+    // The recorded launch retains the cookie count from the local session.
     await launcher.verifyRunningIdentity(profile.id);
     // Nothing waits for a restart.
     expect(launchIdentityChanged(store.getProfile(profile.id)!, store.getLaunch(profile.id))).toBe(false);
@@ -5542,38 +5400,6 @@ test("Chromium 155 names its window with a launch switch instead of a page title
   const mac = await launch("darwin", "cloakbrowser");
   expect(mac.switches).toEqual([]);
   expect(mac.scripted).toEqual([]);
-});
-
-test("a Cloud launch of Chromium 155 keeps the browser after its last window; other launches do not", async () => {
-  const launch = async (hostPlatform: NodeJS.Platform, engine: "aliasmode" | "cloakbrowser", keepAliveWithoutWindows?: boolean) => {
-    const store = new ProfileStore(":memory:");
-    const chromium155 = buildNewProfile({ chromiumRuntime: "aliasmode" }, () => false);
-    const { chromiumRuntime: _runtime, ...cloakbrowser } = chromium155;
-    store.upsertProfile(engine === "aliasmode" ? chromium155 : cloakbrowser);
-    const spawnedArgs: string[][] = [];
-    const launcher = newLauncher(store, fleet(), spawnedArgs, undefined, undefined, {
-      hostPlatform,
-      hostArch: hostPlatform === "darwin" ? "arm64" : "x64",
-      chromiumRuntimeRoot: "/fake/runtimes",
-      ensureAliasmodeChromium: async () => "/fake/runtimes/chromium-155/chrome.exe",
-      chromiumSandboxBlocked: () => false,
-      captureFingerprint: async () => null,
-    });
-    await launcher.start(chromium155.id, [], { keepAliveWithoutWindows });
-    await launcher.stop(chromium155.id);
-    store.close();
-    return spawnedArgs[0]!.includes("--aliasmode-keep-alive");
-  };
-  expect(await launch("win32", "aliasmode", true)).toBe(true);
-  expect(await launch("linux", "aliasmode", true)).toBe(true);
-  // On macOS the process outlives its last window anyway, but reading cookies then needs the switch.
-  expect(await launch("darwin", "aliasmode", true)).toBe(true);
-  expect(await launch("win32", "aliasmode")).toBe(false);
-  expect(await launch("darwin", "aliasmode")).toBe(false);
-  // CloakBrowser lacks the switch.
-  for (const [host, engine] of [["darwin", "cloakbrowser"], ["win32", "cloakbrowser"]] as const) {
-    expect(await launch(host, engine, true)).toBe(false);
-  }
 });
 
 test("a Windows profile of Chromium 155 on Linux gets the Windows font pack through fontconfig; others keep the system fonts", async () => {

@@ -1,0 +1,40 @@
+name: Maobu local build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.21
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test --timeout 10000
+      - run: bun run docs:public:check
+      - run: bun run desktop:prepare
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - run: cargo build --locked --manifest-path src-tauri/Cargo.toml
+      - run: bun run desktop:verify
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maobu-local-windows
+          path: |
+            src-tauri/target/debug/aliasmode.exe
+            src-tauri/target/debug/aliasmode-sidecar.exe
+            src-tauri/target/debug/aliasmode-mcp.exe
+            src-tauri/target/debug/playwright/
+            LICENSE
+            NOTICE

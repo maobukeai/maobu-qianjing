@@ -123,7 +123,7 @@ async function serve(): Promise<never> {
   const root = runtimeRoot();
   const node = nodeExecutable(root);
   const host = join(root, "agent", "mcp-host.mjs");
-  if (!existsSync(node) || !existsSync(host)) throw new Error("packaged AliasMode MCP runtime is incomplete");
+  if (!existsSync(node) || !existsSync(host)) throw new Error("packaged 猫步·千境 MCP runtime is incomplete");
   const code = await runProcess(node, [host], childEnvironment({
     ALIASMODE_APP_VERSION: VERSION,
     ALIASMODE_DESKTOP_EXE: desktopExecutable(),
@@ -227,7 +227,7 @@ async function playwright(args: string[]): Promise<unknown> {
     });
     try {
       if (opened.engine === "firefox") {
-        throw new Error("Firefox scripts run through the AliasMode script library");
+        throw new Error("Firefox scripts run through the 猫步·千境 script library");
       }
       const output = await new Promise<string>((resolveOutput, reject) => {
         const child = spawn(node, [runner, resolve(file)], {
@@ -251,24 +251,6 @@ async function playwright(args: string[]): Promise<unknown> {
       }
     }
   });
-}
-
-async function remoteMcp(args: string[]): Promise<unknown> {
-  const [action, ...rest] = args;
-  if (action === "create") {
-    const label = value(rest, "name");
-    if (!label) throw new Error("remote-mcp create requires --name");
-    return await withRuntime((client) => client.call("mcp.connectors.create", { label }));
-  }
-  if (action === "list") {
-    return await withRuntime((client) => client.call("mcp.connectors.list"));
-  }
-  if (action === "revoke") {
-    const connectorId = value(rest, "id");
-    if (!connectorId) throw new Error("remote-mcp revoke requires --id");
-    return await withRuntime((client) => client.call("mcp.connectors.revoke", { connectorId }));
-  }
-  throw new Error("remote-mcp requires create, list, or revoke");
 }
 
 async function setup(args: string[]): Promise<unknown> {
@@ -302,8 +284,7 @@ async function main(argv: string[]): Promise<void> {
   else if (command === "profiles") result = await profiles(args);
   else if (command === "browser") result = await browser(args);
   else if (command === "playwright") result = await playwright(args);
-  else if (command === "remote-mcp") result = await remoteMcp(args);
-  else throw new Error(`unknown AliasMode MCP command: ${command}`);
+  else throw new Error(`unknown 猫步·千境 MCP command: ${command}`);
   process.stdout.write(`${JSON.stringify({ ok: true, result })}\n`);
 }
 
@@ -312,7 +293,7 @@ export async function runAgentHelper(argv: string[]): Promise<void> {
   try {
     await main(argv);
   } catch (error) {
-    const raw = error instanceof Error ? error.message : "AliasMode command failed";
+    const raw = error instanceof Error ? error.message : "猫步·千境 command failed";
     const message = raw.replace(/wss?:\/\/\S+/gi, "CDP endpoint").slice(0, 500);
     process.stdout.write(`${JSON.stringify({
       ok: false,

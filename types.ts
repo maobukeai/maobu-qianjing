@@ -240,8 +240,6 @@ export interface LaunchInfo {
   /** Loopback port of the auth-injecting proxy relay for this launch, if it has an authed proxy.
    *  Persisted so a manager restart can re-bind the relay on the same port the browser points at. */
   relayPort?: number;
-  /** Hub session version this live browser was opened from or last successfully pushed to. */
-  sessionBaseVersion?: number;
   /** Exact executable and profile directory used by this launch generation. */
   binaryPath?: string;
   userDataDir?: string;

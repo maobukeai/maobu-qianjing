@@ -239,7 +239,7 @@ test("background builds a browser context menu and sends the clicked tab's targe
   const background = new Function("chrome", "fetch", AUTOFILL_BACKGROUND + "\nreturn { refresh, fill };")(chrome, fetcher);
   await background.refresh();
   expect(menus.map((item) => [item.id, item.parentId, item.title])).toEqual([
-    ["aliasmode", undefined, "AliasMode · Test account"],
+    ["aliasmode", undefined, "猫步·千境 · Test account"],
     ["username", "aliasmode", "Fill username"],
     ["email", "aliasmode", "Fill email"],
     ["password", "aliasmode", "Fill password"],

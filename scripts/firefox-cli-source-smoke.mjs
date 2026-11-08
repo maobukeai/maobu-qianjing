@@ -13,7 +13,7 @@ const root = resolve(rootArg);
 const agentNonce = "a".repeat(64);
 const desktopNonce = "b".repeat(64);
 await mkdir(root, { recursive: false });
-// A desktop first run defaults to Cloud; this smoke drives Local profiles.
+// Keep the source smoke state isolated from the normal desktop workspace.
 await mkdir(join(root, "state"));
 await writeFile(join(root, "state", "config.json"), '{"version":1,"mode":"local","localAnalytics":false}\n');
 
@@ -52,10 +52,6 @@ const child = Bun.spawn([
   stderr: "ignore",
   env: {
     ...process.env,
-    HUB_URL: "",
-    ALIASMODE_CLOUD_URL: "http://127.0.0.1:1",
-    ALIASMODE_SUPABASE_URL: "http://127.0.0.1:1",
-    ALIASMODE_SUPABASE_ANON_KEY: "firefox-cli-source-smoke",
     ALIASMODE_AGENT_NONCE: agentNonce,
     ALIASMODE_DESKTOP_NONCE: desktopNonce,
     ALIASMODE_DESKTOP_VERSION: "source-smoke",

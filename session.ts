@@ -548,20 +548,7 @@ export function bundleLoggedInPlatforms(bundle: string, now: number): Set<string
   return set;
 }
 
-/**
- * True if injecting this bundle would put a login BACK — a valued supported-platform auth cookie or
- * origin storage (Telegram's localStorage/IndexedDB). Used to decide whether it's safe to reset a
- * profile's local volatile storage after a crash: only when the bundle we're about to inject can restore
- * the login. On a first-migration open the hub has no session, the fallback bundle is just the import
- * cookies, and Telegram's auth (which lives in localStorage) would NOT be restorable — so resetting then
- * would wipe Telegram's only local copy. This returns false for that case, gating the reset off.
- */
-export function bundleHasRestorableLogin(bundleJson: string, now = Date.now()): boolean {
-  for (const a of AUTH_COOKIES) if (bundleHasLiveAuthCookie(bundleJson, a.cookie, a.parentDomain, now)) return true;
-  return bundleHasTelegramAuthStorage(bundleJson);
-}
-
-/** Parse + validate an arbitrary hub bundle payload into a safe shape, tolerating malformed/legacy input. */
+/** Parse and validate a session bundle into a safe shape, tolerating malformed or legacy input. */
 export function normalizeBundle(raw: any): NormalizedSessionBundle {
   const cookies = Array.isArray(raw?.cookies) ? raw.cookies : [];
   const hasOrigins = Array.isArray(raw?.origins);
@@ -1222,13 +1209,12 @@ export async function writeSessionToBrowser(
     });
     ensureCurrent();
     // Seed durable origin auth first. If it fails, cookies and navigation are left untouched and the
-    // remote coordinator keeps this open from being presented as a successful session handoff.
+    // caller receives a failure instead of presenting an incomplete session restoration as successful.
     if (parsed.hasOrigins) {
       await runOperation("origin_storage", () => restoreOriginStorage(ctx, parsed.origins));
     }
     ensureCurrent();
-    // Always clear first so stale local cookies can't shadow the hub's
-    // authoritative state — including when that state is intentionally empty.
+    // Clear stale cookies before replacing them with the requested session, including an empty one.
     await runOperation("cookie_clear", () => ctx.clearCookies());
     ensureCurrent();
     if (parsed.cookies.length > 0) {
@@ -1435,7 +1421,7 @@ async function restorePortableTabs(context: any, urls: readonly string[]): Promi
 }
 
 /**
- * ONE CDP attach for the whole Cloud open: wait for the persistent context,
+ * One CDP attach for the complete local session restore: wait for the persistent context,
  * restore the authoritative bundle (skipped when empty), replace portable tabs,
  * then detach exactly once. Replaces the probe/restore/navigate chain of
  * separate connects that hung against CloakBrowser's CDP server on real devices.

@@ -9,9 +9,9 @@ import NodeWebSocket from "ws";
 export const RUNTIME_PROTOCOL = "aliasmode-runtime-v1";
 export const AGENT_PROTOCOL = "aliasmode-agent-v1";
 export const AGENT_PATH = "/api/agent/v1/connect";
-const VERSION = process.env.ALIASMODE_APP_VERSION || "0.1.0-beta.32";
+export const RUNTIME_VERSION = process.env.ALIASMODE_APP_VERSION || "0.1.0-local.1";
 const STARTUP_WAIT_MS = 180_000;
-// Replies can be much larger than requests, e.g. a profile list for a large Cloud workspace.
+// Replies can be much larger than requests, e.g. a large local profile list.
 const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
 // Windows and Linux report a tick count. macOS reports the `ps -o lstart=` date.
@@ -21,9 +21,16 @@ function validNonce(value) {
   return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 }
 
-export function validateRuntimeDescriptor(value, expectedVersion = VERSION) {
+export class UnsupportedRuntimeError extends Error {
+  constructor() {
+    super("This adapter requires a local desktop runtime.");
+    this.code = "unsupported_runtime";
+  }
+}
+
+export function validateRuntimeDescriptor(value, expectedVersion = RUNTIME_VERSION) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("runtime descriptor is invalid");
-  const ready = new Set(["local", "cloud_authenticated", "sign_in_required"]);
+  if (typeof value.readiness === "string" && value.readiness !== "local") throw new UnsupportedRuntimeError();
   if (
     value.protocol !== RUNTIME_PROTOCOL ||
     value.appVersion !== expectedVersion ||
@@ -33,30 +40,30 @@ export function validateRuntimeDescriptor(value, expectedVersion = VERSION) {
     !Number.isInteger(value.desktopPid) || value.desktopPid < 1 ||
     !Number.isInteger(value.sidecarPid) || value.sidecarPid < 1 ||
     typeof value.desktopStartedAt !== "string" || !START_IDENTITY.test(value.desktopStartedAt) ||
-    !ready.has(value.readiness) ||
+    value.readiness !== "local" ||
     !Number.isInteger(value.createdAt) || value.createdAt < 1
   ) {
-    throw new Error("runtime descriptor did not match this AliasMode adapter");
+    throw new Error("runtime descriptor did not match this 猫步·千境 adapter");
   }
   return value;
 }
 
-/** The XDG data folder that holds the Linux app (aliasmode) and its data (com.aliasmode.desktop). */
+/** The XDG data folder that holds the Linux app (aliasmode) and its data (com.maobu.local). */
 function linuxDataHome(env) {
   if (env.XDG_DATA_HOME?.startsWith("/")) return env.XDG_DATA_HOME;
-  if (!env.HOME) throw new Error("HOME is required to discover AliasMode");
+  if (!env.HOME) throw new Error("HOME is required to discover 猫步·千境");
   return posix.join(env.HOME, ".local", "share");
 }
 
 export function defaultRuntimeDescriptorPath(env = process.env, platform = process.platform) {
   if (env.ALIASMODE_RUNTIME_DESCRIPTOR) return env.ALIASMODE_RUNTIME_DESCRIPTOR;
   if (platform === "darwin") {
-    if (!env.HOME) throw new Error("HOME is required to discover AliasMode");
-    return posix.join(env.HOME, "Library", "Application Support", "com.aliasmode.desktop", "agent-runtime.json");
+    if (!env.HOME) throw new Error("HOME is required to discover 猫步·千境");
+    return posix.join(env.HOME, "Library", "Application Support", "com.maobu.local", "agent-runtime.json");
   }
-  if (platform === "linux") return posix.join(linuxDataHome(env), "com.aliasmode.desktop", "agent-runtime.json");
-  if (!env.APPDATA) throw new Error("APPDATA is required to discover AliasMode");
-  return join(env.APPDATA, "com.aliasmode.desktop", "agent-runtime.json");
+  if (platform === "linux") return posix.join(linuxDataHome(env), "com.maobu.local", "agent-runtime.json");
+  if (!env.APPDATA) throw new Error("APPDATA is required to discover 猫步·千境");
+  return join(env.APPDATA, "com.maobu.local", "agent-runtime.json");
 }
 
 export function windowsProcessIdentityCommand(pid, env = process.env) {
@@ -116,27 +123,27 @@ function processExists(pid) {
 
 async function verifyHealth(descriptor) {
   if (!processExists(descriptor.desktopPid) || !processExists(descriptor.sidecarPid)) {
-    throw new Error("AliasMode runtime processes are not active");
+    throw new Error("猫步·千境 runtime processes are not active");
   }
   if (await processStartIdentity(descriptor.desktopPid) !== descriptor.desktopStartedAt) {
-    throw new Error("AliasMode desktop process identity changed");
+    throw new Error("猫步·千境 desktop process identity changed");
   }
   const response = await fetch(`http://127.0.0.1:${descriptor.port}/ui/api/health`, {
     signal: AbortSignal.timeout(2_000),
     redirect: "error",
   });
   if (!response.ok || Number(response.headers.get("content-length") || 0) > 16 * 1024) {
-    throw new Error("AliasMode health proof failed");
+    throw new Error("猫步·千境 health proof failed");
   }
   const bytes = await response.arrayBuffer();
-  if (bytes.byteLength > 16 * 1024) throw new Error("AliasMode health proof is oversized");
+  if (bytes.byteLength > 16 * 1024) throw new Error("猫步·千境 health proof is oversized");
   const health = JSON.parse(new TextDecoder().decode(bytes));
   if (
     health.ok !== true ||
     health.version !== descriptor.appVersion ||
     health.instance !== descriptor.generation
   ) {
-    throw new Error("AliasMode health proof did not match the discovered runtime");
+    throw new Error("猫步·千境 health proof did not match the discovered runtime");
   }
 }
 
@@ -164,12 +171,12 @@ export class AgentRuntimeClient {
     this.pending = new Map();
     this.closed = false;
     listen(socket, "message", (data) => this.#onMessage(data));
-    listen(socket, "close", () => this.#onClose(new Error("AliasMode agent connection closed")));
-    listen(socket, "error", () => this.#onClose(new Error("AliasMode agent connection failed")));
+    listen(socket, "close", () => this.#onClose(new Error("猫步·千境 agent connection closed")));
+    listen(socket, "error", () => this.#onClose(new Error("猫步·千境 agent connection failed")));
   }
 
   call(method, params = {}) {
-    if (this.closed) return Promise.reject(new Error("AliasMode agent connection is closed"));
+    if (this.closed) return Promise.reject(new Error("猫步·千境 agent connection is closed"));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
@@ -179,14 +186,14 @@ export class AgentRuntimeClient {
           this.socket.send(payload);
         } catch {
           this.pending.delete(id);
-          reject(new Error("AliasMode agent request could not be sent"));
+          reject(new Error("猫步·千境 agent request could not be sent"));
         }
         return;
       }
       this.socket.send(payload, (error) => {
         if (!error) return;
         this.pending.delete(id);
-        reject(new Error("AliasMode agent request could not be sent"));
+        reject(new Error("猫步·千境 agent request could not be sent"));
       });
     });
   }
@@ -196,7 +203,7 @@ export class AgentRuntimeClient {
     else if (this.socket.readyState === 0) terminate(this.socket);
     if (this.closed) return;
     this.closed = true;
-    this.#rejectPending(new Error("AliasMode agent connection closed"));
+    this.#rejectPending(new Error("猫步·千境 agent connection closed"));
   }
 
   #onMessage(data) {
@@ -204,7 +211,7 @@ export class AgentRuntimeClient {
     try {
       value = JSON.parse(data.toString("utf8"));
     } catch {
-      this.#onClose(new Error("AliasMode returned malformed agent data"));
+      this.#onClose(new Error("猫步·千境 returned malformed agent data"));
       return;
     }
     if (
@@ -212,7 +219,7 @@ export class AgentRuntimeClient {
       !Number.isSafeInteger(value.id) ||
       typeof value.ok !== "boolean"
     ) {
-      this.#onClose(new Error("AliasMode returned an invalid agent response"));
+      this.#onClose(new Error("猫步·千境 returned an invalid agent response"));
       return;
     }
     const pending = this.pending.get(value.id);
@@ -220,7 +227,7 @@ export class AgentRuntimeClient {
     this.pending.delete(value.id);
     if (value.ok) pending.resolve(value.result);
     else {
-      const error = new Error(value.error?.message || "AliasMode operation failed");
+      const error = new Error(value.error?.message || "猫步·千境 operation failed");
       error.code = value.error?.code || "operation_failed";
       pending.reject(error);
     }
@@ -270,31 +277,28 @@ async function connectAgent(descriptor) {
       resolve();
     }, true);
     listen(socket, "error", (error) => {
-      failed(`AliasMode agent handshake failed: ${error?.message || "connection error"}`);
+      failed(`猫步·千境 agent handshake failed: ${error?.message || "connection error"}`);
     }, true);
     if (!bunNative) {
       listen(socket, "unexpected-response", (_request, response) => {
-        failed(`AliasMode agent handshake was rejected with status ${response.statusCode}`);
+        failed(`猫步·千境 agent handshake was rejected with status ${response.statusCode}`);
       }, true);
     }
   });
   if (!bunNative && socket.protocol !== AGENT_PROTOCOL) {
     socket.close();
-    throw new Error("AliasMode agent protocol negotiation failed");
+    throw new Error("猫步·千境 agent protocol negotiation failed");
   }
   return new AgentRuntimeClient(socket);
 }
 
 function defaultDesktopExecutable(env = process.env) {
   if (env.ALIASMODE_DESKTOP_EXE) return env.ALIASMODE_DESKTOP_EXE;
-  if (process.platform === "darwin") return "/Applications/AliasMode.app/Contents/MacOS/aliasmode";
-  if (process.platform === "linux") return join(linuxDataHome(env), "aliasmode", "bin", "aliasmode");
-  if (!env.LOCALAPPDATA) throw new Error("LOCALAPPDATA is required to start AliasMode");
-  return join(env.LOCALAPPDATA, "AliasMode", "AliasMode.exe");
+  throw new Error("Set ALIASMODE_DESKTOP_EXE to this local build to start the desktop app");
 }
 
 function launchBackground(executable) {
-  if (!existsSync(executable)) throw new Error("AliasMode is not installed at the expected path");
+  if (!existsSync(executable)) throw new Error("猫步·千境 is not installed at the expected path");
   const child = spawn(executable, ["--background"], {
     detached: true,
     stdio: "ignore",
@@ -309,39 +313,42 @@ async function readRuntimeDescriptor(path, version) {
   try {
     text = await readFile(path, "utf8");
   } catch {
-    throw new Error("AliasMode runtime descriptor is unavailable");
+    throw new Error("猫步·千境 runtime descriptor is unavailable");
   }
   try {
     return validateRuntimeDescriptor(JSON.parse(text), version);
   } catch (error) {
-    if (error instanceof SyntaxError) throw new Error("AliasMode runtime descriptor is malformed");
+    if (error instanceof SyntaxError) throw new Error("猫步·千境 runtime descriptor is malformed");
     throw error;
   }
 }
 
 export async function discoverRuntime(options = {}) {
   const descriptorPath = options.descriptorPath || defaultRuntimeDescriptorPath(options.env);
-  const desktopExecutable = options.desktopExecutable || defaultDesktopExecutable(options.env);
+  const desktopEnv = options.env ?? process.env;
+  const desktopExecutable = options.desktopExecutable || desktopEnv.ALIASMODE_DESKTOP_EXE;
   const deadline = Date.now() + (options.waitMs ?? STARTUP_WAIT_MS);
   let launched;
-  let lastError = new Error("AliasMode runtime is not ready");
+  let lastError = new Error("猫步·千境 runtime is not ready");
 
   while (Date.now() < deadline) {
     try {
       const descriptor = await readRuntimeDescriptor(
         descriptorPath,
-        options.version || VERSION,
+        options.version || RUNTIME_VERSION,
       );
       const client = await connectAgent(descriptor);
       return { client, descriptor };
     } catch (error) {
+      // Never launch a desktop when a different runtime protocol is configured.
+      if (error instanceof UnsupportedRuntimeError) throw error;
       lastError = error instanceof Error ? error : lastError;
       if (launched?.exitCode !== null && launched?.exitCode !== undefined) {
-        throw new Error(`AliasMode desktop exited before runtime readiness with code ${launched.exitCode}`);
+        throw new Error(`猫步·千境 desktop exited before runtime readiness with code ${launched.exitCode}`);
       }
-      if (!launched) launched = launchBackground(desktopExecutable);
+      if (!launched) launched = launchBackground(desktopExecutable || defaultDesktopExecutable(desktopEnv));
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
   }
-  throw new Error(`AliasMode did not become ready: ${lastError.message}`);
+  throw new Error(`猫步·千境 did not become ready: ${lastError.message}`);
 }

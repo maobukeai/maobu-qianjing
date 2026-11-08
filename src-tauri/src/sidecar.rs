@@ -1,4 +1,4 @@
-use crate::{browser::FirefoxRuntime, credentials, runtime_descriptor::RuntimeDescriptorState};
+use crate::{browser::FirefoxRuntime, runtime_descriptor::RuntimeDescriptorState};
 use reqwest::{redirect::Policy, Client};
 use serde::Deserialize;
 use std::{
@@ -42,31 +42,6 @@ struct HealthRecord {
 }
 
 #[derive(Debug, Deserialize)]
-struct CredentialSetRecord {
-    protocol: String,
-    event: String,
-    nonce: String,
-    request: u64,
-    key: String,
-    secret: String,
-}
-
-impl Drop for CredentialSetRecord {
-    fn drop(&mut self) {
-        self.secret.zeroize();
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct CredentialDeleteRecord {
-    protocol: String,
-    event: String,
-    nonce: String,
-    request: u64,
-    key: String,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct ImportRecord {
     pub ok: bool,
     pub message: String,
@@ -97,19 +72,6 @@ impl SidecarSupervisor {
         self.0.pid
     }
 
-    fn write_control(&self, value: &serde_json::Value) -> Result<(), String> {
-        let mut child = self
-            .0
-            .child
-            .lock()
-            .map_err(|_| "sidecar handle lock failed".to_owned())?;
-        child
-            .as_mut()
-            .ok_or_else(|| "AliasMode sidecar is not running".to_owned())?
-            .write(format!("{value}\n").as_bytes())
-            .map_err(|_| "could not write to the owned sidecar".to_owned())
-    }
-
     pub fn request_shutdown(&self) -> Result<(), String> {
         if self.0.shutting_down.swap(true, Ordering::AcqRel) {
             return Ok(());
@@ -126,7 +88,7 @@ impl SidecarSupervisor {
             .map_err(|_| "sidecar handle lock failed".to_owned())?;
         child
             .as_mut()
-            .ok_or_else(|| "AliasMode sidecar is not running".to_owned())?
+            .ok_or_else(|| "猫步·千境后台服务未运行".to_owned())?
             .write(format!("{command}\n").as_bytes())
             .map_err(|_| "could not request graceful sidecar shutdown".to_owned())
     }
@@ -202,34 +164,6 @@ fn parse_ready_line(line: &[u8], nonce: &str, pid: u32) -> Result<Option<u16>, S
         return Err("sidecar readiness proof did not match the owned process".to_owned());
     }
     Ok(Some(record.port))
-}
-
-fn parse_credential_set(line: &[u8], nonce: &str) -> Option<CredentialSetRecord> {
-    let record = serde_json::from_slice::<CredentialSetRecord>(line).ok()?;
-    if record.protocol == PROTOCOL
-        && record.event == "credential-set"
-        && record.nonce == nonce
-        && record.request > 0
-        && record.key == "refresh_token"
-    {
-        Some(record)
-    } else {
-        None
-    }
-}
-
-fn parse_credential_delete(line: &[u8], nonce: &str) -> Option<CredentialDeleteRecord> {
-    let record = serde_json::from_slice::<CredentialDeleteRecord>(line).ok()?;
-    if record.protocol == PROTOCOL
-        && record.event == "credential-delete"
-        && record.nonce == nonce
-        && record.request > 0
-        && matches!(record.key.as_str(), "refresh_token" | "device_credential")
-    {
-        Some(record)
-    } else {
-        None
-    }
 }
 
 fn verify_health_record(record: &HealthRecord, nonce: &str, root: &Path) -> Result<(), String> {
@@ -337,21 +271,32 @@ pub async fn run_import(
         .map_err(|_| "Cloakpit import sidecar returned an invalid result".to_owned())
 }
 
-fn command_args(data_dir: &Path) -> Vec<OsString> {
-    vec![
+fn command_args(
+    data_dir: &Path,
+    workspace_home: &Path,
+    workspace_id: &str,
+) -> Result<Vec<OsString>, String> {
+    if crate::workspaces::workspace_root(workspace_home, workspace_id)? != data_dir {
+        return Err("sidecar workspace root does not match its workspace ID".to_owned());
+    }
+    Ok(vec![
         "start".into(),
         "--desktop-stdio".into(),
         "--desktop-root".into(),
         data_dir.as_os_str().to_owned(),
         "--state-root".into(),
         data_dir.as_os_str().to_owned(),
+        "--workspace-home".into(),
+        workspace_home.as_os_str().to_owned(),
+        "--workspace-id".into(),
+        workspace_id.into(),
         "--db".into(),
         data_dir.join("profiles.sqlite").into_os_string(),
         "--data-root".into(),
         data_dir.join("profiles").into_os_string(),
         "--port".into(),
         "0".into(),
-    ]
+    ])
 }
 
 fn present_unexpected_exit(app: &AppHandle, code: Option<i32>) {
@@ -364,16 +309,16 @@ fn present_unexpected_exit(app: &AppHandle, code: Option<i32>) {
         if let Ok(url) = fallback.parse() {
             let _ = window.navigate(url);
         }
-        let _ = window.set_title("AliasMode service stopped");
+        let _ = window.set_title("猫步·千境服务已停止");
     }
     let detail = code
-        .map(|value| format!(" (exit code {value})"))
+        .map(|value| format!("（退出代码 {value}）"))
         .unwrap_or_default();
     app.dialog()
         .message(format!(
-            "AliasMode's local service stopped unexpectedly{detail}. Restart AliasMode before opening another browser. Browser cleanup could not be confirmed."
+            "猫步·千境本地服务意外停止{detail}。请先重新启动猫步·千境，再打开其他浏览器。无法确认浏览器是否已完成清理。"
         ))
-        .title("AliasMode service stopped")
+        .title("猫步·千境服务已停止")
         .kind(MessageDialogKind::Error)
         .buttons(MessageDialogButtons::Ok)
         .show(|_| {});
@@ -386,22 +331,34 @@ fn should_present_unexpected_exit(shutting_down: bool) -> bool {
 pub async fn launch_and_verify(
     app: &AppHandle,
     data_dir: &Path,
-    firefox: &FirefoxRuntime,
+    workspace_home: &Path,
+    workspace_id: &str,
+    firefox: Option<&FirefoxRuntime>,
     playwright_runtime: &Path,
     nonce: &str,
     agent_nonce: &str,
     background: bool,
 ) -> Result<(SidecarSupervisor, u16), String> {
     let mut command = scrubbed_sidecar_command(app)?
-        .args(command_args(data_dir))
+        .args(command_args(data_dir, workspace_home, workspace_id)?)
         .current_dir(data_dir)
         .env("ALIASMODE_DESKTOP_NONCE", nonce)
         .env("ALIASMODE_AGENT_NONCE", agent_nonce)
         .env("ALIASMODE_BACKGROUND", if background { "1" } else { "0" })
         .env("ALIASMODE_DESKTOP_VERSION", VERSION)
-        .env("ALIASMODE_PLAYWRIGHT_RUNTIME", playwright_runtime)
-        .env("ALIASMODE_FIREFOX_BINARY_PATH", &firefox.executable)
-        .env("ALIASMODE_FIREFOX_BINARY_SHA256", &firefox.sha256);
+        .env("ALIASMODE_APP_VERSION", VERSION)
+        .env("ALIASMODE_PLAYWRIGHT_RUNTIME", playwright_runtime);
+    command = if let Some(firefox) = firefox {
+        command
+            .env("ALIASMODE_FIREFOX_BINARY_PATH", &firefox.executable)
+            .env("ALIASMODE_FIREFOX_BINARY_SHA256", &firefox.sha256)
+            .env("MAOBU_MANAGED_FIREFOX", "0")
+    } else {
+        command
+            .env("ALIASMODE_FIREFOX_BINARY_PATH", "")
+            .env("ALIASMODE_FIREFOX_BINARY_SHA256", "")
+            .env("MAOBU_MANAGED_FIREFOX", "1")
+    };
     // Chromium 155 on Windows draws pages at the primary display's scale, as Chrome does there.
     // New profiles get a screen no smaller than that display; Firefox profiles get the display.
     // A Firefox window opens inside its available area (without the taskbar, or menu bar and Dock).
@@ -431,7 +388,7 @@ pub async fn launch_and_verify(
                     }
                 }
                 Some(CommandEvent::Stderr(_)) => {
-                    eprintln!("AliasMode sidecar startup emitted stderr");
+                    eprintln!("猫步·千境后台服务启动时产生了错误输出");
                 }
                 Some(CommandEvent::Error(_)) => {
                     return Err("sidecar output channel failed during startup".to_owned())
@@ -486,38 +443,6 @@ pub async fn launch_and_verify(
         while let Some(event) = events.recv().await {
             match event {
                 CommandEvent::Stdout(mut line) => {
-                    if let Some(mut record) = parse_credential_set(&line, &expected_nonce) {
-                        let request = record.request;
-                        let secret = std::mem::take(&mut record.secret);
-                        let ok = credentials::store_refresh_token(secret).is_ok();
-                        line.zeroize();
-                        let response = serde_json::json!({
-                            "protocol": PROTOCOL,
-                            "event": "credential-result",
-                            "nonce": expected_nonce.as_str(),
-                            "request": request,
-                            "ok": ok,
-                        });
-                        if control.write_control(&response).is_err() {
-                            eprintln!("AliasMode credential acknowledgement failed");
-                        }
-                        continue;
-                    }
-                    if let Some(record) = parse_credential_delete(&line, &expected_nonce) {
-                        let ok = credentials::delete_cloud_credential(&record.key).is_ok();
-                        line.zeroize();
-                        let response = serde_json::json!({
-                            "protocol": PROTOCOL,
-                            "event": "credential-result",
-                            "nonce": expected_nonce.as_str(),
-                            "request": record.request,
-                            "ok": ok,
-                        });
-                        if control.write_control(&response).is_err() {
-                            eprintln!("AliasMode credential acknowledgement failed");
-                        }
-                        continue;
-                    }
                     if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&line) {
                         let protocol = value.get("protocol").and_then(|value| value.as_str());
                         let nonce = value.get("nonce").and_then(|value| value.as_str());
@@ -534,7 +459,7 @@ pub async fn launch_and_verify(
                     line.zeroize();
                 }
                 CommandEvent::Stderr(_) => {
-                    eprintln!("AliasMode sidecar emitted stderr");
+                    eprintln!("猫步·千境后台服务产生了错误输出");
                 }
                 CommandEvent::Error(_) => {
                     status.send_replace(ChildStatus::ShutdownFailed);
@@ -548,10 +473,7 @@ pub async fn launch_and_verify(
                         let _ = runtime.remove_owned();
                     }
                     if should_present_unexpected_exit(shutting_down.load(Ordering::Acquire)) {
-                        eprintln!(
-                            "AliasMode sidecar exited unexpectedly (code {:?})",
-                            exit.code
-                        );
+                        eprintln!("猫步·千境后台服务意外退出（代码 {:?}）", exit.code);
                         present_unexpected_exit(&app, exit.code);
                         app.exit(1);
                     }
@@ -568,12 +490,40 @@ pub async fn launch_and_verify(
 #[cfg(test)]
 mod tests {
     use super::{
-        import_command_args, parse_credential_delete, parse_credential_set, parse_ready_line,
-        should_present_unexpected_exit, verify_health_record, HealthRecord, PROTOCOL, VERSION,
+        command_args, import_command_args, parse_ready_line, should_present_unexpected_exit,
+        verify_health_record, HealthRecord, PROTOCOL, VERSION,
     };
     use std::{ffi::OsString, path::Path};
 
     const NONCE: &str = "abababababababababababababababababababababababababababababababab";
+
+    #[test]
+    fn binds_sidecar_paths_and_workspace_identity_to_the_same_root() {
+        let home = Path::new("workspace-home");
+        let id = "ws_0123456789abcdef0123456789abcdef";
+        let root = home.join("workspaces").join(id);
+        let args = command_args(&root, home, id).unwrap();
+        let value = |name: &str| {
+            args.windows(2)
+                .find(|pair| pair[0] == name)
+                .map(|pair| pair[1].clone())
+        };
+        assert_eq!(value("--desktop-root"), Some(root.clone().into_os_string()));
+        assert_eq!(value("--state-root"), Some(root.clone().into_os_string()));
+        assert_eq!(
+            value("--db"),
+            Some(root.join("profiles.sqlite").into_os_string())
+        );
+        assert_eq!(
+            value("--data-root"),
+            Some(root.join("profiles").into_os_string())
+        );
+        assert_eq!(value("--workspace-home"), Some(home.as_os_str().to_owned()));
+        assert_eq!(value("--workspace-id"), Some(OsString::from(id)));
+        assert!(command_args(home, home, id).is_err());
+        assert!(command_args(&root, home, "../escape").is_err());
+        assert!(command_args(home, home, "default").is_ok());
+    }
 
     #[test]
     fn accepts_only_nonce_and_pid_bound_readiness() {
@@ -596,47 +546,6 @@ mod tests {
     }
 
     #[test]
-    fn accepts_only_nonce_bound_refresh_token_persistence() {
-        let line = serde_json::json!({
-            "protocol": PROTOCOL,
-            "event": "credential-set",
-            "nonce": NONCE,
-            "request": 1,
-            "key": "refresh_token",
-            "secret": "rotated-refresh",
-        });
-        assert!(parse_credential_set(line.to_string().as_bytes(), NONCE).is_some());
-        assert!(parse_credential_set(line.to_string().as_bytes(), &"cd".repeat(32)).is_none());
-
-        let wrong_key = serde_json::json!({
-            "protocol": PROTOCOL,
-            "event": "credential-set",
-            "nonce": NONCE,
-            "request": 1,
-            "key": "access_token",
-            "secret": "access",
-        });
-        assert!(parse_credential_set(wrong_key.to_string().as_bytes(), NONCE).is_none());
-
-        let delete = serde_json::json!({
-            "protocol": PROTOCOL,
-            "event": "credential-delete",
-            "nonce": NONCE,
-            "request": 2,
-            "key": "device_credential",
-        });
-        assert!(parse_credential_delete(delete.to_string().as_bytes(), NONCE).is_some());
-        let delete_queue = serde_json::json!({
-            "protocol": PROTOCOL,
-            "event": "credential-delete",
-            "nonce": NONCE,
-            "request": 3,
-            "key": "queue_encryption_key",
-        });
-        assert!(parse_credential_delete(delete_queue.to_string().as_bytes(), NONCE).is_none());
-    }
-
-    #[test]
     fn presents_only_unexpected_sidecar_exits() {
         assert!(should_present_unexpected_exit(false));
         assert!(!should_present_unexpected_exit(true));
@@ -647,13 +556,11 @@ mod tests {
         let record = HealthRecord {
             ok: true,
             version: VERSION.to_owned(),
-            root: "C:\\AliasMode".to_owned(),
+            root: "C:\\Maobu".to_owned(),
             instance: NONCE.to_owned(),
         };
-        assert!(verify_health_record(&record, NONCE, Path::new("C:\\AliasMode")).is_ok());
-        assert!(
-            verify_health_record(&record, &"cd".repeat(32), Path::new("C:\\AliasMode")).is_err()
-        );
+        assert!(verify_health_record(&record, NONCE, Path::new("C:\\Maobu")).is_ok());
+        assert!(verify_health_record(&record, &"cd".repeat(32), Path::new("C:\\Maobu")).is_err());
         assert!(verify_health_record(&record, NONCE, Path::new("C:\\Other")).is_err());
     }
 

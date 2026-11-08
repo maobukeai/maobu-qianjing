@@ -289,7 +289,7 @@ const DROPPED_LAUNCH_KEYS = [
 
 /**
  * The config one launch sends to the engine. Seeds, voices, media devices, the window label and
- * the window fit are derived here and never stored, so saved Local and Cloud profiles keep their
+ * the window fit are derived here and never stored, so saved profiles keep their
  * exact shape. A value the profile stores itself is kept, unless no real desktop of its system
  * shows it (fitDesktopPersona, a macOS card that is not Apple's). On a display smaller than the
  * profile's screen the window fits `hostAvail`, the display's available area, and the screen keeps

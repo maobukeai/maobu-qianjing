@@ -4,16 +4,14 @@
  *
  *   bun scripts/generate-public-docs.mjs                  rewrite current-source catalog + manifest
  *   bun scripts/generate-public-docs.mjs --check          fail when the committed files drift
- *   bun scripts/generate-public-docs.mjs --released <tag> write an immutable catalog for a git tag
  *
  * MCP tool catalogs are produced by connecting an in-memory MCP client to the
  * real `createAliasModeMcp` server with a fake browser proxy and runtime, so no
  * browser or AliasMode runtime is needed. Playwright tools come from the real
  * pinned @playwright/mcp package through PlaywrightToolProxy.initialize().
  */
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -28,7 +26,6 @@ export const CATALOG_DIR = "mcp-tools";
 export const CURRENT_CATALOG_PATH = `${CATALOG_DIR}/current-source.json`;
 const CATALOG_SCHEMA_VERSION = 1;
 const MANIFEST_SCHEMA_VERSION = 1;
-const TAG_AGENT_FILES = ["mcp-host.mjs", "playwright-proxy.mjs", "runtime-client.mjs"];
 
 export function serialize(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
@@ -138,54 +135,6 @@ export async function generateCurrentSourceCatalog() {
   });
 }
 
-function sameList(a, b) {
-  return a.length === b.length && a.every((value, index) => value === b[index]);
-}
-
-/** Catalog for a released git tag, introspected from the tag's own agent/ sources. */
-export async function generateReleasedCatalog(tag) {
-  const show = (path) => execFileSync("git", ["-C", ROOT, "show", `${tag}:${path}`], { encoding: "utf8" });
-  const pkg = JSON.parse(show("package.json"));
-  const currentPkg = readJson(join(ROOT, "package.json"));
-  const meta = playwrightMetaFromSource(show("agent/playwright-proxy.mjs"));
-  const currentMeta = playwrightMetaFromSource(readFileSync(join(ROOT, "agent", "playwright-proxy.mjs"), "utf8"));
-  const playwrightMcpVersion = pkg.dependencies["@playwright/mcp"];
-  if (
-    playwrightMcpVersion !== currentPkg.dependencies["@playwright/mcp"]
-    || !sameList(meta.capabilities, currentMeta.capabilities)
-    || !sameList(meta.filtered, currentMeta.filtered)
-  ) {
-    throw new Error(`${tag} pins a different @playwright/mcp version, capabilities, or filtered tools; its Playwright tool list cannot be reproduced from the installed package`);
-  }
-  const playwrightTools = await listPlaywrightTools(pkg.version);
-  const tmp = join(ROOT, `.tmp-${tag}`);
-  rmSync(tmp, { recursive: true, force: true });
-  mkdirSync(join(tmp, "agent"), { recursive: true });
-  try {
-    for (const file of TAG_AGENT_FILES) writeFileSync(join(tmp, "agent", file), show(`agent/${file}`));
-    const tools = await listHostTools(join(tmp, "agent", "mcp-host.mjs"), playwrightTools);
-    return catalog({
-      aliasModeVersion: pkg.version,
-      status: "released",
-      sourceRef: tag,
-      playwrightMcpVersion,
-      meta,
-      tools,
-    });
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
-}
-
-function releasedVersions() {
-  const dir = join(PUBLIC_DOCS_DIR, CATALOG_DIR);
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((name) => name.endsWith(".json") && name !== "current-source.json")
-    .map((name) => name.slice(0, -".json".length))
-    .sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
-}
-
 /** Stamp the package version into the hand-written OpenAPI document. */
 export function stampOpenApi(text, productVersion) {
   const doc = JSON.parse(text);
@@ -195,17 +144,11 @@ export function stampOpenApi(text, productVersion) {
 
 export function buildManifest({ productVersion, openapiText, currentCatalogText }) {
   const mcpCatalogs = { "current-source": { path: CURRENT_CATALOG_PATH, sha256: sha256(currentCatalogText) } };
-  const versions = releasedVersions();
-  for (const version of versions) {
-    const path = `${CATALOG_DIR}/${version}.json`;
-    mcpCatalogs[version] = { path, sha256: sha256(readFileSync(join(PUBLIC_DOCS_DIR, path), "utf8")) };
-  }
   return {
     schemaVersion: MANIFEST_SCHEMA_VERSION,
     productVersion,
     openapi: { path: OPENAPI_PATH, sha256: sha256(openapiText) },
     mcpCatalogs,
-    releasedVersions: versions,
   };
 }
 
@@ -215,20 +158,8 @@ function fail(message) {
 }
 
 async function main(argv) {
+  if (argv.some((argument) => argument !== "--check")) fail("usage: bun scripts/generate-public-docs.mjs [--check]");
   const check = argv.includes("--check");
-  const releasedAt = argv.indexOf("--released");
-  if (releasedAt !== -1) {
-    const tag = argv[releasedAt + 1];
-    if (!tag) fail("usage: bun scripts/generate-public-docs.mjs --released <git tag>");
-    const path = join(PUBLIC_DOCS_DIR, CATALOG_DIR, `${tag.replace(/^v/, "")}.json`);
-    if (existsSync(path)) fail(`${relative(ROOT, path)} already exists; released catalogs are immutable`);
-    const released = serialize(await generateReleasedCatalog(tag));
-    if (check) return console.log(`${relative(ROOT, path)} would be written`);
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, released);
-    console.log(`wrote ${relative(ROOT, path)}`);
-  }
-
   const productVersion = readJson(join(ROOT, "package.json")).version;
   const openapiPath = join(PUBLIC_DOCS_DIR, OPENAPI_PATH);
   const openapiText = stampOpenApi(readFileSync(openapiPath, "utf8"), productVersion);
@@ -251,14 +182,6 @@ async function main(argv) {
   for (const [path, expected] of outputs) {
     const actual = existsSync(path) ? readFileSync(path, "utf8") : null;
     if (actual !== expected) problems.push(`${relative(ROOT, path)} is out of date`);
-  }
-  const committed = existsSync(join(PUBLIC_DOCS_DIR, MANIFEST_PATH)) ? readJson(join(PUBLIC_DOCS_DIR, MANIFEST_PATH)) : {};
-  for (const version of committed.releasedVersions ?? []) {
-    const entry = committed.mcpCatalogs?.[version];
-    const path = entry ? join(PUBLIC_DOCS_DIR, entry.path) : null;
-    if (!path || !existsSync(path) || sha256(readFileSync(path, "utf8")) !== entry.sha256) {
-      problems.push(`released catalog ${entry?.path ?? version} does not match its sha256 in docs/public/manifest.json`);
-    }
   }
   if (problems.length) fail(`${problems.join("\n")}\nRun \`bun run docs:public\` and commit the result.`);
   console.log("public docs are up to date");

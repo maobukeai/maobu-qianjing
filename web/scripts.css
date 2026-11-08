@@ -1,0 +1,83 @@
+/* Local script management and its run dialog share the airy workspace tokens. */
+.workspace.scripts-page {
+  padding: 0 0 16px; gap: 18px; overflow: auto; scrollbar-gutter: stable;
+  background: var(--bg); border: 0; box-shadow: none;
+}
+.workspace.scripts-page > * { flex: 0 0 auto; min-width: 0; }
+.scripts-page .scripts-head { justify-content: space-between; align-items: center; gap: 18px; margin: 0 0 2px; }
+.scripts-page .scripts-head .sect-title { margin: 0 0 8px; color: var(--ink); font-size: 25px; font-weight: 600; line-height: 1.25; letter-spacing: -.04em; }
+.scripts-page .page-subtitle { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.scripts-page .page-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.scripts-page .scripts-layout { display: grid; grid-template-columns: minmax(185px, 242px) minmax(0, 1fr); gap: 18px; align-items: start; min-width: 0; }
+.scripts-page .scripts-list { display: block; padding: 0; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); overflow: hidden; }
+.scripts-page .scripts-list-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 15px 16px; border-bottom: 1px solid var(--line-soft); }
+.scripts-page .scripts-list-head h3 { margin: 0; color: var(--ink-soft); font-size: 12px; font-weight: 500; }
+.scripts-page .scripts-list-head > span { color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.scripts-page .scripts-list-body { padding: 6px; }
+.scripts-page .scripts-list-empty { margin: 0; padding: 27px 12px 32px; color: var(--muted); text-align: center; font-size: 12px; }
+.scripts-page .script-row { gap: 5px; padding: 11px 10px; margin: 1px 0; border-radius: var(--r-sm); color: var(--ink-soft); }
+.scripts-page .script-row b { min-width: 0; overflow-wrap: anywhere; font-size: 12px; font-weight: 500; line-height: 1.5; }
+.scripts-page .script-row span, .scripts-page .script-row small { font-size: 11px; line-height: 1.5; }
+.scripts-page .script-row:hover:not(:disabled) { color: var(--ink); background: var(--surface-hover); }
+.scripts-page .script-row.active { color: var(--accent-ink); background: var(--accent-soft); }
+.scripts-page .script-row.active span, .scripts-page .script-row.active small { color: var(--accent-ink); opacity: .8; }
+.scripts-page .script-detail { min-width: 0; border-radius: var(--r-lg); box-shadow: none; }
+.scripts-page .script-detail > header { min-width: 0; padding: 17px 20px; gap: 12px; background: var(--surface); border-bottom: 1px solid var(--line-soft); }
+.scripts-page .script-detail > header h2 { min-width: 0; font-size: 14px; font-weight: 500; line-height: 1.45; color: var(--ink-soft); overflow-wrap: anywhere; }
+.scripts-page .script-detail .card-body { padding: 18px 20px 20px; gap: 16px; }
+.scripts-page .script-detail .chip { flex-shrink: 0; color: var(--accent-ink); background: var(--accent-soft); border-color: var(--accent-line); border-radius: var(--r-sm); font-size: 11px; font-weight: 400; }
+.scripts-page .script-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.scripts-page .script-actions .btn.danger { margin-left: auto; }
+.scripts-page .script-source { padding: 14px 15px; min-height: 190px; max-height: 420px; border-color: var(--line-soft); border-radius: var(--r-sm); background: var(--surface-sunken); color: var(--ink-soft); font: 12px/1.8 var(--mono); tab-size: 2; }
+.scripts-page .scripts-empty { min-width: 0; min-height: 285px; padding: 45px 24px; justify-content: center; text-align: center; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); }
+.scripts-page .scripts-empty b { font-size: 13px; font-weight: 500; color: var(--ink-soft); }
+.scripts-page .scripts-empty p { font-size: 12px; line-height: 1.65; }
+.scripts-page .scripts-empty-symbol { display: grid; place-items: center; width: 38px; height: 38px; margin-bottom: 8px; border: 1px solid var(--accent-line); border-radius: var(--r-md); background: var(--accent-soft); color: var(--accent); font: 16px/1 var(--mono); }
+.scripts-page .scripts-run-note { position: relative; padding: 12px 15px; margin: 0; border-radius: var(--r-md); font-size: 12px; line-height: 1.6; box-shadow: none; }
+.scripts-page > .formnote { padding: 12px 15px; margin: 0; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); font-size: 12px; line-height: 1.7; }
+.scripts-page :is(button, input, select, textarea):focus-visible,
+.script-run-modal :is(button, input, select, textarea):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.scripts-page .fld > .input { background: var(--surface); color: var(--ink-soft); border-color: var(--line); box-shadow: none; }
+.scripts-page .fld > .input:focus { border-color: var(--accent); box-shadow: var(--ring); }
+.script-run-modal { width: min(640px, 100%); border: 1px solid var(--line); border-radius: var(--r-xl); }
+.script-run-modal .modal-head { padding: 19px 22px; color: var(--ink-soft); font-size: 15px; font-weight: 500; background: var(--surface); border-bottom: 1px solid var(--line-soft); }
+.script-run-modal .modal-body { padding: 20px 22px; gap: 16px; }
+.script-run-modal .modal-foot { padding: 15px 22px; border-top: 1px solid var(--line-soft); background: var(--surface); }
+.script-run-modal .fld > span { color: var(--muted); font-size: 12px; }
+.script-run-modal .script-inputs { padding: 12px 13px; min-height: 96px; color: var(--ink-soft); background: var(--surface-sunken); border-color: var(--line); font: 12px/1.7 var(--mono); }
+.script-run-modal .script-credentials { gap: 8px; color: var(--ink-soft); font-size: 12px; line-height: 1.6; }
+.script-run-modal .script-credentials input { flex-shrink: 0; width: 14px; height: 14px; accent-color: var(--accent); }
+.script-run-modal .formnote { color: var(--muted); font-size: 12px; line-height: 1.7; }
+.script-run-modal .script-progress { padding: 14px 15px; gap: 10px; border-color: var(--line); border-radius: var(--r-md); background: var(--surface); }
+.script-run-modal .script-progress > b { color: var(--ink-soft); font-size: 12px; font-weight: 500; padding-bottom: 9px; border-bottom: 1px solid var(--line-soft); overflow-wrap: anywhere; }
+.script-run-modal .script-profile { gap: 4px 12px; padding: 4px 0; font-size: 12px; }
+.script-run-modal .script-profile > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.script-run-modal .script-profile small { font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.script-run-modal .script-log { min-height: 105px; max-height: 260px; padding: 14px 15px; border-radius: var(--r-md); border-color: var(--line); color: var(--ink-soft); background: var(--surface-sunken); font: 11px/1.8 var(--mono); }
+@media (max-width: 1100px) {
+  .scripts-page .scripts-layout { grid-template-columns: minmax(175px, 215px) minmax(0, 1fr); gap: 14px; }
+}
+@media (max-width: 800px) {
+  .workspace.scripts-page { gap: 17px; }
+  .scripts-page .scripts-head { flex-direction: row; }
+  .scripts-page .scripts-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .scripts-page .scripts-list-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+  .scripts-page .scripts-list-empty { grid-column: 1 / -1; }
+  .scripts-page .scripts-empty { min-height: 240px; }
+}
+@media (max-width: 480px) {
+  .scripts-page .scripts-head { align-items: flex-start; flex-direction: column; gap: 13px; }
+  .scripts-page .scripts-head .sect-title { font-size: 23px; }
+  .scripts-page .scripts-list-body { grid-template-columns: minmax(0, 1fr); }
+  .scripts-page .script-detail > header { padding: 15px 14px; }
+  .scripts-page .script-detail .card-body { padding: 16px 14px; }
+  .scripts-page .script-actions { align-items: stretch; }
+  .scripts-page .script-actions .btn { flex: 1 1 auto; }
+  .scripts-page .script-actions .btn.danger { margin-left: 0; }
+  .script-run-modal .modal-head, .script-run-modal .modal-body { padding-left: 16px; padding-right: 16px; }
+  .script-run-modal .modal-foot { padding: 13px 16px; }
+}
+@media (pointer: coarse) {
+  .scripts-page :is(.btn, .script-row), .script-run-modal .btn { min-height: 44px; }
+  .scripts-page .input, .script-run-modal :is(input.input, textarea.input, select.select) { font-size: 16px; }
+}

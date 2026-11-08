@@ -1,9 +1,8 @@
 import { expect, test } from "bun:test";
-import { buildNewProfile } from "./create.ts";
+import { buildNewProfile, type NewProfileInput } from "./create.ts";
 import { deriveFingerprintFlags, editedProfileHardware, generateProfileHardware } from "./fingerprint.ts";
 import { firefoxLaunchConfig } from "./firefox-config.ts";
 import { parseExport, serializeAdsTxt, serializeXlsxRows } from "./parse.ts";
-import { decodePortableProfile, encodePortableProfile } from "./portable-profile.ts";
 import { ProfileStore } from "./store.ts";
 
 const cloakProfile = () => {
@@ -67,30 +66,18 @@ test("a typed count reaches every engine, and Chromium 155 shows at most this co
   expect(editedProfileHardware(firefox, undefined)).toBeUndefined();
 });
 
-test("Cloud carries typed cores for Firefox and Chromium 155 in their own schema versions", () => {
-  const beta = { ...buildNewProfile({ chromiumRuntime: "aliasmode" }, () => false), hardware: { cores: 6 } };
-  const betaPayload = encodePortableProfile(beta);
-  expect(betaPayload).toMatchObject({ schemaVersion: 3, profile: { hardware: { cores: 6 } } });
-  expect(decodePortableProfile(betaPayload).profile.hardware).toEqual({ cores: 6 });
-  const firefox = { ...buildNewProfile({ engine: "firefox", platformOs: "windows" }, () => false), hardware: { cores: 6 } };
-  const firefoxPayload = encodePortableProfile(firefox);
-  expect(firefoxPayload).toMatchObject({ schemaVersion: 2, profile: { hardware: { cores: 6 } } });
-  expect(decodePortableProfile(firefoxPayload).profile.hardware).toEqual({ cores: 6 });
-});
-
-test("Cloud carries stored hardware in schema V4, which older clients reject", () => {
-  const profile = cloakProfile();
-  const payload = encodePortableProfile(profile);
-  expect(payload.schemaVersion).toBe(4);
-  expect(payload.profile).toMatchObject({ hardware: profile.hardware });
-  expect(decodePortableProfile(payload).profile.hardware).toEqual(profile.hardware);
-
-  // The version and the content must agree in both directions.
-  expect(() => decodePortableProfile({ ...payload, schemaVersion: 1 } as any)).toThrow("unsupported portable profile payload");
-  const { hardware: _hardware, ...withoutHardware } = payload.profile as any;
-  expect(() => decodePortableProfile({ ...payload, profile: withoutHardware } as any)).toThrow("unsupported portable profile payload");
-  expect(() => decodePortableProfile({ ...payload, profile: { ...payload.profile, hardware: { cores: "8" } } } as any))
-    .toThrow("unsupported portable profile payload");
+test("local storage retains typed cores across engines and rejects malformed hardware", () => {
+  const store = new ProfileStore(":memory:");
+  try {
+    const inputs: NewProfileInput[] = [{ chromiumRuntime: "aliasmode" }, { engine: "firefox", platformOs: "windows" }, { chromiumRuntime: "cloakbrowser" }];
+    for (const input of inputs) {
+      const profile = { ...buildNewProfile(input, () => false), hardware: { cores: 6 } };
+      store.upsertProfile(profile);
+      expect(store.getProfile(profile.id)!.hardware).toEqual({ cores: 6 });
+      expect(() => store.upsertProfile({ ...profile, hardware: { cores: "8" } } as any)).toThrow();
+      expect(store.getProfile(profile.id)!.hardware).toEqual({ cores: 6 });
+    }
+  } finally { store.close(); }
 });
 
 test("export and import keep stored hardware", () => {

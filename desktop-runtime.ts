@@ -17,21 +17,6 @@ export interface DesktopReadyRecord {
   port: number;
 }
 
-interface DesktopCredentialResult {
-  protocol: typeof DESKTOP_PROTOCOL;
-  event: "credential-result";
-  nonce: string;
-  request: number;
-  ok: boolean;
-}
-
-interface PendingCredentialRequest {
-  resolve: () => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-  failure: string;
-}
-
 interface ManagedServer {
   stop(closeActiveConnections?: boolean): void | Promise<void>;
   stopScripts?(): Promise<void>;
@@ -52,7 +37,6 @@ export interface ManagedDesktopRuntimeOptions {
   admission: LifecycleAdmissionController;
   store: ManagedStore;
   launcher: ManagedLauncher;
-  remoteShutdown?: (remainingMs: number) => Promise<void>;
   stopInbox?: () => void | Promise<void>;
   wait?: (ms: number) => Promise<void>;
   shutdownTimeoutMs?: number;
@@ -100,90 +84,6 @@ export function isDesktopShutdownCommand(line: string, nonce: string): boolean {
   }
 }
 
-export class DesktopCredentialBridge {
-  private request = 0;
-  private readonly pending = new Map<number, PendingCredentialRequest>();
-
-  constructor(
-    private readonly nonce: string,
-    private readonly write: (line: string) => void = (line) => { process.stdout.write(line); },
-    private readonly timeoutMs = 10_000,
-  ) {
-    if (!NONCE_RE.test(nonce)) throw new Error("desktop credential nonce is invalid");
-  }
-
-  persistRefreshToken(secret: string): Promise<void> {
-    return this.send("credential-set", "refresh_token", secret);
-  }
-
-  async clearCloudSessionCredentials(): Promise<void> {
-    // Keep the queue key. Signed-out captures remain encrypted and must survive
-    // until the same account authenticates and can retry them.
-    const results = await Promise.allSettled([
-      this.send("credential-delete", "refresh_token"),
-      this.send("credential-delete", "device_credential"),
-    ]);
-    if (results.some((result) => result.status === "rejected")) {
-      throw new Error("Windows Credential Manager could not clear Cloud credentials");
-    }
-  }
-
-  private send(event: "credential-set" | "credential-delete", key: string, secret?: string): Promise<void> {
-    const request = ++this.request;
-    return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(request);
-        reject(new Error("desktop credential operation timed out"));
-      }, this.timeoutMs);
-      this.pending.set(request, {
-        resolve,
-        reject,
-        timer,
-        failure: event === "credential-set"
-          ? "Windows Credential Manager rejected the rotated refresh token"
-          : "Windows Credential Manager could not clear Cloud credentials",
-      });
-      try {
-        this.write(`${JSON.stringify({
-          protocol: DESKTOP_PROTOCOL,
-          event,
-          nonce: this.nonce,
-          request,
-          key,
-          ...(secret === undefined ? {} : { secret }),
-        })}\n`);
-      } catch (error) {
-        clearTimeout(timer);
-        this.pending.delete(request);
-        reject(error instanceof Error ? error : new Error("desktop credential request failed"));
-      }
-    });
-  }
-
-  handleLine(line: string): boolean {
-    let result: DesktopCredentialResult;
-    try {
-      result = JSON.parse(line) as DesktopCredentialResult;
-    } catch {
-      return false;
-    }
-    if (
-      result.protocol !== DESKTOP_PROTOCOL
-      || result.event !== "credential-result"
-      || result.nonce !== this.nonce
-      || !Number.isSafeInteger(result.request)
-      || typeof result.ok !== "boolean"
-    ) return false;
-    const pending = this.pending.get(result.request);
-    if (!pending) return false;
-    this.pending.delete(result.request);
-    clearTimeout(pending.timer);
-    if (result.ok) pending.resolve();
-    else pending.reject(new Error(pending.failure));
-    return true;
-  }
-}
-
 async function beforeDeadline<T>(pending: Promise<T>, deadline: number): Promise<T> {
   const remaining = deadline - Date.now();
   if (remaining <= 0) throw new Error("desktop shutdown deadline expired");
@@ -209,7 +109,7 @@ async function stopServers(servers: ManagedServer[]): Promise<void> {
 export class ManagedDesktopRuntime {
   private shutdownInFlight: Promise<void> | null = null;
 
-  constructor(private readonly options: ManagedDesktopRuntimeOptions) {}
+  constructor(private readonly options: ManagedDesktopRuntimeOptions) { }
 
   shutdown(): Promise<void> {
     if (!this.shutdownInFlight) this.shutdownInFlight = this.runShutdown();
@@ -223,8 +123,7 @@ export class ManagedDesktopRuntime {
       admission,
       store,
       launcher,
-      remoteShutdown,
-      stopInbox = () => {},
+      stopInbox = () => { },
       wait = (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
       shutdownTimeoutMs = 7 * 60_000,
     } = this.options;
@@ -247,22 +146,16 @@ export class ManagedDesktopRuntime {
         await wait(25);
       }
 
-      if (remoteShutdown) {
-        const remainingMs = deadline - Date.now();
-        if (remainingMs <= 0) throw new Error("desktop shutdown deadline expired before remote cleanup");
-        await beforeDeadline(remoteShutdown(remainingMs), deadline);
-      } else {
-        const failed: string[] = [];
-        for (const { profileId } of store.listLaunches()) {
-          try {
-            if (await beforeDeadline(launcher.stop(profileId), deadline) !== true) failed.push(profileId);
-          } catch {
-            failed.push(profileId);
-          }
+      const failed: string[] = [];
+      for (const { profileId } of store.listLaunches()) {
+        try {
+          if (await beforeDeadline(launcher.stop(profileId), deadline) !== true) failed.push(profileId);
+        } catch {
+          failed.push(profileId);
         }
-        if (failed.length) {
-          throw new Error(`browser teardown was not confirmed for ${failed.length} profile(s)`);
-        }
+      }
+      if (failed.length) {
+        throw new Error(`browser teardown was not confirmed for ${failed.length} profile(s)`);
       }
     } catch (error) {
       failure ??= error;

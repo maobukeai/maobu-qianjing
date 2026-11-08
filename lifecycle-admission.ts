@@ -243,7 +243,7 @@ export async function classifyLifecycleRequest(req: Request): Promise<Classified
   } catch {}
   const action = ui[2]!;
   return {
-    // A restore registers and closes a Cloud open, so it queues like a start.
+    // A session restore can open and close a browser, so it queues like a start.
     kind: action === "open" || action === "restore-session"
       ? "start"
       : action === "close" ? "stop" : "cleanup",

@@ -5,8 +5,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { migrateLegacyState, type MigrationOptions } from "./migration.ts";
-import { statePaths } from "./paths.ts";
+import { legacyStatePaths, statePaths } from "./paths.ts";
 import { ProfileStore } from "./store.ts";
+import { AppConfigStore } from "./app-config.ts";
 
 function roots() {
   const parent = mkdtempSync(join(tmpdir(), "aliasmode-migration-"));
@@ -109,8 +110,9 @@ test("migration preserves all database values and session-bearing Chromium bytes
   expect(migrated.query("SELECT * FROM groups").get()).toEqual({ name: "Imported", future_group_value: "unknown-group-value" });
   expect(migrated.query("SELECT * FROM extensions").get()).toEqual({ id: "ext1", name: "Extension", load_dir: join(destination.extensions, "ext1"), future_extension_value: "unknown-extension-value" });
   migrated.close();
-  expect(readFileSync(destination.operatorId, "utf8")).toBe("legacy-device\n");
-  expect(JSON.parse(readFileSync(destination.config, "utf8")).mode).toBe("local");
+  expect(readFileSync(join(source, ".operator-id"), "utf8")).toBe("legacy-device\n");
+  expect(existsSync(legacyStatePaths(destination.root).operatorId)).toBe(false);
+  expect(new AppConfigStore(destination.config).read().mode).toBe("local");
   await expect(migrateLegacyState(source, destination, stopped)).rejects.toThrow("already contains imported local profile data");
 });
 
@@ -168,21 +170,17 @@ test("initialized-empty local destination is accepted and harmless files are pre
   mkdirSync(destination.inbox, { recursive: true });
   mkdirSync(destination.reports, { recursive: true });
   mkdirSync(join(destination.root, "logs"), { recursive: true });
-  const pendingSyncKey = Buffer.alloc(32, 7).toString("base64");
-  const stalePendingSyncKey = `${destination.pendingSyncKey}.123.00000000-0000-4000-8000-000000000000.tmp`;
-  writeFileSync(destination.pendingSyncKey, `${pendingSyncKey}\n`, { mode: 0o600 });
-  writeFileSync(stalePendingSyncKey, `${pendingSyncKey}\n`, { mode: 0o600 });
   writeFileSync(join(destination.inbox, "keep.txt"), "keep");
   writeFileSync(join(destination.reports, "keep.txt"), "keep");
   writeFileSync(join(destination.root, "logs", "keep.log"), "keep");
+  writeFileSync(legacyStatePaths(destination.root).operatorId, "retained-destination-id\n");
   writeFileSync(destination.config, '{"version":1,"mode":"local","localAnalytics":true}\n');
 
   await migrateLegacyState(source, destination, stopped);
   expect(readFileSync(join(destination.inbox, "keep.txt"), "utf8")).toBe("keep");
   expect(readFileSync(join(destination.reports, "keep.txt"), "utf8")).toBe("keep");
   expect(readFileSync(join(destination.root, "logs", "keep.log"), "utf8")).toBe("keep");
-  expect(readFileSync(destination.pendingSyncKey, "utf8").trim()).toBe(pendingSyncKey);
-  expect(existsSync(stalePendingSyncKey)).toBe(false);
+  expect(readFileSync(legacyStatePaths(destination.root).operatorId, "utf8")).toBe("retained-destination-id\n");
   expect(readFileSync(destination.config, "utf8")).toContain('"mode":"local"');
 });
 
@@ -194,14 +192,34 @@ test("a Cloud-mode destination without Cloud state imports as Local", async () =
   writeFileSync(destination.config, '{"version":1,"mode":"cloud","cloudUrl":"https://cloud.aliasmode.com","localAnalytics":false}');
 
   expect(await migrateLegacyState(source, destination, stopped)).toEqual({ status: "migrated", profileCount: 1 });
-  expect(JSON.parse(readFileSync(destination.config, "utf8"))).toEqual({ version: 1, mode: "local", localAnalytics: false });
+  expect(new AppConfigStore(destination.config).read()).toEqual({ version: 1, mode: "local", localAnalytics: false });
+  // Reading an old selection disables it without rewriting retained user data.
+  expect(JSON.parse(readFileSync(destination.config, "utf8")).mode).toBe("cloud");
+});
+
+test("retained legacy keys and unfinished key files block migration without deleting or copying credentials", async () => {
+  for (const filename of ["pending-sync.key", "pending-sync.key.123.00000000-0000-4000-8000-000000000000.tmp"]) {
+    const { source, destination } = roots();
+    sourceDb(source).close();
+    addBrowserState(join(source, "profiles"), "legacy1");
+    mkdirSync(destination.root);
+    writeFileSync(join(destination.root, filename), "retained encryption key");
+    const originalSource = treeHash(source);
+    const originalDestination = treeHash(destination.root);
+    await expect(migrateLegacyState(source, destination, stopped)).rejects.toThrow("legacy Cloud credentials");
+    expect(treeHash(source)).toBe(originalSource);
+    expect(treeHash(destination.root)).toBe(originalDestination);
+    expect(existsSync(destination.migration)).toBe(false);
+    expect(existsSync(destination.database)).toBe(false);
+    expect(existsSync(`${destination.root}.pre-cloakpit-import`)).toBe(false);
+  }
 });
 
 test("nonempty, Cloud cache, pending-sync, launch, remote, live, and inconclusive states reject", async () => {
   const cases: Array<[string, (source: string, destination: ReturnType<typeof statePaths>) => void, Pick<MigrationOptions, "scanProcesses"> | undefined, string]> = [
     ["profiles", (_s, d) => { mkdirSync(join(d.profiles, "old"), { recursive: true }); writeFileSync(join(d.profiles, "old", "Cookies"), "x"); }, stopped, "destination"],
-    ["cloud cache", (_s, d) => { mkdirSync(join(d.root, "cloud-cache"), { recursive: true }); writeFileSync(d.cloudDatabase, "state"); }, stopped, "Cloud"],
-    ["pending", (_s, d) => { mkdirSync(d.root); writeFileSync(d.pendingSync, "state"); }, stopped, "pending"],
+    ["cloud cache", (_s, d) => { mkdirSync(join(d.root, "cloud-cache"), { recursive: true }); writeFileSync(legacyStatePaths(d.root).cloudDatabase, "state"); }, stopped, "Cloud"],
+    ["pending", (_s, d) => { mkdirSync(d.root); writeFileSync(legacyStatePaths(d.root).pendingSync, "state"); }, stopped, "pending"],
     ["launch", (s) => { const db = new Database(join(s, "profiles.sqlite")); db.query("INSERT INTO launches VALUES (?,?)").run("legacy1", 1); db.close(); }, stopped, "launch"],
     ["remote", (s) => { const db = new Database(join(s, "hub.sqlite")); db.exec("CREATE TABLE sessions (profile_id TEXT); INSERT INTO sessions VALUES ('legacy1')"); db.close(); }, stopped, "remote"],
     ["live", () => {}, { scanProcesses: async () => ({ records: [{ pid: 10, executablePath: "C:/Cloakpit/cloakbrowser.exe", commandLine: '--user-data-dir="C:/Cloakpit/profiles/legacy1"' }], incomplete: false }) }, "running"],

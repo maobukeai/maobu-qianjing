@@ -12,7 +12,6 @@ export interface ProxyInventoryProfile {
   group: string;
   proxy: ProxySpec | null;
   proxyError?: string;
-  version?: number;
   permission: "view" | "edit";
   running: boolean;
 }
@@ -21,7 +20,6 @@ export interface PlannedProxyReplacement {
   view: ProxyReplacementView;
   next?: ProxySpec;
   originalKey: string;
-  expectedVersion?: number;
 }
 
 export class ProxyToolsError extends Error {
@@ -63,7 +61,6 @@ export function buildProxyPreview(profiles: ProxyInventoryProfile[], input: Prox
       },
       next,
       originalKey: proxyIdentityKey(profile?.proxy ?? null),
-      expectedVersion: profile?.version,
     });
   };
   try {

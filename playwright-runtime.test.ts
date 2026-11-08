@@ -751,7 +751,7 @@ const cdpShowingNewTab = async (page: { url: () => string }) => ({
   async detach() {},
 });
 
-test("a Cloud open keeps the search engine's new tab page and does not leave a blank page", async () => {
+test("local session restore keeps the search engine's new tab page and does not leave a blank page", async () => {
   let handler: ((route: { fulfill: () => Promise<void> }) => Promise<void>) | undefined;
   const events: string[] = [];
   const makePage = (name: string, url: string) => {
@@ -777,7 +777,7 @@ test("a Cloud open keeps the search engine's new tab page and does not leave a b
     async addCookies() {},
     newCDPSession: cdpShowingNewTab,
   };
-  // An empty Cloud session for a new profile, and a saved session with DuckDuckGo storage.
+  // An empty session for a new profile, and a saved session with DuckDuckGo storage.
   for (const origins of [[], [{ origin: "https://duckduckgo.com", localStorage: [{ name: "theme", value: "dark" }] }]]) {
     events.length = 0;
     await restoreSession({}, context, { bundle: JSON.stringify({ cookies: [], origins }), urls: [], replacePages: true });
@@ -841,7 +841,7 @@ test("a Chromium capture reads a site tab's storage in an isolated world, not in
   expect(calls).toContain("Runtime.evaluate");
 });
 
-bunAsNodeTest("worker imports all sites without replacing existing cookies and restores complete Cloud jars", async () => {
+bunAsNodeTest("worker imports all sites without replacing existing cookies and restores complete saved cookie jars", async () => {
   const root = await mkdtemp(join(tmpdir(), "aliasmode-worker-cookie-import-"));
   const existing = { name: "session", value: "rotated", domain: "example.org", path: "/", secure: true };
   const partitioned = { ...existing, domain: "example.net", partitionKey: "https://example.org", _crHasCrossSiteAncestor: true };

@@ -229,8 +229,6 @@ export async function importBuffers(
   files: { name: string; bytes: Uint8Array }[],
   log: (msg: string) => void = console.log,
   overrides: ImportOverrides = {},
-  /** Optional hub-side lock/CAS guard, called synchronously immediately before the atomic write. */
-  beforeCommit?: (profiles: readonly Profile[]) => void,
   timezoneFetch?: FetchLike,
 ): Promise<InboxResult> {
   const batch = await prepareImportBuffers(files, log, overrides, (id) => !!store.getProfile(id) || store.isTrashed(id), timezoneFetch, (id) => store.getProfile(id));
@@ -293,9 +291,7 @@ export async function importBuffers(
       `profile(s) ${[...new Set(liveIds)].join(", ")} are currently open; close them before importing identity changes`,
     ], 409);
   }
-  // Keep these checks adjacent to the single batch write: the hub guard closes
-  // the claim-vs-import race after all parsing/timezone I/O has completed.
-  beforeCommit?.(prepared);
+  // Commit immediately after the local launch check, with no intervening async work.
   store.upsertProfiles(prepared, new Map(collected
     .filter((entry) => entry.sessionBundle !== undefined)
     .map((entry) => [entry.profile.id, entry.sessionBundle!])));
@@ -326,6 +322,7 @@ export function watchInbox(
   store: ProfileStore,
   dir = DEFAULT_INBOX,
   log: (msg: string) => void = console.log,
+  options: { canImport?: () => boolean; admit?: (operation: () => Promise<InboxResult>) => Promise<InboxResult> } = {},
 ): () => Promise<void> {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -369,8 +366,11 @@ export function watchInbox(
     // No-op events shouldn't re-run the import (and burn ip-api's budget).
     const current = inboxSig();
     if (current === lastSig) return;
-    const r = await importInbox(store, dir).catch((err) => {
+    if (options.canImport && !options.canImport()) { timer = setTimeout(tryImport, 1000); return; }
+    const execute = () => importInbox(store, dir);
+    const r = await (options.admit ? options.admit(execute) : execute()).catch((err) => {
       log(`inbox import failed: ${err}`);
+      if (!stopped && options.canImport && !options.canImport()) timer = setTimeout(tryImport, 1000);
       return null;
     });
     if (r) {

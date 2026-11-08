@@ -7,10 +7,10 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { discoverRuntime } from "./runtime-client.mjs";
+import { discoverRuntime, RUNTIME_VERSION } from "./runtime-client.mjs";
 import { PlaywrightToolProxy } from "./playwright-proxy.mjs";
 
-const VERSION = process.env.ALIASMODE_APP_VERSION || "0.1.0-beta.32";
+const VERSION = RUNTIME_VERSION;
 const EMPTY_SCHEMA = { type: "object", properties: {}, additionalProperties: false };
 const FIREFOX_FILTERED_TOOLS = new Set(["browser_close", "browser_install", "browser_pdf_save"]);
 
@@ -22,7 +22,7 @@ function safeBrowserResult(value) {
   if (value?.engine !== "firefox") return value;
   const {
     profileId, running, state, engine, capabilities, headless, alreadyOpen,
-    ownedByConnection, attachedExisting, selected, closed, sync, deleted, detached,
+    ownedByConnection, attachedExisting, selected, closed, deleted, detached,
   } = value;
   return {
     ...(profileId !== undefined ? { profileId } : {}),
@@ -36,7 +36,6 @@ function safeBrowserResult(value) {
     ...(attachedExisting !== undefined ? { attachedExisting } : {}),
     ...(selected !== undefined ? { selected } : {}),
     ...(closed !== undefined ? { closed } : {}),
-    ...(sync !== undefined ? { sync } : {}),
     ...(deleted !== undefined ? { deleted } : {}),
     ...(detached !== undefined ? { detached } : {}),
   };
@@ -47,7 +46,6 @@ const PROXY_REPLACEMENT_ROW = {
   properties: {
     profileId: PROFILE_ID,
     username: { type: "string", minLength: 1, maxLength: 255 },
-    expectedVersion: { type: "integer", minimum: 1 },
     proxy: {
       type: "object",
       properties: {
@@ -87,14 +85,14 @@ function toolAnnotations(title, { readOnly = false, destructive = false, openWor
 const ALIAS_TOOLS = [
   {
     name: "aliasmode_profiles_list",
-    description: "List AliasMode profiles and their current browser state. Cloud profiles include expectedVersion and permission for editing.",
-    annotations: toolAnnotations("List AliasMode profiles"),
+    description: "List local 猫步·千境 profiles and their current browser state.",
+    annotations: toolAnnotations("List 猫步·千境 profiles"),
     inputSchema: EMPTY_SCHEMA,
   },
   {
     name: "aliasmode_profiles_replace_proxies",
-    description: "Dry-run or apply bulk proxy replacements to closed AliasMode Cloud profiles. Apply always preflights first.",
-    annotations: toolAnnotations("Replace AliasMode profile proxies", { destructive: true }),
+    description: "Preview or apply proxy replacements to closed local 猫步·千境 profiles. The default is a dry run; open and ambiguous profiles are skipped.",
+    annotations: toolAnnotations("Replace 猫步·千境 profile proxies", { destructive: true }),
     inputSchema: {
       type: "object",
       properties: {
@@ -115,8 +113,8 @@ const ALIAS_TOOLS = [
   },
   {
     name: "aliasmode_profile_create",
-    description: "Create a persistent AliasMode profile, or an explicit temporary profile. Without engine, Windows creates an AliasMode Chromium profile, and macOS and Linux create an AliasMode Firefox profile.",
-    annotations: toolAnnotations("Create an AliasMode profile"),
+    description: "Create a persistent 猫步·千境 profile, or an explicit temporary profile. Without engine, Windows creates a Chromium profile, and macOS and Linux create a Firefox profile.",
+    annotations: toolAnnotations("Create a 猫步·千境 profile"),
     inputSchema: {
       type: "object",
       properties: {
@@ -127,7 +125,7 @@ const ALIAS_TOOLS = [
         chromiumRuntime: {
           type: "string",
           enum: ["aliasmode", "cloakbrowser"],
-          description: "Chromium profiles only. aliasmode (AliasMode Chromium 155) is the default where this computer can run it. CloakBrowser profiles on one computer can be linked to each other.",
+          description: "Chromium profiles only. aliasmode (Chromium 155) is the default where this computer can run it. CloakBrowser profiles on one computer can be linked to each other.",
         },
         screen: { type: "string" },
         proxy: {
@@ -153,13 +151,12 @@ const ALIAS_TOOLS = [
   },
   {
     name: "aliasmode_profile_update",
-    description: "Edit a closed AliasMode Cloud profile by ID using expectedVersion from aliasmode_profiles_list. Only supplied fields change; empty strings clear fields. Sessions and cookies are preserved. Returns confirmation, not credentials.",
-    annotations: toolAnnotations("Edit an AliasMode Cloud profile", { destructive: true }),
+    description: "Edit a closed local 猫步·千境 profile by ID. Only supplied fields change; empty strings clear fields. Sessions and cookies are preserved. Returns confirmation, not credentials.",
+    annotations: toolAnnotations("Edit a local 猫步·千境 profile", { destructive: true }),
     inputSchema: {
       type: "object",
       properties: {
         profileId: PROFILE_ID,
-        expectedVersion: { type: "integer", minimum: 0 },
         set: {
           type: "object",
           properties: {
@@ -181,14 +178,14 @@ const ALIAS_TOOLS = [
           additionalProperties: false,
         },
       },
-      required: ["profileId", "expectedVersion", "set"],
+      required: ["profileId", "set"],
       additionalProperties: false,
     },
   },
   {
     name: "aliasmode_profile_delete",
-    description: "Delete a closed AliasMode profile.",
-    annotations: toolAnnotations("Delete an AliasMode profile", { destructive: true }),
+    description: "Delete a closed 猫步·千境 profile.",
+    annotations: toolAnnotations("Delete a 猫步·千境 profile", { destructive: true }),
     inputSchema: {
       type: "object",
       properties: { profileId: PROFILE_ID },
@@ -198,8 +195,8 @@ const ALIAS_TOOLS = [
   },
   {
     name: "aliasmode_browser_open",
-    description: "Open an AliasMode browser and select it for Playwright actions.",
-    annotations: toolAnnotations("Open an AliasMode browser", { destructive: true, openWorld: true }),
+    description: "Open a 猫步·千境 browser and select it for Playwright actions.",
+    annotations: toolAnnotations("Open a 猫步·千境 browser", { destructive: true, openWorld: true }),
     inputSchema: {
       type: "object",
       properties: {
@@ -217,8 +214,8 @@ const ALIAS_TOOLS = [
   },
   {
     name: "aliasmode_browser_select",
-    description: "Select an open AliasMode browser for subsequent Playwright actions.",
-    annotations: toolAnnotations("Select an AliasMode browser", { destructive: true }),
+    description: "Select an open 猫步·千境 browser for subsequent Playwright actions.",
+    annotations: toolAnnotations("Select a 猫步·千境 browser", { destructive: true }),
     inputSchema: {
       type: "object",
       properties: { profileId: PROFILE_ID },
@@ -229,7 +226,7 @@ const ALIAS_TOOLS = [
   {
     name: "aliasmode_browser_status",
     description: "Get the selected browser state, or the state of one profile.",
-    annotations: toolAnnotations("Get AliasMode browser status", { destructive: true }),
+    annotations: toolAnnotations("Get 猫步·千境 browser status", { destructive: true }),
     inputSchema: {
       type: "object",
       properties: { profileId: PROFILE_ID },
@@ -238,8 +235,8 @@ const ALIAS_TOOLS = [
   },
   {
     name: "aliasmode_browser_close",
-    description: "Safely capture and close one AliasMode browser.",
-    annotations: toolAnnotations("Close an AliasMode browser", { destructive: true }),
+    description: "Safely capture and close one 猫步·千境 browser.",
+    annotations: toolAnnotations("Close a 猫步·千境 browser", { destructive: true }),
     inputSchema: {
       type: "object",
       properties: { profileId: PROFILE_ID },
@@ -248,8 +245,8 @@ const ALIAS_TOOLS = [
   },
   {
     name: "browser_close",
-    description: "Safely capture and close the selected AliasMode browser.",
-    annotations: toolAnnotations("Close the selected AliasMode browser", { destructive: true }),
+    description: "Safely capture and close the selected 猫步·千境 browser.",
+    annotations: toolAnnotations("Close the selected 猫步·千境 browser", { destructive: true }),
     inputSchema: EMPTY_SCHEMA,
   },
 ];
@@ -262,7 +259,7 @@ function toolResult(value) {
 }
 
 function safeError(error) {
-  const message = error instanceof Error ? error.message : "AliasMode operation failed";
+  const message = error instanceof Error ? error.message : "猫步·千境 operation failed";
   return message.replace(/wss?:\/\/\S+/gi, "CDP endpoint").slice(0, 500);
 }
 
@@ -297,7 +294,7 @@ export async function createAliasModeMcp(options = {}) {
 
   const selectBrowser = async (profileId, knownStatus) => {
     const status = knownStatus ?? await runtime.call("browser.status", { profileId });
-    if (!status.running) throw new Error("open this AliasMode profile before selecting it");
+    if (!status.running) throw new Error("open this 猫步·千境 profile before selecting it");
     const wasChromium = selectedEngine === "chromium";
     selectedProfileId = undefined;
     selectedEngine = undefined;
@@ -310,7 +307,7 @@ export async function createAliasModeMcp(options = {}) {
       selectedEngine = "firefox";
       return safeBrowserResult({ ...status, selected: true });
     }
-    if (!status.ws) throw new Error("open this AliasMode profile before selecting it");
+    if (!status.ws) throw new Error("open this 猫步·千境 profile before selecting it");
     await playwright.attach(status.ws);
     selectedProfileId = profileId;
     selectedEngine = "chromium";
@@ -325,7 +322,7 @@ export async function createAliasModeMcp(options = {}) {
 
   const closeBrowser = async (profileId) => {
     const target = profileId || selectedProfileId;
-    if (!target) throw new Error("select an open AliasMode browser first");
+    if (!target) throw new Error("select an open 猫步·千境 browser first");
     const selected = target === selectedProfileId;
     const engine = selectedEngine;
     if (selected) await playwright.detach();
@@ -412,7 +409,7 @@ export async function createAliasModeMcp(options = {}) {
       }
       if (name === "aliasmode_browser_status") {
         const profileId = args.profileId || selectedProfileId;
-        if (!profileId) throw new Error("select an open AliasMode browser first");
+        if (!profileId) throw new Error("select an open 猫步·千境 browser first");
         const status = await runtime.call("browser.status", { profileId });
         const { ws: _ws, firefoxOwner: _firefoxOwner, ...safeStatus } = safeBrowserResult(status);
         return toolResult({ ...safeStatus, selected: profileId === selectedProfileId });
@@ -420,9 +417,9 @@ export async function createAliasModeMcp(options = {}) {
       if (name === "aliasmode_browser_close" || name === "browser_close") {
         return toolResult(await closeBrowser(args.profileId));
       }
-      if (!selectedProfileId) throw new Error("select an open AliasMode browser first");
+      if (!selectedProfileId) throw new Error("select an open 猫步·千境 browser first");
       if (!selectedTools().some((tool) => tool.name === name)) {
-        throw new Error(`unknown AliasMode tool: ${name}`);
+        throw new Error(`unknown 猫步·千境 tool: ${name}`);
       }
       if (selectedEngine === "firefox") {
         return await runtime.call("firefox.tools.call", {
@@ -503,8 +500,8 @@ async function main() {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error) => {
-    console.error(`AliasMode MCP could not start: ${safeError(error)}`);
-    console.error("Run AliasMode setup again or open the app once.");
+    console.error(`猫步·千境 MCP could not start: ${safeError(error)}`);
+    console.error("Run 猫步·千境 setup again or open the app once.");
     process.exit(1);
   });
 }

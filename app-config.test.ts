@@ -1,56 +1,46 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AppConfigStore, legacyHubUrl, parseAppConfig } from "./app-config.ts";
+import { AppConfigStore, parseAppConfig } from "./app-config.ts";
+import * as configModule from "./app-config.ts";
 
-describe("AliasMode app config", () => {
-  test("fresh installs remain unconfigured with Local analytics disabled", () => {
-    const root = mkdtempSync(join(tmpdir(), "aliasmode-config-"));
-    expect(new AppConfigStore(join(root, "config.json")).read()).toEqual({
-      version: 1,
-      mode: "unconfigured",
-      localAnalytics: false,
-    });
+const local = { version: 1, mode: "local", localAnalytics: false } as const;
+
+describe("local-only app config", () => {
+  test("fresh installs start locally without login, analytics, or promotions", () => {
+    const root = mkdtempSync(join(tmpdir(), "maobu-config-"));
+    expect(new AppConfigStore(join(root, "config.json")).read()).toEqual(local);
   });
 
-  test("Cloud mode requires HTTPS except for loopback development", () => {
-    expect(() => parseAppConfig({ version: 1, mode: "cloud", cloudUrl: "http://example.com", localAnalytics: false }))
-      .toThrow("Cloud URL must use HTTPS");
-    expect(parseAppConfig({ version: 1, mode: "cloud", cloudUrl: "http://127.0.0.1:54321", localAnalytics: false }).cloudUrl)
-      .toBe("http://127.0.0.1:54321");
+  test("old Cloud selections and malformed retired endpoints are read as Local", () => {
+    for (const mode of ["cloud", "unconfigured", "local"]) {
+      expect(parseAppConfig({ version: 1, mode, cloudUrl: "not a URL", localAnalytics: true })).toEqual(local);
+    }
   });
 
-  test("writes normalized config atomically", () => {
-    const root = mkdtempSync(join(tmpdir(), "aliasmode-config-"));
+  test("reading an old config preserves the original file until an explicit write", () => {
+    const root = mkdtempSync(join(tmpdir(), "maobu-config-"));
     const path = join(root, "config.json");
+    const original = JSON.stringify({ version: 1, mode: "cloud", cloudUrl: "https://retired.example" });
+    writeFileSync(path, original);
     const store = new AppConfigStore(path);
-    expect(store.setMode("cloud", "https://cloud.aliasmode.test/")).toEqual({
-      version: 1,
-      mode: "cloud",
-      cloudUrl: "https://cloud.aliasmode.test",
-      localAnalytics: false,
-    });
-    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual(store.read());
+    expect(store.read()).toEqual(local);
+    expect(readFileSync(path, "utf8")).toBe(original);
+    expect(store.setMode("local")).toEqual(local);
+    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual(local);
   });
 
-  test("switching to Local removes the Cloud endpoint", () => {
-    const root = mkdtempSync(join(tmpdir(), "aliasmode-config-"));
+  test("only a local configuration can be written and retired service exports are absent", () => {
+    const root = mkdtempSync(join(tmpdir(), "maobu-config-"));
     const store = new AppConfigStore(join(root, "config.json"));
-    store.setMode("cloud", "https://cloud.aliasmode.test");
-    expect(store.setMode("local")).toEqual({ version: 1, mode: "local", localAnalytics: false });
+    expect(() => store.setMode("cloud" as never)).toThrow("local mode");
+    expect(store.write({ version: 1, mode: "local", localAnalytics: true } as never)).toEqual(local);
+    for (const name of ["legacyHubUrl", "normalizeSecureServiceUrl", "CLOUD_DISABLED_MESSAGE"]) expect(Object.hasOwn(configModule, name)).toBe(false);
   });
 
-  test("legacy HUB_URL never handles an explicit Local or Cloud selection", () => {
-    const env = { HUB_URL: "https://legacy-hub.example" };
-    expect(legacyHubUrl({ version: 1, mode: "unconfigured", localAnalytics: false }, env))
-      .toBe("https://legacy-hub.example");
-    expect(legacyHubUrl({ version: 1, mode: "local", localAnalytics: false }, env)).toBeUndefined();
-    expect(legacyHubUrl({
-      version: 1,
-      mode: "cloud",
-      cloudUrl: "https://cloud.aliasmode.test",
-      localAnalytics: false,
-    }, env)).toBeUndefined();
+  test("unknown schemas and modes are rejected without rewriting existing data", () => {
+    expect(() => parseAppConfig({ version: 2, mode: "local" })).toThrow("version");
+    expect(() => parseAppConfig({ version: 1, mode: "unknown" })).toThrow("mode");
   });
 });

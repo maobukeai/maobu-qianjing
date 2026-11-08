@@ -1,10 +1,10 @@
+import { parseExport, serializeAdsTxt } from "./parse.ts";
 import { expect, test } from "bun:test";
 import {
   completeProfileFingerprint, createFirefoxProfileConfig, firefoxGraphicsRenderer, firefoxLaunchConfig, firefoxStartupPrefs, fitFirefoxWindow, graphicsIdentity,
   intelMacGraphicsVendor, setFirefoxScreen,
 } from "./firefox-config.ts";
 import macVoiceLists from "./firefox-data/mac-voices.json";
-import { encodePortableProfile, decodePortableProfile } from "./portable-profile.ts";
 import type { FirefoxProfileConfig, JsonValue, Profile } from "./types.ts";
 
 function profile(fingerprintSeed: number, config: Record<string, JsonValue> = {}, runtimeVersion = "156.0.1-beta.36"): Profile {
@@ -254,12 +254,9 @@ test("a Firefox profile saved for engine 152 moves to 156 like a browser update,
     .toEqual({ ...unchanged.firefox!.config, "navigator.userAgent": "", "headers.User-Agent": "" });
   expect({ ...current, ua: "", firefox: undefined }).toEqual({ ...unchanged, ua: "", firefox: undefined });
   expect(completeProfileFingerprint(current)).toEqual(current);
-  // Cloud and export payloads carry the same shape with the new runtime.
-  const payload = encodePortableProfile(completeProfileFingerprint(legacy) as Profile & { engine: "firefox"; firefox: FirefoxProfileConfig });
-  expect(payload.schemaVersion).toBe(2);
-  expect(Object.keys(payload.profile.firefox).sort()).toEqual(["config", "runtimeVersion", "version"]);
-  expect(payload.profile.firefox.runtimeVersion).toBe("156.0.1-beta.36");
-  expect(decodePortableProfile(payload).profile.firefox).toEqual(current.firefox);
+  // Local file exports retain the migrated identity and runtime.
+  const exported = parseExport(serializeAdsTxt([current])).profiles[0]!;
+  expect(exported.firefox).toEqual(current.firefox);
   // A profile from a newer engine is left for the launcher to refuse.
   const newer = { ...legacy, firefox: { ...legacy.firefox!, runtimeVersion: "157.0-beta.1" } };
   expect(completeProfileFingerprint(newer).firefox!.runtimeVersion).toBe("157.0-beta.1");

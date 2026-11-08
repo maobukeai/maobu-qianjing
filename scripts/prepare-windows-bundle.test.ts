@@ -198,3 +198,18 @@ test("desktop bundle preparation is Windows x64 only", async () => {
   await expect(prepareWindowsBundle({ platform: "linux", arch: "x64" })).rejects.toThrow("Windows x64");
   await expect(prepareWindowsBundle({ platform: "win32", arch: "arm64" })).rejects.toThrow("Windows x64");
 });
+
+test("standard Windows bundles do not install or require any browser engine", async () => {
+  const cwd = workspace();
+  try {
+    const metadata = await prepareWindowsBundle({ cwd, platform: "win32", arch: "x64", bundleFirefox: false,
+      compileSidecar: async (output) => { writeFileSync(output, "sidecar"); },
+      installNode: async (root) => { mkdirSync(join(root, "node"), { recursive: true }); writeFileSync(join(root, "node", "node.exe"), "node"); },
+    });
+    expect(metadata).toEqual({ firefox: null });
+    expect(existsSync(join(cwd, "src-tauri", "resources", "firefox", "aliasmode.exe"))).toBe(false);
+    expect(existsSync(join(cwd, "src-tauri", "resources", "cloakbrowser"))).toBe(false);
+    expect(readFileSync(join(cwd, "src-tauri", "resources", "firefox", "ON-DEMAND.txt"), "utf8")).toContain("downloaded and verified");
+    expect(JSON.parse(readFileSync(join(cwd, "src-tauri", "generated", "browser.json"), "utf8"))).toEqual({ firefox: null });
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});

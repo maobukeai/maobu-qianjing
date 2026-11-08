@@ -1,4 +1,5 @@
 use crate::sidecar::SidecarSupervisor;
+use crate::{credentials::CredentialOrigin, workspaces::WorkspaceRuntime};
 use reqwest::{redirect::Policy, Client};
 use serde::Deserialize;
 use std::sync::{
@@ -6,12 +7,21 @@ use std::sync::{
     Arc,
 };
 use std::time::Duration;
-use tauri::{AppHandle, WebviewWindow, WindowEvent};
+use tauri::{AppHandle, Manager, WebviewWindow, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 #[derive(Default)]
-struct CloseState {
+pub(crate) struct CloseState {
     in_progress: AtomicBool,
+}
+
+impl CloseState {
+    fn begin(&self) -> Result<(), String> {
+        self.in_progress
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map(|_| ())
+            .map_err(|_| "desktop shutdown or restart is already in progress".to_owned())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -71,23 +81,8 @@ pub(crate) fn exit_after_cleanup_failure(
     exit_after_cleanup_failure_message(
         app,
         sidecar,
-        "AliasMode shutdown failed",
-        format!("AliasMode could not confirm safe browser cleanup. {error}"),
-    );
-}
-
-pub(crate) fn exit_after_update_cleanup_failure(
-    app: AppHandle,
-    sidecar: &SidecarSupervisor,
-    error: String,
-) {
-    exit_after_cleanup_failure_message(
-        app,
-        sidecar,
-        "AliasMode update not installed",
-        format!(
-            "AliasMode could not confirm safe browser cleanup, so the update was not installed. The current version remains installed. {error}"
-        ),
+        "猫步·千境关闭失败",
+        format!("猫步·千境无法确认浏览器是否已安全清理。{error}"),
     );
 }
 
@@ -129,8 +124,52 @@ pub fn restart_after_mode_change(
     app: AppHandle,
     window: WebviewWindow,
     sidecar: tauri::State<'_, SidecarSupervisor>,
-) {
+    origin: tauri::State<'_, CredentialOrigin>,
+    workspace: tauri::State<'_, WorkspaceRuntime>,
+    closing: tauri::State<'_, Arc<CloseState>>,
+) -> Result<(), String> {
+    crate::workspaces::authorize_workspace_window(&window, &origin)?;
+    // The compatibility command cannot restart into an unchecked catalog target.
+    workspace.validate_restart(&workspace.active.id, &workspace.active.id)?;
+    closing.begin()?;
     finish_after_cleanup(app, window, sidecar.inner().clone(), CleanupAction::Restart);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn restart_workspace(
+    app: AppHandle,
+    window: WebviewWindow,
+    sidecar: tauri::State<'_, SidecarSupervisor>,
+    origin: tauri::State<'_, CredentialOrigin>,
+    workspace: tauri::State<'_, WorkspaceRuntime>,
+    closing: tauri::State<'_, Arc<CloseState>>,
+    expected_workspace_id: String,
+    target_workspace_id: String,
+) -> Result<(), String> {
+    crate::workspaces::authorize_workspace_window(&window, &origin)?;
+    workspace.validate_restart(&expected_workspace_id, &target_workspace_id)?;
+    closing.begin()?;
+    if let Err(error) = workspace.validate_restart(&expected_workspace_id, &target_workspace_id) {
+        closing.in_progress.store(false, Ordering::Release);
+        return Err(error);
+    }
+    let workspace = workspace.inner().clone();
+    let sidecar = sidecar.inner().clone();
+    let _ = window.hide();
+    tauri::async_runtime::spawn(async move {
+        match graceful_sidecar_cleanup(&sidecar).await {
+            Ok(()) => match workspace.validate_restart(&expected_workspace_id, &target_workspace_id) {
+                Ok(_) => app.request_restart(),
+                Err(error) => exit_after_cleanup_failure_message(
+                    app, &sidecar, "工作区切换已停止",
+                    format!("工作区目录或切换目标发生变化，猫步·千境已停止重启。请检查工作区后重新打开应用。{error}"),
+                ),
+            },
+            Err(error) => exit_after_cleanup_failure(app, &sidecar, error),
+        }
+    });
+    Ok(())
 }
 
 fn ask_to_close(
@@ -142,15 +181,14 @@ fn ask_to_close(
 ) {
     let message = match active {
         Ok(count) => format!(
-            "{count} browser session{} active. AliasMode will save session state and close the browser{} before exiting.",
-            if count == 1 { " is" } else { "s are" },
-            if count == 1 { "" } else { "s" },
+            "当前有 {count} 个浏览器会话正在运行。猫步·千境将在退出前保存会话状态并关闭浏览器。"
         ),
-        Err(_) => "Browser activity could not be confirmed. AliasMode will save session state and close any active browsers before exiting.".to_owned(),
+        Err(_) => "无法确认浏览器运行状态。猫步·千境将在退出前保存会话状态并关闭正在运行的浏览器。"
+            .to_owned(),
     };
     app.dialog()
         .message(message)
-        .title("Close AliasMode?")
+        .title("关闭猫步·千境？")
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::YesNo)
         .show(move |confirmed| {
@@ -168,11 +206,11 @@ pub fn install_close_handler(
     sidecar: SidecarSupervisor,
     origin: String,
 ) {
-    let state = Arc::new(CloseState::default());
+    let state = app.state::<Arc<CloseState>>().inner().clone();
     window.clone().on_window_event(move |event| {
         if let WindowEvent::CloseRequested { api, .. } = event {
             api.prevent_close();
-            if state.in_progress.swap(true, Ordering::AcqRel) {
+            if state.begin().is_err() {
                 return;
             }
             let app = app.clone();
@@ -194,7 +232,17 @@ pub fn install_close_handler(
 
 #[cfg(test)]
 mod tests {
-    use super::{Roster, RosterProfile};
+    use super::{CloseState, Roster, RosterProfile};
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn close_and_restart_share_one_exclusive_transition() {
+        let state = CloseState::default();
+        assert!(state.begin().is_ok());
+        assert!(state.begin().is_err());
+        state.in_progress.store(false, Ordering::Release);
+        assert!(state.begin().is_ok());
+    }
 
     #[test]
     fn counts_only_active_roster_entries() {

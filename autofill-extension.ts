@@ -7,9 +7,9 @@ export const autofillExtensionDir = (userDataDir: string) => join(userDataDir, "
 // and AliasMode types the value as real key events, so pages see only typing.
 export const AUTOFILL_MANIFEST = {
   manifest_version: 3,
-  name: "AliasMode Autofill",
+  name: "猫步·千境 Autofill",
   version: "1.0.0",
-  description: "Fill saved credentials from this AliasMode profile.",
+  description: "Fill saved credentials from this 猫步·千境 profile.",
   permissions: ["contextMenus", "debugger"],
   host_permissions: ["http://127.0.0.1/*"],
   background: { service_worker: "background.js" },
@@ -46,7 +46,7 @@ async function rebuild() {
   await chrome.contextMenus.removeAll();
   if (!menu.fields.length || !menu.sites.length) return;
   const scope = { contexts: ["editable"], documentUrlPatterns: menu.sites };
-  await create({ id: "aliasmode", title: "AliasMode · " + menu.name, ...scope });
+  await create({ id: "aliasmode", title: "猫步·千境 · " + menu.name, ...scope });
   if (failure) await create({ id: "failure", parentId: "aliasmode", title: failure, enabled: false, ...scope });
   for (const field of menu.fields) if (titles[field]) await create({ id: field, parentId: "aliasmode", title: titles[field], ...scope });
 }
@@ -64,9 +64,9 @@ async function fill(info, tab) {
       ? await call("type", { field: info.menuItemId, url: info.frameUrl || info.pageUrl, page: info.pageUrl, target: target.id })
       : { ok: false, error: "Reload the page and try again." };
   } catch {
-    result = { ok: false, error: "Open AliasMode to use autofill." };
+    result = { ok: false, error: "Open 猫步·千境 to use autofill." };
   }
-  failure = result?.ok ? "" : "Last fill failed: " + (result?.error || "Autofill is unavailable. Check AliasMode.");
+  failure = result?.ok ? "" : "Last fill failed: " + (result?.error || "Autofill is unavailable. Check 猫步·千境.");
   await refresh();
   return result;
 }
