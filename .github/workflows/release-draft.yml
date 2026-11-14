@@ -77,6 +77,45 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path node_modules/.cache/release | Out-Null
           [IO.File]::WriteAllText((Join-Path (Get-Location) 'node_modules/.cache/release/notes.md'), $env:RELEASE_NOTES, [Text.UTF8Encoding]::new($false))
+      - name: Pre-stage Bun baseline compile target
+        shell: pwsh
+        run: |
+          $expectedSha256 = 'D1335DC7FD0E85CDB9C9B6CE7821B78CEF9E7AEE883DBE8D53A370DDFB25C63C'
+          $cacheName = 'bun-windows-x64-baseline-v1.3.13'
+          $cacheDirs = @()
+          if ($env:BUN_INSTALL_CACHE_DIR) { $cacheDirs += $env:BUN_INSTALL_CACHE_DIR }
+          if ($env:USERPROFILE) { $cacheDirs += (Join-Path $env:USERPROFILE '.bun\install\cache') }
+          if ($env:BUN_INSTALL) { $cacheDirs += (Join-Path $env:BUN_INSTALL 'install\cache') }
+          $cacheDirs = @($cacheDirs | Where-Object { $_ } | Select-Object -Unique)
+          $staged = $false
+          foreach ($dir in $cacheDirs) {
+            $candidate = Join-Path $dir $cacheName
+            if ((Test-Path -LiteralPath $candidate) -and ((Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash -eq $expectedSha256)) {
+              $staged = $true
+              break
+            }
+          }
+          if (-not $staged) {
+            $tempRoot = Join-Path $env:RUNNER_TEMP ('bun-baseline-' + [Guid]::NewGuid().ToString('N'))
+            $zipPath = Join-Path $tempRoot 'bun-windows-x64-baseline.zip'
+            $extractDir = Join-Path $tempRoot 'extract'
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            try {
+              & curl.exe -fsSL --retry 5 --retry-delay 2 --retry-all-errors 'https://github.com/oven-sh/bun/releases/download/bun-v1.3.13/bun-windows-x64-baseline.zip' -o $zipPath
+              if ($LASTEXITCODE -ne 0) { throw 'Failed to download bun-windows-x64-baseline.zip' }
+              Expand-Archive -LiteralPath $zipPath -DestinationPath $extractDir -Force
+              $exe = Get-ChildItem -Path $extractDir -Recurse -Filter 'bun.exe' | Select-Object -First 1
+              if (-not $exe) { throw 'bun.exe was not found in bun-windows-x64-baseline.zip' }
+              $actualSha256 = (Get-FileHash -LiteralPath $exe.FullName -Algorithm SHA256).Hash
+              if ($actualSha256 -ne $expectedSha256) { throw "bun-windows-x64-baseline SHA-256 mismatch: $actualSha256" }
+              foreach ($dir in $cacheDirs) {
+                New-Item -ItemType Directory -Force -Path $dir | Out-Null
+                Copy-Item -LiteralPath $exe.FullName -Destination (Join-Path $dir $cacheName) -Force
+              }
+            } finally {
+              Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+          }
       - name: Build and verify signed release assets
         shell: pwsh
         env:
