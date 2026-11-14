@@ -10,7 +10,7 @@ const answer = { model: input.model, message: { role: "assistant" as const, cont
 const originalFetch = globalThis.fetch;
 const originalProxy = process.env.HTTP_PROXY;
 const cleanups: Array<() => Promise<void>> = [];
-afterEach(async () => { globalThis.fetch = originalFetch; if (originalProxy === undefined) delete process.env.HTTP_PROXY; else process.env.HTTP_PROXY = originalProxy; for (const cleanup of cleanups.splice(0)) await cleanup(); });
+afterEach(async () => { globalThis.fetch = originalFetch; if (originalProxy === undefined) { process.env.HTTP_PROXY = ""; delete process.env.HTTP_PROXY; } else process.env.HTTP_PROXY = originalProxy; for (const cleanup of cleanups.splice(0)) await cleanup(); });
 function stub(payload: unknown = answer) {
   const calls: Array<{ endpoint: string; options: Parameters<LocalAssistantTransport>[1] }> = [];
   const transport: LocalAssistantTransport = async (endpoint, options) => { calls.push({ endpoint, options }); return options.path === "/api/tags" ? tags : payload; };

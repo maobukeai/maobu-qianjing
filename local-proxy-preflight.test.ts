@@ -84,7 +84,7 @@ test("localhost checks literal loopbacks and works without global fetch or proxy
   const service = await listener(), original = globalThis.fetch, proxy = process.env.HTTP_PROXY;
   globalThis.fetch = (() => { throw new Error("Global fetch must not be used"); }) as unknown as typeof fetch; process.env.HTTP_PROXY = "http://external-proxy.invalid:1234";
   try { await createLocalProxyPreflight(enabled)(endpoint(service.port, "http", "localhost")); expect(service.received).toEqual([]); }
-  finally { globalThis.fetch = original; if (proxy === undefined) delete process.env.HTTP_PROXY; else process.env.HTTP_PROXY = proxy; await service.close(); }
+  finally { globalThis.fetch = original; if (proxy === undefined) { process.env.HTTP_PROXY = ""; delete process.env.HTTP_PROXY; } else process.env.HTTP_PROXY = proxy; await service.close(); }
 });
 test("only simultaneous endpoint checks coalesce and completion or failure is never cached", async () => {
   let calls = 0, release!: () => void; let gate = new Promise<void>(resolve => { release = resolve; });
