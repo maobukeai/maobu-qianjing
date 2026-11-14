@@ -71,6 +71,7 @@ import { WorkspaceProvider, WorkspaceSwitcher, WorkspaceManagementPage, Workspac
 import { useWorkspaceOperations, workspaceOperationMessage, type WorkspaceOperationLease } from "./workspace-operations.tsx";
 import { fetchWorkspacePreferences, saveWorkspacePreference } from "./workspaces-api.ts";
 import { DesktopStartupBar, WindowActionError, WindowControls, useWindowChrome } from "./window-chrome.tsx";
+import { AboutPopover } from "./about-popover.tsx";
 import { type UiProfile, type DiagnoseReport, type EditProfile, type Extension, type GroupExtensionDefaults, type AppModeConfig, fetchAppMode, fetchRuntimeDownloads, type RuntimeDownload, fetchProfiles, fetchHealth, fetchDiskSpace, type DiskSpace, fetchLogs, fetchDiagnose, checkProxy, ProxyCheckError, type ProxyCheckInput, type ProxyCheckResult, fetchPendingCookies, clearPendingCookies, openProfile, closeProfile, restartProfile, raiseProfile, fetchExtensions, installWebStoreExtension, uploadExtensions, removeExtension, assignExtensionBulk, fetchGroupExtensionDefaults, setGroupExtensionDefaults, uploadExports, moveProfiles, deleteProfiles, createProfile, fetchProfileEdit, updateProfile, refreshProfileTimezone, convertMobileProfile, exportProfiles, type ExportFormat, type ExportProgress, createGroup, renameGroup, moveGroup, deleteGroup, fetchTotp, isUnauthorizedError, setStandaloneSessionToken, subscribeUnauthorized } from "./api.ts";
 const emptyBulkSnapshot = (): BulkProfileTaskSnapshot | null => null;
 const noBulkSubscription = (_listener: () => void) => () => {};
@@ -1024,6 +1025,11 @@ function App() {
     }, [commandOpen]);
 
     const [appVersion, setAppVersion] = useState("");
+    const [aboutOpen, setAboutOpen] = useState(false);
+    const [githubUpdateAvailable, setGithubUpdateAvailable] = useState(false);
+    const aboutTriggerRef = useRef<HTMLButtonElement>(null);
+    useEffect(() => { setGithubUpdateAvailable(false); }, [currentWorkspaceId]);
+    const hasUpdateNotice = Boolean(signedUpdateStartup.noticeVersion || githubUpdateAvailable);
 
     const [logDir, setLogDir] = useState<string | undefined>(undefined);
     const [diskSpace, setDiskSpace] = useState<DiskSpace | null>(null);
@@ -3130,12 +3136,24 @@ function App() {
 
       <div className="main">
       <header className="workspace-header" onMouseDown={windowChrome.onMouseDown}>
-        <div className="desktop-brand">
+        <button
+          ref={aboutTriggerRef}
+          type="button"
+          className={`desktop-brand${aboutOpen ? " is-open" : ""}`}
+          data-no-drag
+          aria-haspopup="dialog"
+          aria-expanded={aboutOpen}
+          aria-controls={aboutOpen ? "about-popover-dialog" : undefined}
+          aria-label={hasUpdateNotice ? `${t("About {app}", { app: "猫步·千境" })} · ${t("Update available")}` : t("About {app}", { app: "猫步·千境" })}
+          title={t("About {app}", { app: "猫步·千境" })}
+          onClick={() => setAboutOpen((open) => !open)}
+        >
           <MaobuMark />
           <strong>猫步·千境</strong>
           {sidebarIsCompact && savedWorkspaceName && <span className="desktop-workspace-name" title={savedWorkspaceName}>{savedWorkspaceName}</span>}
           {appVersion && <span className="appversion" title={appVersion}>{appVersion}</span>}
-        </div>
+          {hasUpdateNotice && <span className="desktop-brand-dot" data-update-available="true" aria-hidden="true" />}
+        </button>
         <div className="topbar-actions">
           <WorkbenchActivity items={activityItems} />
           <button type="button" className="command-palette-trigger" aria-label={t("Command palette")} title={t("Command palette")} aria-haspopup="dialog" aria-expanded={commandOpen} onClick={() => setCommandOpen(true)}><Icon name="search" className="sm" /><span>{t("Command palette")}</span><kbd>{typeof navigator !== "undefined" && /Mac/.test(navigator.platform) ? "⌘ K" : "Ctrl K"}</kbd></button>
@@ -3144,6 +3162,26 @@ function App() {
           <WindowControls chrome={windowChrome} />
         </div>
       </header>
+      <AboutPopover
+        open={aboutOpen}
+        onClose={() => setAboutOpen(false)}
+        anchorRef={aboutTriggerRef}
+        appVersion={appVersion}
+        signedUpdateStartup={signedUpdateStartup}
+        dialogId="about-popover-dialog"
+        onOpenUpdateSettings={() => {
+          setAboutOpen(false);
+          if (view === "settings" && settingsTab === "updates") {
+            if (settingsPanelRef.current) settingsPanelRef.current.scrollTop = 0;
+            updateTabRef.current?.focus({ preventScroll: true });
+          } else {
+            focusUpdateTabOnOpen.current = true;
+            setSettingsTab("updates");
+            setView("settings");
+          }
+        }}
+        onGithubUpdateResult={(result) => setGithubUpdateAvailable(result?.status === "available")}
+      />
       <div className="workspace-content" ref={navigationMotion.contentRef} role="main" aria-label={t(PAGE_TITLES[view])}>
       <ErrorBoundary scope={t(PAGE_TITLES[view])} resetKeys={[view, currentWorkspaceId]}>
       <WorkspaceActivity hidden={view === "workspaces"} onOpen={() => openWorkspaceManagement({ mode: "backups" })} />

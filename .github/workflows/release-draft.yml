@@ -1,4 +1,4 @@
-name: Prepare signed Windows release draft
+name: Prepare signed Windows release
 
 on:
   workflow_dispatch:
@@ -11,8 +11,17 @@ on:
         description: Mark this release as a prerelease (the stable native channel ignores prereleases)
         default: true
         type: boolean
+      publish:
+        description: Publish a live GitHub release instead of a draft
+        default: false
+        type: boolean
+      title:
+        description: Optional GitHub release title (defaults to "猫步·千境 <version>")
+        required: false
+        default: ""
+        type: string
       notes:
-        description: Release notes for the draft and update manifest
+        description: Release notes for the release and update manifest
         required: true
         type: string
 
@@ -34,6 +43,8 @@ jobs:
       RELEASE_VERSION: ${{ inputs.version }}
       RELEASE_NOTES: ${{ inputs.notes }}
       IS_PRERELEASE: ${{ inputs.prerelease }}
+      PUBLISH_RELEASE: ${{ inputs.publish }}
+      RELEASE_TITLE: ${{ inputs.title }}
       MAOBU_UPDATE_PUBLIC_KEY: ${{ vars.MAOBU_UPDATE_PUBLIC_KEY }}
       MAOBU_UPDATE_ENDPOINT: https://github.com/${{ github.repository }}/releases/latest/download/latest.json
     steps:
@@ -92,7 +103,7 @@ jobs:
           name: maobu-signed-${{ inputs.version }}-windows-x64
           path: ${{ steps.release-assets.outputs.paths }}
           if-no-files-found: error
-      - name: Create a draft only
+      - name: Create GitHub release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -104,14 +115,17 @@ jobs:
           & gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName 2>$null
           if ($LASTEXITCODE -eq 0) { throw 'A release with this tag already exists; artifacts will not be overwritten.' }
           $tagRefs = & git ls-remote origin "refs/tags/$tag" "refs/tags/$tag^{}"
-          if ($LASTEXITCODE -ne 0) { throw 'Could not verify the release tag before creating its draft.' }
+          if ($LASTEXITCODE -ne 0) { throw 'Could not verify the release tag before creating its release.' }
           if ($tagRefs) {
             $peeled = $tagRefs | Where-Object { $_.EndsWith('^{}') } | Select-Object -First 1
             $selected = if ($peeled) { $peeled } else { $tagRefs | Select-Object -First 1 }
             $tagCommit = ($selected -split '\s+')[0]
             if ($tagCommit -ne $env:GITHUB_SHA) { throw 'The release tag already points to a different commit; it will not be moved.' }
           }
-          $arguments = @('release', 'create', $tag, '--repo', $env:GITHUB_REPOSITORY, '--target', $env:GITHUB_SHA, '--draft', '--title', "猫步·千境 $env:RELEASE_VERSION", '--notes-file', 'node_modules/.cache/release/notes.md')
+          $customTitle = if ($null -ne $env:RELEASE_TITLE) { ($env:RELEASE_TITLE -replace '[\r\n]+', ' ').Trim() } else { '' }
+          $releaseTitle = if ($customTitle) { $customTitle } else { "猫步·千境 $env:RELEASE_VERSION" }
+          $arguments = @('release', 'create', $tag, '--repo', $env:GITHUB_REPOSITORY, '--target', $env:GITHUB_SHA, '--title', $releaseTitle, '--notes-file', 'node_modules/.cache/release/notes.md')
+          if ($env:PUBLISH_RELEASE -ne 'true') { $arguments += '--draft' }
           if ($env:IS_PRERELEASE -eq 'true') { $arguments += '--prerelease' }
           & gh @arguments @files
-          if ($LASTEXITCODE -ne 0) { throw 'Draft release creation failed. Nothing was published.' }
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub release creation failed. Nothing was published.' }

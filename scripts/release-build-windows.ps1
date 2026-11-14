@@ -42,7 +42,7 @@ try {
   }
   & node node_modules/@tauri-apps/cli/tauri.js build --bundles nsis --config $configurationPath
   if ($LASTEXITCODE -ne 0) { throw 'Signed Windows installer build failed' }
-  $configuration = Get-Content -LiteralPath (Join-Path $projectRoot 'src-tauri/tauri.conf.json') -Raw | ConvertFrom-Json
+  $configuration = Get-Content -LiteralPath (Join-Path $projectRoot 'src-tauri/tauri.conf.json') -Raw -Encoding UTF8 | ConvertFrom-Json
   $builtName = "$($configuration.productName)_${ReleaseVersion}_x64-setup.exe"
   $installer = Get-Item -LiteralPath (Join-Path $projectRoot "src-tauri/target/release/bundle/nsis/$builtName") -ErrorAction Stop
   New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
