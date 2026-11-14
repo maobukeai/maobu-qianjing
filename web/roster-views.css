@@ -1,0 +1,37 @@
+.roster-views { flex: 0 0 auto; min-width: 0; margin-bottom: 13px; }
+.roster-view-bar { display: flex; align-items: center; gap: 12px; min-height: 36px; }
+.roster-view-select { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.roster-view-select > span { color: var(--muted); font-size: 12px; white-space: nowrap; flex-shrink: 0; }
+.roster-view-select .select { min-width: 180px; max-width: min(380px, 100%); background-color: var(--surface); font-size: 12px; }
+.roster-view-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; flex-shrink: 0; }
+.roster-view-actions .iconbtn { width: 30px; height: 30px; border-color: transparent; }
+.roster-view-note, .roster-view-error { margin: 7px 0 0; font-size: 11.5px; line-height: 1.7; color: var(--muted); }
+.roster-view-error { color: var(--danger-ink); }
+.roster-view-editor { display: flex; align-items: center; gap: 10px; padding: 14px 16px; margin-top: 10px; border: 1px solid var(--accent-line); border-radius: 8px; background: var(--surface-sunken); }
+.roster-view-editor > div { flex: 1; min-width: 0; }
+.roster-view-editor .fld { margin: 0; }
+.roster-view-editor .input { width: 100%; max-width: 420px; }
+.roster-view-editor p { font-size: 11px; line-height: 1.6; margin: 6px 0 0; color: var(--muted); }
+.roster-view-manager { max-width: 640px; max-height: 240px; overflow-y: auto; margin-top: 10px; padding: 4px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.roster-view-manager > header, .roster-view-manager > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-block: 7px; }
+.roster-view-manager > header { color: var(--muted); font-size: 11.5px; }
+.roster-view-manager > div { border-top: 1px solid var(--line-soft); }
+.roster-view-name { padding: 4px 0; min-width: 0; color: var(--ink-soft); border: 0; background: none; font: 12px/1.6 var(--font); text-align: left; overflow-wrap: anywhere; }
+.roster-view-name:hover { color: var(--accent-ink); }
+.profile-name-line { display: flex; align-items: center; min-width: 0; max-width: 100%; gap: 3px; }
+.profile-name-line .profile-name-button { flex: 0 1 auto; min-width: 0; }
+.profile-favorite { display: grid; place-items: center; width: 25px; height: 25px; margin-left: -4px; padding: 3px; flex: 0 0 auto; border: 0; border-radius: 5px; background: transparent; color: var(--faint); opacity: .6; transition: background-color 120ms, color 120ms, opacity 120ms; }
+.profile-favorite .icon { width: 15px; height: 15px; }
+.profile-favorite:hover, .profile-favorite:focus-visible { opacity: 1; color: var(--accent-ink); background: var(--accent-soft); }
+.profile-favorite.is-favorite { opacity: 1; color: var(--accent-ink); }
+.profile-favorite.is-favorite .icon { fill: var(--accent-soft); stroke-width: 1.9; }
+:root[data-desktop-motion="full"] .profile-favorite.is-favorite .icon { animation: profile-favorite-in 160ms var(--ease); }
+@keyframes profile-favorite-in { from { transform: scale(.8); } to { transform: none; } }
+.profile-name-line + .sub { margin-left: 24px; }
+.profile-tags-preview { display: flex; align-items: center; gap: 4px; max-width: 100%; margin: 4px 0 0 24px; padding: 0; border: 0; background: none; font: 10px/1.5 var(--font); color: var(--muted); text-align: left; }
+.profile-tags-preview > span { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 5px; border-radius: 4px; background: var(--surface-sunken); }
+.profile-tags-preview > small { font-size: inherit; }
+.profile-tags-preview:hover > span { background: var(--accent-soft); color: var(--accent-ink); }
+.profile-tags-preview:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 3px; border-radius: 4px; }
+@media (max-width: 700px) { .roster-view-bar { flex-wrap: wrap; gap: 5px 10px; } .roster-view-select { flex: 1; } .roster-view-select .select { min-width: 0; width: 100%; } .roster-view-actions { margin-left: 0; } .roster-view-editor { flex-wrap: wrap; } .roster-view-editor > div { flex-basis: 100%; } }
+@media (pointer: coarse) { .profile-favorite { width: 40px; height: 40px; opacity: 1; } .profile-name-line + .sub { margin-left: 39px; } .roster-view-name, .roster-view-actions .btn { min-height: 40px; } }

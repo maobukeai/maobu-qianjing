@@ -146,9 +146,12 @@ test("MCP catalogs list the expected tools", () => {
   const current = JSON.parse(read(CURRENT_CATALOG_PATH));
   expect(current.status).toBe("source");
   expect(current.playwrightToolAvailability).toBe("listed-before-selection");
-  expect(current.aliasModeTools.length).toBe(10);
+  expect(current.aliasModeTools.length).toBe(12);
   expect(current.aliasModeTools.map((tool: any) => tool.name)).toContain("aliasmode_profiles_replace_proxies");
   expect(current.aliasModeTools.map((tool: any) => tool.name)).toContain("aliasmode_profile_update");
+  for (const name of ["aliasmode_fingerprint_review", "aliasmode_network_discover"]) {
+    expect(current.aliasModeTools.find((tool: any) => tool.name === name)?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true });
+  }
   for (const catalog of [current]) {
     const names = [...catalog.aliasModeTools, ...catalog.playwrightTools].map((tool: any) => tool.name);
     expect(new Set(names).size).toBe(names.length);

@@ -1,23 +1,79 @@
 import * as React from "react";
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 import "./proxies.css";
 import maobuMarkUrl from "./maobu-mark.png";
 import { ProxiesPage } from "./proxies.tsx";
+import type { ProxyAssignmentSnapshot } from "./proxy-assignment-task.ts";
+import type { LocalProxyAssignmentIntent } from "./local-proxy-assignment-draft.tsx";
+import { useNavigationMotion } from "./navigation-motion.ts";
+import { EnvironmentInspectionPage, type InspectionEditField } from "./environment-inspection.tsx";
+import { ExtensionsPage, type GroupDefaultsSnapshot } from "./extensions-page.tsx";
+import { createExtensionDefaultDrafts } from "./extension-default-drafts.ts";
+import { previewGroupExtensionDefaults } from "./api.ts";
+import { DesktopCloseHost, DesktopCloseRegistryProvider, useDesktopCloseDraft, useDesktopCloseRegistry } from "./desktop-close.tsx";
+import { RosterViews } from "./roster-views.tsx";
+import { RosterDensityControl, ROSTER_DENSITY_KEY, parseRosterDensity, type RosterDensity } from "./roster-density.tsx";
+import { ProfileTagsDialog, type ProfileTagsTarget } from "./profile-tags.tsx";
+import { profileTagsUpdate } from "../profile-tags.ts";
+import { createImportReceipt, ImportReceiptError, type ImportReceipt } from "./import-receipt-data.ts";
+import { ImportReceiptPanel } from "./import-receipt.tsx";
+import { useBackgroundScriptRun } from "./background-script-run.tsx";
+import { WorkbenchActivity, type WorkbenchActivityItem } from "./workbench-activity.tsx";
+import { useProfileFileUpdate, ProfileFileUpdateDialog, ProfileFileUpdatePanel } from "./profile-file-update-panel.tsx";
+import { useProfileMove, ProfileMoveFeedback, type ProfileMoveResult } from "./profile-move.tsx";
+import { captureProfileEditSnapshot, buildProfileEditPatch, ProfileEditPatchError, PROFILE_EDIT_FORM_FIELDS, type ProfileEditSnapshot, type ProfileEditSummary } from "./profile-edit-patch.ts";
+import { EditChangesSummary } from "./edit-changes-summary.tsx";
+import { ProfileEditorStatus, type ProfileEditorBrowserLabel } from "./profile-editor-status.tsx";
+import { EditorWindowControls } from "./editor-window-controls.tsx";
+import { useUnsavedChangesGuard } from "./unsaved-changes-guard.tsx";
+import { useCookieImportTask, CookieImportTaskDialog, CookieImportTaskPanel } from "./cookie-import-task-panel.tsx";
+import { changeProfileRangeSelection, reconcileProfileSelectionAnchor, type ProfileSelectionAnchor } from "./profile-range-selection.ts";
+import { createBulkProfileTask, type BulkProfileTask, type BulkProfileAction, type BulkProfileTaskSnapshot } from "./bulk-profile-task.ts";
+import { BulkProfileTaskPanel } from "./bulk-profile-task-panel.tsx";
+import { useDesktopMotion, MotionPresence, usePanelMotion } from "./desktop-motion.tsx";
+import { FAVORITE_PROFILES_KEY, SAVED_PROFILE_VIEWS_KEY, parseFavoriteProfiles, parseSavedProfileViews, serializeFavoriteProfiles, serializeSavedProfileViews, inProfileScope, type ProfileViewFilters, type RosterScope, type SavedProfileView } from "../profile-view-state.ts";
+import { type FeatureSettingsTab, type LocalProxyDraftCandidate } from "./settings-center.tsx";
+import { useSignedUpdateStartup } from "./signed-updates.tsx";
+import { FingerprintImportBadge } from "./fingerprint-import-badge.tsx";
+import { RuntimeDownloadProgressView, runtimeDownloadLabel } from "./runtime-download-progress.tsx";
+import { CommandPalette, type CommandPaletteCommand } from "./command-palette.tsx";
+import { ShortcutHelp } from "./shortcut-help.tsx";
+import { getWorkbenchShortcut, readWorkbenchShortcutContext, type WorkbenchShortcutAction } from "./workbench-shortcuts.ts";
+import { LocalAssistantPage, type AssistantDraftSuggestion } from "./local-assistant.tsx";
+import { buildFingerprintAssistantBrief } from "./fingerprint-assistant-brief.ts";
+import type { FingerprintReport } from "./settings-api.ts";
+import { proxyExitNote } from "./proxy-check-presentation.ts";
+import { ProfileTemplates } from "./profile-templates.tsx";
+import { profileCreationRuntime, type FormChromiumRuntime } from "./profile-creation-runtime.ts";
+import { fetchReusableProfile, type ReusableProfileSettings } from "./profile-reuse-api.ts";
+import { installExternalLinkHandler } from "./external-links.ts";
 import { TrashPage } from "./trash.tsx";
+import type { TrashTaskSnapshot } from "./trash-task.ts";
 import { parsePastedProxy } from "./proxy-input.ts";
 import { ScriptRunPanel, ScriptsPage } from "./scripts.tsx";
-import { I18nProvider, availableLanguages, languageNativeName, useTranslation } from "./i18n.tsx";
+import { I18nProvider, useTranslation } from "./i18n.tsx";
+import { ErrorBoundary } from "./error-boundary.tsx";
+import { AppIcon, type IconName, useConfirmDialog } from "./ui-primitives.tsx";
+import { useRosterPolling } from "./hooks/use-roster-polling.ts";
+import { useProfileMetrics } from "./hooks/use-profile-selection.ts";
+import { copyPlainText, CopyField } from "./features/copy-field.tsx";
+import { LogModal } from "./features/log-modal.tsx";
+import { MoveFolderModal } from "./features/move-folder-modal.tsx";
+import { SettingsPanel } from "./features/settings-panel.tsx";
 import { localeTimezoneMismatch } from "../profile-locale.ts";
 import { folderTree, folderScope, type FolderInfo } from "../folders.ts";
 import { GROUP_DISCLOSURE_KEY, profileGroupCollapsed, profileGroupSections, readGroupDisclosure, serializeGroupDisclosure, toggleProfileSelection } from "../profile-group-state.ts";
 import { THEME_KEY, readThemeChoice, themeCookie, type ThemeChoice } from "./theme.ts";
 import { ProfileActionMenu } from "./profile-action-menu.tsx";
 import { WorkspaceProvider, WorkspaceSwitcher, WorkspaceManagementPage, WorkspaceActivity, DevicePanel, useWorkspaceCatalog, type WorkspacePageIntent, type WorkspacePageRequest } from "./workspace-manager.tsx";
+import { useWorkspaceOperations, workspaceOperationMessage, type WorkspaceOperationLease } from "./workspace-operations.tsx";
 import { fetchWorkspacePreferences, saveWorkspacePreference } from "./workspaces-api.ts";
 import { DesktopStartupBar, WindowActionError, WindowControls, useWindowChrome } from "./window-chrome.tsx";
-import { type UiProfile, type DiagnoseReport, type EditProfile, type Extension, type GroupExtensionDefaults, type AppModeConfig, fetchAppMode, fetchRuntimeDownloads, type RuntimeDownload, fetchProfiles, serialLoader, fetchHealth, fetchDiskSpace, type DiskSpace, fetchLogs, fetchDiagnose, checkProxy, ProxyCheckError, type ProxyCheckInput, type ProxyCheckResult, addProfileCookies, fetchPendingCookies, clearPendingCookies, openProfile, closeProfile, restartProfile, raiseProfile, fetchExtensions, installWebStoreExtension, uploadExtensions, removeExtension, assignExtensionBulk, fetchGroupExtensionDefaults, setGroupExtensionDefaults, uploadExports, moveProfiles, deleteProfiles, createProfile, fetchProfileEdit, updateProfile, refreshProfileTimezone, convertMobileProfile, exportProfiles, type ExportFormat, type ExportProgress, updateFromFile, createGroup, renameGroup, moveGroup, deleteGroup, fetchTotp } from "./api.ts";
+import { type UiProfile, type DiagnoseReport, type EditProfile, type Extension, type GroupExtensionDefaults, type AppModeConfig, fetchAppMode, fetchRuntimeDownloads, type RuntimeDownload, fetchProfiles, fetchHealth, fetchDiskSpace, type DiskSpace, fetchLogs, fetchDiagnose, checkProxy, ProxyCheckError, type ProxyCheckInput, type ProxyCheckResult, fetchPendingCookies, clearPendingCookies, openProfile, closeProfile, restartProfile, raiseProfile, fetchExtensions, installWebStoreExtension, uploadExtensions, removeExtension, assignExtensionBulk, fetchGroupExtensionDefaults, setGroupExtensionDefaults, uploadExports, moveProfiles, deleteProfiles, createProfile, fetchProfileEdit, updateProfile, refreshProfileTimezone, convertMobileProfile, exportProfiles, type ExportFormat, type ExportProgress, createGroup, renameGroup, moveGroup, deleteGroup, fetchTotp, isUnauthorizedError, setStandaloneSessionToken, subscribeUnauthorized } from "./api.ts";
+const emptyBulkSnapshot = (): BulkProfileTaskSnapshot | null => null;
+const noBulkSubscription = (_listener: () => void) => () => {};
 /** Run async tasks with bounded concurrency (so "Open 50" isn't 50 at once). */
 async function runPool<T>(items: T[], n: number, fn: (item: T) => Promise<void>): Promise<void> {
     let i = 0;
@@ -62,16 +118,18 @@ function downloadText(name: string, text: string, type: string): void {
 const REFRESH_MS = 3000;
 const PROFILE_PAGE_SIZE = 20;
 const PAGE_SIZES = [20, 25, 50, 100, 200];
-const PAGE_TITLES: Record<"profiles" | "scripts" | "settings" | "extensions" | "proxies" | "trash" | "workspaces", string> = {
+const PAGE_TITLES: Record<"profiles" | "inspection" | "scripts" | "settings" | "extensions" | "proxies" | "trash" | "workspaces" | "assistant", string> = {
     profiles: "Profiles",
+    inspection: "Environment inspection",
     scripts: "Scripts",
     settings: "Settings",
     extensions: "Extensions",
     proxies: "Proxies",
     trash: "Trash",
     workspaces: "Workspace management",
+    assistant: "AI workspace",
 };
-const SETTINGS_TABS = [{ key: "account", label: "General" }, { key: "advanced", label: "Advanced" }] as const;
+const SETTINGS_TABS = [{ key: "account", label: "General" }, { key: "network", label: "Network & proxies" }, { key: "fingerprints", label: "Fingerprint quality" }, { key: "models", label: "Model services" }, { key: "integrations", label: "AI & MCP" }, { key: "sync", label: "Sync & portability" }, { key: "updates", label: "App updates" }, { key: "advanced", label: "Advanced" }] as const;
 type SettingsTab = (typeof SETTINGS_TABS)[number]["key"];
 /** Mirrors MAX_CUSTOM_NO_LENGTH in parse.ts — the server rejects anything longer. */
 const MAX_CUSTOM_NO = 12;
@@ -133,7 +191,12 @@ function readHiddenColumns(): Set<ColumnKey> {
   } catch { return new Set(DEFAULT_HIDDEN_COLUMNS); }
 }
 function readSidebarCollapsed(): boolean {
-  try { return localStorage.getItem(SIDEBAR_KEY) !== "0"; } catch { return true; }
+  try {
+    const stored = localStorage.getItem(SIDEBAR_KEY);
+    if (stored === "0") return false;
+    if (stored === "1") return true;
+    return typeof window !== "undefined" ? window.innerWidth < 1200 : true;
+  } catch { return true; }
 }
 function readPageSize(): number {
   try {
@@ -142,6 +205,9 @@ function readPageSize(): number {
   } catch { return PROFILE_PAGE_SIZE; }
 }
 let preferenceRevision = 0;
+function readFavorites(): string[] { try { return parseFavoriteProfiles(localStorage.getItem(FAVORITE_PROFILES_KEY)) ?? []; } catch { return []; } }
+function readSavedViews(): SavedProfileView[] { try { return parseSavedProfileViews(localStorage.getItem(SAVED_PROFILE_VIEWS_KEY)) ?? []; } catch { return []; } }
+function readRosterDensity(): RosterDensity { try { return parseRosterDensity(localStorage.getItem(ROSTER_DENSITY_KEY)); } catch { return "comfortable"; } }
 function writeSetting(key: string, value: string): void {
   try { localStorage.setItem(key, value); } catch { /* private mode / disabled storage */ }
   if ([HIDDEN_COLUMNS_KEY, PAGE_SIZE_KEY, SIDEBAR_KEY, GROUP_DISCLOSURE_KEY].includes(key)) {
@@ -149,71 +215,7 @@ function writeSetting(key: string, value: string): void {
     void saveWorkspacePreference(key, value).catch((error) => window.dispatchEvent(new CustomEvent("workspace-preference-error", { detail: error instanceof Error ? error.message : String(error) })));
   }
 }
-/**
- * Stroke-icon set (16px grid, 1.7 stroke) used everywhere a control needs a
- * glyph. Inline so the dashboard ships no icon font or sprite request, and one
- * `.icon` rule in styles.css controls size and color for all of them.
- */
-const ICONS = {
-  plus: <path d="M12 5v14M5 12h14" />,
-  import: <><path d="M12 3v12" /><path d="M8 11l4 4 4-4" /><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" /></>,
-  /* Pulling a file INTO the app. A bare download tray reads as "save to disk",
-     which is the opposite of what the import control does. */
-  fileImport: <><path d="M15 2H7a2 2 0 00-2 2v16a2 2 0 002 2h10a2 2 0 002-2V6z" /><path d="M14 2v4a2 2 0 002 2h3" /><path d="M12 18v-7" /><path d="M9 14l3-3 3 3" /></>,
-  export: <><path d="M12 15V3" /><path d="M8 7l4-4 4 4" /><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" /></>,
-  search: <><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></>,
-  close: <path d="M18 6L6 18M6 6l12 12" />,
-  refresh: <><path d="M20 11a8 8 0 10-2.3 5.7" /><path d="M20 4v7h-7" /></>,
-  chevronRight: <path d="M9 6l6 6-6 6" />,
-  chevronDown: <path d="M6 9l6 6 6-6" />,
-  chevronUp: <path d="M6 15l6-6 6 6" />,
-  chevronLeft: <path d="M15 6l-6 6 6 6" />,
-  sort: <path d="M8 9l4-4 4 4M8 15l4 4 4-4" />,
-  sortUp: <path d="M7 14l5-5 5 5" />,
-  sortDown: <path d="M7 10l5 5 5-5" />,
-  profiles: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18M8 9v11" /></>,
-  folder: <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />,
-  folders: <><path d="M8 17a2 2 0 01-2-2V5a2 2 0 012-2h2.88a2 2 0 011.41.59l.71.7A2 2 0 0014.41 5H18a2 2 0 012 2v8a2 2 0 01-2 2z" /><path d="M2 8v11a2 2 0 002 2h14" /></>,
-  puzzle: <path d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z" />,
-  logs: <><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z" /><path d="M14 3v5h5M9 13h6M9 17h4" /></>,
-  user: <><circle cx="12" cy="8" r="3.6" /><path d="M5 20c.6-4 3-6 7-6s6.4 2 7 6" /></>,
-  settings: <><path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" /></>,
-  columns: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M15 4v16" /></>,
-  play: <path d="M7 4.5l12 7.5-12 7.5z" />,
-  power: <><path d="M12 3v9" /><path d="M6.5 6.5a8 8 0 1011 0" /></>,
-  trash: <><path d="M4 7h16M10 7V5a1 1 0 011-1h2a1 1 0 011 1v2" /><path d="M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12" /></>,
-  edit: <><path d="M4 20h4L20 8a2.8 2.8 0 10-4-4L4 16z" /><path d="M14 6l4 4" /></>,
-  move: <><path d="M4 20h13a3 3 0 003-3v-6a2 2 0 00-2-2h-7.5a2 2 0 01-1.6-.8L7.6 5.8A2 2 0 006 5H4a2 2 0 00-2 2v11a2 2 0 002 2z" /><path d="M9 14h6M13 11.5l2.5 2.5L13 16.5" /></>,
-  raise: <><rect x="8" y="3" width="13" height="13" rx="2" /><path d="M16 16v3a2 2 0 01-2 2H5a2 2 0 01-2-2v-9a2 2 0 012-2h3" /></>,
-  key: <><circle cx="8" cy="12" r="4" /><path d="M12 12h9M18 12v3M15.5 12v2.5" /></>,
-  fingerprint: <><path d="M7 11a5 5 0 0110 0v2a9 9 0 01-1.5 5" /><path d="M10 11a2 2 0 014 0v2a12 12 0 01-2.5 7" /><path d="M4.5 15a14 14 0 00.5-4 7 7 0 0114 0" /></>,
-  cookie: <><circle cx="12" cy="12" r="9" /><circle cx="8.5" cy="10" r="1" /><circle cx="13.5" cy="15" r="1" /><circle cx="16" cy="9" r="1" /></>,
-  more: <><circle cx="6" cy="12" r="1.4" /><circle cx="12" cy="12" r="1.4" /><circle cx="18" cy="12" r="1.4" /></>,
-  alert: <><circle cx="12" cy="12" r="9" /><path d="M12 7.5v5M12 16.2v.3" /></>,
-  warning: <><path d="M10.3 4.2L2.8 17a2 2 0 001.7 3h15a2 2 0 001.7-3L13.7 4.2a2 2 0 00-3.4 0z" /><path d="M12 9.5v4M12 17v.3" /></>,
-  check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
-  activity: <path d="M3 12h4l3 8 4-16 3 8h4" />,
-  lock: <><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 118 0v3" /></>,
-  laptop: <><rect x="4" y="5" width="16" height="11" rx="2" /><path d="M2 20h20" /></>,
-  hash: <path d="M9 4L7 20M17 4l-2 16M4 9h16M3 15h16" />,
-  window: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18" /></>,
-  file: <><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z" /><path d="M14 3v5h5" /></>,
-  copy: <><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 012-2h8" /></>,
-  filter: <path d="M4 5h16l-6 7v6l-4 2v-8z" />,
-  sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></>,
-  moon: <path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" />,
-  help: <><circle cx="12" cy="12" r="9" /><path d="M9.4 9.1a2.7 2.7 0 015.3.7c0 1.8-2.7 2.2-2.7 3.7" /><path d="M12 16.8v.3" /></>,
-} as const;
-type IconName = keyof typeof ICONS;
-
-function Icon({ name, className }: {
-    name: IconName;
-    className?: string;
-}) {
-    return (<svg className={className ? `icon ${className}` : "icon"} viewBox="0 0 24 24" aria-hidden="true">
-      {ICONS[name]}
-    </svg>);
-}
+const Icon = AppIcon;
 /**
  * Close a popover on outside click or Escape. The returned ref goes on the
  * wrapper holding BOTH the trigger and the panel, so clicking the trigger again
@@ -255,41 +257,20 @@ function displayNo(profile: UiProfile, fallbackIndex: number): { value: string; 
   if (profile.serial != null) return { value: String(profile.serial), custom: false };
   return { value: String(fallbackIndex + 1), custom: false };
 }
-/**
- * Whether this profile's last measured fingerprint still matches the one its
- * import claimed. Renders nothing when there is no attestation to check
- * against — "unknown" must not look like "verified".
- */
-function FingerprintBadge({ p }: {
-    p: UiProfile;
-}) {
-    const v = p.fpVerdict;
-    if (!v) return null;
-    if (v.verdict === "match") {
-        return (<span className="fpbadge ok" title={`Fingerprint verified against the import${p.fpCapturedAt ? ` — measured ${p.fpCapturedAt}` : ""}`}>
-        verified
-      </span>);
-    }
-    const detail = v.differences
-    .map((d) => `${d.field}: ${d.expected || "(none)"} → ${d.observed || "(none)"}`)
-    .join("; ");
-    return (<span className="fpbadge warn" title={`This browser no longer matches the imported fingerprint — ${detail}`}>
-      identity changed
-    </span>);
-}
 function StatusDot({ running }: { running: boolean }) {
   return <span className={`dot ${running ? "on" : ""}`} title={running ? "running" : "stopped"} />;
 }
 
 /** Keep keyboard navigation inside an editor and return to its entry point. */
-function useProfileEditorFocus(open: boolean, ready = true) {
+function useProfileEditorFocus(open: boolean, ready = true, returnFocus?: { current: HTMLElement | null }, fieldOnOpen?: { current: InspectionEditField | null }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
     const editor = ref.current;
     if (!editor) return;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusable = () => [...editor.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]')].filter((element) => element.getClientRects().length > 0);
+    const focusable = () => [...editor.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]')]
+      .filter(element => !element.closest('[inert], [hidden], [aria-hidden="true"]') && element.getClientRects().length > 0);
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Tab") return;
       const controls = focusable();
@@ -303,12 +284,23 @@ function useProfileEditorFocus(open: boolean, ready = true) {
     document.addEventListener("keydown", onKey, true);
     return () => {
       document.removeEventListener("keydown", onKey, true);
-      if (previous?.isConnected) previous.focus({ preventScroll: true });
+      const target = returnFocus?.current?.isConnected ? returnFocus.current : previous;
+      if (returnFocus) returnFocus.current = null;
+      if (target?.isConnected) target.focus({ preventScroll: true });
     };
-  }, [open]);
+  }, [open, returnFocus]);
   useEffect(() => {
-    if (open && ready) ref.current?.querySelector<HTMLInputElement>('.modal-body input:not(:disabled):not([readonly])')?.focus({ preventScroll: true });
-  }, [open, ready]);
+    const editor = ref.current;
+    if (!open || !ready || !editor) return;
+    if (fieldOnOpen?.current) {
+      const field = fieldOnOpen.current;
+      fieldOnOpen.current = null;
+      if (document.activeElement !== editor && editor.contains(document.activeElement)) return;
+      const target = editor.querySelector<HTMLElement>(`[data-profile-field="${field}"]:not(:disabled)`);
+      if (target) { focusEditorTarget(target, "instant"); return; }
+    }
+    editor.querySelector<HTMLInputElement>('.modal-body input:not(:disabled):not([readonly])')?.focus({ preventScroll: true });
+  }, [open, ready, fieldOnOpen]);
   return ref;
 }
 
@@ -428,11 +420,21 @@ function PlatformPill({ platform }: {
  * plus "➕ New group…", which flips to an inline text field so you can create a
  * group on the fly. Consistent with the other modal selects (no native datalist).
  */
-function GroupPicker({ value, onChange, groups, allowCreate = true }: {
+interface EditorFieldFeedback { field: string; invalid: boolean; describedBy: string }
+function editorFieldAttributes(feedback?: EditorFieldFeedback) {
+  return { "data-profile-field": feedback?.field, "aria-invalid": feedback?.invalid || undefined, "aria-describedby": feedback?.invalid ? feedback.describedBy : undefined };
+}
+function focusEditorTarget(target: HTMLElement | null | undefined, behavior: ScrollBehavior) {
+  if (!target) return;
+  for (let ancestor = target.parentElement; ancestor; ancestor = ancestor.parentElement) if (ancestor.tagName === "DETAILS") (ancestor as HTMLDetailsElement).open = true;
+  target.focus({ preventScroll: true }); target.scrollIntoView({ behavior, block: "nearest" });
+}
+function GroupPicker({ value, onChange, groups, allowCreate = true, emptyLabel = "(ungrouped)" }: {
     value: string;
     onChange: (v: string) => void;
     groups: string[];
     allowCreate?: boolean;
+    emptyLabel?: string;
 }) {
     const { t } = useTranslation();
     const [creating, setCreating] = useState(false);
@@ -446,7 +448,7 @@ function GroupPicker({ value, onChange, groups, allowCreate = true }: {
         if (e.target.value === "__new__") { setCreating(true); onChange(""); }
         else onChange(e.target.value);
       }}>
-      <option value="">{t("(ungrouped)")}</option>
+      <option value="">{t(emptyLabel)}</option>
       {groups.map((g) => <option key={g} value={g}>{g}</option>)}
       {allowCreate && <option value="__new__">{t("➕ New group…")}</option>}
     </select>);
@@ -468,52 +470,9 @@ function PlatformPicker({ value, onChange }: {
         if (e.target.value === "__new__") { setCreating(true); onChange(""); }
         else onChange(e.target.value);
       }}>
-      {KNOWN_PLATFORMS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+      {KNOWN_PLATFORMS.map((p) => <option key={p.value} value={p.value}>{p.value ? p.label : t(p.label)}</option>)}
       <option value="__new__">{t("➕ New platform…")}</option>
     </select>);
-}
-async function copyPlainText(value: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
-    return;
-  }
-  const textarea = document.createElement("textarea");
-  textarea.value = value;
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  document.body.appendChild(textarea);
-  textarea.select();
-  const copied = document.execCommand("copy");
-  textarea.remove();
-  if (!copied) throw new Error("copy failed");
-}
-function CopyField({ label, value, onChange }: {
-    label: string;
-    value: string;
-    onChange: (value: string) => void;
-}) {
-    const { t } = useTranslation();
-    const [copied, setCopied] = useState(false);
-    const copy = async () => {
-    try {
-      await copyPlainText(value);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1200);
-    } catch {
-      setCopied(false);
-    }
-  };
-    return (<div className="fld grow">
-      <span>{label}</span>
-      {/* Copy sits inside the field rather than beside it: a separate bordered
-          button per credential turned the dialog into a grid of grey boxes. */}
-      <div className="inputwrap">
-        <input aria-label={label} value={value} onChange={(event) => onChange(event.target.value)} />
-        <button type="button" className={`inline-action tip${copied ? " ok" : ""}`} data-tip={copied ? t("Copied") : `${t("Copy")} ${label}`} aria-label={`${t("Copy")} ${label}`} onClick={copy}>
-          <Icon name={copied ? "check" : "copy"} className="sm" />
-        </button>
-      </div>
-    </div>);
 }
 const AUTOMATIC_FINGERPRINT_FIELDS = [
   ["User agent", "Automatic"],
@@ -531,11 +490,19 @@ const FINGERPRINT_EDIT_WARNING = `These settings work together. Changing them ca
 
 Save fingerprint changes?`;
 const CLOAKBROWSER_NOTE = "CloakBrowser profiles on one computer can be linked to each other. Use Chromium or Firefox for separate identities.";
-function browserLabel(engine: "chromium" | "firefox", chromiumRuntime?: string): string {
+function browserLabel(engine: "chromium" | "firefox", chromiumRuntime?: string): ProfileEditorBrowserLabel {
   if (engine === "firefox") return "Firefox";
   return chromiumRuntime ? "Chromium" : "CloakBrowser";
 }
-function FingerprintSettings({ engine, chromiumRuntime, screen, onScreenChange, platformOs, onPlatformOsChange, timezone, onTimezoneChange, locale, onLocaleChange, cores, onCoresChange, seed, onSeedChange, disabled = false, onUndo, hardware, }: {
+function validEditDetail(value: unknown, id: string): value is EditProfile {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const profile = value as Record<string, unknown>;
+  return profile.id === id && (profile.engine === "chromium" || profile.engine === "firefox")
+    && ["name", "group", "platform", "proxyType", "proxy", "username", "password", "email", "emailPassword", "twofa", "resolution", "tags", "timezone", "platformOs"].every(key => typeof profile[key] === "string")
+    && ["chromiumRuntime", "proxyError", "customNo", "locale", "cores", "fingerprintSeed"].every(key => profile[key] === undefined || typeof profile[key] === "string")
+    && Array.isArray(profile.extensions) && profile.extensions.every(extension => typeof extension === "string");
+}
+function FingerprintSettings({ engine, chromiumRuntime, screen, onScreenChange, platformOs, onPlatformOsChange, timezone, onTimezoneChange, locale, onLocaleChange, cores, onCoresChange, seed, onSeedChange, disabled = false, allowAutomaticScreen = true, onUndo, hardware, feedback, }: {
     engine: "chromium" | "firefox";
     chromiumRuntime?: string;
     screen: string;
@@ -551,7 +518,9 @@ function FingerprintSettings({ engine, chromiumRuntime, screen, onScreenChange, 
     seed?: string;
     onSeedChange?: (value: string) => void;
     disabled?: boolean;
+    allowAutomaticScreen?: boolean;
     onUndo?: () => void;
+    feedback?: (field: string) => EditorFieldFeedback;
     hardware?: {
         gpu?: string;
         cores?: number;
@@ -570,11 +539,11 @@ function FingerprintSettings({ engine, chromiumRuntime, screen, onScreenChange, 
         </label>
         <label className="fld">
           <span>{t("Screen")}</span>
-          <input value={screen} disabled={disabled} placeholder={t("Automatic · e.g. 1920x1080")} onChange={(event) => onScreenChange(event.target.value)} />
+          <input {...editorFieldAttributes(feedback?.("resolution"))} value={screen} disabled={disabled} placeholder={allowAutomaticScreen ? t("Automatic · e.g. 1920x1080") : t("Required · e.g. 1920x1080")} onChange={(event) => onScreenChange(event.target.value)} />
         </label>
         <label className="fld">
           <span>{t("Operating system")}</span>
-          {onPlatformOsChange ? (<select value={platformOs} disabled={disabled} onChange={(event) => onPlatformOsChange(event.target.value)}>
+          {onPlatformOsChange ? (<select {...editorFieldAttributes(feedback?.("platformOs"))} value={platformOs} disabled={disabled} onChange={(event) => onPlatformOsChange(event.target.value)}>
               <option value="">{t("Automatic — match this computer")}</option>
               <option value="windows">Windows</option>
               <option value="macos">macOS</option>
@@ -583,19 +552,19 @@ function FingerprintSettings({ engine, chromiumRuntime, screen, onScreenChange, 
         </label>
         {onTimezoneChange && (<label className="fld">
             <span>{t("Timezone")}</span>
-            <input value={timezone ?? ""} disabled={disabled} placeholder={t("Automatic · e.g. Europe/Paris")} onChange={(event) => onTimezoneChange(event.target.value)} />
+            <input {...editorFieldAttributes(feedback?.("timezone"))} value={timezone ?? ""} disabled={disabled} placeholder={t("Automatic · e.g. Europe/Paris")} onChange={(event) => onTimezoneChange(event.target.value)} />
           </label>)}
         {onLocaleChange && (<label className="fld">
             <span>{t("Language")}</span>
-            <input value={locale ?? ""} disabled={disabled} placeholder={t("Automatic · e.g. en-US")} onChange={(event) => onLocaleChange(event.target.value)} />
+            <input {...editorFieldAttributes(feedback?.("locale"))} value={locale ?? ""} disabled={disabled} placeholder={t("Automatic · e.g. en-US")} onChange={(event) => onLocaleChange(event.target.value)} />
           </label>)}
         {onCoresChange && (<label className="fld">
             <span>{t("CPU")}</span>
-            <input value={cores ?? ""} disabled={disabled} inputMode="numeric" placeholder={hardware?.cores ? t("Automatic · {n} cores", { n: hardware.cores }) : t("Automatic · e.g. 8")} onChange={(event) => onCoresChange(event.target.value)} />
+            <input {...editorFieldAttributes(feedback?.("cores"))} value={cores ?? ""} disabled={disabled} inputMode="numeric" placeholder={hardware?.cores ? t("Automatic · {n} cores", { n: hardware.cores }) : t("Automatic · e.g. 8")} onChange={(event) => onCoresChange(event.target.value)} />
           </label>)}
         {onSeedChange && (<label className="fld">
             <span>{t("Fingerprint seed")}</span>
-            <input value={seed ?? ""} disabled={disabled} inputMode="numeric" onChange={(event) => onSeedChange(event.target.value)} />
+            <input {...editorFieldAttributes(feedback?.("fingerprintSeed"))} value={seed ?? ""} disabled={disabled} inputMode="numeric" onChange={(event) => onSeedChange(event.target.value)} />
           </label>)}
         {AUTOMATIC_FINGERPRINT_FIELDS.filter(([label]) => !((label === "Timezone" && onTimezoneChange) || (label === "CPU" && onCoresChange) || (label === "Fingerprint seed" && onSeedChange))).map(([label, value]) => {
             // A stored value is the same on every computer that opens the profile.
@@ -607,7 +576,7 @@ function FingerprintSettings({ engine, chromiumRuntime, screen, onScreenChange, 
         })}
         <div className="hint">{t("We recommend keeping every setting automatic. Custom values can make the browser look inconsistent, easier to detect, and can trigger account checks.")}</div>
         <div className="hint">{onTimezoneChange
-          ? `${t("Leave a field blank to keep it automatic. A timezone you type stays when the proxy changes.")}${chromiumRuntime && cores ? ` ${t("Chromium shows at most the processor count of the computer it runs on.")}` : ""}`
+          ? `${t("Leave timezone or CPU blank for automatic settings. Screen size and fingerprint seed need explicit values; a blank language keeps the saved language. A timezone you type stays when the proxy changes.")}${chromiumRuntime && cores ? ` ${t("Chromium shows at most the processor count of the computer it runs on.")}` : ""}`
           : engine === "firefox"
             ? t("Firefox uses its native profile. CDP, PDF, and Chrome extensions are unavailable.")
             : t("The browser keeps the locked values coordinated. Screen and operating system are the only fingerprint settings you can override.")}</div>
@@ -619,32 +588,23 @@ type DesktopInvoke = (command: string, args?: Record<string, unknown>) => Promis
 function desktopInvoke(): DesktopInvoke | undefined {
   return (window as any).__TAURI_INTERNALS__?.invoke as DesktopInvoke | undefined;
 }
-/** Percent of the bytes these browser downloads have received. */
-function downloadPercent(downloads: RuntimeDownload[]): number {
-  const total = downloads.reduce((sum, download) => sum + download.totalBytes, 0);
-  const received = downloads.reduce((sum, download) => sum + download.receivedBytes, 0);
-  return Math.floor(received * 100 / total);
-}
 /** The browser downloads that opening this profile waits for. */
 function profileDownloads(profile: UiProfile, downloads: RuntimeDownload[]): RuntimeDownload[] {
   const runtime = profile.engine === "firefox" ? "firefox" : profile.chromiumRuntime ?? "cloakbrowser";
   return downloads.filter((download) => download.runtime === runtime);
 }
-function RuntimeDownloadProgressView({ downloads }: {
-    downloads: RuntimeDownload[];
-}) {
-    const { t } = useTranslation();
-    const percent = downloadPercent(downloads);
-    return (<div className="update-progress" role="status">
-      <span>{t("Downloading browser… {percent}%", { percent: String(percent) })}</span>
-      <progress max={100} value={percent} aria-label={t("Browser download progress")} />
-    </div>);
+function launchRecovery(message: string) {
+  // Older sidecars send the public launcher guidance without a separate reason code.
+  if (/^(?:Firefox|Chromium|CloakBrowser|The fonts for this profile's operating system) could not be downloaded\b/.test(message)) return "download";
+  if (/^(?:Saved proxy settings are invalid|The configured local (?:proxy|SOCKS5 port)|Authenticated HTTPS proxies are unsupported)/.test(message)) return "proxy";
+  if (/^(?:Local proxy startup|Page preloading) settings could not be read\b/.test(message)) return "network";
+  return "logs";
 }
 const BLANK_FORM = {
-  name: "", engine: "chromium" as "chromium" | "firefox", chromiumRuntime: "" as "" | "aliasmode", group: "", platform: "", proxyType: "http", host: "", port: "", user: "", pass: "",
+  name: "", engine: "chromium" as "chromium" | "firefox", chromiumRuntime: "" as FormChromiumRuntime, group: "", platform: "", proxyType: "http", host: "", port: "", user: "", pass: "",
   screen: "", platformOs: "", customNo: "", username: "", password: "", email: "", emailPassword: "", twofa: "",
 };
-const BLANK_COOKIE_FORM = { name: "", value: "", domain: "", path: "/" };
+
 type ProxyCheckUiState = {
   checking: boolean;
   result: ProxyCheckResult | null;
@@ -675,8 +635,6 @@ function ProxyCheckFeedback({ hasProxy, state }: {
             ? t("Proxy details are invalid. Check them and try again.")
             : t("Proxy check is unavailable. Try again later.")}</span>
         </div>
-        {invalid
-                ? null : null}
       </>);
     }
     const result = state.result;
@@ -684,12 +642,13 @@ function ProxyCheckFeedback({ hasProxy, state }: {
     if (!result)
         return null;
     const location = [result.city, result.region, result.country].filter(Boolean).join(", ");
-    const exit = [result.ip ? `Exit IP: ${result.ip}` : "", location].filter(Boolean).join(" · ");
+    const exit = [result.ip ? t("Exit IP: {ip}", { ip: result.ip }) : "", location].filter(Boolean).join(" · ");
+    const comparison = proxyExitNote(result);
     if (result.status === "working") {
         return (<>
         <div className="proxy-check-result working" role="status">
           <Icon name="check" className="sm" />
-          <span><strong>{t("Proxy is working.")}</strong>{exit && <> {exit}.</>}{result.rotating && <> {t("Rotating exit IPs detected.")}</>}</span>
+          <span><strong>{t("Proxy is working.")}</strong>{exit && <> {exit}.</>}{result.rotating && <> {t("Rotating exit IPs detected.")}</>}{comparison && <> {t(comparison)}</>}</span>
         </div>
       </>);
     }
@@ -697,7 +656,7 @@ function ProxyCheckFeedback({ hasProxy, state }: {
         return (<>
         <div className="proxy-check-result unstable" role="status">
           <Icon name="warning" className="sm" />
-          <span><strong>{t("Proxy checks were mixed.")}</strong> {result.successes} of {result.attempts} succeeded.</span>
+          <span><strong>{t("Proxy checks were mixed.")}</strong> {t("{successes} of {attempts} succeeded.", { successes: result.successes, attempts: result.attempts })}{comparison && <> {t(comparison)}</>}</span>
         </div>
       </>);
     }
@@ -716,10 +675,188 @@ function ProxyCheckFeedback({ hasProxy, state }: {
       </div>
     </>);
 }
+interface ProfileRosterRowHandlers {
+    openEdit: (id: string, field?: InspectionEditField, trigger?: HTMLButtonElement) => void;
+    openPendingCookies: (profile: UiProfile) => Promise<void>;
+    openCookie: (targets: UiProfile[]) => void;
+    act: (id: string, fn: (id: string) => Promise<any>) => Promise<void>;
+    openInspection: (id: string) => void;
+    reuseProfileConfiguration: (id: string, name: string) => Promise<void>;
+    openProfileTags: (profile: UiProfile) => void;
+    copy2fa: (id: string) => Promise<void>;
+    toggleFavorite: (id: string) => Promise<void>;
+    changeProfileSelection: (id: string, event: React.ChangeEvent<HTMLInputElement>) => void;
+    setLaunchFailure: (id: string, message: string | null) => void;
+    openNetworkSettings: () => void;
+    openLogs: () => void;
+}
+interface ProfileRosterRowProps {
+    p: UiProfile;
+    no: { value: string; custom: boolean };
+    isSelected: boolean;
+    isBusy: boolean;
+    isFavorite: boolean;
+    isReuseLoading: boolean;
+    twoFaFlashed: boolean;
+    startLabel: string;
+    launchFailure: string | undefined;
+    rosterScope: RosterScope;
+    language: string;
+    hiddenCols: ReadonlySet<ColumnKey>;
+    visibleColumnCount: number;
+    viewPreferencesReady: boolean;
+    viewPreferenceBusy: boolean;
+    rangeKeyboardActivation: React.MutableRefObject<{ id: string; shiftKey: boolean } | null>;
+    handlers: ProfileRosterRowHandlers;
+    t: (source: string, values?: Record<string, string | number>) => string;
+}
+const ProfileRosterRow = React.memo(function ProfileRosterRow({
+    p,
+    no,
+    isSelected,
+    isBusy,
+    isFavorite,
+    isReuseLoading,
+    twoFaFlashed,
+    startLabel,
+    launchFailure,
+    rosterScope,
+    language,
+    hiddenCols,
+    visibleColumnCount,
+    viewPreferencesReady,
+    viewPreferenceBusy,
+    rangeKeyboardActivation,
+    handlers,
+    t,
+}: ProfileRosterRowProps) {
+    const {
+        openEdit,
+        openPendingCookies,
+        openCookie,
+        act,
+        openInspection,
+        reuseProfileConfiguration,
+        openProfileTags,
+        copy2fa,
+        toggleFavorite,
+        changeProfileSelection,
+        setLaunchFailure,
+        openNetworkSettings,
+        openLogs,
+    } = handlers;
+    const columnVisible = (key: ColumnKey) => !hiddenCols.has(key);
+    const openLabel = (_profile: UiProfile) => startLabel;
+    // live through the local cache. Only rows locked by ANOTHER
+    // session stay read-only — that writer owns the profile.
+    const canEditRow = true;
+    const recovery = launchFailure ? launchRecovery(launchFailure) : null;
+    const failureId = launchFailure ? `profile-launch-failure-${p.id}` : undefined;
+    return (<React.Fragment><tr data-profile-id={p.id} className={`${p.running ? "running" : ""}${isSelected ? " selected" : ""}`}>
+      <td className="chk">
+        <input type="checkbox" aria-label={t("Select {profile}", { profile: p.name })} aria-describedby="profile-range-selection-hint" title={t("Shift-click to select a range")} checked={isSelected}
+          onPointerDown={() => { rangeKeyboardActivation.current = null; }}
+          onKeyDown={event => { rangeKeyboardActivation.current = event.key === " " ? { id: p.id, shiftKey: event.shiftKey } : null; }}
+          onBlur={() => { rangeKeyboardActivation.current = null; }}
+          onChange={event => changeProfileSelection(p.id, event)} />
+      </td>
+      {columnVisible("no") && (<td className="col-no">
+          <span className={`no-text${no.custom ? " custom" : ""}`} title={`${no.custom ? t("Custom NO.") : t("Serial")} ${no.value}`}>{no.value}</span>
+        </td>)}
+      {columnVisible("name") && (<td className="col-name" title={`${p.name}\n${p.id}`}>
+          <span className="name-cell">
+            <span className="profile-name-line"><button type="button" className={`profile-favorite${isFavorite ? " is-favorite" : ""}`} aria-pressed={isFavorite} aria-label={t(isFavorite ? "Remove {profile} from favorites" : "Add {profile} to favorites", { profile: p.name })} title={t(isFavorite ? "Remove from favorites" : "Add to favorites")} disabled={!viewPreferencesReady || viewPreferenceBusy} onClick={() => void toggleFavorite(p.id)}><Icon name="star" /></button>
+            <button type="button" className="n profile-name-button" disabled={isBusy} aria-label={t("Edit {profile}", { profile: p.name })} onClick={() => openEdit(p.id)}><span className="profile-name-text">{p.name}</span><FingerprintImportBadge p={p} /></button></span>
+            <span className="sub">
+              <span className="profile-serial" title={p.id}>#{no.value}</span>
+              {rosterScope === "recent" && <span>{p.group || t("Ungrouped")}</span>}
+              {rosterScope === "recent" && !!p.lastOpenAt && <time dateTime={new Date(p.lastOpenAt).toISOString()} title={new Date(p.lastOpenAt).toLocaleString(language)}>{t("Last launch · {time}", { time: new Date(p.lastOpenAt).toLocaleString(language, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) })}</time>}
+              <span title={p.engine === "firefox" ? "Native Firefox profile · no CDP, PDF, or Chrome extensions" : `${browserLabel(p.engine, p.chromiumRuntime)} · CDP, PDF, and Chrome extensions`}>
+                {browserLabel(p.engine, p.chromiumRuntime)}
+              </span>
+
+            </span>
+            {p.tags.length > 0 && <button type="button" className="profile-tags-preview" aria-label={t("Manage tags for {profile}", { profile: p.name })} disabled={isBusy} onClick={() => openProfileTags(p)}>{p.tags.slice(0, 2).map((tag) => <span key={tag} title={tag}>{tag}</span>)}{p.tags.length > 2 && <small>+{p.tags.length - 2}</small>}</button>}
+            {(p.restartPending || !!p.pendingCookieCount) && (<span className="status">
+                {p.restartPending && (<button
+                    type="button"
+                    className="status-chip warn tip"
+                    data-tip={t("Saved proxy or fingerprint changes apply when this browser restarts. Click to restart it now.")}
+                    aria-label={t("Restart {profile} so the saved changes apply", { profile: p.name })}
+                    disabled={isBusy}
+                    onClick={() => act(p.id, restartProfile)}
+                  ><Icon name="refresh" className="sm" />{t("Applies at next start")}</button>)}
+                {!!p.pendingCookieCount && (<button
+                    type="button"
+                    className="status-chip tip"
+                    data-tip={t("The browser sets these cookies the next time it starts. Click to see or remove them.")}
+                    onClick={() => void openPendingCookies(p)}
+                  ><Icon name="cookie" className="sm" />{t("{count} cookie(s) at next start", { count: String(p.pendingCookieCount) })}</button>)}
+              </span>)}
+          </span>
+        </td>)}
+      {columnVisible("group") && (<td className="col-group" title={p.group}>
+          {p.group ? <span className="chip">{p.group}</span> : <span className="muted">—</span>}
+        </td>)}
+      {columnVisible("platform") && <td className="col-platform"><PlatformPill platform={p.platform} /></td>}
+      {columnVisible("tags") && (<td className="col-tags" title={p.tags?.length ? p.tags.join(", ") : "No tags"}>
+          {p.tags?.length ? p.tags.map((tag) => <span key={tag} className="chip">{tag}</span>) : <span className="muted">—</span>}
+        </td>)}
+      {columnVisible("proxy") && (<td className="col-proxy" title={p.proxyError || p.proxy || "no proxy"}>
+          {p.proxyError
+            ? <span className="proxy-cell bad"><Icon name="warning" className="sm" />{t("Invalid proxy — edit to fix")}</span>
+            : p.proxy
+              ? <span className="proxy-cell">{p.proxy}</span>
+              : <span className="muted">—</span>}
+        </td>)}
+      {columnVisible("status") && <td className="col-status"><span className={`profile-status${p.running ? " running" : ""}`}><StatusDot running={p.running} />{p.running ? t("Running") : t("Stopped")}</span></td>}
+      {columnVisible("action") && (<td className="col-action"><span className="rowactions">
+        {p.running ? <button className="btn sm row-stop" aria-label={t("Stop {profile}", { profile: p.name })} disabled={isBusy} onClick={() => act(p.id, closeProfile)}><Icon name="power" className="sm" />{t("Stop")}</button>
+          : p.mobilePersona ? <button className="btn sm warn" disabled={isBusy} title={t("Convert this mobile persona to a desktop device")} onClick={() => openEdit(p.id)}><Icon name="laptop" className="sm" />{t("Convert")}</button>
+          : <button className="btn sm primary row-start"
+              aria-label={t(recovery === "download" ? "Retry download for {profile}" : recovery ? "Retry starting {profile}" : "Start {profile}", { profile: p.name })}
+              aria-describedby={failureId} disabled={isBusy} onClick={() => void act(p.id, openProfile)}><Icon name={recovery ? "refresh" : "play"} className="sm" />{openLabel(p)}</button>}
+        <ProfileActionMenu label={t("Actions for {profile}", { profile: p.name })} icon={<Icon name="more" className="sm" />}>
+          <button role="menuitem" className="pop-item" onClick={() => openInspection(p.id)}><Icon name="activity" className="sm" />{t("Inspect network & fingerprint")}</button>
+          {canEditRow && <button role="menuitem" className="pop-item" disabled={isBusy} onClick={() => openEdit(p.id)}><Icon name="edit" className="sm" />{t("Edit profile")}</button>}
+          {canEditRow && <button role="menuitem" className="pop-item" disabled={isBusy} onClick={() => openProfileTags(p)}><Icon name="hash" className="sm" />{t("Manage tags")}</button>}
+          <button role="menuitem" className="pop-item" disabled={isReuseLoading} onClick={() => void reuseProfileConfiguration(p.id, p.name)}><Icon name="copy" className="sm" />{t("Create from this configuration")}</button>
+          {canEditRow && <button role="menuitem" className="pop-item" onClick={() => openCookie([p])}><Icon name="cookie" className="sm" />{t("Add cookies")}</button>}
+          {p.has2fa && <button role="menuitem" className="pop-item" onClick={() => copy2fa(p.id)}><Icon name={twoFaFlashed ? "check" : "key"} className="sm" />{twoFaFlashed ? t("Copied") : t("Copy current 2FA code")}</button>}
+          {p.running && p.engine === "chromium" && <button role="menuitem" className="pop-item" disabled={isBusy} onClick={() => act(p.id, raiseProfile)}><Icon name="raise" className="sm" />{t("Bring to front")}</button>}
+        </ProfileActionMenu>
+      </span></td>)}
+    </tr>
+    {launchFailure && <tr className="profile-launch-feedback"><td colSpan={visibleColumnCount}>
+      <div className="profile-launch-notice">
+        <Icon name="warning" className="sm" />
+        <div className="profile-launch-detail">
+          <p id={failureId} role="alert"><strong>{t(recovery === "download" ? "Browser download failed" : "Browser start failed")}</strong> {t(launchFailure)}</p>
+          {recovery === "proxy" && <button type="button" className="btn xs ghost" disabled={isBusy} onClick={event => openEdit(p.id, "proxy", event.currentTarget)}>{t("Review proxy settings")}</button>}
+          {recovery === "network" && <button type="button" className="btn xs ghost" onClick={openNetworkSettings}>{t("Network & proxies")}</button>}
+          {recovery === "logs" && <button type="button" className="btn xs ghost" onClick={openLogs}>{t("View logs")}</button>}
+        </div>
+        <button type="button" className="iconbtn profile-launch-dismiss" aria-label={t("Dismiss start failure for {profile}", { profile: p.name })} onClick={event => {
+          event.currentTarget.closest("tr")?.previousElementSibling?.querySelector<HTMLButtonElement>(".row-start")?.focus({ preventScroll: true });
+          setLaunchFailure(p.id, null);
+        }}><Icon name="close" className="sm" /></button>
+      </div>
+    </td></tr>}
+    </React.Fragment>);
+});
 function App() {
+    const motion = useDesktopMotion();
     const { t, language, setLanguage } = useTranslation();
+    useEffect(() => {
+      if (typeof document !== "undefined") {
+        document.documentElement.lang = language;
+      }
+    }, [language]);
+    const { requestConfirm, confirmDialogNode, isConfirmOpen } = useConfirmDialog();
     const windowChrome = useWindowChrome();
-    const { currentName: savedWorkspaceName } = useWorkspaceCatalog();
+    const { currentName: savedWorkspaceName, catalog, error: workspaceCatalogError } = useWorkspaceCatalog();
+    const { coordinator: workspaceCoordinator, snapshot: workspaceOperationState } = useWorkspaceOperations();
+    const signedUpdateStartup = useSignedUpdateStartup(catalog?.currentId);
     const currentName = savedWorkspaceName || t("Local workspace");
     useEffect(() => { document.title = `${currentName} · 猫步·千境`; }, [currentName]);
     const [profiles, setProfiles] = useState<UiProfile[]>([]);
@@ -735,17 +872,156 @@ function App() {
     const [folderMoveErr, setFolderMoveErr] = useState<string | null>(null);
 
     const [appMode, setAppMode] = useState<AppModeConfig | null>(null);
+    const [appModeErr, setAppModeErr] = useState<string | null>(null);
+    const [authRequired, setAuthRequired] = useState(false);
+    const [authTokenInput, setAuthTokenInput] = useState("");
+    const [authTokenErr, setAuthTokenErr] = useState<string | null>(null);
+    const bulkOwnerActive = useRef(true);
+    const {
+      loaded,
+      connErr,
+      connectionAlertDismissed,
+      dismissConnectionAlert,
+      retryConnection,
+      refreshing,
+      setRefreshing,
+      load,
+      readFreshRoster,
+      lastRosterResult,
+    } = useRosterPolling({
+      enabled: !!appMode,
+      intervalMs: REFRESH_MS,
+      bulkOwnerActiveRef: bulkOwnerActive,
+      onRoster: (roster) => {
+        setProfiles(roster.profiles);
+        setRegisteredGroups(roster.groups);
+        setLocalFolders(roster.folders ?? []);
+      },
+    });
+    const effectiveConnErr = appModeErr ?? connErr;
 
     const [modeErr, setModeErr] = useState<string | null>(null);
     // Management sections share the main content area. Focused profile forms
     // keep their own centred editor while the underlying roster stays mounted.
-    const [view, setView] = useState<"profiles" | "scripts" | "settings" | "extensions" | "proxies" | "trash" | "workspaces">("profiles");
+    const [view, setView] = useState<"profiles" | "inspection" | "scripts" | "settings" | "extensions" | "proxies" | "trash" | "workspaces" | "assistant">("profiles");
+    const settingsVisited = useRef(false);
+    if (view === "settings") settingsVisited.current = true;
+    const currentWorkspaceId = catalog?.currentId ?? null;
+    const scriptsVisit = useRef({ workspaceId: currentWorkspaceId, visited: false });
+    if (scriptsVisit.current.workspaceId !== currentWorkspaceId) scriptsVisit.current = { workspaceId: currentWorkspaceId, visited: false };
+    if (view === "scripts") scriptsVisit.current.visited = true;
+    const [trashTaskState, setTrashTaskState] = useState<{ workspaceId: string | null; snapshot: TrashTaskSnapshot } | null>(null);
+    const trashTaskSnapshot = trashTaskState?.workspaceId === currentWorkspaceId ? trashTaskState.snapshot : null;
+    const [proxyTaskState, setProxyTaskState] = useState<{ workspaceId: string | null; snapshot: ProxyAssignmentSnapshot } | null>(null);
+    const proxyTaskSnapshot = proxyTaskState?.workspaceId === currentWorkspaceId ? proxyTaskState.snapshot : null;
+    const publishProxyTask = useCallback((snapshot: ProxyAssignmentSnapshot) => setProxyTaskState({ workspaceId: currentWorkspaceId, snapshot }), [currentWorkspaceId]);
+    const [proxyTaskFocusRequest, setProxyTaskFocusRequest] = useState<{ workspaceId: string } | null>(null);
+    const completeProxyTaskFocus = useCallback(() => {
+      setProxyTaskFocusRequest(request => request === proxyTaskFocusRequest ? null : request);
+    }, [proxyTaskFocusRequest]);
+    useLayoutEffect(() => {
+      if (proxyTaskFocusRequest && (view !== "proxies" || proxyTaskFocusRequest.workspaceId !== currentWorkspaceId)) completeProxyTaskFocus();
+    }, [view, currentWorkspaceId, proxyTaskFocusRequest, completeProxyTaskFocus]);
+    const [localProxyIntent, setLocalProxyIntent] = useState<LocalProxyAssignmentIntent | null>(null);
+    const localProxySequence = useRef(0);
+    const localProxyTrigger = useRef<HTMLButtonElement | null>(null);
+    const returnToLocalProxy = useRef(false);
+    const activeLocalProxyIntent = localProxyIntent?.workspaceId === currentWorkspaceId ? localProxyIntent : undefined;
+    useLayoutEffect(() => {
+      setLocalProxyIntent(previous => previous?.workspaceId === currentWorkspaceId ? previous : null);
+      localProxyTrigger.current = null;
+      returnToLocalProxy.current = false;
+    }, [currentWorkspaceId]);
+    const navigationMotion = useNavigationMotion(view, !!appMode, motion.effective === "full");
+    const [inspectionId, setInspectionId] = useState<string | null>(null);
     const [workspacePageRequest, setWorkspacePageRequest] = useState<WorkspacePageRequest>({ mode: "manage", id: 0 });
     const [scriptRunOpen, setScriptRunOpen] = useState(false);
     const [scriptRunProfiles, setScriptRunProfiles] = useState<UiProfile[]>([]);
     const [showCreate, setShowCreate] = useState(false);
+    const [createReuseSource, setCreateReuseSource] = useState<ReusableProfileSettings | null>(null);
+    const [reuseRequest, setReuseRequest] = useState<{ id: string; name: string; status: "loading" | "failed"; error?: string } | null>(null);
+    const reuseGeneration = useRef(0);
+    const reuseRead = useRef<{ id: string; generation: number; controller: AbortController } | null>(null);
+    const reuseCanOpenRef = useRef(false);
     const [createProxyOpen, setCreateProxyOpen] = useState(false);
+    const [createProxySource, setCreateProxySource] = useState<LocalProxyDraftCandidate | null>(null);
     const [settingsTab, setSettingsTab] = useState<SettingsTab>("account");
+    useLayoutEffect(() => {
+      if (view !== "settings" || settingsTab !== "network" || !returnToLocalProxy.current) return;
+      returnToLocalProxy.current = false;
+      const target = localProxyTrigger.current;
+      localProxyTrigger.current = null;
+      if (target?.isConnected && !target.disabled) target.focus();
+      else document.getElementById("settings-tab-network")?.focus();
+    }, [view, settingsTab]);
+    const startLocalProxyAssignment = (candidate: LocalProxyDraftCandidate, trigger: HTMLButtonElement) => {
+      if (!currentWorkspaceId || workspaceCoordinator.getSnapshot().blocked || localProxyTrigger.current) return;
+      localProxyTrigger.current = trigger;
+      setLocalProxyIntent({ workspaceId: currentWorkspaceId, requestId: ++localProxySequence.current, candidate });
+      setView("proxies");
+    };
+    const dismissLocalProxyAssignment = (requestId: number, options?: { returnToSettings?: boolean }) => {
+      if (activeLocalProxyIntent?.requestId !== requestId) return;
+      setLocalProxyIntent(null);
+      if (options?.returnToSettings) {
+        returnToLocalProxy.current = true;
+        setSettingsTab("network");
+        setView("settings");
+      } else localProxyTrigger.current = null;
+    };
+    const [fingerprintRefreshVersion, setFingerprintRefreshVersion] = useState(0);
+    const [assistantDraftSuggestion, setAssistantDraftSuggestion] = useState<AssistantDraftSuggestion | null>(null);
+    const assistantDraftSequence = useRef(0);
+    const settingsPanelRef = useRef<HTMLDivElement>(null);
+    usePanelMotion(settingsTab, view === "settings", settingsPanelRef);
+    const updateTabRef = useRef<HTMLButtonElement>(null);
+    const focusUpdateTabOnOpen = useRef(false);
+    const focusRuntimePanelOnOpen = useRef(false);
+    useLayoutEffect(() => { if (settingsPanelRef.current) settingsPanelRef.current.scrollTop = 0; }, [settingsTab]);
+    useLayoutEffect(() => {
+      if (view !== "settings" || settingsTab !== "updates" || !focusUpdateTabOnOpen.current) return;
+      focusUpdateTabOnOpen.current = false;
+      updateTabRef.current?.focus({ preventScroll: true });
+    }, [view, settingsTab]);
+    useLayoutEffect(() => {
+      if (view !== "settings" || settingsTab !== "updates" || !focusRuntimePanelOnOpen.current) return;
+      focusRuntimePanelOnOpen.current = false;
+      focusRuntimePanel();
+    }, [view, settingsTab]);
+    function focusRuntimePanel() {
+      const target = settingsPanelRef.current?.querySelector<HTMLElement>("[data-browser-runtime-settings-heading]");
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView({ block: "start", behavior: "instant" });
+    }
+    function viewRuntimeDownloads() {
+      if (view === "settings" && settingsTab === "updates") { focusRuntimePanel(); return; }
+      focusRuntimePanelOnOpen.current = true;
+      setSettingsTab("updates");
+      setView("settings");
+    }
+    function viewSignedUpdate() {
+      signedUpdateStartup.dismissNotice();
+      if (view === "settings" && settingsTab === "updates") {
+        if (settingsPanelRef.current) settingsPanelRef.current.scrollTop = 0;
+        updateTabRef.current?.focus({ preventScroll: true });
+      } else {
+        focusUpdateTabOnOpen.current = true;
+        setSettingsTab("updates");
+        setView("settings");
+      }
+    }
+    const [commandOpen, setCommandOpen] = useState(false);
+    const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
+    const shortcutAction = useRef<(action: WorkbenchShortcutAction) => void>(() => {});
+    useEffect(() => {
+      const onKey = (event: KeyboardEvent) => {
+        const action = getWorkbenchShortcut(event, { ...readWorkbenchShortcutContext(event.target), desktop: !!desktopInvoke(), commandPaletteOpen: commandOpen });
+        if (!action) return;
+        event.preventDefault(); shortcutAction.current(action);
+      };
+      document.addEventListener("keydown", onKey);
+      return () => document.removeEventListener("keydown", onKey);
+    }, [commandOpen]);
 
     const [appVersion, setAppVersion] = useState("");
 
@@ -763,74 +1039,237 @@ function App() {
     const [pageSize, setPageSize] = useState(readPageSize);
     const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "no", dir: 1 });
     const [hiddenCols, setHiddenCols] = useState<Set<ColumnKey>>(readHiddenColumns);
+    const [rosterScope, setRosterScope] = useState<RosterScope>("all");
+    const [favoriteProfiles, setFavoriteProfiles] = useState<string[]>(readFavorites);
+    const [savedProfileViews, setSavedProfileViews] = useState<SavedProfileView[]>(readSavedViews);
+    const [rosterDensity, setRosterDensity] = useState<RosterDensity>(readRosterDensity);
+    const [viewPreferencesWorkspaceId, setViewPreferencesWorkspaceId] = useState<string | null>(null);
+    const viewPreferencesReady = currentWorkspaceId !== null && viewPreferencesWorkspaceId === currentWorkspaceId;
+    const [viewPreferencesLoading, setViewPreferencesLoading] = useState(true);
+    const [viewPreferenceReadError, setViewPreferenceReadError] = useState<string | null>(null);
+    const [viewPreferenceBusy, setViewPreferenceBusy] = useState(false);
+    const [preferenceLoadAttempt, setPreferenceLoadAttempt] = useState(0);
+    const viewPreferenceWrite = useRef(false);
+    const favoriteProfileIds = useMemo(() => new Set(favoriteProfiles), [favoriteProfiles]);
+    const paletteSavedViews = useMemo(() => viewPreferencesReady ? savedProfileViews.map(({ id, name, filters }) => ({ id, name, group: filters.group, scope: filters.scope, status: filters.status })) : [], [savedProfileViews, viewPreferencesReady]);
     const [colsOpen, setColsOpen] = useState(false);
     const [groupDisclosure, setGroupDisclosure] = useState(() => readGroupDisclosure(null));
     const [groupManagerOpen, setGroupManagerOpen] = useState(false);
     const [bulkToolsOpen, setBulkToolsOpen] = useState(false);
 
-    const [refreshing, setRefreshing] = useState(false);
     const [groupsOpen, setGroupsOpen] = useState(true);
     const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
+    const sidebarChoice = useRef<{ workspaceId: string | null } | null>(null);
     const [railForced, setRailForced] = useState(readRailForced);
+    const sidebarIsCompact = sidebarCollapsed || railForced;
     const [tableScrolled, setTableScrolled] = useState(false);
     const [theme, setTheme] = useState<ThemeChoice>(readTheme);
-    const [busy, setBusy] = useState<Record<string, boolean>>({});
+    const [manualBusy, setBusy] = useState<Record<string, boolean>>({});
+    const profileMove = useProfileMove({ readRoster: () => readFreshRoster() });
+    const moveUiInFlight = useRef(false), moveDraftRevision = useRef(0);
+    const [bulkTask, setBulkTask] = useState<BulkProfileTask | null>(null);
+    const bulkTaskRef = useRef<BulkProfileTask | null>(null), bulkBatchBusy = useRef(false);
+    const bulkTaskLease = useRef<WorkspaceOperationLease | null>(null), bulkTaskWorkspace = useRef<string | null>(null);
+    const [bulkTaskExpanded, setBulkTaskExpanded] = useState(false), [bulkTaskRefreshing, setBulkTaskRefreshing] = useState(false);
+    const bulkTaskSnapshot = useSyncExternalStore(bulkTask?.subscribe ?? noBulkSubscription, bulkTask?.getSnapshot ?? emptyBulkSnapshot, emptyBulkSnapshot);
+    const bulkTaskActive = !!bulkTaskSnapshot && bulkTaskSnapshot.phase !== "complete";
+    const scriptBackground = useBackgroundScriptRun();
+    const cookieImportLease = useRef<WorkspaceOperationLease | null>(null);
+    const cookieImport = useCookieImportTask({
+      workspaceId: () => catalog?.currentId ?? null,
+      acquire: workspaceId => {
+        const lease = workspaceCoordinator.acquire("profile-cookies", workspaceId);
+        if (!lease) return null;
+        cookieImportLease.current = lease;
+        return { refreshing: () => workspaceCoordinator.setPhase(lease, "refreshing"), release: () => {
+          workspaceCoordinator.release(lease); if (cookieImportLease.current === lease) cookieImportLease.current = null;
+        } };
+      },
+      onSettled: async () => {
+        if (!bulkOwnerActive.current) return;
+        const lease = cookieImportLease.current;
+        const results = await Promise.allSettled([readFreshRoster(), lease ? workspaceCoordinator.refreshWorkspaceViews(lease) : Promise.resolve()]);
+        const failure = results.find(result => result.status === "rejected");
+        if (failure?.status === "rejected") throw failure.reason;
+      },
+    });
+    const cookieImportBusy = cookieImport.snapshot.phase === "sending" || cookieImport.snapshot.phase === "refreshing";
+    const fileUpdateLease = useRef<WorkspaceOperationLease | null>(null);
+    const fileUpdatePanelRef = useRef<HTMLDivElement>(null);
+    const fileUpdate = useProfileFileUpdate({
+      workspaceId: () => catalog?.currentId ?? null,
+      acquire: workspaceId => {
+        const lease = workspaceCoordinator.acquire("profile-file-update", workspaceId);
+        if (!lease) return null;
+        fileUpdateLease.current = lease;
+        return { refreshing: () => workspaceCoordinator.setPhase(lease, "refreshing"), release: () => {
+          workspaceCoordinator.release(lease); if (fileUpdateLease.current === lease) fileUpdateLease.current = null;
+        } };
+      },
+      onSettled: async () => {
+        if (!bulkOwnerActive.current) return;
+        const lease = fileUpdateLease.current;
+        const results = await Promise.allSettled([readFreshRoster(), lease ? workspaceCoordinator.refreshWorkspaceViews(lease) : Promise.resolve()]);
+        const failure = results.find(result => result.status === "rejected");
+        if (failure?.status === "rejected") throw failure.reason;
+      },
+    });
+    const fileUpdateBusy = fileUpdate.snapshot.phase === "sending" || fileUpdate.snapshot.phase === "refreshing";
+    const latestProfiles = useRef(profiles); latestProfiles.current = profiles;
+    const busy = useMemo(() => {
+      const next = { ...manualBusy };
+      for (const row of bulkTaskSnapshot?.rows ?? []) if (row.status === "pending" || row.status === "running") next[row.id] = true;
+      if (profileMove.busy) for (const id of profileMove.state.attempt?.ids ?? []) next[id] = true;
+      if (cookieImportBusy) for (const row of cookieImport.snapshot.rows) next[row.id] = true;
+      if (fileUpdateBusy) for (const profile of profiles) next[profile.id] = true;
+      return next;
+    }, [manualBusy, bulkTaskSnapshot, profileMove.busy, profileMove.state.attempt, cookieImportBusy, cookieImport.snapshot, fileUpdateBusy, profiles]);
+    useEffect(() => { bulkOwnerActive.current = true; return () => { bulkOwnerActive.current = false; bulkTaskRef.current?.stopPending(); }; }, []);
     const [runtimeDownloads, setRuntimeDownloads] = useState<RuntimeDownload[]>([]);
-    // Two error slots so an auto-refresh can't silently wipe why an action failed:
-    // actionErr is sticky (Open/Close/move/import), connErr tracks load() only.
+    const [runtimeDownloadsStale, setRuntimeDownloadsStale] = useState(false);
+    const runtimeTransfersObserved = useRef(false);
+    // Roster refreshes report connectivity separately from operation failures.
     const [actionErr, setActionErr] = useState<string | null>(null);
+    const [launchFailureState, setLaunchFailureState] = useState<{ workspaceId: string | null; byId: ReadonlyMap<string, string> }>(() => ({ workspaceId: currentWorkspaceId, byId: new Map() }));
+    const launchFailures = launchFailureState.workspaceId === currentWorkspaceId ? launchFailureState.byId : null;
+    const manualActions = useRef(new Set<string>());
     useEffect(() => {
+      setLaunchFailureState(previous => {
+        if (previous.workspaceId !== currentWorkspaceId) return { workspaceId: currentWorkspaceId, byId: new Map() };
+        if (!previous.byId.size) return previous;
+        const stopped = new Set(profiles.filter(profile => !profile.running).map(profile => profile.id));
+        const byId = new Map([...previous.byId].filter(([id]) => stopped.has(id)));
+        return byId.size === previous.byId.size ? previous : { ...previous, byId };
+      });
+    }, [currentWorkspaceId, profiles]);
+    useEffect(() => {
+      if (!currentWorkspaceId) return;
       let alive = true;
       const revision = preferenceRevision;
+      const ownsWorkspace = () => alive && workspaceCoordinator.getSnapshot().workspaceId === currentWorkspaceId;
+      if (sidebarChoice.current?.workspaceId === null) sidebarChoice.current.workspaceId = currentWorkspaceId;
+      setViewPreferencesWorkspaceId(null);
+      setViewPreferencesLoading(true); setViewPreferenceReadError(null);
       void fetchWorkspacePreferences().then((preferences) => {
-        if (!alive || preferenceRevision !== revision) return;
-        for (const [key, value] of Object.entries(preferences)) try { localStorage.setItem(key, value); } catch { }
+        if (!ownsWorkspace()) return;
+        // Roster metadata cannot be edited until it has loaded. Restore it even
+        // when a separate sidebar/layout action changed the general revision.
+        const favorites = parseFavoriteProfiles(preferences[FAVORITE_PROFILES_KEY] ?? "[]") ?? [];
+        const views = parseSavedProfileViews(preferences[SAVED_PROFILE_VIEWS_KEY] ?? "[]") ?? [];
+        const density = parseRosterDensity(preferences[ROSTER_DENSITY_KEY]);
+        setRosterDensity(density);
+        setFavoriteProfiles(favorites); setSavedProfileViews(views); setViewPreferencesWorkspaceId(currentWorkspaceId);
+        for (const [key, value] of [[FAVORITE_PROFILES_KEY, JSON.stringify(favorites)], [SAVED_PROFILE_VIEWS_KEY, JSON.stringify(views)], [ROSTER_DENSITY_KEY, density]]) try { localStorage.setItem(key!, value!); } catch { }
+        if (preferenceRevision !== revision) return;
+        // The rail is already interactive while the first catalog request is pending.
+        const preserveSidebarChoice = sidebarChoice.current?.workspaceId === currentWorkspaceId;
+        for (const [key, value] of Object.entries(preferences)) {
+          if (key === SIDEBAR_KEY && preserveSidebarChoice) continue;
+          try { localStorage.setItem(key, value); } catch { }
+        }
         if (preferences[HIDDEN_COLUMNS_KEY] !== undefined) {
-          const keys: unknown = JSON.parse(preferences[HIDDEN_COLUMNS_KEY]!);
-          const known = new Set(COLUMNS.map((column) => column.key as string));
-          if (Array.isArray(keys)) setHiddenCols(new Set(keys.filter((key) => known.has(key)) as ColumnKey[]));
+          try {
+            const keys: unknown = JSON.parse(preferences[HIDDEN_COLUMNS_KEY]!);
+            const known = new Set(COLUMNS.map((column) => column.key as string));
+            if (Array.isArray(keys)) setHiddenCols(new Set(keys.filter((key) => known.has(key)) as ColumnKey[]));
+          } catch { /* A damaged column preference must not strand valid saved views. */ }
         }
         if (preferences[PAGE_SIZE_KEY] !== undefined && PAGE_SIZES.includes(Number(preferences[PAGE_SIZE_KEY]))) setPageSize(Number(preferences[PAGE_SIZE_KEY]));
-        if (preferences[SIDEBAR_KEY] !== undefined) setSidebarCollapsed(preferences[SIDEBAR_KEY] === "1");
+        if (!preserveSidebarChoice && preferences[SIDEBAR_KEY] !== undefined) setSidebarCollapsed(preferences[SIDEBAR_KEY] === "1");
         setGroupDisclosure(readGroupDisclosure(preferences[GROUP_DISCLOSURE_KEY]));
-      }).catch((error) => { if (alive) setActionErr(error instanceof Error ? error.message : String(error)); });
+      }).catch((error) => { if (ownsWorkspace()) setViewPreferenceReadError(error instanceof Error ? error.message : String(error)); })
+        .finally(() => { if (ownsWorkspace()) setViewPreferencesLoading(false); });
+      return () => { alive = false; };
+    }, [currentWorkspaceId, preferenceLoadAttempt, workspaceCoordinator]);
+    useEffect(() => {
       const failed = (event: Event) => setActionErr(String((event as CustomEvent).detail));
       window.addEventListener("workspace-preference-error", failed);
-      return () => { alive = false; window.removeEventListener("workspace-preference-error", failed); };
+      window.addEventListener("external-link-error", failed);
+      return () => { window.removeEventListener("workspace-preference-error", failed); window.removeEventListener("external-link-error", failed); };
     }, []);
-    const [connErr, setConnErr] = useState<string | null>(null);
-    const [connectionAlertDismissed, setConnectionAlertDismissed] = useState(false);
-    useEffect(() => { if (!connErr) setConnectionAlertDismissed(false); }, [connErr]);
+    const writeViewPreference = async (key: string, value: string): Promise<boolean> => {
+      if (!viewPreferencesReady || viewPreferenceWrite.current || workspaceCoordinator.getSnapshot().workspaceId !== currentWorkspaceId) return false;
+      viewPreferenceWrite.current = true; setViewPreferenceBusy(true); setActionErr(null); preferenceRevision++;
+      try {
+        await saveWorkspacePreference(key, value);
+        if (workspaceCoordinator.getSnapshot().workspaceId !== currentWorkspaceId) return false;
+        try { localStorage.setItem(key, value); } catch { /* Server storage remains authoritative. */ }
+        return true;
+      } catch (error) { setActionErr(error instanceof Error ? error.message : String(error)); return false; }
+      finally { viewPreferenceWrite.current = false; setViewPreferenceBusy(false); }
+    };
+    const toggleFavorite = async (id: string) => {
+      try {
+        const next = favoriteProfiles.includes(id) ? favoriteProfiles.filter(value => value !== id) : [...favoriteProfiles, id];
+        if (await writeViewPreference(FAVORITE_PROFILES_KEY, serializeFavoriteProfiles(next))) setFavoriteProfiles(next);
+      } catch (error) { setActionErr(error instanceof Error ? error.message : String(error)); }
+    };
+    const chooseRosterDensity = async (density: RosterDensity) => { if (density !== rosterDensity && await writeViewPreference(ROSTER_DENSITY_KEY, density)) setRosterDensity(density); };
+    const saveProfileView = async (view: SavedProfileView): Promise<boolean> => {
+      const next = [...savedProfileViews, view];
+      const value = serializeSavedProfileViews(next);
+      if (!await writeViewPreference(SAVED_PROFILE_VIEWS_KEY, value)) return false;
+      setSavedProfileViews(next); return true;
+    };
+    const removeProfileView = async (id: string): Promise<boolean> => {
+      const next = savedProfileViews.filter(view => view.id !== id);
+      if (!await writeViewPreference(SAVED_PROFILE_VIEWS_KEY, serializeSavedProfileViews(next))) return false;
+      setSavedProfileViews(next); return true;
+    };
+    const chooseRosterScope = (scope: RosterScope) => {
+      setRosterScope(scope); setQ(""); setGroup("all"); setProfileStatus("all"); setProfilePage(0);
+    };
+    const applyProfileView = (saved: SavedProfileView) => {
+      const filters = saved.filters;
+      setRosterScope(filters.scope); setQ(filters.query); setGroup(filters.group); setProfileStatus(filters.status);
+      setSort(filters.sort); setHiddenCols(new Set(filters.hiddenColumns)); setPageSize(filters.pageSize); setProfilePage(0);
+      writeSetting(HIDDEN_COLUMNS_KEY, JSON.stringify(filters.hiddenColumns)); writeSetting(PAGE_SIZE_KEY, String(filters.pageSize));
+    };
     const [notice, setNotice] = useState<string | null>(null); // transient success banner
-    const [loaded, setLoaded] = useState(false);
+    const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const clearNoticeTimer = () => { if (noticeTimer.current !== null) clearTimeout(noticeTimer.current); noticeTimer.current = null; };
+    useEffect(() => () => clearNoticeTimer(), []);
     const [selected, setSelected] = useState<Set<string>>(new Set());
+    const latestSelection = useRef(selected); latestSelection.current = selected;
+    const rangeSelectionAnchor = useRef<ProfileSelectionAnchor | null>(null);
+    const rangeKeyboardActivation = useRef<{ id: string; shiftKey: boolean } | null>(null);
     const [deleting, setDeleting] = useState(false);
     const deleteInFlight = useRef(false);
-    const rosterLoader = useRef(serialLoader(() => loadRoster()));
+    const editTotpSecsRef = useRef<number | null>(null);
     // Active profile export: null when idle, otherwise how far the server-side
     // collection has progressed ({completed: total} = file being built).
     const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
-    const [moveTarget, setMoveTarget] = useState("");
+    const [moveTarget, setMoveTarget] = useState<string | null>(null);
     const [newMode, setNewMode] = useState(false);
     const [newGroup, setNewGroup] = useState("");
     const [dragging, setDragging] = useState(false);
     const [creating, setCreating] = useState(false);
+    const createInFlight = useRef(false);
     const [createErr, setCreateErr] = useState<string | null>(null);
     const [form, setForm] = useState(BLANK_FORM);
+    const initialCreateForm = useRef<typeof BLANK_FORM>(BLANK_FORM);
+    const createRuntimeInput = profileCreationRuntime(form.engine, form.chromiumRuntime, appMode?.chromiumRuntime);
+    const createRuntimeLabel = createRuntimeInput ?? appMode?.defaultChromiumRuntime;
+    const createFingerprintRuntime = createRuntimeLabel === "cloakbrowser" ? "" : createRuntimeLabel;
     const [createProxyCheck, setCreateProxyCheck] = useState<ProxyCheckUiState>(EMPTY_PROXY_CHECK);
     const createProxyCheckGeneration = useRef(0);
     const [cookieTargets, setCookieTargets] = useState<UiProfile[] | null>(null);
-    const [cookieForm, setCookieForm] = useState(BLANK_COOKIE_FORM);
-    const [cookieText, setCookieText] = useState("");
-    const [cookieErr, setCookieErr] = useState<string | null>(null);
-    const [cookieSaving, setCookieSaving] = useState(false);
+    const lastCookieTargets = useRef<UiProfile[]>([]);
+    if (cookieTargets) lastCookieTargets.current = cookieTargets;
+    const cookieTaskPanelRef = useRef<HTMLDivElement>(null);
+    const moveTaskPanelRef = useRef<HTMLDivElement>(null);
     const [pendingView, setPendingView] = useState<{ profile: UiProfile; cookies: Array<{ domain: string; name: string }> | null; error: string | null; busy: boolean } | null>(null);
     const [proxyPaste, setProxyPaste] = useState("");
     const [proxyPasteOk, setProxyPasteOk] = useState<string | null>(null);
+    const [proxyPasteInvalid, setProxyPasteInvalid] = useState(false);
     // Edit modal + bulk export/update + group rename
     const [editId, setEditId] = useState<string | null>(null);
+    const [tagsTarget, setTagsTarget] = useState<ProfileTagsTarget | null>(null);
+    const tagsReturnFocus = useRef<HTMLElement | null>(null);
 
     const [editForm, setEditForm] = useState<Record<string, string>>({});
+    const [editSnapshot, setEditSnapshot] = useState<ProfileEditSnapshot | null>(null);
+    const [editClearQuarantinedProxy, setEditClearQuarantinedProxy] = useState(false);
     const [editInitialFingerprint, setEditInitialFingerprint] = useState<Record<string, string>>({});
     const [editInitialProxy, setEditInitialProxy] = useState({ proxy: "", proxyType: "http" });
 
@@ -839,40 +1278,72 @@ function App() {
     const [editErr, setEditErr] = useState<string | null>(null);
     const [editSaving, setEditSaving] = useState(false);
     const [editLoading, setEditLoading] = useState(false);
-    const createEditorRef = useProfileEditorFocus(showCreate);
-    const editEditorRef = useProfileEditorFocus(!!editId, !editLoading);
+    const editSessionSequence = useRef(0);
+    const editSessionRef = useRef<{ id: string; generation: number; loading: boolean; ready: boolean } | null>(null);
+    const editSaveInFlight = useRef(false);
+    const [editLoadedGeneration, setEditLoadedGeneration] = useState<number | null>(null);
+    const editReady = editLoadedGeneration !== null && editSessionRef.current?.generation === editLoadedGeneration && editSessionRef.current.ready;
+    useEffect(() => () => { editSessionRef.current = null; editSaveInFlight.current = false; }, []);
+    const createReturnFocus = useRef<HTMLElement | null>(null);
+    const createEditorRef = useProfileEditorFocus(showCreate, true, createReturnFocus);
+    const editReturnFocus = useRef<HTMLElement | null>(null);
+    const editFieldOnOpen = useRef<InspectionEditField | null>(null);
+    const editEditorRef = useProfileEditorFocus(!!editId, editReady, editReturnFocus, editFieldOnOpen);
+    const createCloseGuard = useUnsavedChangesGuard({ label: "New Profile", returnFocus: () => createEditorRef.current });
+    const editCloseGuard = useUnsavedChangesGuard({ label: "Edit profile", returnFocus: () => editEditorRef.current });
 
     // Null until the profile detail loads, so a failed load never names a browser.
     const [editEngine, setEditEngine] = useState<"chromium" | "firefox" | null>(null);
     const [editChromiumRuntime, setEditChromiumRuntime] = useState("");
     const [editHardware, setEditHardware] = useState<{ gpu?: string; cores?: number } | undefined>();
     const [timezoneBusy, setTimezoneBusy] = useState(false);
-    const editFetchId = useRef<string | null>(null);
     const [editMobile, setEditMobile] = useState<NonNullable<EditProfile["desktopConversion"]> | null>(null);
     const [editTotp, setEditTotp] = useState<{ code: string; secs: number } | null>(null);
     const [twoFaFlash, setTwoFaFlash] = useState<{ id: string; code: string } | null>(null);
     const [editExts, setEditExts] = useState<string[]>([]);
     const [editInitialExts, setEditInitialExts] = useState<string[]>([]);
+    const editReview = useMemo<{ summary: ProfileEditSummary | null; error: string | null; field: string | null }>(() => {
+      if (!editReady || !editSnapshot) return { summary: null, error: null, field: null };
+      try { return { summary: buildProfileEditPatch(editSnapshot, { form: editForm, extensions: editExts, clearQuarantinedProxy: editClearQuarantinedProxy }).summary, error: null, field: null }; }
+      catch (error) { return { summary: null, error: error instanceof ProfileEditPatchError ? error.message : "Edited fields could not be validated. Reload this editor before saving.", field: error instanceof ProfileEditPatchError ? error.field : null }; }
+    }, [editReady, editSnapshot, editForm, editExts, editClearQuarantinedProxy]);
+    const editFieldFeedback = (field: string): EditorFieldFeedback => ({ field, invalid: editReview.field === field, describedBy: "profile-edit-validation-error" });
+    const editorScroll: ScrollBehavior = motion.effective === "full" ? "smooth" : "instant";
+    const locateEditProblem = () => {
+      const editor = editEditorRef.current;
+      if (!editor) return;
+      const invalidField = editor.querySelector<HTMLElement>('[data-profile-field][aria-invalid="true"]');
+      focusEditorTarget(invalidField ?? editor.querySelector<HTMLElement>("#profile-edit-validation-error, .profile-edit-save-error"), editorScroll);
+    };
+
     // Local extension registry + Extensions page
     const [extensions, setExtensions] = useState<Extension[]>([]);
-    const [groupExtensionDefaults, setGroupExtensionDefaultsState] = useState<GroupExtensionDefaults[]>([]);
-    const [groupDefaultName, setGroupDefaultName] = useState("");
-    const [groupDefaultExts, setGroupDefaultExts] = useState<string[]>([]);
+    const extensionWorkspaceId = catalog?.currentId ?? null;
+    const extensionWorkspace = useRef(extensionWorkspaceId); extensionWorkspace.current = extensionWorkspaceId;
+    const [extensionDrafts] = useState(() => createExtensionDefaultDrafts(extensionWorkspaceId));
+    const extensionDraftState = useSyncExternalStore(extensionDrafts.subscribe, extensionDrafts.getSnapshot, extensionDrafts.getSnapshot);
+    const groupExtensionDefaults = useMemo<GroupExtensionDefaults[]>(() => extensionDraftState.groups.map(group => ({ name: group.name, extensions: [...group.extensions] })), [extensionDraftState.groups]);
+    const groupDefaultName = extensionDraftState.selectedGroup ?? "";
+    const groupDefaultExts = useMemo(() => [...(extensionDraftState.selected?.extensions ?? [])], [extensionDraftState.selected?.extensions]);
+    const [extDataFresh, setExtDataFresh] = useState(false);
+    const extensionFresh = useRef(false);
+    const markExtensionFresh = (fresh: boolean) => { extensionFresh.current = fresh; setExtDataFresh(fresh); };
     const [groupDefaultBusy, setGroupDefaultBusy] = useState(false);
     const [extSource, setExtSource] = useState("");
     const [extInstallBusy, setExtInstallBusy] = useState(false);
     const [extBusy, setExtBusy] = useState(false);
     const [extErr, setExtErr] = useState<string | null>(null);
-    const extFileRef = useRef<HTMLInputElement>(null);
+    const [extLoading, setExtLoading] = useState(false);
+    const [extensionPageRefresh, setExtensionPageRefresh] = useState(0);
+    const extensionReadVersion = useRef(0);
+    const extensionMutation = useRef(false);
+    useLayoutEffect(() => {
+      extensionReadVersion.current++;
+      markExtensionFresh(false); extensionDrafts.setWorkspace(extensionWorkspaceId); setExtensions([]); setExtSource("");
+    }, [extensionWorkspaceId]);
     const [bulkExt, setBulkExt] = useState(""); // extension chosen for bulk assign
     // Update-from-file modal (export → edit → re-upload, matched by id)
     const [showUpdate, setShowUpdate] = useState(false);
-    const [updateFile, setUpdateFile] = useState<File | null>(null);
-    const [updateBusy, setUpdateBusy] = useState(false);
-    const [updateErr, setUpdateErr] = useState<string | null>(null);
-    const [updateResult, setUpdateResult] = useState<string | null>(null);
-    const [updateOver, setUpdateOver] = useState(false);
-    const updateFileRef = useRef<HTMLInputElement>(null);
     const [exportOpen, setExportOpen] = useState(false);
     const [renaming, setRenaming] = useState<string | null>(null);
     const [renameVal, setRenameVal] = useState("");
@@ -885,17 +1356,24 @@ function App() {
     const [bulkGroup, setBulkGroup] = useState("");
     const [bulkPlatform, setBulkPlatform] = useState("");
     const [bulkBusy, setBulkBusy] = useState(false);
+    const importInFlight = useRef(false);
+    const [importBusy, setImportBusy] = useState(false);
+    const [importReceipt, setImportReceipt] = useState<ImportReceipt | null>(null);
+    const [importReceiptExpanded, setImportReceiptExpanded] = useState(false);
+    const [importReceiptRefreshing, setImportReceiptRefreshing] = useState(false);
     const [bulkErr, setBulkErr] = useState<string | null>(null);
     const [bulkOver, setBulkOver] = useState(false);
     // One source at a time: two full-height inputs stacked made it ambiguous which
     // one the Import button would actually read.
     const [bulkSource, setBulkSource] = useState<"file" | "paste">("file");
+    const bulkEditorRef = useProfileEditorFocus(showBulk, false);
 
     const bulkFileRef = useRef<HTMLInputElement>(null);
-
-
-
-
+    const reuseCanOpen = view === "profiles" && !showCreate && !editId && !showBulk && !showUpdate && !cookieTargets && !pendingView
+      && !movingFolder && !logView && !logErr && !scriptRunOpen && !commandOpen && !shortcutHelpOpen && !tagsTarget && !showDiag;
+    reuseCanOpenRef.current = reuseCanOpen;
+    useLayoutEffect(() => { if (!reuseCanOpen) cancelReuseRead(); }, [reuseCanOpen]);
+    useEffect(() => () => { reuseGeneration.current++; reuseRead.current?.controller.abort(); reuseRead.current = null; }, []);
     // The app resolves "system" itself and stamps the result on <html>, so the
     // stylesheet carries exactly one dark palette instead of a duplicated media query.
     useEffect(() => {
@@ -918,52 +1396,48 @@ function App() {
   }, []);
     // Escape closes whatever dialog is open, topmost first — standard desktop
     // behavior the mouse-only close buttons don't cover.
+    const escapeHandlerRef = useRef<() => void>(() => {});
+    escapeHandlerRef.current = () => {
+      if (isConfirmOpen) return;
+      if (movingFolder) { if (!folderMoveBusy) setMovingFolder(null); return; }
+      if (logView || logErr) { setLogView(null); setLogErr(null); return; }
+      if (showUpdate) { setShowUpdate(false); return; }
+      if (showBulk) { closeBulk(); return; }
+      if (pendingView) { if (!pendingView.busy) setPendingView(null); return; }
+      if (cookieTargets) { closeCookie(); return; }
+      if (editId) { closeEdit(); return; }
+      if (showCreate) closeCreate();
+    };
     useEffect(() => {
         const onKey = (event: KeyboardEvent) => {
-            if (event.key !== "Escape") return;
-            if (movingFolder) { if (!folderMoveBusy) setMovingFolder(null); return; }
-            if (logView || logErr) { setLogView(null); setLogErr(null); return; }
-            if (showUpdate) { setShowUpdate(false); return; }
-            if (showBulk) { closeBulk(); return; }
-            if (pendingView) { if (!pendingView.busy) setPendingView(null); return; }
-            if (cookieTargets) { if (!cookieSaving) closeCookie(); return; }
-            if (editId) { closeEdit(); return; }
-            if (showCreate) closeCreate();
+            if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.key !== "Escape") return;
+            escapeHandlerRef.current();
         };
         document.addEventListener("keydown", onKey);
         return () => document.removeEventListener("keydown", onKey);
-    });
-    const reloadGroupExtensionDefaults = async () => {
-    try {
-      setGroupExtensionDefaultsState(await fetchGroupExtensionDefaults());
-    } catch (error) {
-      setExtErr(error instanceof Error ? error.message : String(error));
-    }
-  };
-    // One roster request at a time: on a slow link a large roster takes longer
-    // than the poll interval, and stacked requests share the bandwidth until
-    // every one of them fails.
-    const { load, poll: pollRoster } = rosterLoader.current;
-    const loadRoster = async () => {
-    try {
-      const roster = await fetchProfiles();
-      setProfiles(roster.profiles);
-      setRegisteredGroups(roster.groups);
-      setLocalFolders(roster.folders ?? []);
-
-      setConnErr(null); // manages connectivity only; never clears an action error
-    } catch (e) {
-      setConnErr(String(e));
-    } finally {
-      setLoaded(true);
-    }
-  };
+    }, []);
+    const refreshImportedProfiles = async () => { await readFreshRoster(); };
     const openSettings = () => setView("settings");
+    const openExtensions = () => { setExtErr(null); setExtLoading(true); if (view === "extensions") setExtensionPageRefresh(value => value + 1); else setView("extensions"); };
+    const openInspection = (id: string) => {
+      if (editSessionRef.current) return;
+      setInspectionId(id);
+      setView("inspection");
+    };
+    const backFromInspection = () => {
+      setView("profiles");
+      requestAnimationFrame(() => {
+        const row = [...document.querySelectorAll<HTMLTableRowElement>("tr[data-profile-id]")].find(item => item.dataset.profileId === inspectionId);
+        const target = row?.querySelector<HTMLButtonElement>(".profile-menu-trigger") ?? document.getElementById("profiles-page-title");
+        target?.focus({ preventScroll: true });
+      });
+    };
     const openWorkspaceManagement = (intent: WorkspacePageIntent) => {
       setWorkspacePageRequest((current) => ({ ...intent, id: current.id + 1 }));
       setView("workspaces");
     };
     const showRunningProfiles = () => {
+      setRosterScope("all");
       setQ("");
       setGroup("all");
       setSelected(new Set());
@@ -971,14 +1445,23 @@ function App() {
       setProfileStatus("running");
       setView("profiles");
     };
-    useEffect(() => {
+    const loadAppMode = useCallback(() => {
         fetchAppMode().then((config) => {
+            setAuthRequired(false);
+            setAuthTokenErr(null);
+            setAppModeErr(null);
             setAppMode({ ...config, mode: "local", localAnalytics: false });
         }).catch((error) => {
-            setConnErr(String(error));
-            setLoaded(true);
+            if (isUnauthorizedError(error)) setAuthRequired(true);
+            setAppModeErr(error instanceof Error ? error.message : String(error));
         });
     }, []);
+    useEffect(() => {
+        loadAppMode();
+    }, [loadAppMode]);
+    useEffect(() => subscribeUnauthorized(() => {
+        setAuthRequired(true);
+    }), []);
     useEffect(() => {
         const invoke = desktopInvoke();
         if (!appMode || !invoke)
@@ -988,38 +1471,54 @@ function App() {
     useEffect(() => {
     if (!appMode) return;
     load();
-    fetchHealth().then((health) => { setAppVersion(health.version); setLogDir(health.logDir); }).catch(() => {});
-    // Resolve extension assignments from the local registry.
-    fetchExtensions().then(setExtensions).catch(() => {});
-    fetchDiagnose().then(setDiag).catch(() => {});
+    fetchHealth().then((health) => { setAppVersion(health.version); setLogDir(health.logDir); }).catch((error) => console.warn("[health]", error));
+    fetchDiagnose().then(setDiag).catch((error) => console.warn("[diagnose]", error));
   }, [appMode]);
     useEffect(() => {
-    if (view !== "extensions" || !appMode) return;
-    void reloadGroupExtensionDefaults();
-  }, [view, appMode]);
+      if (!appMode || !extensionWorkspaceId) return;
+      const generation = ++extensionReadVersion.current;
+      void fetchExtensions().then(items => { if (generation === extensionReadVersion.current && extensionWorkspace.current === extensionWorkspaceId) setExtensions(items); }).catch((error) => console.warn("[extensions]", error));
+    }, [appMode, extensionWorkspaceId]);
     useEffect(() => {
-    const editable = groupExtensionDefaults;
-    if (!editable.some((item) => item.name === groupDefaultName)) {
-      setGroupDefaultName(editable[0]?.name ?? "");
-    }
-  }, [groupExtensionDefaults, groupDefaultName]);
-    useEffect(() => {
-    setGroupDefaultExts(
-      groupExtensionDefaults.find((item) => item.name === groupDefaultName)?.extensions ?? [],
-    );
-  }, [groupExtensionDefaults, groupDefaultName]);
-    useEffect(() => {
-    if (!appMode) return;
-    const t = setInterval(pollRoster, REFRESH_MS);
-    return () => clearInterval(t);
-  }, [appMode]);
+    if (view !== "extensions" || !appMode || !extensionWorkspaceId) return;
+    let alive = true;
+    const generation = ++extensionReadVersion.current;
+    setExtLoading(true); markExtensionFresh(false);
+    void Promise.allSettled([fetchExtensions(), fetchGroupExtensionDefaults(), readFreshRoster()]).then(results => {
+      if (!alive || generation !== extensionReadVersion.current || extensionWorkspace.current !== extensionWorkspaceId) return;
+      if (results[0].status === "fulfilled") setExtensions(results[0].value);
+      if (results[1].status === "fulfilled") extensionDrafts.receive(extensionWorkspaceId, results[1].value);
+      const failed = results.find(result => result.status === "rejected");
+      markExtensionFresh(!failed);
+      setExtErr(failed ? t("The latest extension data could not be loaded. Your draft is kept. Reload before applying changes.") : null);
+    }).finally(() => { if (alive && generation === extensionReadVersion.current) setExtLoading(false); });
+    return () => { alive = false; if (generation === extensionReadVersion.current) extensionReadVersion.current++; setExtLoading(false); };
+  }, [view, appMode, extensionPageRefresh, extensionWorkspaceId]);
     // Both browsers delete saved site data when the profiles drive is almost full.
     useEffect(() => {
         let live = true;
-        const check = () => void fetchDiskSpace().then((next) => { if (live) setDiskSpace(next); }).catch(() => { });
+        let lastCheckedAt = 0;
+        const runCheck = () => {
+          lastCheckedAt = Date.now();
+          void fetchDiskSpace().then((next) => { if (live) setDiskSpace(next); }).catch((error) => console.warn("[disk-space]", error));
+        };
+        const check = () => {
+          if (typeof document !== "undefined" && document.hidden) return;
+          runCheck();
+        };
+        const onVisibility = () => {
+          if (typeof document !== "undefined" && !document.hidden && Date.now() - lastCheckedAt >= 60_000) {
+            runCheck();
+          }
+        };
         check();
         const timer = setInterval(check, 60_000);
-        return () => { live = false; clearInterval(timer); };
+        if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisibility);
+        return () => {
+          live = false;
+          clearInterval(timer);
+          if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisibility);
+        };
     }, []);
     // Browser runtime downloads: read once when the profile count changes (a new profile
     // starts its download), then every second while one runs or a row is busy opening.
@@ -1027,14 +1526,22 @@ function App() {
     useEffect(() => {
     let live = true;
     let timer: number | undefined;
+    let failures = 0;
     const poll = () => {
       void fetchRuntimeDownloads().then((next) => {
         if (!live) return;
+        failures = 0;
+        runtimeTransfersObserved.current = next.length > 0;
         setRuntimeDownloads(next);
+        setRuntimeDownloadsStale(false);
         if (next.length > 0 || anyBusy) timer = window.setTimeout(poll, 1000);
       }).catch(() => {
-        // A missed check must not freeze the label while a row still opens.
-        if (live && anyBusy) timer = window.setTimeout(poll, 1000);
+        if (!live) return;
+        setRuntimeDownloadsStale(true);
+        failures++;
+        if (anyBusy || runtimeTransfersObserved.current || failures === 1) {
+          timer = window.setTimeout(poll, 1000 * 2 ** Math.min(3, failures - 1));
+        }
       });
     };
     poll();
@@ -1043,36 +1550,56 @@ function App() {
     // Live 2FA code in the Edit modal: fetch the current TOTP, count it down
     // locally, and refetch when the window rolls over.
     useEffect(() => {
-        if (!editId) { setEditTotp(null); return; }
+        const session = editSessionRef.current;
+        if (!editId || !editReady || !session?.ready) { editTotpSecsRef.current = null; setEditTotp(null); return; }
         let alive = true;
         const tick = async () => {
       try {
         const r = await fetchTotp(editId);
-        if (alive) setEditTotp(r.code ? { code: r.code, secs: r.secondsRemaining ?? 30 } : null);
-      } catch { if (alive) setEditTotp(null); }
+        if (alive && editSessionRef.current === session) {
+          if (r.code) {
+            const secs = r.secondsRemaining ?? 30;
+            editTotpSecsRef.current = secs;
+            setEditTotp({ code: r.code, secs });
+          } else {
+            editTotpSecsRef.current = null;
+            setEditTotp(null);
+          }
+        }
+      } catch { if (alive && editSessionRef.current === session) { editTotpSecsRef.current = null; setEditTotp(null); } }
     };
-        tick();
+        void tick();
         const timer = setInterval(() => {
-      setEditTotp((t) => {
-        if (!t) return t;
-        if (t.secs <= 1) { tick(); return t; }
-        return { ...t, secs: t.secs - 1 };
-      });
+      if (!alive || editSessionRef.current !== session) return;
+      const secs = editTotpSecsRef.current;
+      if (secs === null) return;
+      if (secs <= 1) {
+        editTotpSecsRef.current = null;
+        void tick();
+        return;
+      }
+      const nextSecs = secs - 1;
+      editTotpSecsRef.current = nextSecs;
+      setEditTotp((prev) => (prev ? { ...prev, secs: nextSecs } : prev));
     }, 1000);
-        return () => { alive = false; clearInterval(timer); };
-    }, [editId]);
+        return () => { alive = false; editTotpSecsRef.current = null; clearInterval(timer); };
+    }, [editId, editLoadedGeneration]);
     const folders = useMemo<FolderInfo[]>(() => {
         const metadata = new Map(localFolders.map((folder) => [folder.name, folder]));
         return [...new Set([...registeredGroups, ...profiles.map((profile) => profile.group).filter(Boolean)])]
       .map((name) => metadata.get(name) ?? { name });
     }, [localFolders, registeredGroups, profiles]);
     const tree = useMemo(() => folderTree(folders), [folders]);
+    const folderLabels = useMemo(() => new Map(folders.map(folder => [folder.name, folder.label ?? folder.name])), [folders]);
     const groups = useMemo(() => ["all", ...tree.map((folder) => folder.name)], [tree]);
-    const selectedScope = useMemo(() => folderScope(folders, group), [folders, group]);
+    const missingRosterGroup = loaded && group !== "all" && group !== "" && !groups.includes(group) ? group : null;
+    const hasRosterRefinements = !!q.trim() || group !== "all" || profileStatus !== "all";
+    const clearRosterRefinements = () => { setQ(""); setGroup("all"); setProfileStatus("all"); setProfilePage(0); };
+    const selectedScope = useMemo(() => group === "" ? new Set([""]) : folderScope(folders, group), [folders, group]);
 
     const breadcrumb = tree.find((folder) => folder.name === group);
     const selectFolder = (name: string) => { setGroup(name); setView("profiles"); };
-    const folderLabel = (name: string) => folders.find((folder) => folder.name === name)?.label ?? name;
+    const folderLabel = (name: string) => folderLabels.get(name) ?? name;
     /**
      * Every profile's visible "No.", resolved once against the unsorted roster so
      * sorting or paging can never renumber a row underneath the operator.
@@ -1095,10 +1622,13 @@ function App() {
   };
     const matchingProfiles = useMemo(() => {
         return profiles.filter((p) => {
+            if (!inProfileScope(p, rosterScope, favoriteProfileIds)) return false;
             if (group !== "all" && !selectedScope.has(p.group))
                 return false;
-            if (q) {
-        const needle = q.toLowerCase();
+            if (q.trim()) {
+        const exactId = /^id:(\S+)$/.exec(q.trim());
+        if (exactId) return p.id === exactId[1];
+        const needle = q.trim().toLowerCase();
         const no = numbering.get(p.id)?.value ?? "";
         if (
           !p.id.toLowerCase().includes(needle) &&
@@ -1111,13 +1641,14 @@ function App() {
       }
             return true;
         });
-    }, [profiles, group, selectedScope, q, numbering]);
+    }, [profiles, group, selectedScope, q, numbering, rosterScope, favoriteProfileIds]);
     const matchingRunningCount = matchingProfiles.filter((profile) => profile.running).length;
     const filtered = useMemo(() => {
         const matched = matchingProfiles.filter((profile) => profileStatus === "all" || (profileStatus === "running" ? profile.running : !profile.running));
         // Running profiles stay on top regardless of the chosen column: an open
         // browser is the row an operator acts on next.
         return matched.sort((a, b) => {
+      if (rosterScope === "recent" && a.lastOpenAt !== b.lastOpenAt) return (b.lastOpenAt ?? 0) - (a.lastOpenAt ?? 0);
       if (a.running !== b.running) return a.running ? -1 : 1;
       const left = sortField(a, sort.key);
       const right = sortField(b, sort.key);
@@ -1125,19 +1656,22 @@ function App() {
       if (left > right) return sort.dir;
       return a.id.localeCompare(b.id);
     });
-    }, [matchingProfiles, profileStatus, sort, numbering]);
+    }, [matchingProfiles, profileStatus, sort, numbering, rosterScope]);
     const profilePageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
     const visibleProfilePage = Math.min(profilePage, profilePageCount - 1);
     const visibleProfiles = filtered.slice(visibleProfilePage * pageSize, (visibleProfilePage + 1) * pageSize);
     const previousProfileFilters = useRef({ q, group, pageSize, profileStatus });
-    const revealGroupMatches = !!q.trim() || profileStatus !== "all" || group !== "all";
-    const profileSections = useMemo(() => profileGroupSections(
+    const revealGroupMatches = !!q.trim() || profileStatus !== "all" || group !== "all" || rosterScope !== "all";
+    const profileSections = useMemo(() => rosterScope === "recent" ? [{ name: "", orderIndex: 0, profiles: visibleProfiles, matches: filtered, running: filtered.filter(profile => profile.running).length }] : profileGroupSections(
       visibleProfiles,
       filtered,
       tree.filter(folder => group === "all" || selectedScope.has(folder.name)).map(folder => folder.name),
-      visibleProfilePage === 0 && !q.trim() && profileStatus === "all",
-    ), [visibleProfiles, filtered, tree, group, selectedScope, visibleProfilePage, q, profileStatus]);
+      visibleProfilePage === 0 && !q.trim() && profileStatus === "all" && rosterScope === "all",
+    ), [visibleProfiles, filtered, tree, group, selectedScope, visibleProfilePage, q, profileStatus, rosterScope]);
     const selectableProfiles = profileSections.flatMap(section => profileGroupCollapsed(section, groupDisclosure, revealGroupMatches) ? [] : section.profiles);
+    const rangeVisibleIds = selectableProfiles.map(profile => profile.id);
+    const rangeViewKey = JSON.stringify([catalog?.currentId ?? "", view, rosterScope, q, group, profileStatus, sort.key, sort.dir, visibleProfilePage, pageSize]);
+    rangeSelectionAnchor.current = reconcileProfileSelectionAnchor(rangeSelectionAnchor.current, rangeViewKey, rangeVisibleIds);
     const saveGroupDisclosure = (next: Map<string, boolean>) => {
       const value = serializeGroupDisclosure(next);
       setGroupDisclosure(readGroupDisclosure(value));
@@ -1149,12 +1683,22 @@ function App() {
       next.set(name, !collapsed);
       saveGroupDisclosure(next);
     };
-    const editSerial = editId ? profiles.find((profile) => profile.id === editId)?.serial ?? null : null;
-    const editRunning = editId ? profiles.find((profile) => profile.id === editId)?.running === true : false;
     const createHasProxy = !!(form.host.trim() || form.port.trim() || form.user.trim() || form.pass);
+    const createProxyIssue = proxyPaste.trim() ? { field: "proxyPaste", message: proxyPasteInvalid ? "This proxy could not be filled in. Check the format and try again." : "Use Autofill to apply the pasted proxy, or clear it before creating this environment." }
+      : createHasProxy && !form.host.trim() ? { field: "host", message: "Enter the proxy host, or clear the proxy fields to create without a profile proxy." } : null;
+    const createProxyFeedback = (field: string): EditorFieldFeedback => ({ field, invalid: createProxyIssue?.field === field, describedBy: "profile-create-validation-error" });
+    const locateCreateProblem = () => {
+      const editor = createEditorRef.current;
+      if (!editor) return;
+      if (createProxyIssue) setCreateProxyOpen(true);
+      const invalidField = editor.querySelector<HTMLElement>('[data-profile-field][aria-invalid="true"]');
+      focusEditorTarget(invalidField ?? editor.querySelector<HTMLElement>(".profile-create-error"), editorScroll);
+    };
+    const createProxyHost = form.host.trim();
+    const createProxyEndpoint = form.port ? `${createProxyHost.includes(":") && !createProxyHost.startsWith("[") ? `[${createProxyHost}]` : createProxyHost}:${form.port}` : createProxyHost;
     const editHasProxy = !!(editForm.proxy ?? "").trim();
     const editProxyChanged = (editForm.proxy ?? "") !== editInitialProxy.proxy ||
-    (editHasProxy && editForm.proxyType !== editInitialProxy.proxyType);
+    (editHasProxy && editForm.proxyType !== editInitialProxy.proxyType) || editClearQuarantinedProxy;
     const pastedRecordCount = bulkText.trim() ? countPastedRecords(bulkText) : null;
     const folderMenuRef = useDismiss<HTMLSpanElement>(folderMenu !== null, () => setFolderMenu(null));
     const colsRef = useDismiss<HTMLDivElement>(colsOpen, () => setColsOpen(false));
@@ -1178,11 +1722,13 @@ function App() {
     try { document.cookie = themeCookie(choice); } catch {}
   };
 
-    const toggleSidebar = () =>
-    setSidebarCollapsed((collapsed) => {
-      writeSetting(SIDEBAR_KEY, collapsed ? "0" : "1");
-      return !collapsed;
-    });
+    const toggleSidebar = () => {
+      sidebarChoice.current = { workspaceId: workspaceCoordinator.getSnapshot().workspaceId };
+      setSidebarCollapsed((collapsed) => {
+        writeSetting(SIDEBAR_KEY, collapsed ? "0" : "1");
+        return !collapsed;
+      });
+    };
     const toggleSort = (key: SortKey) =>
     setSort((current) => (current.key === key ? { key, dir: current.dir === 1 ? -1 : 1 } : { key, dir: 1 }));
     const refreshRoster = async () => {
@@ -1194,6 +1740,11 @@ function App() {
             setRefreshing(false);
         }
     };
+    const profileMetrics = useProfileMetrics(profiles, selected);
+    const profilesById = profileMetrics.profilesById;
+    const editProfileRow = editId ? profilesById.get(editId) : undefined;
+    const editSerial = editProfileRow?.serial ?? null;
+    const editRunning = editProfileRow?.running === true;
     useEffect(() => {
     const previous = previousProfileFilters.current;
     const filtersChanged = previous.q !== q || previous.group !== group || previous.pageSize !== pageSize || previous.profileStatus !== profileStatus;
@@ -1203,12 +1754,22 @@ function App() {
     const nextPage = filtersChanged ? 0 : visibleProfilePage;
     if (profilePage !== nextPage) setProfilePage(nextPage);
   }, [q, group, pageSize, profileStatus, profilePage, visibleProfilePage]);
-    const runningCount = profiles.filter((p) => p.running).length;
-    const selectedMobileCount = profiles.filter((p) => selected.has(p.id) && p.mobilePersona).length;
+    const runningCount = profileMetrics.runningCount;
+    const selectedMobileCount = profileMetrics.selectedMobileCount;
     const existingGroups = groups.slice(1); // drop the "all" pseudo-group
 
-    const selectedProfilesSupportChromeExtensions = [...selected].every((id) =>
-    profiles.find((profile) => profile.id === id)?.engine === "chromium");
+    const selectedProfilesSupportChromeExtensions = profileMetrics.selectedProfilesSupportChromeExtensions;
+    const rosterViewCounts = useMemo(() => {
+      let favorites = 0;
+      let recent = 0;
+      let attention = 0;
+      for (const profile of profiles) {
+        if (favoriteProfileIds.has(profile.id)) favorites += 1;
+        if (inProfileScope(profile, "recent", favoriteProfileIds)) recent += 1;
+        if (inProfileScope(profile, "attention", favoriteProfileIds)) attention += 1;
+      }
+      return { all: profiles.length, favorites, recent, attention };
+    }, [profiles, favoriteProfileIds]);
     const folderCounts = useMemo(() => {
     const counts = new Map<string, number>();
     const byName = new Map(tree.map((folder) => [folder.name, folder]));
@@ -1218,36 +1779,30 @@ function App() {
     return counts;
   }, [tree, profiles]);
     const countFor = (g: string) => folderCounts.get(g) ?? 0;
-    const editableDefaultGroups = groupExtensionDefaults;
     const installedExtensionIds = new Set(extensions.map((item) => item.id));
-    const storedGroupDefaultExts = groupExtensionDefaults.find((item) => item.name === groupDefaultName)?.extensions ?? [];
     const editExtensionChoices = [
     ...extensions.map((item) => ({ ...item, missing: false })),
     ...[...new Set([...editInitialExts, ...editExts])]
       .filter((id) => !installedExtensionIds.has(id))
       .map((id) => ({ id, name: id, missing: true })),
   ];
-    const groupDefaultExtensionChoices = [
-    ...extensions.map((item) => ({ ...item, missing: false })),
-    ...[...new Set([...storedGroupDefaultExts, ...groupDefaultExts])]
-      .filter((id) => !installedExtensionIds.has(id))
-      .map((id) => ({ id, name: id, missing: true })),
-  ];
-    const groupDefaultProfileCount = profiles.filter((profile) => profile.group === groupDefaultName).length;
-    const toggle = (id: string) =>
-    setSelected((s) => {
-      const n = new Set(s);
-      if (n.has(id)) n.delete(id);
-      else n.add(id);
-      return n;
-    });
+    const changeProfileSelection = (id: string, event: React.ChangeEvent<HTMLInputElement>) => {
+      const keyboard = rangeKeyboardActivation.current;
+      rangeKeyboardActivation.current = null;
+      const result = changeProfileRangeSelection({ selected: latestSelection.current, visibleIds: rangeVisibleIds,
+        viewKey: rangeViewKey, anchor: rangeSelectionAnchor.current, id, checked: event.currentTarget.checked,
+        shiftKey: !!(event.nativeEvent as MouseEvent).shiftKey || keyboard?.id === id && keyboard.shiftKey });
+      rangeSelectionAnchor.current = result.anchor;
+      latestSelection.current = result.selected;
+      setSelected(result.selected);
+    };
     const allVisibleSelected = selectableProfiles.length > 0 && selectableProfiles.every((p) => selected.has(p.id));
     const selectedFilteredCount = filtered.filter((p) => selected.has(p.id)).length;
     const selectedOutsideFilter = selected.size - selectedFilteredCount;
     const allFilteredSelected = filtered.length > 0 && selectedFilteredCount === filtered.length && selectedOutsideFilter === 0;
-    const selectionKind = q ? t("matching profiles") : t("profiles");
+    const selectionKind = q.trim() ? t("matching profiles") : t("profiles");
     const selectionScope = group === "all"
-      ? `${filtered.length.toLocaleString()} ${selectionKind}`
+      ? t("{count} {kind}", { count: filtered.length.toLocaleString(), kind: selectionKind })
       : t("{count} {kind} in “{group}”", { count: filtered.length.toLocaleString(), kind: selectionKind, group });
     const selectAllFiltered = () => setSelected(new Set(filtered.map((p) => p.id)));
     const toggleAll = () =>
@@ -1257,48 +1812,54 @@ function App() {
       else selectableProfiles.forEach((p) => n.add(p.id));
       return n;
     });
-    const moveSelected = async () => {
-        const ids = [...selected];
-        const group = newMode ? newGroup.trim() : moveTarget;
-        if (ids.length === 0 || !group) return;
-        setActionErr(null);
-        try {
-            const r = await moveProfiles(ids, group);
-            if (r.ok === false) {
-        setActionErr(r.error || "move failed");
-        return;
+    const completeMove = (result: ProfileMoveResult | null, selection: Set<string>, draftRevision: number) => {
+      if (!result || !bulkOwnerActive.current || !result.confirmedIds.length) return;
+      const unchangedSelection = latestSelection.current === selection;
+      const confirmed = new Set(result.confirmedIds);
+      setSelected(current => current === selection ? new Set([...current].filter(id => !confirmed.has(id))) : current);
+      if (unchangedSelection && !result.unresolvedIds.length && moveDraftRevision.current === draftRevision && (newMode ? newGroup.trim() : moveTarget) === result.attempt.group) {
+        moveDraftRevision.current++; setNewMode(false); setNewGroup(""); setMoveTarget(null);
       }
-            setSelected(new Set());
-            setNewMode(false);
-            setNewGroup("");
-            setMoveTarget("");
-            await load();
-        }
-        catch (e) {
-            setActionErr(String(e));
-        }
+    };
+    const runMoveAction = async (action: () => Promise<ProfileMoveResult | null>) => {
+      if (moveUiInFlight.current || profileMove.busy) return;
+      const selection = latestSelection.current, revision = moveDraftRevision.current;
+      moveUiInFlight.current = true; setActionErr(null);
+      try { completeMove(await action(), selection, revision); }
+      catch { if (bulkOwnerActive.current) setActionErr(t("The move could not be confirmed. Check the result before trying again.")); }
+      finally { moveUiInFlight.current = false; }
+    };
+    const moveSelected = () => {
+      const ids = [...selected], destination = newMode ? newGroup.trim() : moveTarget;
+      if (ids.length && destination !== null && (!newMode || !!destination)) void runMoveAction(() => profileMove.submit({ ids, group: destination }));
     };
     const deleteSelected = async () => {
         const ids = [...selected];
         if (ids.length === 0 || deleteInFlight.current) return;
-        if (!confirm(t("Move all {count} selected environments to Trash? This includes every selected page. You can restore them with their saved data.", { count: ids.length.toLocaleString() })))
-            return;
+        const confirmed = await requestConfirm({
+          title: t("Move to Trash"),
+          message: t("Move all {count} selected environments to Trash? This includes every selected page. You can restore them with their saved data.", { count: ids.length.toLocaleString() }),
+          confirmLabel: t("Move to Trash"),
+          cancelLabel: t("Cancel"),
+          tone: "danger",
+        });
+        if (!confirmed || deleteInFlight.current) return;
         deleteInFlight.current = true;
         setDeleting(true);
         setActionErr(null);
         try {
             const r = await deleteProfiles(ids);
             if (r.ok === false) {
-        setActionErr(r.error || "delete failed");
+        setActionErr(r.error || t("Delete failed"));
         return;
       }
             const problems = [
-        r.locked?.length && `${r.locked.length} in use, not deleted`,
-        r.failed?.length && `${r.failed.length} failed`,
+        r.locked?.length && t("{count} in use, not deleted", { count: r.locked.length }),
+        r.failed?.length && t("{count} failed", { count: r.failed.length }),
       ].filter(Boolean);
-            if (problems.length) setActionErr(`${problems.join("; ")}. These profiles remain selected.`);
+            if (problems.length) setActionErr(t("{problems}. These profiles remain selected.", { problems: problems.join("; ") }));
             setSelected(new Set([...(r.locked ?? []), ...(r.failed ?? [])]));
-            flash(`${r.deleted.toLocaleString()} profiles ${"moved to Trash"}`);
+            flash(t("{count} profiles moved to Trash", { count: r.deleted.toLocaleString() }));
             await load();
         }
         catch (e) {
@@ -1309,44 +1870,65 @@ function App() {
             setDeleting(false);
         }
     };
-    const actionWarning = (r: any): string => r.warning ?? "";
-
+    const setLaunchFailure = (id: string, message: string | null) => {
+      setLaunchFailureState(previous => {
+        const current = previous.workspaceId === currentWorkspaceId ? previous.byId : null;
+        if (message === null && !current?.has(id)) return previous;
+        const byId = new Map(current);
+        if (message === null) byId.delete(id);
+        else byId.set(id, message);
+        return { workspaceId: currentWorkspaceId, byId };
+      });
+    };
     const act = async (id: string, fn: (id: string) => Promise<any>) => {
-    setActionErr(null);
-    setBusy((b) => ({ ...b, [id]: true }));
-    try {
-      const r = await fn(id);
-      await load(); // refresh first; load() no longer clears action errors
-      if (r && r.ok === false) setActionErr(r.error || "action failed");
-      else if (r && r.warning) setActionErr(actionWarning(r));
-    } catch (e) {
-      await load().catch(() => {});
-      setActionErr(String(e));
-    } finally {
-      setBusy((b) => ({ ...b, [id]: false }));
-    }
-  };
+      if (busy[id] || manualActions.current.has(id)) return;
+      const starting = fn === openProfile || fn === restartProfile;
+      const workspaceId = workspaceCoordinator.getSnapshot().workspaceId;
+      const ownsResult = () => bulkOwnerActive.current && workspaceCoordinator.getSnapshot().workspaceId === workspaceId;
+      const recordFailure = (message: string) => {
+        if (starting && lastRosterResult.current?.profiles.some(profile => profile.id === id && !profile.running)) setLaunchFailure(id, message);
+        else setActionErr(message);
+      };
+      manualActions.current.add(id);
+      setActionErr(null);
+      setBusy(current => ({ ...current, [id]: true }));
+      try {
+        const result = await fn(id);
+        if (!ownsResult()) return;
+        await load();
+        if (!ownsResult()) return;
+        if (result?.ok === false) recordFailure(typeof result.error === "string" && result.error ? result.error : "action failed");
+        else {
+          if (starting) setLaunchFailure(id, null);
+          if (typeof result?.warning === "string" && result.warning) setActionErr(result.warning);
+        }
+      } catch (error) {
+        if (ownsResult()) await load().catch(() => {});
+        if (ownsResult()) recordFailure(error instanceof Error ? error.message : String(error));
+      } finally {
+        manualActions.current.delete(id);
+        if (bulkOwnerActive.current) setBusy(current => {
+          const next = { ...current };
+          delete next[id];
+          return next;
+        });
+      }
+    };
     /** While a profile opens, its Open button shows the browser download it waits for. */
     const openLabel = (profile: UiProfile) => {
-    if (!busy[profile.id]) return t("Start");
-    const waiting = profileDownloads(profile, runtimeDownloads);
+    if (!busy[profile.id]) return t(launchFailures?.has(profile.id) ? "Retry" : "Start");
+    const waiting = profileDownloads(profile, runtimeDownloadsStale ? [] : runtimeDownloads);
     return waiting.length > 0
-      ? t("Downloading browser… {percent}%", { percent: String(downloadPercent(waiting)) })
+      ? runtimeDownloadLabel(waiting, t)
       : t("Opening…");
   };
 
-    const openCookie = (targets: UiProfile[]) => {
-    setCookieTargets(targets);
-    setCookieForm({ ...BLANK_COOKIE_FORM, domain: targets.length === 1 ? targets[0]!.platform : "" });
-    setCookieText("");
-    setCookieErr(null);
-  };
-    const closeCookie = () => {
-    setCookieTargets(null);
-    setCookieForm(BLANK_COOKIE_FORM);
-    setCookieText("");
-    setCookieErr(null);
-  };
+    const openCookie = (targets: UiProfile[]) => { setCookieTargets([...targets]); };
+    const closeCookie = () => { setCookieTargets(null); };
+    const showCookieImportTask = () => {
+      setView("profiles");
+      requestAnimationFrame(() => { cookieTaskPanelRef.current?.focus({ preventScroll: true }); cookieTaskPanelRef.current?.scrollIntoView({ block: "nearest", behavior: "auto" }); });
+    };
     const openPendingCookies = async (profile: UiProfile) => {
     setPendingView({ profile, cookies: null, error: null, busy: false });
     try {
@@ -1369,68 +1951,53 @@ function App() {
       setPendingView((view) => view && { ...view, busy: false, error: error instanceof Error ? error.message : t("Cookies could not be removed.") });
     }
   };
-    const setCookieField = (key: keyof typeof BLANK_COOKIE_FORM, value: string) =>
-    setCookieForm((current) => ({ ...current, [key]: value }));
-    const submitCookie = async () => {
-    if (!cookieTargets) return;
-    setCookieSaving(true);
-    setCookieErr(null);
-    try {
-      const result = await addProfileCookies(cookieTargets.map((profile) => profile.id), cookieText.trim() ? { text: cookieText } : cookieForm);
-      await load().catch(() => {});
-      if (result.errors?.length) {
-        const names = new Map(cookieTargets.map((profile) => [profile.id, profile.name]));
-        setCookieErr(result.errors.map((item) => `${names.get(item.id) ?? item.id}: ${item.error}`).join("\n"));
-        return;
+    const importProfiles = async (files: File[], assign: { group?: string; platform?: string } | undefined, reportError: (message: string | null) => void): Promise<boolean> => {
+      if (!files.length) return false;
+      if (importInFlight.current) { reportError(t("An import is already in progress. Wait for its result before importing again.")); return false; }
+      const lease = workspaceCoordinator.acquire("profile-import", catalog?.currentId);
+      if (!lease) { reportError(t(workspaceOperationMessage(workspaceCoordinator.getSnapshot()))); return false; }
+      importInFlight.current = true; setImportBusy(true); reportError(null);
+      try {
+        const response = await uploadExports(files, assign);
+        const receipt = createImportReceipt(response);
+        if (!bulkOwnerActive.current) return false;
+        setImportReceipt(receipt); setImportReceiptExpanded(receipt.issues.length > 0); setImportReceiptRefreshing(true);
+        workspaceCoordinator.setPhase(lease, "refreshing");
+        const refreshed = await Promise.allSettled([refreshImportedProfiles(), workspaceCoordinator.refreshWorkspaceViews(lease)]);
+        if (bulkOwnerActive.current && refreshed.some(result => result.status === "rejected")) setActionErr(t("Import completed, but the environment list could not refresh. Refresh the list to see the saved result."));
+        return true;
+      } catch (error) {
+        if (bulkOwnerActive.current) {
+          reportError(t(error instanceof ImportReceiptError ? error.message : "The import could not be confirmed. Refresh environments before trying again."));
+          if (error instanceof ImportReceiptError && error.kind === "invalid") await load().catch(() => {});
+        }
+        return false;
+      } finally {
+        workspaceCoordinator.release(lease); importInFlight.current = false;
+        if (bulkOwnerActive.current) { setImportBusy(false); setImportReceiptRefreshing(false); }
       }
-      if (!result.ok) {
-        setCookieErr(result.error || t("Cookies could not be added."));
-        return;
-      }
-      closeCookie();
-      flash(t("{count} cookie(s) added: {now} open browser(s) now, {later} profile(s) at next start.", {
-        count: String(result.count ?? 0), now: String(result.live ?? 0), later: String(result.nextStart ?? 0),
-      }));
-    } catch (error) {
-      setCookieErr(error instanceof Error ? error.message : t("Cookies could not be added."));
-    } finally {
-      setCookieSaving(false);
-    }
-  };
-    const doUpload = async (files: FileList | File[]) => {
-    setActionErr(null);
-    try {
-      const list = Array.from(files);
-      if (list.length === 0) return;
-      const r = await uploadExports(list);
-      await load();
-      if (r.ok) {
-        const issues = r.errors?.length ? ` Reported ${r.errors.length} invalid record(s); invalid proxies were quarantined for repair.` : "";
-        alert(`Imported ${r.profiles} profile(s) from ${r.files} file(s).${issues}`);
-      }
-      else setActionErr(r.error || "import failed");
-    } catch (e) {
-      setActionErr(String(e));
-    }
-  };
+    };
+    const doUpload = async (files: FileList | File[]) => { await importProfiles(Array.from(files), undefined, setActionErr); };
     // ---- Bulk add accounts from provider export files or AdsPower text ----
     const openBulk = () => {
+        if (importInFlight.current) { setActionErr(t("An import is already in progress. Wait for its result before importing again.")); return; }
         setBulkFiles([]);
         setBulkText("");
-        setBulkGroup(group !== "all" ? group : "");
+        setBulkGroup("");
         setBulkPlatform("");
         setBulkErr(null);
         setBulkSource("file");
         setShowBulk(true);
     };
     const closeBulk = () => {
+    if (importInFlight.current) return;
     setShowBulk(false);
     setBulkFiles([]);
     setBulkText("");
     setBulkErr(null);
   };
     const submitBulk = async () => {
-        if ((!bulkFiles.length && !bulkText.trim()))
+        if (importInFlight.current || (!bulkFiles.length && !bulkText.trim()))
             return;
         setBulkBusy(true);
         setBulkErr(null);
@@ -1438,22 +2005,13 @@ function App() {
             const uploads = [...bulkFiles];
             if (bulkText.trim()) uploads.push(new File([bulkText], "pasted-adspower.txt", { type: "text/plain" }));
             if (!uploads.length) throw new Error("no rows found in the file(s)");
-            const r = await uploadExports(uploads, { group: bulkGroup.trim(), platform: bulkPlatform });
-            if (r.ok) {
-                closeBulk();
-                await load();
-
-                const issues = r.errors?.length ? ` Reported ${r.errors.length} invalid record(s); invalid proxies were quarantined for repair.` : "";
-                alert(`Imported ${r.profiles} profile(s) from ${r.files} file(s).${issues}`);
-            }
-            else
-                setBulkErr(r.error || "import failed");
+            if (await importProfiles(uploads, { group: bulkGroup.trim(), platform: bulkPlatform }, setBulkErr)) closeBulk();
         }
         catch (e) {
-            setBulkErr(String(e));
+            if (bulkOwnerActive.current) setBulkErr(t("The import could not be confirmed. Refresh environments before trying again."));
         }
         finally {
-            setBulkBusy(false);
+            if (bulkOwnerActive.current) setBulkBusy(false);
         }
     };
     const resetCreateProxyCheck = () => {
@@ -1461,35 +2019,89 @@ function App() {
     setCreateProxyCheck(EMPTY_PROXY_CHECK);
   };
     const setF = (k: keyof typeof BLANK_FORM, v: string) => {
+    if (createInFlight.current) return;
     if (k === "proxyType" || k === "host" || k === "port" || k === "user" || k === "pass") {
       resetCreateProxyCheck();
     }
+    if (k === "proxyType" || k === "host" || k === "port") setCreateProxySource(null);
     setForm((f) => ({ ...f, [k]: v }));
   };
     // Open prefilled with the folder you're browsing; close always resets so a
     // cancelled draft never leaks into the next open.
-    const openCreate = () => {
+    function cancelReuseRead() {
+      reuseGeneration.current++;
+      reuseRead.current?.controller.abort();
+      reuseRead.current = null;
+      setReuseRequest(null);
+    }
+    const beginCreate = (proxy?: LocalProxyDraftCandidate, trigger?: HTMLButtonElement, reuse?: ReusableProfileSettings) => {
+        if (showCreate || createInFlight.current || editSessionRef.current) return false;
+        createCloseGuard.reset();
+        cancelReuseRead();
+        createReturnFocus.current = trigger ?? null;
         resetCreateProxyCheck();
-        setForm({ ...BLANK_FORM, engine: appMode?.defaultEngine ?? "chromium", chromiumRuntime: appMode?.defaultChromiumRuntime ?? "", group: group !== "all" ? group : "" });
+        const draft: typeof BLANK_FORM = { ...BLANK_FORM, engine: appMode?.defaultEngine ?? "chromium", chromiumRuntime: appMode?.defaultChromiumRuntime ?? "", group: group !== "all" ? group : "" };
+        if (reuse) Object.assign(draft, { name: t("{name} copy", { name: reuse.name || reuse.sourceId }), group: reuse.group, engine: reuse.engine,
+          chromiumRuntime: reuse.engine === "chromium" && reuse.chromiumRuntime === "aliasmode" ? "aliasmode" : "",
+          platformOs: reuse.platformOs, screen: reuse.screen, platform: reuse.platform });
+        else if (proxy) Object.assign(draft, { proxyType: proxy.type, host: proxy.host, port: String(proxy.port) });
+        initialCreateForm.current = draft;
+        setForm(draft);
+        setCreateReuseSource(reuse ?? null);
+        setCreateProxySource(reuse ? null : proxy ?? null);
         setProxyPaste("");
         setProxyPasteOk(null);
+        setProxyPasteInvalid(false);
         setCreateErr(null);
         // A first profile needs no proxy, so the section starts closed until profiles use one.
-        setCreateProxyOpen(profiles.some((profile) => !!profile.proxy));
+        setCreateProxyOpen(reuse ? false : !!proxy || profiles.some((profile) => !!profile.proxy));
         setShowCreate(true);
+        return true;
     };
-    const closeCreate = () => {
+    const reuseProfileConfiguration = async (id: string, name: string) => {
+      if (!reuseCanOpenRef.current || createInFlight.current || editSessionRef.current || reuseRead.current?.id === id) return;
+      cancelReuseRead();
+      const request = { id, generation: ++reuseGeneration.current, controller: new AbortController() };
+      reuseRead.current = request;
+      setReuseRequest({ id, name, status: "loading" });
+      const owns = () => reuseRead.current === request && request.generation === reuseGeneration.current && !request.controller.signal.aborted;
+      try {
+        const source = await fetchReusableProfile(id, request.controller.signal);
+        if (!owns() || !reuseCanOpenRef.current || createInFlight.current || editSessionRef.current) return;
+        const row = [...document.querySelectorAll<HTMLTableRowElement>("tr[data-profile-id]")].find(item => item.dataset.profileId === id);
+        const trigger = row?.querySelector<HTMLButtonElement>(".profile-menu-trigger") ?? document.querySelector<HTMLButtonElement>(".profiles-workspace .page-actions .btn.primary") ?? undefined;
+        beginCreate(undefined, trigger, source);
+      } catch (error) {
+        if (owns() && reuseCanOpenRef.current) setReuseRequest({ id, name, status: "failed", error: error instanceof Error ? error.message : "The source configuration could not be loaded." });
+      } finally {
+        if (owns()) { reuseRead.current = null; setReuseRequest(current => current?.status === "loading" ? null : current); }
+      }
+    };
+    const openCreate = () => beginCreate();
+    const finishCloseCreate = () => {
+    if (createInFlight.current) return;
+    cancelReuseRead();
     resetCreateProxyCheck();
     setShowCreate(false);
+    setCreateProxySource(null);
+    setCreateReuseSource(null);
     setForm(BLANK_FORM);
     setProxyPaste("");
     setProxyPasteOk(null);
+    setProxyPasteInvalid(false);
     setCreateErr(null);
   };
+    const closeCreate = () => {
+      if (createInFlight.current || !showCreate) return;
+      const dirty = (Object.keys(BLANK_FORM) as Array<keyof typeof BLANK_FORM>).some(key => form[key] !== initialCreateForm.current[key]) || !!proxyPaste;
+      createCloseGuard.requestClose({ dirty, onDiscard: finishCloseCreate });
+    };
     const applyProxyPaste = (raw: string) => {
+    if (!raw.trim()) return;
     try {
       const parsed = parsePastedProxy(raw, form.proxyType === "socks5" ? "socks5" : "http");
       resetCreateProxyCheck();
+      setCreateProxySource(null);
       setForm((current) => ({
         ...current,
         proxyType: parsed.type,
@@ -1499,11 +2111,13 @@ function App() {
         pass: parsed.pass,
       }));
       setProxyPaste("");
+      setProxyPasteInvalid(false);
       setProxyPasteOk(`✓ ${parsed.type.toUpperCase()} proxy fields filled`);
       setCreateErr(null);
-    } catch (error) {
+    } catch {
       setProxyPasteOk(null);
-      setCreateErr(error instanceof Error ? error.message : String(error));
+      setProxyPaste(raw);
+      setProxyPasteInvalid(true);
     }
   };
     const checkCreateProxy = async () => {
@@ -1536,13 +2150,15 @@ function App() {
     }
   };
     const submitCreate = async () => {
+        if (createInFlight.current || createProxyIssue) return;
+        createInFlight.current = true;
         setCreating(true);
         setCreateErr(null);
         try {
             const r = await createProfile({
                 name: form.name,
                 engine: form.engine,
-                ...(form.engine === "chromium" ? { chromiumRuntime: form.chromiumRuntime || "cloakbrowser" } : {}),
+                ...(createRuntimeInput ? { chromiumRuntime: createRuntimeInput } : {}),
                 group: form.group,
                 platform: form.platform,
                 screen: form.screen,
@@ -1559,8 +2175,9 @@ function App() {
         const next = new Map(groupDisclosure);
         next.set(form.group, false);
         saveGroupDisclosure(next);
-        closeCreate();
         await load();
+        createInFlight.current = false;
+        finishCloseCreate();
       } else {
         setCreateErr(r.error || "create failed"); // shown inside the modal
       }
@@ -1569,6 +2186,7 @@ function App() {
             setCreateErr(String(e));
         }
         finally {
+            createInFlight.current = false;
             setCreating(false);
         }
     };
@@ -1578,36 +2196,26 @@ function App() {
     setEditProxyCheck(EMPTY_PROXY_CHECK);
   };
     const setEF = (k: string, v: string) => {
+    if (editSaveInFlight.current || !editSessionRef.current?.ready) return;
     if (k === "proxy" || k === "proxyType") {
       resetEditProxyCheck();
       setTimezoneBusy(false);
     }
     setEditForm((f) => ({ ...f, [k]: v }));
   };
-    // The dialog opens on the click; the detail fetch fills it in when it lands.
-    // The ref discards a stale response if the operator has moved on meanwhile.
-    const openEdit = (id: string) => {
-    resetEditProxyCheck();
-    setActionErr(null);
-    editFetchId.current = id;
-    setEditId(id);
-    setEditForm({});
-    setEditInitialFingerprint({});
-    setEditExts([]);
-    setEditInitialExts([]);
-    setEditMobile(null);
-
-    setEditEngine(null);
-    setEditChromiumRuntime("");
-    setEditHardware(undefined);
-    setTimezoneBusy(false);
+    // A retry and a reopened copy of the same profile each receive a new token.
+    const loadEditedProfile = async (id: string) => {
+    if (editSaveInFlight.current || editSessionRef.current?.loading) return;
+    const session = { id, generation: ++editSessionSequence.current, loading: true, ready: false };
+    editSessionRef.current = session;
+    setEditLoadedGeneration(null);
     setEditErr(null);
     setEditLoading(true);
-    void (async () => {
       try {
         const p: EditProfile = await fetchProfileEdit(id);
-        if (editFetchId.current !== id) return;
-        setEditForm({
+        if (editSessionRef.current !== session) return;
+        if (!validEditDetail(p, id)) throw new Error("The local service returned incomplete profile details. Retry before editing.");
+        const loadedForm = {
           name: p.name, group: p.group, platform: p.platform,
           proxyType: p.proxyType || "http", proxy: p.proxy,
           proxyError: p.proxyError ?? "",
@@ -1620,7 +2228,10 @@ function App() {
           locale: p.locale ?? "",
           cores: p.cores ?? "",
           fingerprintSeed: p.fingerprintSeed ?? "",
-        });
+        };
+        setEditForm(loadedForm);
+        setEditSnapshot(captureProfileEditSnapshot({ form: loadedForm, extensions: p.extensions ?? [], engine: p.engine === "firefox" ? "firefox" : "chromium", timezoneManual: !!p.timezoneManual, proxyQuarantined: !!p.proxyError }));
+        setEditClearQuarantinedProxy(false);
         setEditInitialProxy({ proxy: p.proxy, proxyType: p.proxyType || "http" });
         setEditInitialFingerprint({
           resolution: p.resolution, platformOs: p.platformOs ?? "", timezone: p.timezone ?? "",
@@ -1632,17 +2243,62 @@ function App() {
         setEditExts(p.extensions ?? []);
         setEditInitialExts(p.extensions ?? []);
         setEditMobile(p.desktopConversion ?? null);
-
+        session.ready = true;
+        setEditLoadedGeneration(session.generation);
       } catch (e) {
-        if (editFetchId.current === id) setEditErr(String(e));
+        if (editSessionRef.current === session) setEditErr(e instanceof Error ? e.message : String(e));
       } finally {
-        if (editFetchId.current === id) setEditLoading(false);
+        if (editSessionRef.current === session) { session.loading = false; setEditLoading(false); }
       }
-    })();
   };
-    const closeEdit = () => {
+    const refreshQualityAfterEdit = () => {
+    // The report's edit button can be disabled while its new evidence loads.
+    if (view === "settings" && settingsTab === "fingerprints") editReturnFocus.current = document.getElementById("settings-tab-fingerprints");
+    if (view === "inspection") editReturnFocus.current = document.getElementById("inspection-page-title");
+    setFingerprintRefreshVersion(version => version + 1);
+  };
+    const explainFingerprint = (report: FingerprintReport) => {
+    if (editSessionRef.current) return;
+    const text = buildFingerprintAssistantBrief(report, t);
+    setAssistantDraftSuggestion({ id: ++assistantDraftSequence.current, text, source: {
+      title: t("Inspection for {profile}", { profile: report.name || t("Unnamed profile") }),
+      description: t("Review the selected fingerprint findings, then return to the report to verify your changes."),
+      returnKey: report.profileId,
+    } });
+    setView("assistant");
+  };
+    // The dialog opens immediately, but can save only validated details from this session.
+    const openEdit = (id: string, field?: InspectionEditField, trigger?: HTMLButtonElement) => {
+    if (busy[id]) { setActionErr(t("Wait for the current environment action to finish before editing it.")); return; }
+    if (editSaveInFlight.current) return;
+    cancelReuseRead();
+    editReturnFocus.current = trigger ?? null;
+    editFieldOnOpen.current = field ?? null;
+    editCloseGuard.reset();
     resetEditProxyCheck();
-    editFetchId.current = null;
+    setActionErr(null);
+    editSessionRef.current = null;
+    setEditLoadedGeneration(null);
+    setEditId(id);
+    setEditForm({});
+    setEditSnapshot(null); setEditClearQuarantinedProxy(false);
+    setEditInitialFingerprint({});
+    setEditExts([]);
+    setEditInitialExts([]);
+    setEditMobile(null);
+    setEditTotp(null);
+    setEditEngine(null);
+    setEditChromiumRuntime("");
+    setEditHardware(undefined);
+    setTimezoneBusy(false);
+    void loadEditedProfile(id);
+  };
+    const finishCloseEdit = () => {
+    if (editSaveInFlight.current) return;
+    editFieldOnOpen.current = null;
+    resetEditProxyCheck();
+    editSessionRef.current = null;
+    setEditLoadedGeneration(null);
     setEditId(null);
 
     setEditEngine(null);
@@ -1650,14 +2306,24 @@ function App() {
     setEditHardware(undefined);
     setTimezoneBusy(false);
     setEditLoading(false);
+    setEditSaving(false);
     setEditForm({});
+    setEditSnapshot(null); setEditClearQuarantinedProxy(false);
     setEditInitialFingerprint({});
     setEditExts([]);
     setEditInitialExts([]);
     setEditErr(null);
     setEditMobile(null);
+    setEditTotp(null);
   };
+    const closeEdit = () => {
+      if (editSaveInFlight.current || !editSessionRef.current) return;
+      const dirty = !!editSnapshot && (PROFILE_EDIT_FORM_FIELDS.some(field => editForm[field] !== editSnapshot.form[field])
+        || !sameExtensionSelection(editExts, [...editSnapshot.extensions]) || editClearQuarantinedProxy);
+      editCloseGuard.requestClose({ dirty, onDiscard: finishCloseEdit });
+    };
     const checkEditedProxy = async () => {
+    if (!editSessionRef.current?.ready || editSaveInFlight.current) return;
     const generation = ++editProxyCheckGeneration.current;
     const value = editForm.proxy ?? "";
     if (editForm.proxyType === "https" || /^\s*https:\/\//i.test(value)) {
@@ -1690,154 +2356,206 @@ function App() {
     }
   };
     const refreshEditedTimezone = async () => {
-    if (!editId || editProxyChanged || timezoneBusy || editSaving || editForm.proxyError  || !confirm(t(FINGERPRINT_EDIT_WARNING))) return;
+    const session = editSessionRef.current;
+    if (!editId || !editReady || !session?.ready || editSaveInFlight.current || editProxyChanged || timezoneBusy || editForm.proxyError) return;
+    const confirmed = await requestConfirm({
+      title: t("Confirm fingerprint change"),
+      message: t(FINGERPRINT_EDIT_WARNING),
+      confirmLabel: t("Continue"),
+      cancelLabel: t("Cancel"),
+    });
+    if (!confirmed || editSessionRef.current !== session || editSaveInFlight.current || timezoneBusy) return;
     const id = editId;
     const generation = editProxyCheckGeneration.current;
+    editSaveInFlight.current = true;
     setTimezoneBusy(true);
     setEditErr(null);
     try {
       const { timezone, locale } = await refreshProfileTimezone(id);
-      if (editFetchId.current !== id || generation !== editProxyCheckGeneration.current) return;
+      if (editSessionRef.current !== session || generation !== editProxyCheckGeneration.current) return;
       setEditForm((form) => ({ ...form, timezone, locale }));
-      setEditInitialFingerprint((initial) => ({ ...initial, timezone }));
+      setEditInitialFingerprint((initial) => ({ ...initial, timezone, locale }));
+      setEditSnapshot(initial => initial ? captureProfileEditSnapshot({ ...initial, form: { ...initial.form, timezone, locale }, timezoneManual: false }) : null);
+      refreshQualityAfterEdit();
       await load();
     } catch (error) {
-      if (editFetchId.current === id && generation === editProxyCheckGeneration.current) setEditErr(error instanceof Error ? error.message : String(error));
+      if (editSessionRef.current === session && generation === editProxyCheckGeneration.current) setEditErr(error instanceof Error ? error.message : String(error));
     } finally {
-      if (editFetchId.current === id && generation === editProxyCheckGeneration.current) setTimezoneBusy(false);
+      if (editSessionRef.current === session) { editSaveInFlight.current = false; setTimezoneBusy(false); }
     }
   };
     const saveEdit = async () => {
-        if (!editId) return;
-        const fingerprintEdits = Object.fromEntries(Object.entries(editInitialFingerprint)
-      .filter(([key, value]) => editForm[key] !== value)
-      .map(([key]) => [key, editForm[key] ?? ""]));
-        if (Object.keys(fingerprintEdits).length && !confirm(t(FINGERPRINT_EDIT_WARNING))) return;
+        const session = editSessionRef.current;
+        if (!editId || !editReady || !session?.ready || session.id !== editId || editSaveInFlight.current || timezoneBusy) return;
+        if (!editSnapshot) return;
+        let changes: ReturnType<typeof buildProfileEditPatch>;
+        try { changes = buildProfileEditPatch(editSnapshot, { form: editForm, extensions: editExts, clearQuarantinedProxy: editClearQuarantinedProxy }); }
+        catch (error) { setEditErr(error instanceof ProfileEditPatchError ? error.message : "Edited fields could not be validated. Reload this editor before saving."); return; }
+        if (!changes.summary.hasChanges) return;
+        if (changes.summary.requiresFingerprintConfirmation) {
+          const confirmed = await requestConfirm({
+            title: t("Confirm fingerprint change"),
+            message: t(FINGERPRINT_EDIT_WARNING),
+            confirmLabel: t("Save fingerprint changes"),
+            cancelLabel: t("Cancel"),
+          });
+          if (!confirmed || editSessionRef.current !== session || editSaveInFlight.current || timezoneBusy) return;
+        }
+        editSaveInFlight.current = true;
         setEditSaving(true);
         setEditErr(null);
         try {
-            const r = await updateProfile(editId, {
-                name: editForm.name ?? "", group: editForm.group ?? "", platform: editForm.platform ?? "",
-                proxy: editForm.proxy ?? "", proxyType: editForm.proxyType ?? "http",
-                username: editForm.username ?? "", password: editForm.password ?? "",
-                email: editForm.email ?? "", emailPassword: editForm.emailPassword ?? "", twofa: editForm.twofa ?? "",
-                tags: editForm.tags ?? "", ...fingerprintEdits,
-                ...({ customNo: editForm.customNo ?? "" }),
-                ...(!sameExtensionSelection(editExts, editInitialExts) && editEngine === "chromium" ? { extensions: editExts } : {}),
-            });
-            if (r.ok) {
-        closeEdit();
+            const r = await updateProfile(session.id, changes.patch);
+            if (editSessionRef.current !== session) return;
+            if (r?.ok === true) {
+        refreshQualityAfterEdit();
         await load();
+        if (editSessionRef.current !== session) return;
+        editSaveInFlight.current = false;
+        finishCloseEdit();
         if (r.restartRequired) flash(t("Saved. The open browser keeps its current proxy and fingerprint until it restarts."));
       }
             else if (r.status === 409) {
-                const message = r.error || "Profile changed; reopen Edit before saving";
-                closeEdit();
-                setActionErr(message);
+                setEditErr(r.error || "Profile changed; reopen Edit before saving");
             }
             else
                 setEditErr(r.error || "save failed");
         }
         catch (e) {
-            setEditErr(String(e));
+            if (editSessionRef.current === session) setEditErr(e instanceof Error ? e.message : String(e));
         }
         finally {
-            setEditSaving(false);
+            if (editSessionRef.current === session) { editSaveInFlight.current = false; setEditSaving(false); }
         }
     };
     const convertEditedMobile = async () => {
-    if (!editId || !editMobile) return;
+    const session = editSessionRef.current;
+    if (!editId || !editReady || !session?.ready || !editMobile || editSaveInFlight.current) return;
     const platform = editMobile.platform === "macos" ? "macOS" : "Windows";
-    const screenNote = editMobile.screenChanged ? ` Its mobile-sized screen will become ${editMobile.resolution}.` : " Its existing desktop-sized screen will be kept.";
-    if (!confirm(
-      `Convert this imported mobile persona to a stable ${platform} desktop persona?\n\n` +
-      `Cookies, login/session, credentials, proxy, timezone, fingerprint seed, tags and extensions are preserved.${screenNote}\n\n` +
-      "The website may treat the first launch as a new desktop device and request verification. Other unsaved edits in this dialog are not included.",
-    )) return;
+    const screenNote = editMobile.screenChanged
+      ? t("Its mobile-sized screen will become {resolution}.", { resolution: editMobile.resolution })
+      : t("Its existing desktop-sized screen will be kept.");
+    const confirmed = await requestConfirm({
+      title: t("Convert to desktop persona"),
+      message: `${t("Convert this imported mobile persona to a stable {platform} desktop persona?", { platform })}\n\n${t("Cookies, login/session, credentials, proxy, timezone, fingerprint seed, tags and extensions are preserved.")} ${screenNote}\n\n${t("The website may treat the first launch as a new desktop device and request verification. Other unsaved edits in this dialog are not included.")}`,
+      confirmLabel: t("Convert"),
+      cancelLabel: t("Cancel"),
+    });
+    if (!confirmed || editSessionRef.current !== session || editSaveInFlight.current) return;
+    editSaveInFlight.current = true;
     setEditSaving(true);
     setEditErr(null);
     try {
-      const r = await convertMobileProfile(editId);
-      if (!r.ok) { setEditErr(r.error || "conversion failed"); return; }
-      closeEdit();
+      const r = await convertMobileProfile(session.id);
+      if (editSessionRef.current !== session) return;
+      if (!r.ok) { setEditErr(r.error || t("Conversion failed")); return; }
+      refreshQualityAfterEdit();
       await load();
-      flash(`Converted profile to a stable ${platform} desktop persona`);
+      if (editSessionRef.current !== session) return;
+      editSaveInFlight.current = false;
+      finishCloseEdit();
+      flash(t("Converted profile to a stable {platform} desktop persona", { platform }));
     } catch (e) {
-      setEditErr(String(e));
+      if (editSessionRef.current === session) setEditErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setEditSaving(false);
+      if (editSessionRef.current === session) { editSaveInFlight.current = false; setEditSaving(false); }
     }
   };
     // ---- Extensions manager (Store URL / upload / delete) ----
-    const reloadExtensions = async () => { try { setExtensions(await fetchExtensions()); } catch {} };
-    const toggleGroupDefaultExt = (id: string) =>
-    setGroupDefaultExts((ids) => (ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id]));
-    const applyGroupExtensionDefault = async () => {
-    if (!groupDefaultName) return;
-    if (!confirm(
-      `Apply this extension default to “${groupDefaultName}”?\n\n` +
-      `This replaces extension assignments on ${groupDefaultProfileCount} current profile(s). ` +
-      "New and moved profiles inherit this selection. Individual profile edits can differ later. " +
-      "Reopen browsers to apply the change.",
-    )) return;
-    setGroupDefaultBusy(true);
-    setExtErr(null);
-    try {
-      const result = await setGroupExtensionDefaults(groupDefaultName, groupDefaultExts);
-      if (result.ok === false) { setExtErr(result.error || "group default update failed"); return; }
-      await Promise.all([reloadGroupExtensionDefaults(), load()]);
-      flash(`Updated extension defaults for “${groupDefaultName}” on ${result.updatedCount} profile(s)`);
-    } catch (error) {
-      setExtErr(error instanceof Error ? error.message : String(error));
-    } finally {
-      setGroupDefaultBusy(false);
-    }
+    const refreshExtensionState = async (assignmentsChanged = false) => {
+    const workspaceId = extensionWorkspace.current;
+    const generation = ++extensionReadVersion.current;
+    setExtLoading(true); markExtensionFresh(false);
+    const registry = await Promise.allSettled([fetchExtensions(), fetchGroupExtensionDefaults(), readFreshRoster()]);
+    if (generation !== extensionReadVersion.current || workspaceId !== extensionWorkspace.current || !bulkOwnerActive.current) return false;
+    if (registry[0]?.status === "fulfilled") setExtensions(registry[0].value as Extension[]);
+    if (registry[1]?.status === "fulfilled") extensionDrafts.receive(workspaceId, registry[1].value as GroupExtensionDefaults[]);
+    setExtLoading(false);
+    const fresh = registry.every(result => result.status === "fulfilled"); markExtensionFresh(fresh);
+    setExtErr(fresh ? null : t("The latest extension data could not be loaded. Your draft is kept. Reload before applying changes."));
+    return fresh;
   };
-    const doInstallWebStoreExtension = async () => {
+    const toggleGroupDefaultExt = (id: string) => extensionDrafts.toggle(id);
+    const applyGroupExtensionDefault = async (snapshot: GroupDefaultsSnapshot): Promise<boolean> => {
+    if (!snapshot.group || !/^[a-f0-9]{64}$/.test(snapshot.expectedFingerprint ?? "") || !extensionFresh.current || extensionMutation.current) return false;
+    const workspaceId = extensionWorkspace.current;
+    extensionMutation.current = true; setGroupDefaultBusy(true); setExtErr(null);
+    markExtensionFresh(false);
+    try {
+      const result = await setGroupExtensionDefaults(snapshot.group, snapshot.extensions, snapshot.expectedFingerprint);
+      if (!bulkOwnerActive.current || workspaceId !== extensionWorkspace.current) return result.ok === true;
+      if (result.ok !== true || !Number.isSafeInteger(result.updatedCount) || result.updatedCount < 0) { setExtErr(result.error || t("Could not apply extension defaults.")); return false; }
+      extensionDrafts.acknowledge(workspaceId, snapshot.group, snapshot.extensions);
+      setProfiles(current => current.map(profile => profile.group === snapshot.group ? { ...profile, extensions: profile.engine === "firefox" ? [] : [...snapshot.extensions] } : profile));
+      const refreshed = await refreshExtensionState(true);
+      if (!refreshed) setExtErr(t("The change was saved, but the latest extension data could not be loaded. Reopen this page before making another change."));
+      flash(t("Updated extension defaults for {group} on {count} environments. Reopen browsers to apply.", { group: snapshot.group, count: result.updatedCount }));
+      return true;
+    } catch (error) {
+      setExtErr(error instanceof Error ? error.message : String(error)); return false;
+    } finally { extensionMutation.current = false; setGroupDefaultBusy(false); }
+  };
+    const doInstallWebStoreExtension = async (): Promise<boolean> => {
     const source = extSource.trim();
-    if (!source) { setExtErr("Paste a Chrome Web Store URL or extension ID"); return; }
-    setExtInstallBusy(true);
-    setExtErr(null);
+    if (!source) { setExtErr(t("Paste a Chrome Web Store URL or extension ID")); return false; }
+    if (extensionMutation.current) return false;
+    extensionMutation.current = true; setExtInstallBusy(true); setExtErr(null);
     try {
       const r = await installWebStoreExtension(source);
-      if (!r.ok) { setExtErr(r.error || "installation failed"); return; }
+      if (r.ok !== true) { setExtErr(r.error || t("Could not install extension.")); return false; }
       setExtSource("");
-      await reloadExtensions();
-      flash(r.alreadyInstalled ? `${r.installed.name} is already installed` : `Installed ${r.installed.name}`);
-    } catch (e) {
-      setExtErr(String(e));
-    } finally {
-      setExtInstallBusy(false);
-    }
+      if (r.installed?.id && r.installed?.name) setExtensions(current => [...current.filter(item => item.id !== r.installed.id), r.installed]);
+      if (!await refreshExtensionState()) setExtErr(t("The change was saved, but the latest extension data could not be loaded. Reopen this page before making another change."));
+      flash(t(r.alreadyInstalled ? "{extension} is already installed." : "Installed {extension}. Assign it to an environment to use it.", { extension: r.installed?.name ?? t("Extension") }));
+      return true;
+    } catch (error) {
+      setExtErr(error instanceof Error ? error.message : String(error)); return false;
+    } finally { extensionMutation.current = false; setExtInstallBusy(false); }
   };
-    const doUploadExtensions = async (files: FileList | File[]) => {
+    const doUploadExtensions = async (files: FileList | File[]): Promise<boolean> => {
     const list = Array.from(files);
-    if (!list.length) return;
-    setExtBusy(true);
-    setExtErr(null);
+    if (!list.length || extensionMutation.current) return false;
+    extensionMutation.current = true; setExtBusy(true); setExtErr(null);
+    let installed = 0;
+    const failed: string[] = [];
     try {
-      const r = await uploadExtensions(list);
-      if (!r.ok) setExtErr(r.error || "upload failed");
-      await reloadExtensions();
-    } catch (e) {
-      setExtErr(String(e));
-    } finally {
-      setExtBusy(false);
-    }
-  };
-    const doRemoveExtension = async (id: string, name: string) => {
-        const message = `Remove extension "${name}"? It will be unassigned from all profiles.`;
-        if (!confirm(message)) return;
-        setExtErr(null);
+      // One archive per request gives a truthful partial result if a later file
+      // is invalid. Retrying must not silently reinstall successful archives.
+      for (const file of list) {
         try {
+          const r = await uploadExtensions([file]);
+          if (r.ok !== true) throw new Error(r.error || t("Could not upload extension."));
+          installed++;
+          if (Array.isArray(r.installed)) setExtensions(current => [...current.filter(item => !r.installed.some((added: Extension) => added.id === item.id)), ...r.installed]);
+        } catch (error) { failed.push(`${file.name}: ${error instanceof Error ? error.message : String(error)}`); }
+      }
+      const refreshed = await refreshExtensionState();
+      if (failed.length) setExtErr(t("Installed {installed} files; {failed} failed. Retry only the failed files: {details}", { installed, failed: failed.length, details: failed.join("; ") }));
+      else if (!refreshed) setExtErr(t("The change was saved, but the latest extension data could not be loaded. Reopen this page before making another change."));
+      if (installed) flash(t("Installed {count} extension files. Assign them to environments to use them.", { count: installed }));
+      return failed.length === 0;
+    } finally { extensionMutation.current = false; setExtBusy(false); }
+  };
+    const doRemoveExtension = async (id: string, name: string): Promise<boolean> => {
+    if (extensionMutation.current) return false;
+    const workspaceId = extensionWorkspace.current;
+    extensionMutation.current = true; setExtBusy(true); setExtErr(null);
+    markExtensionFresh(false);
+    try {
       const r = await removeExtension(id);
-      if (!r.ok) setExtErr(r.error || "remove failed");
-      setEditExts((xs) => xs.filter((x) => x !== id));
-      await Promise.all([reloadExtensions(), reloadGroupExtensionDefaults()]);
-    } catch (e) {
-      setExtErr(String(e));
-    }
-    };
+      if (!bulkOwnerActive.current || workspaceId !== extensionWorkspace.current) return r.ok === true;
+      if (r.ok !== true) { setExtErr(r.error || t("Could not remove extension.")); return false; }
+      setExtensions(current => current.filter(item => item.id !== id));
+      extensionDrafts.removeConfirmed(workspaceId, id);
+      setEditExts(current => current.filter(item => item !== id));
+      setProfiles(current => current.map(profile => profile.extensions ? { ...profile, extensions: profile.extensions.filter(item => item !== id) } : profile));
+      if (!await refreshExtensionState(true)) setExtErr(t("The change was saved, but the latest extension data could not be loaded. Reopen this page before making another change."));
+      flash(t("Removed {extension} and its environment assignments.", { extension: name }));
+      return true;
+    } catch (error) {
+      setExtErr(error instanceof Error ? error.message : String(error)); return false;
+    } finally { extensionMutation.current = false; setExtBusy(false); }
+  };
     const toggleEditExt = (id: string) =>
     setEditExts((xs) => (xs.includes(id) ? xs.filter((x) => x !== id) : [...xs, id]));
     const bulkAssignExt = async (op: "add" | "remove") => {
@@ -1846,10 +2564,10 @@ function App() {
     setActionErr(null);
     try {
       const r = await assignExtensionBulk(ids, bulkExt, op);
-      if (r.ok === false) { setActionErr(r.error || "extension assign failed"); return; }
+      if (r.ok === false) { setActionErr(r.error || t("Extension assignment failed")); return; }
       await load();
-      const name = extensions.find((x) => x.id === bulkExt)?.name ?? "extension";
-      flash(`${op === "add" ? "Added" : "Removed"} “${name}” ${op === "add" ? "to" : "from"} ${r.updated} profile(s)`);
+      const name = extensions.find((x) => x.id === bulkExt)?.name ?? t("extension");
+      flash(t(op === "add" ? "Added “{name}” to {count} profile(s)" : "Removed “{name}” from {count} profile(s)", { name, count: r.updated }));
     } catch (e) {
       setActionErr(String(e));
     }
@@ -1859,58 +2577,113 @@ function App() {
     setActionErr(null);
     try {
       const r = await fetchTotp(id);
-      if (!r.code) { setActionErr("no 2FA secret on this profile"); return; }
-      try { await navigator.clipboard.writeText(r.code); } catch {}
+      if (!r.code) { setActionErr(t("No 2FA secret on this profile")); return; }
+      try {
+        await copyPlainText(r.code);
+      } catch (copyError) {
+        setActionErr(copyError instanceof Error ? copyError.message : t("Could not copy to clipboard."));
+        return;
+      }
       setTwoFaFlash({ id, code: r.code });
       setTimeout(() => setTwoFaFlash((f) => (f && f.id === id ? null : f)), 4000);
     } catch (e) {
       setActionErr(String(e));
     }
   };
-    // ---- Bulk open / close (bounded concurrency) ----
-    const bulkRun = async (op: (id: string) => Promise<any>, pick: (p: UiProfile) => boolean) => {
-    const ids = [...selected].filter((id) => { const p = profiles.find((x) => x.id === id); return p && pick(p); });
-    if (!ids.length) return;
-    setActionErr(null);
-    setBusy((b) => { const n = { ...b }; ids.forEach((id) => (n[id] = true)); return n; });
-    const issues: string[] = [];
-    await runPool(ids, 4, async (id) => {
+    // A task remains observable after leaving the roster. Only queued items
+    // can be stopped; requests already sent settle with their actual results.
+    const finishBulkTask = async (task: BulkProfileTask, pending: Promise<BulkProfileTaskSnapshot>, lease: WorkspaceOperationLease) => {
       try {
-        const r = await op(id);
-        if (r?.ok === false) issues.push(`${id}: ${r.error || "action failed"}`);
-        else if (r?.warning) issues.push(`${id}: ${actionWarning(r)}`);
+        const result = await pending;
+        if (!bulkOwnerActive.current || bulkTaskRef.current !== task) return;
+        if (result.summary.failed) setBulkTaskExpanded(true);
+        setBulkTaskRefreshing(true);
+        workspaceCoordinator.setPhase(lease, "refreshing");
+        await Promise.all([load(), workspaceCoordinator.refreshWorkspaceViews(lease)]);
       } catch (error) {
-        issues.push(`${id}: ${String(error)}`);
+        if (bulkOwnerActive.current && bulkTaskRef.current === task) setActionErr(error instanceof Error ? error.message : String(error));
+      } finally {
+        workspaceCoordinator.release(lease);
+        if (bulkTaskLease.current === lease) bulkTaskLease.current = null;
+        if (bulkOwnerActive.current && bulkTaskRef.current === task) { bulkBatchBusy.current = false; setBulkTaskRefreshing(false); }
       }
-    });
-    await load();
-    setBusy((b) => { const n = { ...b }; ids.forEach((id) => delete n[id]); return n; });
-    if (issues.length > 0) setActionErr(issues.join("; "));
-  };
-    const openSelected = () => bulkRun(openProfile, (p) => !p.running && !p.mobilePersona);
-    const closeSelected = () => bulkRun(closeProfile, (p) => p.running);
+    };
+    const bulkRun = (action: BulkProfileAction) => {
+      if (!selected.size) return;
+      if (bulkBatchBusy.current || bulkTaskRef.current && bulkTaskRef.current.getSnapshot().phase !== "complete") {
+        setBulkTaskExpanded(true); setActionErr(t("A batch task is already running. Review it before starting another.")); return;
+      }
+      const targets = [...selected].map(id => {
+        const profile = profiles.find(item => item.id === id);
+        const skipReason = !profile ? "This environment is no longer in the current list."
+          : manualBusy[id] ? "Another action is already using this environment."
+          : action === "open" && profile.mobilePersona ? "Convert the imported mobile identity before starting this environment."
+          : action === "open" && profile.running ? "This environment is already running."
+          : action !== "open" && !profile.running ? "This environment is already stopped." : undefined;
+        return { id, name: profile?.name || id, skipReason };
+      });
+      const task = createBulkProfileTask({ action, targets, concurrency: 4, run: async id => {
+        if (!workspaceCoordinator.canContinueBatch(bulkTaskLease.current, bulkTaskWorkspace.current)) {
+          bulkTaskRef.current?.stopPending();
+          return { ok: false, error: "The workspace changed while this task was waiting. No request was sent." };
+        }
+        const profile = latestProfiles.current.find(item => item.id === id);
+        if (!profile) return { ok: false, error: "This environment is no longer in the current list." };
+        if (action === "open" && profile.running) return { ok: true, warning: "Already running; no extra start request was sent." };
+        if (action === "close" && !profile.running) return { ok: true, warning: "Already stopped; no extra close request was sent." };
+        if (action === "restart" && !profile.running) return { ok: false, error: "The environment stopped before the restart. Start it explicitly if needed." };
+        return (action === "open" ? openProfile : action === "close" ? closeProfile : restartProfile)(id);
+      } });
+      const lease = workspaceCoordinator.acquire("profile-batch", catalog?.currentId);
+      if (!lease) { setActionErr(t(workspaceOperationMessage(workspaceCoordinator.getSnapshot()))); return; }
+      bulkTaskLease.current = lease; bulkTaskWorkspace.current = lease.workspaceId;
+      bulkTaskRef.current = task; bulkBatchBusy.current = true; setBulkTask(task); setBulkTaskExpanded(false); setBulkTaskRefreshing(false); setActionErr(null);
+      void finishBulkTask(task, task.start(), lease);
+    };
+    const openSelected = () => bulkRun("open");
+    const closeSelected = () => bulkRun("close");
+    const retryBulkFailures = () => {
+      if (bulkBatchBusy.current) return;
+      const task = bulkTaskRef.current;
+      if (!task || task.getSnapshot().phase !== "complete" || !task.getSnapshot().summary.failed) return;
+      const lease = workspaceCoordinator.acquire("profile-batch", bulkTaskWorkspace.current);
+      if (!lease) { setActionErr(t(workspaceOperationMessage(workspaceCoordinator.getSnapshot()))); return; }
+      bulkTaskLease.current = lease;
+      const pending = task.retryFailed();
+      if (pending) { bulkBatchBusy.current = true; setBulkTaskExpanded(true); void finishBulkTask(task, pending, lease); }
+      else { workspaceCoordinator.release(lease); bulkTaskLease.current = null; }
+    };
+    const dismissBulkTask = () => {
+      if (bulkBatchBusy.current || bulkTaskRef.current?.getSnapshot().phase !== "complete") return;
+      bulkTaskRef.current = null; bulkTaskWorkspace.current = null; setBulkTask(null); setBulkTaskRefreshing(false);
+    };
+    const showBulkTask = () => { setView("profiles"); setBulkTaskExpanded(true); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(".bulk-task-expand")?.focus()); };
+    const showImportReceipt = () => { setView("profiles"); setImportReceiptExpanded(true); requestAnimationFrame(() => (document.querySelector<HTMLButtonElement>(".import-receipt-controls button") ?? document.getElementById("profiles-page-title"))?.focus()); };
     const convertSelectedMobile = async () => {
-    const ids = [...selected].filter((id) => profiles.find((p) => p.id === id)?.mobilePersona);
+    const ids = [...selected].filter((id) => profilesById.get(id)?.mobilePersona);
     if (!ids.length) return;
-    if (!confirm(
-      `Convert ${ids.length} selected mobile persona(s) to stable desktop personas?\n\n` +
-      "Account data, sessions, proxies, timezones and fingerprint seeds are preserved. Android keeps the Windows desktop family used by earlier versions of the app; iPhone/iPad keeps macOS. A website may request device verification on first launch.",
-    )) return;
+    const confirmed = await requestConfirm({
+      title: t("Convert mobile personas"),
+      message: `${t("Convert {count} selected mobile persona(s) to stable desktop personas?", { count: ids.length })}\n\n${t("Account data, sessions, proxies, timezones and fingerprint seeds are preserved. Android keeps the Windows desktop family used by earlier versions of the app; iPhone/iPad keeps macOS. A website may request device verification on first launch.")}`,
+      confirmLabel: t("Convert"),
+      cancelLabel: t("Cancel"),
+    });
+    if (!confirmed) return;
     setActionErr(null);
     setBusy((b) => { const n = { ...b }; ids.forEach((id) => (n[id] = true)); return n; });
     const failed: string[] = [];
     await runPool(ids, 4, async (id) => {
       try {
         const r = await convertMobileProfile(id);
-        if (!r.ok) failed.push(`${id}: ${r.error || "conversion failed"}`);
+        if (!r.ok) failed.push(`${id}: ${r.error || t("Conversion failed")}`);
       } catch (e) {
         failed.push(`${id}: ${String(e)}`);
       }
     });
-    await load().catch(() => {});
+    await load().catch((error) => console.warn("[convertSelectedMobile:reload]", error));
     setBusy((b) => { const n = { ...b }; ids.forEach((id) => delete n[id]); return n; });
-    if (failed.length) setActionErr(`${ids.length - failed.length} converted; ${failed.length} failed — ${failed.join("; ")}`);
-    else flash(`Converted ${ids.length} mobile persona(s) to stable desktop personas`);
+    if (failed.length) setActionErr(t("{succeeded} converted; {failed} failed — {details}", { succeeded: ids.length - failed.length, failed: failed.length, details: failed.join("; ") }));
+    else flash(t("Converted {count} mobile persona(s) to stable desktop personas", { count: ids.length }));
   };
     // ---- Export selected → file ----
     const exportSelected = async (format: ExportFormat) => {
@@ -1921,7 +2694,7 @@ function App() {
     setExportProgress({ completed: 0, total: ids.length });
     try {
       await exportProfiles(ids, format, (progress) => setExportProgress(progress));
-      flash(`Exported ${ids.length.toLocaleString()} profile${ids.length === 1 ? "" : "s"} as ${format.toUpperCase()}`);
+      flash(`Exported ${ids.length} profile${ids.length === 1 ? "" : "s"} as ${format.toUpperCase()}`);
     } catch (e) {
       setActionErr(String(e));
     } finally {
@@ -1929,31 +2702,14 @@ function App() {
     }
   };
     // ---- Transient success banner ----
-    const flash = (m: string) => { setNotice(m); setTimeout(() => setNotice((cur) => (cur === m ? null : cur)), 3500); };
+    const expireNotice = () => { clearNoticeTimer(); if (document.querySelector(".notice:focus-within, .notice:hover")) return; noticeTimer.current = setTimeout(() => { noticeTimer.current = null; setNotice(null); }, 5000); };
+    const flash = (m: string) => { clearNoticeTimer(); setNotice(m); expireNotice(); };
     // ---- File-based bulk update (export → edit → re-upload, matched by id) ----
-    const openUpdate = () => { setShowUpdate(true); setUpdateFile(null); setUpdateErr(null); setUpdateResult(null); };
-    const submitUpdate = async () => {
-    if (!updateFile) return;
-    setUpdateBusy(true); setUpdateErr(null); setUpdateResult(null);
-    try {
-      const r = await updateFromFile([updateFile]);
-      if (!r.ok) {
-        setUpdateErr(r.errors?.length
-          ? r.errors.map((item: { id: string; error: string }) => `${item.id}: ${item.error}`).join(" · ")
-          : r.error || "update failed");
-        if (typeof r.updated !== "number") return;
-      }
-      let m = `Updated ${r.updated} profile(s)`;
-      if (r.notFound?.length) m += ` · ${r.notFound.length} id(s) in the file matched no profile`;
-      if (r.skipped) m += ` · ${r.skipped} row(s) skipped (no id)`;
-      setUpdateResult(m);
-      await load();
-    } catch (e) {
-      setUpdateErr(String(e));
-    } finally {
-      setUpdateBusy(false);
-    }
-  };
+    const openUpdate = () => { setShowUpdate(true); };
+    const showFileUpdateResult = () => {
+      setView("profiles");
+      requestAnimationFrame(() => { fileUpdatePanelRef.current?.focus({ preventScroll: true }); fileUpdatePanelRef.current?.scrollIntoView({ block: "nearest", behavior: "auto" }); });
+    };
     // ---- Group create / rename / delete ----
     const createSidebarGroup = async () => {
         const name = sidebarGroupName.trim();
@@ -2027,13 +2783,22 @@ function App() {
     };
     const removeGroup = async (g: string) => {
         const n = countFor(g);
-        const prompt = `Delete group "${g}"?${n ? ` Its ${n} profile(s) move to Ungrouped (not deleted).` : ""}`;
-        if (!confirm(prompt)) return;
+        const prompt = n
+          ? t("Delete group “{group}”? Its {count} profile(s) move to Ungrouped (not deleted).", { group: g, count: n })
+          : t("Delete group “{group}”?", { group: g });
+        const confirmed = await requestConfirm({
+          title: t("Delete group"),
+          message: prompt,
+          confirmLabel: t("Delete"),
+          cancelLabel: t("Cancel"),
+          tone: "danger",
+        });
+        if (!confirmed) return;
         setActionErr(null);
         try {
             const r = await deleteGroup(g);
             if (r.ok === false)
-                setActionErr(r.error || "delete failed");
+                setActionErr(r.error || t("Delete failed"));
             else {
                 if (group === g) setGroup("all");
                 await Promise.all([load(), Promise.resolve()]);
@@ -2043,15 +2808,52 @@ function App() {
             setActionErr(e instanceof Error ? e.message : String(e));
         }
     };
+    useDesktopCloseDraft("profile-create", { dirty: showCreate && ((Object.keys(BLANK_FORM) as Array<keyof typeof BLANK_FORM>).some(key => form[key] !== initialCreateForm.current[key]) || !!proxyPaste), busy: creating });
+    useDesktopCloseDraft("profile-edit", { dirty: !!editId && !!editSnapshot && (PROFILE_EDIT_FORM_FIELDS.some(field => editForm[field] !== editSnapshot.form[field]) || !sameExtensionSelection(editExts, [...editSnapshot.extensions]) || editClearQuarantinedProxy), busy: editSaving || timezoneBusy });
+    useDesktopCloseDraft("extension-install", { dirty: !!extSource.trim(), busy: extInstallBusy || extBusy });
+    useDesktopCloseDraft("extension-defaults", { dirty: extensionDraftState.dirtyCount > 0, busy: groupDefaultBusy });
+    // When receipt lookup stalls, graceful shutdown still waits for admitted backend writers.
+    const proxyReceiptUnavailable = workspaceOperationState.operation?.kind === "profile-proxies"
+      && (proxyTaskSnapshot?.notice === "status-unavailable" || proxyTaskSnapshot?.notice === "refresh-unavailable");
+    useDesktopCloseDraft("workspace-task", { dirty: false, busy: (!!workspaceOperationState.operation && !proxyReceiptUnavailable) || !!workspaceOperationState.workspaceJob || workspaceOperationState.nativeUpdateBusy });
+    const rowHandlersRef = useRef<ProfileRosterRowHandlers | null>(null);
+    const stableRowHandlers = useMemo<ProfileRosterRowHandlers>(() => ({
+        openEdit: (...args) => rowHandlersRef.current!.openEdit(...args),
+        openPendingCookies: (...args) => rowHandlersRef.current!.openPendingCookies(...args),
+        openCookie: (...args) => rowHandlersRef.current!.openCookie(...args),
+        act: (...args) => rowHandlersRef.current!.act(...args),
+        openInspection: (...args) => rowHandlersRef.current!.openInspection(...args),
+        reuseProfileConfiguration: (...args) => rowHandlersRef.current!.reuseProfileConfiguration(...args),
+        openProfileTags: (...args) => rowHandlersRef.current!.openProfileTags(...args),
+        copy2fa: (...args) => rowHandlersRef.current!.copy2fa(...args),
+        toggleFavorite: (...args) => rowHandlersRef.current!.toggleFavorite(...args),
+        changeProfileSelection: (...args) => rowHandlersRef.current!.changeProfileSelection(...args),
+        setLaunchFailure: (...args) => rowHandlersRef.current!.setLaunchFailure(...args),
+        openNetworkSettings: () => rowHandlersRef.current!.openNetworkSettings(),
+        openLogs: () => rowHandlersRef.current!.openLogs(),
+    }), []);
+    const submitStandaloneAuthToken = (event: React.FormEvent) => {
+        event.preventDefault();
+        const applied = setStandaloneSessionToken(authTokenInput);
+        if (!applied) {
+            setAuthTokenErr(t("Paste the session token or tokenized dashboard URL printed by the CLI."));
+            return;
+        }
+        setAuthTokenInput("");
+        setAuthTokenErr(null);
+        setAuthRequired(false);
+        setAppModeErr(null);
+        if (!appMode) loadAppMode();
+        else void retryConnection();
+    };
     if (!appMode)
-        return <div className={`desktop-loading-shell${windowChrome.enabled ? " desktop-frameless" : ""}`}><DesktopStartupBar chrome={windowChrome}><MaobuMark />猫步·千境</DesktopStartupBar><WindowActionError chrome={windowChrome} /><main className="onboarding"><section className="onboarding-card"><h1>猫步·千境</h1><p>{connErr ?? t("Loading your configuration…")}</p>{connErr && <button className="btn" onClick={() => window.location.reload()}>{t("Try again")}</button>}</section></main></div>;
+        return <div className={`desktop-loading-shell${windowChrome.enabled ? " desktop-frameless" : ""}`}><DesktopStartupBar chrome={windowChrome}><MaobuMark />猫步·千境</DesktopStartupBar><WindowActionError chrome={windowChrome} /><main className="onboarding"><section className="onboarding-card"><h1>猫步·千境</h1><p>{effectiveConnErr ?? t("Loading your configuration…")}</p>{authRequired && (<form className="auth-token-form" onSubmit={submitStandaloneAuthToken}><label className="sr-only" htmlFor="standalone-auth-token">{t("Session token")}</label><input id="standalone-auth-token" className="input" type="password" autoComplete="off" value={authTokenInput} onChange={event => setAuthTokenInput(event.target.value)} placeholder={t("Paste token or /?token=… URL")} /><button type="submit" className="btn primary">{t("Unlock dashboard")}</button>{authTokenErr && <p className="field-error" role="alert">{authTokenErr}</p>}</form>)}{effectiveConnErr && <button className="btn" onClick={() => authRequired ? loadAppMode() : window.location.reload()}>{t("Try again")}</button>}</section></main></div>;
     const diagWhen = diag ? new Date(diag.generatedAt).toLocaleTimeString() : null;
     const shownColumns = COLUMNS.filter((column) => columnVisible(column.key));
     const visibleColumnCount = 1 + shownColumns.length;
     // Sum of what is actually on screen: below this the wrapper scrolls rather
     // than letting the browser crush Name down to "mia.h…".
     const tableMinWidth = CHECKBOX_COLUMN_WIDTH + shownColumns.reduce((total, column) => total + column.width, 0);
-    const renderDevicePanel = (variant: "header" | "rail") => (<DevicePanel variant={variant} runningCount={runningCount} downloads={runtimeDownloads} connection={loaded && !connErr} connectionLoading={!loaded} version={appVersion ?? ""} theme={theme} chooseTheme={chooseTheme} language={language} setLanguage={setLanguage} onShowRunning={showRunningProfiles} onSettings={(section) => { setSettingsTab(section === "advanced" ? "advanced" : "account"); setView("settings"); }} onViewLogs={() => { setLogErr(null); fetchLogs().then(setLogView).catch((error) => setLogErr(error instanceof Error ? error.message : String(error))); }} onRetryConnection={refreshRoster} />);
     const groupNavigation = (<div className="sidesection group-management">
           <button className="sidehead" onClick={() => setGroupsOpen((o) => !o)}>
             <span className={`chev${groupsOpen ? " open" : ""}`}><Icon name="chevronRight" className="sm" /></span>
@@ -2114,116 +2916,315 @@ function App() {
         </button>
       </th>);
     };
+    const focusProfileSearch = () => { setView("profiles"); requestAnimationFrame(() => document.querySelector<HTMLInputElement>(".heading-search input")?.focus()); };
+    const openSettingsFromPalette = (tab: SettingsTab) => {
+      setSettingsTab(tab);
+      setView("settings");
+      requestAnimationFrame(() => {
+        const target = document.getElementById(`settings-tab-${tab}`);
+        if (target?.getAttribute("aria-selected") === "true" && !target.closest("[hidden], [inert]")
+          && !readWorkbenchShortcutContext(document.activeElement).modalOpen) target.focus({ preventScroll: true });
+      });
+    };
+    const locateProfile = (id: string) => {
+      chooseRosterScope("all"); setGroup("all"); setProfileStatus("all"); setQ(`id:${id}`); setProfilePage(0); setView("profiles");
+      requestAnimationFrame(() => {
+        const row = [...document.querySelectorAll<HTMLTableRowElement>("tr[data-profile-id]")].find(item => item.dataset.profileId === id);
+        (row?.querySelector<HTMLButtonElement>(".profile-menu-trigger") ?? document.getElementById("profiles-page-title"))?.focus({ preventScroll: true });
+      });
+    };
+    const activateSavedViewFromPalette = (id: string) => {
+      if (!viewPreferencesReady || viewPreferenceWrite.current || workspaceCoordinator.getSnapshot().workspaceId !== currentWorkspaceId) return;
+      const saved = savedProfileViews.find(view => view.id === id);
+      if (!saved) return;
+      applyProfileView(saved);
+      setView("profiles");
+      requestAnimationFrame(() => {
+        if (workspaceCoordinator.getSnapshot().workspaceId === currentWorkspaceId && !readWorkbenchShortcutContext(document.activeElement).modalOpen) {
+          document.getElementById("profiles-page-title")?.focus({ preventScroll: true });
+        }
+      });
+    };
+    const openProfileTags = (profile: UiProfile) => {
+      if (busy[profile.id]) return;
+      const row = [...document.querySelectorAll<HTMLTableRowElement>("tr[data-profile-id]")].find(item => item.dataset.profileId === profile.id);
+      tagsReturnFocus.current = row?.querySelector<HTMLButtonElement>(".profile-menu-trigger") ?? null;
+      setTagsTarget({ id: profile.id, name: profile.name, tags: [...profile.tags] });
+    };
+    const saveProfileTags = async (id: string, tags: string[]): Promise<boolean> => {
+      const result = await updateProfile(id, profileTagsUpdate(tags));
+      if (result?.ok !== true) return false;
+      if (!bulkOwnerActive.current) return false;
+      await load();
+      return true;
+    };
+    shortcutAction.current = action => {
+      switch (action) {
+        case "toggle-command-palette": setCommandOpen(open => !open); break;
+        case "focus-profile-search": focusProfileSearch(); break;
+        case "open-shortcut-help": setShortcutHelpOpen(true); break;
+        case "create-profile": openCreate(); break;
+        case "go-profiles": chooseRosterScope("all"); selectFolder("all"); break;
+        case "go-proxies": setView("proxies"); break;
+        case "go-scripts": setView("scripts"); break;
+        case "go-assistant": setView("assistant"); break;
+        case "go-extensions": openExtensions(); break;
+      }
+    };
+    const showMoveTask = () => {
+      setView("profiles");
+      requestAnimationFrame(() => { moveTaskPanelRef.current?.focus({ preventScroll: true }); moveTaskPanelRef.current?.scrollIntoView({ block: "nearest", behavior: "auto" }); });
+    };
+    const showTrashTask = () => {
+      setView("trash");
+      requestAnimationFrame(() => {
+        const target = document.querySelector<HTMLElement>(".trash-task-panel h3") ?? document.getElementById("trash-page-title");
+        target?.focus({ preventScroll: true }); target?.scrollIntoView({ block: "nearest", behavior: "auto" });
+      });
+    };
+    const showProxyTask = () => {
+      if (!currentWorkspaceId || workspaceCoordinator.getSnapshot().workspaceId !== currentWorkspaceId) return;
+      setProxyTaskFocusRequest({ workspaceId: currentWorkspaceId });
+      setView("proxies");
+    };
+    const activityItems: WorkbenchActivityItem[] = [];
+    if (runtimeDownloads.length > 0) activityItems.push({ id: "browser-downloads", title: t("Browser downloads"),
+      description: runtimeDownloadsStale ? t("Download status temporarily unavailable") : runtimeDownloadLabel(runtimeDownloads, t),
+      state: runtimeDownloadsStale ? "attention" : "running", onView: viewRuntimeDownloads });
+    if (scriptBackground.run) activityItems.push({ id: "script", title: t("Script run"), description: scriptBackground.run.scriptName,
+      state: scriptBackground.state === "unavailable" ? "attention" : scriptBackground.state !== "finished" ? "running" : scriptBackground.summary.failed ? "attention" : "complete",
+      progress: { done: scriptBackground.summary.settled, total: scriptBackground.summary.total }, onView: () => setScriptRunOpen(true) });
+    if (bulkTaskSnapshot) activityItems.push({ id: "batch", title: t("Batch task"),
+      state: bulkTaskActive || bulkTaskRefreshing ? "running" : bulkTaskSnapshot.summary.failed ? "attention" : "complete",
+      progress: { done: bulkTaskSnapshot.summary.settled, total: bulkTaskSnapshot.summary.total }, onView: showBulkTask });
+    rowHandlersRef.current = {
+        openEdit,
+        openPendingCookies,
+        openCookie,
+        act,
+        openInspection,
+        reuseProfileConfiguration,
+        openProfileTags,
+        copy2fa,
+        toggleFavorite,
+        changeProfileSelection,
+        setLaunchFailure,
+        openNetworkSettings: () => { setSettingsTab("network"); openSettings(); },
+        openLogs: () => {
+            setLogErr(null);
+            void fetchLogs().then(setLogView).catch(error => setLogErr(error instanceof Error ? error.message : String(error)));
+        },
+    };
+    if (importBusy || importReceipt) activityItems.push({ id: "import", title: t("Import profiles"),
+      state: importBusy || importReceiptRefreshing ? "running" : importReceipt && (importReceipt.skipped || importReceipt.issues.length) ? "attention" : "complete", onView: showImportReceipt });
+    if (cookieImport.snapshot.phase !== "idle") activityItems.push({ id: "cookies", title: t("Cookie import"),
+      state: cookieImportBusy ? "running" : cookieImport.snapshot.summary.failed || cookieImport.snapshot.summary.unconfirmed || cookieImport.snapshot.refreshFailed ? "attention" : "complete",
+      progress: { done: cookieImport.snapshot.summary.succeeded + cookieImport.snapshot.summary.failed + cookieImport.snapshot.summary.unconfirmed, total: cookieImport.snapshot.summary.total }, onView: showCookieImportTask });
+    if (fileUpdateBusy || fileUpdate.snapshot.latest) activityItems.push({ id: "file-update", title: t("Update profiles from file"),
+      state: fileUpdateBusy ? "running" : fileUpdate.snapshot.latest?.status === "saved" && !fileUpdate.snapshot.latest.refreshFailed ? "complete" : "attention", onView: showFileUpdateResult });
+    if (profileMove.state.attempt || profileMove.state.blockedReason) activityItems.push({ id: "move", title: t("Move environments"),
+      state: profileMove.busy ? "running" : profileMove.state.result?.status === "confirmed" ? "complete" : "attention", onView: showMoveTask });
+    if (trashTaskSnapshot && (trashTaskSnapshot.phase !== "idle" || trashTaskSnapshot.blockedReason)) activityItems.push({ id: "trash", title: t("Trash operation"),
+      state: ["confirming", "sending", "refreshing"].includes(trashTaskSnapshot.phase) ? "running" : trashTaskSnapshot.receipt?.status === "complete" && !trashTaskSnapshot.receipt.refreshFailed && !trashTaskSnapshot.blockedReason ? "complete" : "attention", onView: showTrashTask });
+    const proxyReceipt = proxyTaskSnapshot?.latest ?? proxyTaskSnapshot?.history.at(-1);
+    if (proxyTaskSnapshot && (proxyTaskSnapshot.busy || proxyTaskSnapshot.notice || proxyReceipt)) {
+      const { phase, busy, notice } = proxyTaskSnapshot;
+      const summary = proxyReceipt?.summary;
+      const receiptNeedsAttention = !!proxyReceipt?.refreshFailed || !!(summary && (summary.failed || summary.skipped || summary.missing || summary.unknown || summary.notStarted));
+      const waitingForRecovery = phase === "reconciling" || notice === "refresh-unavailable";
+      const state = waitingForRecovery ? "attention" : busy ? "running" : notice || receiptNeedsAttention ? "attention" : "complete";
+      activityItems.push({ id: "proxies", title: t("Proxy assignment"), state, onView: showProxyTask });
+    }
+    const paletteCommands: CommandPaletteCommand[] = [
+      { id: "profiles", label: "Profiles", keywords: ["环境", "列表", "roster"], run: () => setView("profiles") },
+      { id: "new-profile", label: "New Profile", keywords: ["创建", "新建", "create"], run: openCreate },
+      { id: "import", label: "Import profiles", keywords: ["导入", "adspower", "csv", "xlsx"], run: openBulk },
+      { id: "search", label: "Search profiles", keywords: ["搜索", "查找", "find"], run: focusProfileSearch },
+      { id: "shortcuts", label: "Keyboard shortcuts", keywords: ["快捷键", "键盘", "帮助", "keyboard", "help"], run: () => setShortcutHelpOpen(true) },
+      { id: "refresh", label: "Refresh profiles", keywords: ["刷新", "reload"], disabled: refreshing, run: () => { void refreshRoster(); } },
+      { id: "proxies", label: "Proxies", keywords: ["网络", "代理", "proxy"], run: () => setView("proxies") },
+      { id: "scripts", label: "Scripts", keywords: ["脚本", "自动化", "automation"], run: () => setView("scripts") },
+      { id: "assistant", label: "AI workspace", keywords: ["AI", "助手", "模型", "智能体", "聊天", "Ollama"], run: () => setView("assistant") },
+      { id: "extensions", label: "Manage extensions", keywords: ["扩展", "插件", "extension"], run: openExtensions },
+      { id: "workspaces", label: "Workspace management", keywords: ["工作区", "备份", "backup"], run: () => openWorkspaceManagement({ mode: "manage" }) },
+      { id: "trash", label: "Trash", keywords: ["回收站", "恢复", "restore"], run: () => setView("trash") },
+      ...SETTINGS_TABS.map(tab => ({ id: `settings-${tab.key}`, label: tab.key === "account" ? "Settings" : tab.label, keywords: ["设置", "settings"], run: () => openSettingsFromPalette(tab.key) })),
+    ];
     return (<>
+    {confirmDialogNode}
+    <CommandPalette commands={paletteCommands} profiles={profiles} favoriteIds={favoriteProfileIds} onLocateProfile={locateProfile}
+      savedViews={paletteSavedViews} savedViewsState={viewPreferencesReady ? "ready" : viewPreferenceReadError || workspaceCatalogError ? "unavailable" : "loading"}
+      savedViewsLocked={viewPreferenceBusy} onApplySavedView={activateSavedViewFromPalette} open={commandOpen} onClose={() => setCommandOpen(false)} />
+    <ShortcutHelp open={shortcutHelpOpen} desktop={!!desktopInvoke()} onClose={() => setShortcutHelpOpen(false)} onAction={action => shortcutAction.current(action)} returnFocus={() => document.querySelector<HTMLButtonElement>(".shortcut-help-trigger") ?? document.querySelector<HTMLButtonElement>(".command-palette-trigger")} />
+    <ProfileTagsDialog target={tagsTarget} sessionKey={catalog?.currentId} onSave={saveProfileTags} onClose={() => setTagsTarget(null)} returnFocus={() => tagsReturnFocus.current?.isConnected ? tagsReturnFocus.current : document.getElementById("profiles-page-title")} />
     <WindowActionError chrome={windowChrome} />
-    <div className={`app airy-workbench folded-workbench${windowChrome.enabled ? " desktop-frameless" : ""}${windowChrome.enabled && !windowChrome.focused ? " is-window-unfocused" : ""}`} onDragOver={(e) => { e.preventDefault(); if (!dragging) setDragging(true); }} onDragLeave={(e) => { e.preventDefault(); if (e.currentTarget === e.target) setDragging(false); }} onDrop={(e) => {
+    {createCloseGuard.dialog}{editCloseGuard.dialog}
+    <div data-roster-density={rosterDensity} className={`app airy-workbench folded-workbench${windowChrome.enabled ? " desktop-frameless" : ""}${windowChrome.enabled && !windowChrome.focused ? " is-window-unfocused" : ""}`} onDragOver={(e) => { if (!Array.from(e.dataTransfer.types).includes("Files") || e.defaultPrevented || readWorkbenchShortcutContext(e.target).modalOpen) return; e.preventDefault(); if (!dragging) setDragging(true); }} onDragLeave={(e) => { e.preventDefault(); if (e.currentTarget === e.target) setDragging(false); }} onDrop={(e) => {
+            const handled = e.defaultPrevented || readWorkbenchShortcutContext(e.target).modalOpen;
             e.preventDefault();
             setDragging(false);
+            if (handled) return;
             if (e.dataTransfer.files?.length) doUpload(e.dataTransfer.files);
         }}>
       {dragging && (<div className="dropzone">
           <Icon name="fileImport" />
-          <span>Drop TXT, CSV, JSON, or XLSX profile exports to import</span>
+          <span>{t("Drop TXT, CSV, JSON, or XLSX profile exports to import")}</span>
         </div>)}
 
-      <aside className={`sidebar${sidebarCollapsed || railForced ? " collapsed" : ""}`}>
-        {/* Copy sits inside the field rather than beside it: a separate bordered
-          button per credential turned the dialog into a grid of grey boxes. */}
-        {!railForced && (<button type="button" className="rail-toggle tip" data-tip={sidebarCollapsed ? t("Expand sidebar") : t("Collapse sidebar")} aria-label={sidebarCollapsed ? t("Expand sidebar") : t("Collapse sidebar")} aria-expanded={!sidebarCollapsed} onClick={toggleSidebar}>
-            <Icon name={sidebarCollapsed ? "chevronRight" : "chevronLeft"} className="sm" />
-          </button>)}
-        <nav className="sidenav" aria-label={t("Sections")}>
-          <button type="button" className={`navitem${view === "profiles" && group === "all" ? " active" : ""}`} data-tip={t("All profiles")} title={t("All profiles")} onClick={() => selectFolder("all")}>
-            <Icon name="profiles" /><span className="navlabel">{t("All profiles")}</span>
-            <span className="cnt">{profiles.length}</span>
-          </button>
-
-          {<>
-            <div className="navrow">
-              <button type="button" className={`navitem${view === "proxies" ? " active" : ""}`} data-tip={t("Proxies")} title={t("Proxies")} onClick={() => { setView("proxies"); }}>
-                <Icon name="activity" /><span className="navlabel">{t("Proxies")}</span>
-              </button>
-              {(null)}
-            </div>
-          </>}
-          <button type="button" className={`navitem${view === "scripts" ? " active" : ""}`} data-tip={t("Scripts")} title={t("Scripts")} onClick={() => setView("scripts")}>
-            <Icon name="file" /><span className="navlabel">{t("Scripts")}</span>
-          </button>
-          <button type="button" className={`navitem${view === "extensions" ? " active" : ""}`} data-tip={t("Manage extensions")} title={t("Manage extensions")} onClick={() => { setExtErr(null); setView("extensions"); }}>
-            <Icon name="puzzle" /><span className="navlabel">{t("Manage extensions")}</span>
-            {extensions.length > 0 && <span className="cnt">{extensions.length}</span>}
-          </button>
-
+      <aside className={`sidebar${sidebarIsCompact ? " collapsed" : ""}`}>
+        <div className="rail-heading">
+          <span className="rail-section-label" aria-hidden="true">{t("Workspaces")}</span>
+          {!railForced && <button type="button" className="rail-toggle" data-tip={sidebarCollapsed ? t("Expand sidebar") : t("Collapse sidebar")} aria-label={sidebarCollapsed ? t("Expand sidebar") : t("Collapse sidebar")} title={sidebarCollapsed ? t("Expand sidebar") : t("Collapse sidebar")} aria-controls="workspace-navigation" aria-expanded={!sidebarCollapsed} onClick={toggleSidebar}>
+            <Icon name={sidebarCollapsed ? "expandRail" : "collapseRail"} />
+          </button>}
+        </div>
+        <WorkspaceSwitcher
+          variant="rail"
+          compact={sidebarIsCompact}
+          profileCount={profiles.length}
+          runningCount={runningCount}
+          connection={loaded && !connErr}
+          onShowRunning={showRunningProfiles}
+          onOpenManagement={openWorkspaceManagement}
+          onShowBatchTask={showBulkTask}
+          managementActive={view === "workspaces"}
+        />
+        <nav id="workspace-navigation" className="sidenav" ref={navigationMotion.navRef} aria-label={t("Workspace navigation")}>
+          <span className="rail-active-marker" aria-hidden="true" />
+          <div className="rail-nav-group" role="group" aria-label={t("Workspace")}>
+            <button type="button" className={`navitem${view === "profiles" || view === "inspection" ? " active" : ""}`} aria-current={view === "profiles" || view === "inspection" ? "page" : undefined} aria-label={t("All profiles")} data-tip={t("All profiles")} title={t("All profiles")} onClick={() => { chooseRosterScope("all"); selectFolder("all"); }}>
+              <Icon name="profiles" /><span className="navlabel">{t("All profiles")}</span>
+              {loaded && profiles.length > 0 && <span className="cnt" aria-hidden="true">{profiles.length}</span>}
+            </button>
+            <button type="button" className={`navitem${view === "proxies" ? " active" : ""}`} aria-current={view === "proxies" ? "page" : undefined} aria-label={t("Proxies")} data-tip={t("Proxies")} title={t("Proxies")} onClick={() => setView("proxies")}>
+              <Icon name="activity" /><span className="navlabel">{t("Proxies")}</span>
+            </button>
+          </div>
+          <div className="rail-nav-group rail-nav-tools" role="group" aria-label={t("Tools")}>
+            <span className="rail-section-label" aria-hidden="true">{t("Tools")}</span>
+            <button type="button" className={`navitem${view === "scripts" ? " active" : ""}`} aria-current={view === "scripts" ? "page" : undefined} aria-label={t("Scripts")} data-tip={t("Scripts")} title={t("Scripts")} onClick={() => setView("scripts")}>
+              <Icon name="file" /><span className="navlabel">{t("Scripts")}</span>
+            </button>
+            <button type="button" className={`navitem${view === "assistant" ? " active" : ""}`} aria-current={view === "assistant" ? "page" : undefined} aria-label={t("AI workspace")} data-tip={t("AI workspace")} title={t("AI workspace")} onClick={() => setView("assistant")}>
+              <Icon name="bot" /><span className="navlabel">{t("AI workspace")}</span>
+            </button>
+            <button type="button" className={`navitem${view === "extensions" ? " active" : ""}`} aria-current={view === "extensions" ? "page" : undefined} aria-label={t("Manage extensions")} data-tip={t("Manage extensions")} title={t("Manage extensions")} onClick={openExtensions}>
+              <Icon name="puzzle" /><span className="navlabel">{t("Manage extensions")}</span>
+              {extensions.length > 0 && <span className="cnt" aria-hidden="true">{extensions.length}</span>}
+            </button>
+          </div>
         </nav>
-
         <div className="sidefoot">
-          <button type="button" className={`navitem${view === "workspaces" ? " active" : ""}`} data-tip={t("Workspace management")} title={t("Workspace management")} onClick={() => openWorkspaceManagement({ mode: "manage" })}>
-            <Icon name="folders" /><span className="navlabel">{t("Workspace management")}</span>
-          </button>
-          <button type="button" className={`navitem${view === "trash" ? " active" : ""}`} data-tip={t("Trash")} title={t("Trash")} onClick={() => setView("trash")}>
-            <Icon name="trash" /><span className="navlabel">{t("Trash")}</span>
-          </button>
-          <button type="button" className={`navitem${view === "settings" ? " active" : ""}`} data-tip={t("Settings")} title={t("Settings")} onClick={openSettings}>
-            <Icon name="settings" /><span className="navlabel">{t("Settings")}</span>
-          </button>
-          {renderDevicePanel("rail")}
+          <div className="rail-utilities" role="group" aria-label={t("Management")}>
+            <button type="button" className={`navitem${view === "trash" ? " active" : ""}`} aria-current={view === "trash" ? "page" : undefined} aria-label={t("Trash")} data-tip={t("Trash")} title={t("Trash")} onClick={() => setView("trash")}>
+              <Icon name="trash" /><span className="navlabel">{t("Trash")}</span>
+            </button>
+            <button type="button" className={`navitem${view === "settings" ? " active" : ""}`} aria-current={view === "settings" ? "page" : undefined} aria-label={t("Settings")} data-tip={t("Settings")} title={t("Settings")} onClick={openSettings}>
+              <Icon name="settings" /><span className="navlabel">{t("Settings")}</span>
+            </button>
+          </div>
+          <DevicePanel variant="rail" runningCount={runningCount} downloads={runtimeDownloads} downloadStatusUnavailable={runtimeDownloadsStale} connection={loaded && !connErr} connectionLoading={!loaded} version={appVersion ?? ""} theme={theme} chooseTheme={chooseTheme} language={language} setLanguage={setLanguage} onShowRunning={showRunningProfiles} onSettings={(section) => { setSettingsTab(section === "advanced" ? "advanced" : "account"); setView("settings"); }} onViewLogs={() => { setLogErr(null); fetchLogs().then(setLogView).catch((error) => setLogErr(error instanceof Error ? error.message : String(error))); }} onRetryConnection={refreshRoster} />
         </div>
         {modeErr && <div className="mode-error" role="alert">{modeErr}</div>}
       </aside>
 
       <div className="main">
       <header className="workspace-header" onMouseDown={windowChrome.onMouseDown}>
-        <div className="desktop-brand"><MaobuMark /><strong>猫步·千境</strong>{appVersion && <span className="appversion" title={appVersion}>{appVersion}</span>}</div>
+        <div className="desktop-brand">
+          <MaobuMark />
+          <strong>猫步·千境</strong>
+          {sidebarIsCompact && savedWorkspaceName && <span className="desktop-workspace-name" title={savedWorkspaceName}>{savedWorkspaceName}</span>}
+          {appVersion && <span className="appversion" title={appVersion}>{appVersion}</span>}
+        </div>
         <div className="topbar-actions">
-          {renderDevicePanel("header")}
+          <WorkbenchActivity items={activityItems} />
+          <button type="button" className="command-palette-trigger" aria-label={t("Command palette")} title={t("Command palette")} aria-haspopup="dialog" aria-expanded={commandOpen} onClick={() => setCommandOpen(true)}><Icon name="search" className="sm" /><span>{t("Command palette")}</span><kbd>{typeof navigator !== "undefined" && /Mac/.test(navigator.platform) ? "⌘ K" : "Ctrl K"}</kbd></button>
+          <button type="button" className="iconbtn tip shortcut-help-trigger" data-tip={`${t("Keyboard shortcuts")} · ?`} aria-label={t("Keyboard shortcuts")} aria-haspopup="dialog" aria-expanded={shortcutHelpOpen} onClick={() => setShortcutHelpOpen(true)}><Icon name="help" /></button>
           <button type="button" className="iconbtn tip topbar-settings" data-tip={t("Settings")} aria-label={t("Settings")} onClick={openSettings}><Icon name="settings" /></button>
           <WindowControls chrome={windowChrome} />
         </div>
       </header>
-      <div className="workspace-content" role="main" aria-label={t(PAGE_TITLES[view])}>
-      <div className="workspace-context" role="navigation" aria-label={t("Workspaces")}>
-        <WorkspaceSwitcher variant="context" profileCount={profiles.length} runningCount={runningCount} connection={loaded && !connErr} onShowRunning={showRunningProfiles} onSettings={() => { setSettingsTab("account"); setView("settings"); }} onOpenManagement={openWorkspaceManagement} managementActive={view === "workspaces"} />
-      </div>
+      <div className="workspace-content" ref={navigationMotion.contentRef} role="main" aria-label={t(PAGE_TITLES[view])}>
+      <ErrorBoundary scope={t(PAGE_TITLES[view])} resetKeys={[view, currentWorkspaceId]}>
       <WorkspaceActivity hidden={view === "workspaces"} onOpen={() => openWorkspaceManagement({ mode: "backups" })} />
-      {(actionErr ?? (!connectionAlertDismissed ? connErr : null)) && (<div className="error">
+      {signedUpdateStartup.noticeVersion && <div className="update-banner signed-update-notice">
+        <Icon name="refresh" className="sm" />
+        <span role="status">{t("Signed desktop update {version} is available.", { version: signedUpdateStartup.noticeVersion })}</span>
+        <button className="btn xs" type="button" onClick={viewSignedUpdate}>{t("View update")}</button>
+        <button className="update-result-dismiss" type="button" aria-label={t("Dismiss")} onClick={signedUpdateStartup.dismissNotice}><Icon name="close" className="sm" /></button>
+      </div>}
+      {(actionErr ?? (!connectionAlertDismissed ? effectiveConnErr : null)) && (<div className="error" role="alert">
           <Icon name="alert" />
-          <span>{actionErr ?? connErr}</span>
-          <button className="dismiss" aria-label={t("Dismiss error")} onClick={() => { setActionErr(null); if (connErr) setConnectionAlertDismissed(true); }}><Icon name="close" className="sm" /></button>
+          <span>{t(actionErr ?? effectiveConnErr ?? "")}</span>
+          {authRequired && (
+            <form className="auth-token-form inline" onSubmit={submitStandaloneAuthToken}>
+              <label className="sr-only" htmlFor="standalone-banner-auth-token">{t("Session token")}</label>
+              <input id="standalone-banner-auth-token" className="input" type="password" autoComplete="off" value={authTokenInput} onChange={event => setAuthTokenInput(event.target.value)} placeholder={t("Paste token or /?token=… URL")} />
+              <button type="submit" className="btn xs primary">{t("Unlock dashboard")}</button>
+              {authTokenErr && <span className="field-error">{authTokenErr}</span>}
+            </form>
+          )}
+          {!actionErr && effectiveConnErr && (
+            <button type="button" className="btn xs ghost" disabled={refreshing} onClick={() => void retryConnection()}>{t("Retry")}</button>
+          )}
+          <button className="dismiss" aria-label={t("Dismiss error")} onClick={() => { setActionErr(null); if (effectiveConnErr) dismissConnectionAlert(); }}><Icon name="close" className="sm" /></button>
         </div>)}
-      {notice && (<div className="notice" role="status" onClick={() => setNotice(null)}><Icon name="check" className="sm" />{notice}</div>)}
+      <MotionPresence present={!!notice} kind="panel">{() => <div className="notice" role="status" onPointerEnter={clearNoticeTimer} onPointerLeave={expireNotice}
+        onFocusCapture={clearNoticeTimer} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) expireNotice(); }}>
+        <Icon name="check" className="sm" /><span>{notice}</span><button type="button" className="notice-dismiss" aria-label={t("Dismiss")} onClick={() => { clearNoticeTimer(); setNotice(null); }}><Icon name="close" className="sm" /></button>
+      </div>}</MotionPresence>
       {exportProgress && (<div className="notice" role="status"><Icon name="export" className="sm" />{exportProgress.completed >= exportProgress.total ? t("Building export file…") : t("Preparing export: {completed} / {total} profiles", { completed: exportProgress.completed.toLocaleString(), total: exportProgress.total.toLocaleString() })}</div>)}
       {diskSpace?.low && diskSpace.freeBytes !== null && !diskWarningDismissed && (<div className="update-banner update-result warning" role="alert">
           <Icon name="warning" />
           <div className="update-copy"><strong>{t("Low disk space: {free} GB free on the drive that holds your profiles.", { free: (diskSpace.freeBytes / 1024 ** 3).toFixed(1) })}</strong><span>{t("When the disk is almost full, browsers delete saved site data, which can log profiles out. Free up space on this drive.")}</span></div>
           <button className="update-result-dismiss" type="button" aria-label={t("Dismiss disk space warning")} onClick={() => setDiskWarningDismissed(true)}><Icon name="close" className="sm" /></button>
         </div>)}
-      <ProxiesPage key="local-proxies" active={view === "proxies"} groups={["", ...groups.slice(1)]} folders={folders} onChanged={load}/>
-      <TrashPage key="local-trash" active={view === "trash"} onChanged={load} folderTree={folders}/>
-      <WorkspaceManagementPage key="local-workspaces" active={view === "workspaces"} request={workspacePageRequest} onBack={() => setView("profiles")} onShowRunning={showRunningProfiles} />
+      <ProxiesPage key={`proxies-${currentWorkspaceId ?? "loading"}`} active={view === "proxies"} groups={["", ...groups.slice(1)]} folders={folders} profiles={profiles} loadingProfiles={!loaded} onChanged={refreshImportedProfiles}
+        onTaskSnapshotChange={publishProxyTask} focusTask={view === "proxies" && proxyTaskFocusRequest !== null && proxyTaskFocusRequest.workspaceId === currentWorkspaceId}
+        onTaskFocused={completeProxyTaskFocus} localAssignmentIntent={activeLocalProxyIntent} onDismissLocalAssignmentIntent={dismissLocalProxyAssignment} />
+      <LocalAssistantPage active={view === "assistant"} onOpenMcp={() => { setSettingsTab("integrations"); setView("settings"); }} onOpenModelServices={() => openSettingsFromPalette("models")}
+        draftSuggestion={assistantDraftSuggestion} onDismissDraftSuggestion={id => setAssistantDraftSuggestion(current => current?.id === id ? null : current)}
+        onReturnToTask={source => { if (source.returnKey) { setInspectionId(source.returnKey); setView("inspection"); } }} />
+      <EnvironmentInspectionPage active={view === "inspection"} profile={inspectionId ? profilesById.get(inspectionId) ?? null : null}
+        refreshVersion={fingerprintRefreshVersion} onBack={backFromInspection} onEditProfile={(id, field, trigger) => { if (!editSessionRef.current) openEdit(id, field, trigger); }} onExplainFingerprint={explainFingerprint} />
+      <TrashPage key={`trash-${currentWorkspaceId ?? "loading"}`} active={view === "trash"} onChanged={refreshImportedProfiles} folderTree={folders}
+        onTaskSnapshotChange={snapshot => setTrashTaskState({ workspaceId: currentWorkspaceId, snapshot })}/>
+      <WorkspaceManagementPage key="local-workspaces" active={view === "workspaces"} request={workspacePageRequest} onBack={() => setView("profiles")} onShowRunning={showRunningProfiles} onShowBatchTask={showBulkTask} />
       {view === "profiles" ? (<div className="workspace profiles-workspace">
+        {reuseRequest && <div className={`update-banner update-result${reuseRequest.status === "failed" ? " warning" : ""}`} role={reuseRequest.status === "failed" ? "alert" : "status"} aria-busy={reuseRequest.status === "loading"}>
+          <Icon name={reuseRequest.status === "loading" ? "copy" : "alert"} className="sm" />
+          <span>{reuseRequest.status === "loading" ? t("Preparing a new draft from {profile}…", { profile: reuseRequest.name || reuseRequest.id }) : t(reuseRequest.error || "The source configuration could not be loaded.")}</span>
+          {reuseRequest.status === "failed" && <button type="button" className="btn xs" onClick={() => void reuseProfileConfiguration(reuseRequest.id, reuseRequest.name)}>{t("Retry")}</button>}
+          <button type="button" className="btn xs ghost" onClick={cancelReuseRead}>{t(reuseRequest.status === "loading" ? "Cancel" : "Dismiss")}</button>
+        </div>}
         <div className="page-heading">
-          <div className="profile-heading-copy"><h1>{t("Environments")}</h1><span className="profile-total">{t("{count} environments", { count: profiles.length })}</span></div>
+          <div className="profile-heading-copy"><h1 id="profiles-page-title" tabIndex={-1}>{t("Environments")}</h1><span className="profile-total">{t("{count} environments", { count: profiles.length })}</span></div>
           <div className="searchfield heading-search"><Icon name="search" className="sm" /><input className="input search" placeholder={t("Search name, No., tag or proxy…")} aria-label={t("Search profiles")} value={q} onChange={(e) => setQ(e.target.value)} />{q && <button type="button" className="clear" aria-label={t("Clear search")} onClick={() => setQ("")}><Icon name="close" className="sm" /></button>}</div>
           <div className="page-actions">
           <button className="btn" title={t("Import profiles from AdsPower, GoLogin, Multilogin, Donut, and other readable exports")} onClick={openBulk}><Icon name="fileImport" className="sm" />{t("Import profiles")}</button>
           <button className="btn primary" onClick={openCreate}><Icon name="plus" className="sm" />{t("New Profile")}</button>
         </div>
         </div>
-        {breadcrumb && <nav className="folder-breadcrumb" aria-label={t("Folder path")}><button className="btn ghost xs" onClick={() => selectFolder("all")}>{t("All profiles")}</button>{[...breadcrumb.ancestors, group].map((name) => <span key={name}> / <button className="btn ghost xs" onClick={() => selectFolder(name)}>{folderLabel(name)}</button></span>)}</nav>}
+        <RosterViews current={{ scope: rosterScope, query: q, group, status: profileStatus, sort, hiddenColumns: [...hiddenCols], pageSize }}
+          views={viewPreferencesReady ? savedProfileViews : []} counts={rosterViewCounts}
+          ready={viewPreferencesReady} loading={viewPreferencesLoading} readError={viewPreferenceReadError} busy={viewPreferenceBusy} onRetry={() => setPreferenceLoadAttempt(value => value + 1)}
+          onScope={chooseRosterScope} onApply={applyProfileView} onSave={saveProfileView} onRemove={removeProfileView} />
+        {!!breadcrumb?.ancestors.length && <nav className="folder-breadcrumb" aria-label={t("Folder path")}><button className="btn ghost xs" onClick={() => selectFolder("all")}>{t("All profiles")}</button>{breadcrumb.ancestors.map(name => <span key={name}> / <button className="btn ghost xs" onClick={() => selectFolder(name)}>{folderLabel(name)}</button></span>)}<span aria-current="location"> / {folderLabel(group)}</span></nav>}
         <div className="profile-filter-row">
-          <nav className="profile-group-tabs" aria-label={t("Group filter")}>
-            <button type="button" className={`profile-group-tab${group === "all" ? " active" : ""}`} aria-pressed={group === "all"} onClick={() => selectFolder("all")}>{t("All groups")}<span>{profiles.length}</span></button>
-            {tree.filter(folder => folder.depth === 0 || folder.name === group).map(folder => <button type="button" key={folder.name} className={`profile-group-tab${group === folder.name ? " active" : ""}`} title={folder.name} aria-pressed={group === folder.name} onClick={() => selectFolder(folder.name)}>{folder.label ?? folder.name}<span>{countFor(folder.name)}</span></button>)}
-            {profiles.some(profile => !profile.group) && <button type="button" className={`profile-group-tab${group === "" ? " active" : ""}`} aria-pressed={group === ""} onClick={() => selectFolder("")}>{t("Ungrouped")}<span>{profiles.filter(profile => !profile.group).length}</span></button>}
-          </nav>
+          <select className="select group-filter" aria-label={t("Group filter")} value={group} onChange={event => selectFolder(event.target.value)}>
+            <option value="all">{t("All groups")} · {profiles.length}</option>
+            <option value="">{t("Ungrouped")} · {countFor("")}</option>
+            {missingRosterGroup && <option value={missingRosterGroup}>{t("Unavailable · {group}", { group: missingRosterGroup })}</option>}
+            {tree.map(folder => <option key={folder.name} value={folder.name}>{[...folder.ancestors, folder.name].map(folderLabel).join(" / ")} · {countFor(folder.name)}</option>)}
+          </select>
           <div className="profile-status-filter"><div className="profile-status-tabs" role="group" aria-label={t("Filter by status")}>
           <button type="button" className={profileStatus === "all" ? "active" : ""} aria-pressed={profileStatus === "all"} onClick={() => setProfileStatus("all")}>{t("All environments")}<span>{matchingProfiles.length}</span></button>
           <button type="button" className={profileStatus === "running" ? "active" : ""} aria-pressed={profileStatus === "running"} onClick={() => setProfileStatus("running")}>{t("Running")}<span>{matchingRunningCount}</span></button>
           <button type="button" className={profileStatus === "stopped" ? "active" : ""} aria-pressed={profileStatus === "stopped"} onClick={() => setProfileStatus("stopped")}>{t("Stopped")}<span>{matchingProfiles.length - matchingRunningCount}</span></button>
         </div></div>
           <div className="profile-view-tools">
-            <select className="select group-filter" aria-label={t("Group filter")} value={group} onChange={(e) => selectFolder(e.target.value)}><option value="all">{t("All groups")}</option><option value="">{t("Ungrouped")}</option>{existingGroups.map((g) => <option key={g} value={g}>{g}</option>)}</select>
             <div className="headactions">
+          <RosterDensityControl value={rosterDensity} onChange={value => void chooseRosterDensity(value)} disabled={!viewPreferencesReady} busy={viewPreferenceBusy} />
           <button
             type="button"
             className="iconbtn tip"
@@ -2255,10 +3256,17 @@ function App() {
             </div>
           </div>
         </div>
-        {runtimeDownloads.length > 0 && <RuntimeDownloadProgressView downloads={runtimeDownloads} />}
+        {runtimeDownloads.length > 0 && (runtimeDownloadsStale ? <div className="update-progress" role="status">{t("Download status temporarily unavailable")}</div> : <RuntimeDownloadProgressView downloads={runtimeDownloads} />)}
+        {importBusy && <div className="import-task-indicator" role="status"><Icon name="refresh" className="sm" /><span>{t("Importing environments…")}</span></div>}
+        {importReceipt && <ImportReceiptPanel receipt={importReceipt} expanded={importReceiptExpanded} refreshing={importReceiptRefreshing} onExpandedChange={setImportReceiptExpanded} onBrowseAll={() => { setSelected(new Set()); chooseRosterScope("all"); selectFolder("all"); }} onViewAttention={() => { setSelected(new Set()); chooseRosterScope("attention"); selectFolder("all"); }} onDismiss={() => { if (!importReceiptRefreshing) { setImportReceipt(null); setImportReceiptExpanded(false); } }} />}
+        {!cookieTargets && cookieImport.snapshot.phase !== "idle" && <div ref={cookieTaskPanelRef} tabIndex={-1} className="cookie-import-result-anchor"><CookieImportTaskPanel snapshot={cookieImport.snapshot} onRetryFailed={() => { void cookieImport.task.retryFailed(); }} onDismiss={() => { cookieImport.task.dismiss(); }} /></div>}
+        {!showUpdate && (fileUpdateBusy || fileUpdate.snapshot.latest) && <div ref={fileUpdatePanelRef} tabIndex={-1} className="profile-file-update-result-anchor"><ProfileFileUpdatePanel snapshot={fileUpdate.snapshot} onChooseFile={openUpdate} onBrowseProfiles={() => { setSelected(new Set()); chooseRosterScope("all"); selectFolder("all"); }} onDismiss={() => { fileUpdate.task.dismissResults(); }} /></div>}
+        <div ref={moveTaskPanelRef} tabIndex={-1} className="profile-move-result-anchor"><ProfileMoveFeedback state={profileMove.state} onRetry={() => void runMoveAction(profileMove.retry)} onRecheck={() => void runMoveAction(profileMove.recheck)} onDismiss={profileMove.dismiss} /></div>
+        {bulkTaskSnapshot && <BulkProfileTaskPanel snapshot={bulkTaskSnapshot} expanded={bulkTaskExpanded} refreshing={bulkTaskRefreshing} onExpandedChange={setBulkTaskExpanded} onStopPending={() => bulkTaskRef.current?.stopPending()} onRetryFailed={retryBulkFailures} onDismiss={dismissBulkTask} />}
+
 
         {filtered.length > 0 && selected.size > 0 && (<div className="toolbar" role="status">
-            <button type="button" className="btn" disabled={deleting || allFilteredSelected} onClick={selectAllFiltered}>
+            <button type="button" className="btn" disabled={deleting || allFilteredSelected} onClick={() => { rangeSelectionAnchor.current = null; selectAllFiltered(); }}>
               {allFilteredSelected ? t("All {scope} selected", { scope: selectionScope }) : t("Select all {scope}", { scope: selectionScope })}
             </button>
             <span className="muted">{deleting ? t("Moving selected profiles…") : t("Across all pages")}</span>
@@ -2272,11 +3280,11 @@ function App() {
             <Icon name="check" className="sm" />
             {t("{count} selected", { count: selected.size })}
           </span>
-          <button type="button" className="btn ghost" aria-label={t("Clear selection")} onClick={() => setSelected(new Set())}>{t("Clear selection")}</button>
-          <button className="btn primary tip" data-tip={t("Open selected browsers")} disabled={!selected.size} onClick={openSelected}>
+          <button type="button" className="btn ghost" aria-label={t("Clear selection")} onClick={() => { rangeSelectionAnchor.current = null; setSelected(new Set()); }}>{t("Clear selection")}</button>
+          <button className="btn primary tip" data-tip={t(workspaceOperationState.blocked ? workspaceOperationMessage(workspaceOperationState) : "Open selected browsers")} disabled={!selected.size || bulkTaskActive || bulkTaskRefreshing || workspaceOperationState.blocked} onClick={openSelected}>
             <Icon name="play" className="sm" />{t("Start")}
           </button>
-          <button className="btn solid-danger tip" data-tip={t("Close selected browsers")} disabled={!selected.size} onClick={closeSelected}>
+          <button className="btn solid-danger tip" data-tip={t(workspaceOperationState.blocked ? workspaceOperationMessage(workspaceOperationState) : "Close selected browsers")} disabled={!selected.size || bulkTaskActive || bulkTaskRefreshing || workspaceOperationState.blocked} onClick={closeSelected}>
             <Icon name="power" className="sm" />{t("Stop")}
           </button>
           <button type="button" className="btn ghost bulk-tools-toggle" aria-expanded={bulkToolsOpen} onClick={() => setBulkToolsOpen(open => !open)}>{t(bulkToolsOpen ? "Fewer actions" : "More actions")}<Icon name={bulkToolsOpen ? "chevronUp" : "chevronDown"} className="sm" /></button>
@@ -2297,7 +3305,7 @@ function App() {
           ><Icon name="cookie" className="sm" />{t("Add cookies")}</button>
           <span className="vsep" />
           {selectedMobileCount > 0 && (<button className="btn warn" onClick={convertSelectedMobile}>
-              <Icon name="laptop" className="sm" />Convert mobile ({selectedMobileCount})
+              <Icon name="laptop" className="sm" />{t("Convert mobile ({count})", { count: selectedMobileCount })}
             </button>)}
           <div className="menuwrap" ref={exportRef}>
             <button className="btn tip" data-tip={t("Export selected profiles")} disabled={!selected.size || !!exportProgress} onClick={() => setExportOpen((o) => !o)}>
@@ -2314,14 +3322,15 @@ function App() {
           </button>
           <span className="vsep" />
           <div className="movewrap">
-            {newMode ? (<input className="input" autoFocus placeholder={t("new group name")} value={newGroup} onChange={(e) => setNewGroup(e.target.value)} />) : (<select className="select move-group" aria-label={t("Move to group")} title={moveTarget || "Choose group"} disabled={!selected.size} value={moveTarget} onChange={(e) => (e.target.value === "__new__" ? setNewMode(true) : setMoveTarget(e.target.value))}>
-                <option value="">{t("Move to…")}</option>
-                {existingGroups.map((g) => (<option key={g} value={g}>{g}</option>))}
-                <option value="__new__">{t("+ new group…")}</option>
+            {newMode ? (<input className="input" autoFocus placeholder={t("new group name")} value={newGroup} disabled={profileMove.busy} onChange={(e) => { if (moveUiInFlight.current) return; moveDraftRevision.current++; setNewGroup(e.target.value); }} />) : (<select className="select move-group" aria-label={t("Move to group")} title={moveTarget === null ? t("Choose destination group") : moveTarget || t("Ungrouped")} disabled={!selected.size || profileMove.busy} value={moveTarget === null ? "choose" : `group:${moveTarget}`} onChange={(e) => { if (moveUiInFlight.current) return; moveDraftRevision.current++; if (e.target.value === "new") setNewMode(true); else if (e.target.value.startsWith("group:")) setMoveTarget(e.target.value.slice(6)); else setMoveTarget(null); }}>
+                <option value="choose">{t("Move to…")}</option>
+                <option value="group:">{t("Ungrouped")}</option>
+                {existingGroups.map((g) => (<option key={g} value={`group:${g}`}>{g}</option>))}
+                <option value="new">{t("+ new group…")}</option>
               </select>)}
-            {newMode && (<button className="btn ghost" onClick={() => { setNewMode(false); setNewGroup(""); }}>{t("cancel")}</button>)}
-            <button className="btn accent" disabled={!selected.size || (newMode ? !newGroup.trim() : !moveTarget)} onClick={moveSelected}>
-              <Icon name="move" className="sm" />{t("Move")}
+            {newMode && (<button className="btn ghost" disabled={profileMove.busy} onClick={() => { if (moveUiInFlight.current) return; moveDraftRevision.current++; setNewMode(false); setNewGroup(""); }}>{t("cancel")}</button>)}
+            <button className="btn accent" disabled={!selected.size || profileMove.busy || workspaceOperationState.blocked || (newMode ? !newGroup.trim() : moveTarget === null)} onClick={moveSelected}>
+              <Icon name="move" className="sm" />{t(profileMove.busy ? "Moving…" : "Move")}
             </button>
           </div>
           {extensions.length > 0 && selectedProfilesSupportChromeExtensions && (<>
@@ -2344,11 +3353,12 @@ function App() {
         </div>)}
 
         <div className={`tablewrap${tableScrolled ? " scrolled" : ""}`} onScroll={(event) => setTableScrolled(event.currentTarget.scrollLeft > 0)}>
+          <span id="profile-range-selection-hint" className="sr-only">{t("Hold Shift while changing a checkbox to select or clear a visible range on this page. Shift+Space also works.")}</span>
           <table className="profile-table" aria-busy={!loaded} style={{ minWidth: tableMinWidth }}>
             <thead>
               <tr>
-                <th className="chk" style={{ width: CHECKBOX_COLUMN_WIDTH }}>
-                  <input type="checkbox" aria-label={t("Select all visible profiles")} checked={allVisibleSelected} disabled={!selectableProfiles.length} onChange={toggleAll} />
+                <th className="chk" style={{ width: CHECKBOX_COLUMN_WIDTH }} title={t("Shift-click to select a range")}>
+                  <input type="checkbox" aria-label={t("Select all visible profiles")} checked={allVisibleSelected} disabled={!selectableProfiles.length} onChange={() => { rangeSelectionAnchor.current = null; toggleAll(); }} />
                 </th>
                 {shownColumns.map(columnHead)}
               </tr>
@@ -2361,87 +3371,44 @@ function App() {
               const groupName = section.name ? folderLabel(section.name) : t("Ungrouped");
               const selectedInGroup = section.matches.filter(profile => selected.has(profile.id)).length;
               const groupPanelId = `profile-group-${section.orderIndex}`;
-              return <React.Fragment key={section.name}><tbody className="profile-group-header">
+              return <React.Fragment key={section.name}>{rosterScope !== "recent" && <tbody className="profile-group-header">
                 <tr className="profile-group-row"><td colSpan={visibleColumnCount}><div className="profile-group-heading">
-                  <input className="profile-group-check" type="checkbox" aria-label={t("Select all {count} profiles in {group}", { count: section.matches.length, group: groupName })} disabled={!section.matches.length} checked={section.matches.length > 0 && selectedInGroup === section.matches.length} ref={element => { if (element) element.indeterminate = selectedInGroup > 0 && selectedInGroup < section.matches.length; }} onChange={() => setSelected(current => toggleProfileSelection(current, section.matches))} />
+                  <input className="profile-group-check" type="checkbox" aria-label={t("Select all {count} profiles in {group}", { count: section.matches.length, group: groupName })} disabled={!section.matches.length} checked={section.matches.length > 0 && selectedInGroup === section.matches.length} ref={element => { if (element) element.indeterminate = selectedInGroup > 0 && selectedInGroup < section.matches.length; }} onChange={() => { rangeSelectionAnchor.current = null; setSelected(current => toggleProfileSelection(current, section.matches)); }} />
                   <button type="button" className="profile-group-toggle" aria-expanded={!collapsed} aria-controls={groupPanelId} aria-label={t(collapsed ? "Expand {group}" : "Collapse {group}", { group: groupName })} disabled={revealGroupMatches} onClick={() => toggleProfileGroup(section.name, collapsed)}><Icon name={collapsed ? "chevronRight" : "chevronDown"} className="sm" /><span className="profile-group-name" title={section.name}>{groupName}</span><span className="profile-group-count">{t("{count} environments", { count: section.matches.length })}</span><span className="profile-group-running">{t("{count} running", { count: section.running })}</span>{section.profiles.length < section.matches.length && <span className="profile-group-page-hint">{t("{count} on this page", { count: section.profiles.length })}</span>}</button>
-                  <button type="button" className="iconbtn tip profile-group-create" data-tip={t("New Profile")} aria-label={t("New profile in {group}", { group: groupName })} onClick={() => { openCreate(); setForm(form => ({ ...form, group: section.name })); const next = new Map(groupDisclosure); next.set(section.name, false); saveGroupDisclosure(next); }}><Icon name="plus" className="sm" /></button>
+                  <button type="button" className="iconbtn tip profile-group-create" data-tip={t("New Profile")} aria-label={t("New profile in {group}", { group: groupName })} onClick={() => { if (!openCreate()) return; setForm(form => ({ ...form, group: section.name })); const next = new Map(groupDisclosure); next.set(section.name, false); saveGroupDisclosure(next); }}><Icon name="plus" className="sm" /></button>
                   <ProfileActionMenu label={t("Actions for {folder}", { folder: groupName })} icon={<Icon name="more" className="sm" />}>
                     <button role="menuitem" className="pop-item" onClick={() => { selectFolder(section.name); setGroupManagerOpen(true); }}><Icon name="folders" className="sm" />{t("Manage groups")}</button>
                     <button role="menuitem" className="pop-item" onClick={() => { setNewFolderParent(section.name || null); setSidebarGroupName(""); setAddingGroup(true); setGroupManagerOpen(true); }}><Icon name="plus" className="sm" />{t("New subfolder")}</button>
                   </ProfileActionMenu>
                 </div></td></tr>
-              </tbody><tbody className="profile-group-body" id={groupPanelId} hidden={collapsed}>
+              </tbody>}<tbody className="profile-group-body" id={groupPanelId} hidden={collapsed}>
               {!collapsed && section.profiles.map((p) => {
                 // The numbering memo covers every roster profile, so this
                 // lookup cannot miss; a silent fallback here would renumber
                 // rows wrongly if that invariant ever broke.
                 const no = numbering.get(p.id)!;
-                // live through the local cache. Only rows locked by ANOTHER
-                // session stay read-only — that writer owns the profile.
-                const canEditRow = true;
-                return (<tr key={p.id} className={`${p.running ? "running" : ""}${selected.has(p.id) ? " selected" : ""}`}>
-                  <td className="chk">
-                    <input type="checkbox" aria-label={t("Select {profile}", { profile: p.name })} checked={selected.has(p.id)} onChange={() => toggle(p.id)} />
-                  </td>
-                  {columnVisible("no") && (<td className="col-no">
-                      <span className={`no-text${no.custom ? " custom" : ""}`} title={`${no.custom ? t("Custom NO.") : "Serial"} ${no.value}`}>{no.value}</span>
-                    </td>)}
-                  {columnVisible("name") && (<td className="col-name" title={`${p.name}\n${p.id}`}>
-                      <span className="name-cell">
-                        <button type="button" className="n profile-name-button" aria-label={t("Edit {profile}", { profile: p.name })} onClick={() => openEdit(p.id)}>{p.name}<FingerprintBadge p={p} /></button>
-                        <span className="sub">
-                          <span className="profile-serial" title={p.id}>#{no.value}</span>
-                          <span title={p.engine === "firefox" ? "Native Firefox profile · no CDP, PDF, or Chrome extensions" : `${browserLabel(p.engine, p.chromiumRuntime)} · CDP, PDF, and Chrome extensions`}>
-                            {browserLabel(p.engine, p.chromiumRuntime)}
-                          </span>
-
-                        </span>
-                        {(p.restartPending || !!p.pendingCookieCount) && (<span className="status">
-                            {p.restartPending && (<button
-                                type="button"
-                                className="status-chip warn tip"
-                                data-tip={t("Saved proxy or fingerprint changes apply when this browser restarts. Click to restart it now.")}
-                                aria-label={t("Restart {profile} so the saved changes apply", { profile: p.name })}
-                                disabled={busy[p.id]}
-                                onClick={() => act(p.id, restartProfile)}
-                              ><Icon name="refresh" className="sm" />{t("Applies at next start")}</button>)}
-                            {!!p.pendingCookieCount && (<button
-                                type="button"
-                                className="status-chip tip"
-                                data-tip={t("The browser sets these cookies the next time it starts. Click to see or remove them.")}
-                                onClick={() => void openPendingCookies(p)}
-                              ><Icon name="cookie" className="sm" />{t("{count} cookie(s) at next start", { count: String(p.pendingCookieCount) })}</button>)}
-                          </span>)}
-                      </span>
-                    </td>)}
-                  {columnVisible("group") && (<td className="col-group" title={p.group}>
-                      {p.group ? <span className="chip">{p.group}</span> : <span className="muted">—</span>}
-                    </td>)}
-                  {columnVisible("platform") && <td className="col-platform"><PlatformPill platform={p.platform} /></td>}
-                  {columnVisible("tags") && (<td className="col-tags" title={p.tags?.length ? p.tags.join(", ") : "No tags"}>
-                      {p.tags?.length ? p.tags.map((t) => <span key={t} className="chip">{t}</span>) : <span className="muted">—</span>}
-                    </td>)}
-                  {columnVisible("proxy") && (<td className="col-proxy" title={p.proxyError || p.proxy || "no proxy"}>
-                      {p.proxyError
-                        ? <span className="proxy-cell bad"><Icon name="warning" className="sm" />{t("Invalid proxy — edit to fix")}</span>
-                        : p.proxy
-                          ? <span className="proxy-cell">{p.proxy}</span>
-                          : <span className="muted">—</span>}
-                    </td>)}
-                  {columnVisible("status") && <td className="col-status"><span className={`profile-status${p.running ? " running" : ""}`}><StatusDot running={p.running} />{p.running ? t("Running") : t("Stopped")}</span></td>}
-                  {columnVisible("action") && (<td className="col-action"><span className="rowactions">
-                    {p.running ? <button className="btn sm row-stop" aria-label={t("Stop {profile}", { profile: p.name })} disabled={busy[p.id]} onClick={() => act(p.id, closeProfile)}><Icon name="power" className="sm" />{t("Stop")}</button>
-                      : p.mobilePersona ? <button className="btn sm warn" disabled={busy[p.id]} title={t("Convert this mobile persona to a desktop device")} onClick={() => openEdit(p.id)}><Icon name="laptop" className="sm" />{t("Convert")}</button>
-                      : <button className="btn sm primary row-start" aria-label={t("Start {profile}", { profile: p.name })} disabled={busy[p.id]} onClick={() => act(p.id, openProfile)}><Icon name="play" className="sm" />{openLabel(p)}</button>}
-                    <ProfileActionMenu label={t("Actions for {profile}", { profile: p.name })} icon={<Icon name="more" className="sm" />}>
-                      {canEditRow && <button role="menuitem" className="pop-item" onClick={() => openEdit(p.id)}><Icon name="edit" className="sm" />{t("Edit profile")}</button>}
-                      {canEditRow && <button role="menuitem" className="pop-item" onClick={() => openCookie([p])}><Icon name="cookie" className="sm" />{t("Add cookies")}</button>}
-                      {p.has2fa && <button role="menuitem" className="pop-item" onClick={() => copy2fa(p.id)}><Icon name={twoFaFlash?.id === p.id ? "check" : "key"} className="sm" />{twoFaFlash?.id === p.id ? t("Copied") : t("Copy current 2FA code")}</button>}
-                      {p.running && p.engine === "chromium" && <button role="menuitem" className="pop-item" disabled={busy[p.id]} onClick={() => act(p.id, raiseProfile)}><Icon name="raise" className="sm" />{t("Bring to front")}</button>}
-                    </ProfileActionMenu>
-                  </span></td>)}
-                </tr>);
+                const launchFailure = p.running ? undefined : launchFailures?.get(p.id);
+                return (<ProfileRosterRow
+                  key={p.id}
+                  p={p}
+                  no={no}
+                  isSelected={selected.has(p.id)}
+                  isBusy={!!busy[p.id]}
+                  isFavorite={favoriteProfileIds.has(p.id)}
+                  isReuseLoading={reuseRequest?.id === p.id && reuseRequest.status === "loading"}
+                  twoFaFlashed={twoFaFlash?.id === p.id}
+                  startLabel={openLabel(p)}
+                  launchFailure={launchFailure}
+                  rosterScope={rosterScope}
+                  language={language}
+                  hiddenCols={hiddenCols}
+                  visibleColumnCount={visibleColumnCount}
+                  viewPreferencesReady={viewPreferencesReady}
+                  viewPreferenceBusy={viewPreferenceBusy}
+                  rangeKeyboardActivation={rangeKeyboardActivation}
+                  handlers={stableRowHandlers}
+                  t={t}
+                />);
             })}
               </tbody></React.Fragment>;
             })}
@@ -2449,18 +3416,27 @@ function App() {
               {loaded && filtered.length === 0 && (<tr>
                   <td colSpan={visibleColumnCount} className="empty">
                     <div className="emptystate">
-                      <span className="glyph"><Icon name="profiles" /></span>
+                      <span className="glyph"><Icon name={rosterScope === "attention" && !hasRosterRefinements ? "check" : "profiles"} /></span>
                       {profiles.length === 0 ? (<>
                           <b>{t("No profiles yet")}</b>
                           <p>{t("Create a profile or import a readable export from another browser.")}</p>
+                          <p>{t("When you start an environment for the first time, the app downloads its browser engine if needed.")}</p>
                           <div className="empty-actions">
                             <button className="btn primary" onClick={openCreate}><Icon name="plus" className="sm" />{t("New Profile")}</button>
                             <button className="btn" onClick={openBulk}><Icon name="fileImport" className="sm" />{t("Import profiles")}</button>
                           </div>
+                        </>) : missingRosterGroup ? (<>
+                          <b>{t("This group is unavailable")}</b>
+                          <p>{t("The group “{group}” may have been renamed or removed. Your saved view is kept.", { group: missingRosterGroup })}</p>
+                          <button className="btn" onClick={() => setGroup("all")}>{t("Search all groups")}</button>
+                        </>) : !hasRosterRefinements && rosterScope !== "all" ? (<>
+                          <b>{t(rosterScope === "favorites" ? "Your favorites start here" : rosterScope === "recent" ? "No recent launches yet" : "Nothing needs attention")}</b>
+                          <p>{t(rosterScope === "favorites" ? "Use the star beside an environment name to keep it close at hand." : rosterScope === "recent" ? "Environments launched on this computer in the last seven days appear here." : "No environments currently have invalid proxy settings, changes awaiting restart or imported mobile configurations.")}</p>
+                          <button className="btn" onClick={() => chooseRosterScope("all")}>{t("Browse all environments")}</button>
                         </>) : (<>
                           <b>{t("No matches")}</b>
                           <p>{t("No profiles match the current filters.")}</p>
-                          <button className="btn" onClick={() => { setQ(""); setGroup("all"); setProfileStatus("all"); }}>{t("Clear filters")}</button>
+                          <div className="empty-actions"><button className="btn" onClick={clearRosterRefinements}>{t("Clear filters")}</button>{rosterScope !== "all" && <button className="btn ghost" onClick={() => chooseRosterScope("all")}>{t("Browse all environments")}</button>}</div>
                         </>)}
                     </div>
                   </td>
@@ -2470,7 +3446,7 @@ function App() {
         </div>
 
         {showDiag && diag && (<div className="diagpanel">
-            <div className="when">Last diagnose: {diagWhen}</div>
+            <div className="when">{t("Last diagnose: {when}", { when: diagWhen ?? "" })}</div>
             {diag.analysis.verdicts.map((v, i) => (<div className="v" key={i}>{v}</div>))}
           </div>)}
 
@@ -2478,7 +3454,7 @@ function App() {
           <span className="stat"><b>{profiles.length}</b> {t("profiles")}</span>
           <span className="stat"><StatusDot running={runningCount > 0} /><b>{runningCount}</b> {t("running")}</span>
           {diag && (<span className="diag" onClick={() => setShowDiag((s) => !s)}>
-              Diagnose · last {diagWhen}
+              {t("Diagnose · last {when}", { when: diagWhen ?? "" })}
               <Icon name={showDiag ? "chevronDown" : "chevronRight"} className="sm" />
             </span>)}
           <span className="pager">
@@ -2502,182 +3478,78 @@ function App() {
             </select>
           </span>
         </footer>
-      </div>) : view === "scripts" ? (<ScriptsPage onViewRun={() => setScriptRunOpen(true)} />) : view === "extensions" ? (<div className="workspace extensions-workspace">
-        <div className="page-heading"><div><h1>{t("Extensions")}</h1><p className="page-subtitle">{t("Keep your tools close to every environment.")}</p></div><button className="btn primary" type="button" disabled={extBusy || extInstallBusy} onClick={() => extFileRef.current?.click()}><Icon name="plus" className="sm" />{extBusy ? t("Uploading…") : t("Upload ZIP/CRX")}</button></div>
-        <div className="settingspage">
-          {extErr && <div className="modal-err"><Icon name="alert" className="sm" />{extErr}</div>}
-          <section className="settings-card">
-            <header><Icon name="puzzle" className="sm" /><h2>{t("Install from Chrome Web Store")}</h2></header>
-            <div className="card-body">
-              <p>{t("Paste a Chrome Web Store extension link or its 32-character ID.")}</p>
-              <form className="fld-row" onSubmit={(event) => { event.preventDefault(); void doInstallWebStoreExtension(); }}>
-                <input
-                  className="input"
-                  style={{ flex: 1 }}
-                  aria-label={t("Chrome Web Store URL or extension ID")}
-                  placeholder="https://chromewebstore.google.com/detail/…"
-                  value={extSource}
-                  onChange={(event) => setExtSource(event.target.value)}
-                />
-                <button className="btn primary" type="submit" disabled={extInstallBusy || extBusy}>
-                  <Icon name="plus" className="sm" />{extInstallBusy ? t("Installing…") : t("Install")}
-                </button>
-              </form>
-            </div>
-          </section>
-          <p className="formnote">{t("The in-browser Store button does not work in CloakBrowser. Paste the Store link above, or upload a ZIP/CRX archive. Chrome extensions apply only to CloakBrowser profiles.")}</p>
-          <ol className="steps">
-            <li>{t("Install the extension here. New installs stay unassigned.")}</li>
-            <li>{t("Use")} <b>{t("Edit > Extensions")}</b> {t("to assign it to a profile, or assign many at once from the roster toolbar.")}</li>
-            <li>{t("Reopen the profile. The app loads the extension when the browser starts.")}</li>
-          </ol>
-          <section className="settings-card">
-            <header><Icon name="folder" className="sm" /><h2>{t("Group defaults")}</h2></header>
-            <div className="card-body">
-              <p>{t("Choose the exact extensions assigned to this group.")}</p>
-              {editableDefaultGroups.length === 0 ? (<p className="formnote">{t("Create an editable group before setting its extension defaults.")}</p>) : (<>
-                  <label className="fld">
-                    <span>{t("Group")}</span>
-                    <select aria-label={t("Extension default group")} value={groupDefaultName} onChange={(event) => {
-                        const name = event.target.value;
-                        setGroupDefaultName(name);
-                        setGroupDefaultExts(groupExtensionDefaults.find((item) => item.name === name)?.extensions ?? []);
-                      }}>
-                      {editableDefaultGroups.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}
-                    </select>
-                  </label>
-                  {groupDefaultExtensionChoices.length > 0 ? (<div className="extassign">
-                      {groupDefaultExtensionChoices.map((item) => (<label key={item.id} className="extchk">
-                          <input
-                            type="checkbox"
-                            checked={groupDefaultExts.includes(item.id)}
-                            onChange={() => toggleGroupDefaultExt(item.id)}
-                          />
-                          <span>{item.name}{item.missing && <span className="muted">{t(" · Not installed on this device")}</span>}</span>
-                        </label>))}
-                    </div>) : (<p className="formnote">{t("No extensions are installed. Apply an empty selection to clear this default.")}</p>)}
-                  <p className="formnote">
-                    {t("Applying replaces assignments on {count} current profile(s). New and moved profiles inherit it.", { count: groupDefaultProfileCount })}
-                    {t("Individual profiles can differ later. Reopen browsers to apply changes.")}
-                  </p>
-                  <button type="button" className="btn primary" disabled={groupDefaultBusy || !groupDefaultName} onClick={applyGroupExtensionDefault}>
-                    {groupDefaultBusy ? t("Applying…") : t("Apply group default")}
-                  </button>
-                </>)}
-            </div>
-          </section>
-          {extensions.length === 0 ? (<div className="emptystate">
-              <span className="glyph"><Icon name="puzzle" /></span>
-              <b>{t("No extensions yet")}</b>
-              <p>{t("Uploaded extensions appear here, ready to assign to any profile.")}</p>
-              <button className="btn primary" disabled={extBusy || extInstallBusy} onClick={() => extFileRef.current?.click()}>
-                <Icon name="plus" className="sm" />{extBusy ? t("Uploading…") : t("Upload ZIP/CRX")}
-              </button>
-            </div>) : (<div className="extlist">
-              {extensions.map((x) => (<div key={x.id} className="extrow">
-                  <Icon name="puzzle" className="sm" />
-                  <span className="extname">{x.name}</span>
-                  <span className="spacer" />
-                  <button className="btn xs danger" onClick={() => doRemoveExtension(x.id, x.name)}>{t("Remove")}</button>
-                </div>))}
-            </div>)}
-          <input ref={extFileRef} type="file" multiple accept=".zip,.crx,application/zip,application/x-chrome-extension" style={{ display: "none" }} onChange={(e) => { if (e.target.files) doUploadExtensions(e.target.files); e.target.value = ""; }}/>
-        </div>
-        <footer className="pagefoot">
-          <span className="spacer" />
-          {extensions.length > 0 && (<button className="btn primary" type="button" disabled={extBusy || extInstallBusy} onClick={() => extFileRef.current?.click()}>
-              <Icon name="plus" className="sm" />{extBusy ? t("Uploading…") : t("Upload ZIP/CRX")}
-            </button>)}
-        </footer>
-      </div>) : view === "settings" ? (<div className="workspace settings-workspace">
-        <div className="page-heading"><div><h1>{t("Settings")}</h1><p className="page-subtitle">{t("Make this workspace feel like yours.")}</p></div></div>
-        <div className="tabs" role="tablist" aria-label={t("Settings sections")}>
-          {SETTINGS_TABS.map((tab) => (<button key={tab.key} type="button" role="tab" aria-selected={settingsTab === tab.key} className={`tab${settingsTab === tab.key ? " active" : ""}`} onClick={() => setSettingsTab(tab.key)}>
-              {t(tab.label)}
-            </button>))}
-        </div>
-        <div className="settingspage">
-          {settingsTab === "account" && (<>
-              <h2 className="sect-title">{t("Local workspace")}</h2>
-              <div className="identity-card">
-                <span className="identity-avatar"><Icon name="user" className="lg" /></span>
-                <span className="identity-lines">
-                  <b>{currentName}</b>
-                  <span>
-                    {t("No account · profile data stays on this computer")}
-                  </span>
-                </span>
-                <span className="chip">{t("Local")}</span>
-              </div>
-            <section className="settings-card">
-            <header><Icon name="user" className="sm" /><h2>{t("Local data")}</h2></header>
-            <div className="card-body">
-            <div className="settings-row"><span>{t("Mode")}</span><strong>{t("Local · no account")}</strong></div>
-            <div className="settings-row"><span>{t("Profiles stored")}</span><strong>{profiles.length}</strong></div>
-
-            </div>
-          </section>
-
-            <section className="settings-card">
-            <header><Icon name="sun" className="sm" /><h2>{t("Appearance")}</h2></header>
-            <div className="card-body">
-              <p>{t("System follows your operating system setting.")}</p>
-              <label className="fld"><span>{t("language.label")}</span>
-                <select className="select" value={language} onChange={(event) => { void setLanguage(event.target.value).catch((error) => setActionErr(error instanceof Error ? error.message : String(error))); }}>
-                  {availableLanguages().map((lang) => (<option key={lang} value={lang}>{languageNativeName(lang)}</option>))}
-                </select>
-              </label>
-              <div className="segmented" role="radiogroup" aria-label={t("Theme")}>
-                {THEMES.map((option) => (<button key={option.key} type="button" role="radio" aria-checked={theme === option.key} className={theme === option.key ? "active" : ""} onClick={() => chooseTheme(option.key)}>
-                    <Icon name={option.icon} className="sm" />{t(option.label)}
-                  </button>))}
-              </div>
-
-            </div>
-          </section>
-
-            </>)}
-
-          {settingsTab === "advanced" && (<>
-              <h2 className="sect-title">{t("Diagnostics")}</h2>
-
-          <section className="settings-card">
-            <header><Icon name="logs" className="sm" /><h2>{t("Logs")}</h2></header>
-            <div className="card-body">
-              <p>{t("The detailed log records launches, proxy setup and browser lifecycle for this installation.")}</p>
-              <button type="button" className="btn" onClick={() => {
-                setLogErr(null);
-                fetchLogs().then(setLogView).catch((e) => setLogErr(e instanceof Error ? e.message : String(e)));
-              }}><Icon name="logs" className="sm" />{t("View detailed logs")}</button>
-              {logErr && <p className="cardnote">{t("Logs")}: {t(logErr)}</p>}
-              {logDir && <p className="cardnote">{t("File")}: {logDir}</p>}
-            </div>
-          </section>
-
-            </>)}
-          {modeErr && <div className="modal-err" role="alert"><Icon name="alert" className="sm" />{t(modeErr)}</div>}
-        </div>
-        <footer className="pagefoot">
-          <span className="spacer" />
-          <button className="btn primary" type="button" onClick={() => setView("profiles")}>{t("Done")}</button>
-        </footer>
-      </div>) : null}
+      </div>) : view === "extensions" ? (<ExtensionsPage
+        extensions={extensions} profiles={profiles} groupDefaults={groupExtensionDefaults}
+        selectedGroup={groupDefaultName} selectedExtensionIds={groupDefaultExts}
+        source={extSource} loading={extLoading} installing={extInstallBusy} uploading={extBusy} applying={groupDefaultBusy} error={extErr}
+        dataFresh={extDataFresh} selectedGroupAvailable={extensionDraftState.selected?.available !== false} draftDirty={!!extensionDraftState.selected?.dirty} onDiscardGroupDraft={() => extensionDrafts.discard()}
+        retainedGroupDrafts={extensionDraftState.drafts.filter(draft => !draft.available && draft.dirty).map(draft => draft.group)}
+        onReload={async () => { if (!await refreshExtensionState(true)) throw new Error("The latest extension data could not be loaded. Your draft is kept. Reload before applying changes."); }}
+        onPreviewGroupDefaults={(selection, signal) => previewGroupExtensionDefaults(selection.group, selection.extensions, signal)}
+        onSourceChange={setExtSource} onSelectGroup={name => extensionDrafts.select(name)}
+        onToggleExtension={toggleGroupDefaultExt} onInstall={doInstallWebStoreExtension} onUpload={doUploadExtensions}
+        onApplyGroupDefaults={applyGroupExtensionDefault} onRemove={doRemoveExtension}
+        onOpenProfile={id => { if (!editSessionRef.current) openEdit(id); }}
+      />) : null}
+      {scriptsVisit.current.visited && <ScriptsPage key={currentWorkspaceId} active={view === "scripts"} onViewRun={() => setScriptRunOpen(true)} />}
+      {settingsVisited.current && (
+        <SettingsPanel
+          visible={view === "settings"}
+          workspaceId={catalog?.currentId}
+          tabs={SETTINGS_TABS}
+          activeTab={settingsTab}
+          onTabChange={setSettingsTab}
+          updateTabRef={updateTabRef}
+          settingsPanelRef={settingsPanelRef}
+          signedUpdateStartup={signedUpdateStartup}
+          onProfilesImported={refreshImportedProfiles}
+          onLocateSnapshotProfile={locateProfile}
+          onOpenAssistant={() => setView("assistant")}
+          onCreateWithLocalProxy={beginCreate}
+          runtimeDownloads={runtimeDownloads}
+          runtimeDownloadsStale={runtimeDownloadsStale}
+          onAssignLocalProxy={startLocalProxyAssignment}
+          onResumeLocalProxyAssignment={activeLocalProxyIntent ? () => setView("proxies") : undefined}
+          localProxyAssignmentBlocked={workspaceOperationState.blocked}
+          fingerprintRefreshVersion={fingerprintRefreshVersion}
+          onInspectProfile={openInspection}
+          onEditProfile={id => { if (!editSessionRef.current) openEdit(id); }}
+          onExplainFingerprint={explainFingerprint}
+          currentWorkspaceName={currentName}
+          profileCount={profiles.length}
+          language={language}
+          onLanguageChange={setLanguage}
+          onLanguageError={setActionErr}
+          themes={THEMES}
+          theme={theme}
+          onThemeChange={chooseTheme}
+          rosterDensity={rosterDensity}
+          onRosterDensityChange={chooseRosterDensity}
+          viewPreferencesReady={viewPreferencesReady}
+          viewPreferencesLoading={viewPreferencesLoading}
+          viewPreferenceBusy={viewPreferenceBusy}
+          viewPreferenceReadError={viewPreferenceReadError}
+          onRetryViewPreferences={() => setPreferenceLoadAttempt(value => value + 1)}
+          motionPreference={motion.preference}
+          onMotionPreferenceChange={motion.setPreference}
+          logErr={logErr}
+          onLogErr={setLogErr}
+          onLogView={setLogView}
+          logDir={logDir}
+          modeErr={modeErr}
+          onDone={() => setView("profiles")}
+        />
+      )}
+      </ErrorBoundary>
       </div>
       <footer className="workspace-footer"><span><Icon name="laptop" className="sm" />{t("Data stays on this device")}</span><span>猫步·千境{appVersion ? ` · ${appVersion}` : ""}</span></footer>
       </div>
 
-      {(logView || logErr) && (<div className="modal-backdrop" onClick={() => { setLogView(null); setLogErr(null); }}>
-          <div className="modal" role="dialog" aria-modal="true" aria-label={t("Detailed logs")} onClick={(event) => event.stopPropagation()}>
-            <div className="modal-head">{t("Detailed logs")}<button type="button" className="modal-close" aria-label={t("Close")} onClick={() => { setLogView(null); setLogErr(null); }}><Icon name="close" className="sm" /></button></div>
-            <div className="modal-body">
-              {logErr && <p className="hint">{logErr}</p>}
-              {logView && (<pre className="logpre">
-                  {logView.file + "\n" + logView.content}
-                </pre>)}
-            </div>
-            <div className="modal-foot"><button className="btn ghost" type="button" onClick={() => { setLogView(null); setLogErr(null); }}>{t("Close")}</button></div>
-          </div>
-        </div>)}
+      <LogModal
+        logView={logView}
+        logErr={logErr}
+        onClose={() => { setLogView(null); setLogErr(null); }}
+      />
 
       {pendingView && (<div className="modal-backdrop" onClick={() => { if (!pendingView.busy) setPendingView(null); }}>
           <div className="modal" role="dialog" aria-modal="true" aria-labelledby="pending-cookie-title" onClick={(event) => event.stopPropagation()}>
@@ -2703,83 +3575,52 @@ function App() {
           </div>
         </div>)}
 
-      {cookieTargets && (<div className="modal-backdrop">
-          <form className="modal" role="dialog" aria-modal="true" aria-labelledby="add-cookie-title" onSubmit={(event) => { event.preventDefault(); void submitCookie(); }}>
-            <div className="modal-head" id="add-cookie-title">
-              <Icon name="cookie" />{t("Add cookies")}
-              <span className="mono muted">{cookieTargets.length === 1 ? cookieTargets[0]!.name : t("{count} profiles", { count: String(cookieTargets.length) })}</span>
-              <button type="button" className="modal-close" aria-label={t("Close")} disabled={cookieSaving} onClick={closeCookie}><Icon name="close" className="sm" /></button>
-            </div>
-            <div className="modal-body">
-              {cookieErr && <div className="modal-err" style={{ whiteSpace: "pre-line" }}><Icon name="alert" className="sm" />{cookieErr}</div>}
-              <p className="hint">{cookieTargets.length > 1
-                ? t("Open browsers get the cookies now. Closed profiles get them the next time they start, before the first page opens.")
-                : cookieTargets[0]!.running
-                  ? t("The open browser gets the cookies now.")
-                  : t("The browser sets these cookies the next time it starts, before the first page opens.")}</p>
-              <label className="fld">
-                <span>{t("Paste cookies (JSON export or cookies.txt)")}</span>
-                <textarea rows={5} spellCheck={false} autoComplete="off" value={cookieText} placeholder={'[{"name":"auth_token","value":"…","domain":".x.com","path":"/"}]'} onChange={(event) => setCookieText(event.target.value)} />
-              </label>
-              {!cookieText.trim() && <>
-                <p className="hint">{t("Or add one cookie:")}</p>
-                <div className="fld-row">
-                  <label className="fld grow">
-                    <span>{t("Name")}</span>
-                    <input value={cookieForm.name} onChange={(event) => setCookieField("name", event.target.value)} />
-                  </label>
-                  <label className="fld grow">
-                    <span>{t("Value")}</span>
-                    <input type="password" autoComplete="off" value={cookieForm.value} onChange={(event) => setCookieField("value", event.target.value)} />
-                  </label>
-                </div>
-                <div className="fld-row">
-                  <label className="fld grow">
-                    <span>{t("Domain")}</span>
-                    <input value={cookieForm.domain} placeholder="example.com" onChange={(event) => setCookieField("domain", event.target.value)} />
-                  </label>
-                  <label className="fld port">
-                    <span>{t("Path")}</span>
-                    <input value={cookieForm.path} onChange={(event) => setCookieField("path", event.target.value)} />
-                  </label>
-                </div>
-              </>}
-            </div>
-            <div className="modal-foot">
-              <button className="btn ghost" type="button" disabled={cookieSaving} onClick={closeCookie}>{t("Cancel")}</button>
-              <button className="btn primary" type="submit" disabled={cookieSaving || (!cookieText.trim() && (!cookieForm.name || !cookieForm.domain.trim() || !cookieForm.path.startsWith("/")))}>
-                {cookieSaving ? t("Adding…") : t("Add cookies")}
-              </button>
-            </div>
-          </form>
-        </div>)}
+      <CookieImportTaskDialog task={cookieImport.task} open={!!cookieTargets} targets={cookieTargets ?? lastCookieTargets.current} onClose={closeCookie} />
 
-      {movingFolder && <div className="modal-backdrop" onClick={() => { if (!folderMoveBusy) setMovingFolder(null); }}>
-        <div className="modal mode-confirm" role="dialog" aria-modal="true" aria-labelledby="folder-move-title" onClick={(event) => event.stopPropagation()}>
-          <div className="modal-head" id="folder-move-title">{t("Move {folder}", { folder: movingFolder })}</div>
-          <div className="modal-body">
-            <label className="fld"><span>{t("Parent folder")}</span><select value={folderParent} disabled={folderMoveBusy} onChange={(event) => setFolderParent(event.target.value)}>
-              <option value="">{t("Top level")}</option>
-              {tree.filter((folder) => folder.name !== movingFolder && !folder.ancestors.includes(movingFolder)).map((folder) => <option key={folder.name} value={folder.name}>{folder.name}</option>)}
-            </select></label>
+      <MoveFolderModal
+        movingFolder={movingFolder}
+        folderParent={folderParent}
+        folderMoveBusy={folderMoveBusy}
+        folderMoveErr={folderMoveErr}
+        tree={tree}
+        onParentChange={setFolderParent}
+        onClose={() => { if (!folderMoveBusy) setMovingFolder(null); }}
+        onCommit={() => void commitFolderMove()}
+      />
 
-            {folderMoveErr && <div className="modal-err" role="alert">{folderMoveErr}</div>}
-          </div>
-          <div className="modal-foot"><button className="btn ghost" disabled={folderMoveBusy} onClick={() => setMovingFolder(null)}>{t("Cancel")}</button><button className="btn primary" disabled={folderMoveBusy} onClick={() => void commitFolderMove()}>{t("Move")}</button></div>
-        </div>
-      </div>}
-
-      {showCreate && (
+      <MotionPresence present={showCreate}>{() => (
         /* Form dialog: a stray backdrop click must not discard typed input —
            close via Cancel, the X, or Escape (the backdrop has no onClick). */
         <div className="modal-backdrop profile-editor-backdrop">
-          <div ref={createEditorRef} tabIndex={-1} className="modal profile-editor" role="dialog" aria-modal="true" aria-labelledby="create-profile-title" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-head" id="create-profile-title">
-              <Icon name="plus" />{t("New profile")}
-              <button type="button" className="modal-close" aria-label={t("Close")} onClick={closeCreate}><Icon name="close" className="sm" /></button>
+          <div ref={createEditorRef} inert={createCloseGuard.pending || undefined} aria-hidden={createCloseGuard.pending || undefined} tabIndex={-1} className="modal profile-editor" role="dialog" aria-modal="true" aria-labelledby="create-profile-title" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <Icon name="plus" /><span id="create-profile-title">{t("New profile")}</span>
+              <EditorWindowControls chrome={windowChrome} disabled={creating} />
+              <button type="button" className="modal-close" aria-label={t("Close")} disabled={creating} onClick={closeCreate}><Icon name="close" className="sm" /></button>
             </div>
-            <div className="modal-body">
-              {createErr && <div className="modal-err"><Icon name="alert" className="sm" />{createErr}</div>}
+            <div className="modal-body" aria-busy={creating}>
+              <fieldset className="profile-create-fields" disabled={creating}>
+              {createErr && <div className="modal-err profile-create-error" role="alert" tabIndex={-1}><Icon name="alert" className="sm" />{t(createErr)}</div>}
+              {createReuseSource && <div className={`update-banner update-result${createReuseSource.engine === "chromium" && form.engine === "chromium" && appMode?.chromiumRuntime && createReuseSource.chromiumRuntime !== appMode.chromiumRuntime ? " warning" : ""}`} role="note" aria-label={t("Reused configuration")}>
+                <Icon name="copy" className="sm" /><div className="update-copy"><strong>{t("Configuration from {profile}", { profile: createReuseSource.name || createReuseSource.sourceId })}</strong>
+                  <span>{t("Only setup was reused. Account details, proxy settings, cookies and the original fingerprint identity were not copied.")}</span>
+                  <span>{t("Review this draft before creating. The new environment follows normal identity generation and starts without the source session.")}</span>
+                  {createReuseSource.engine === "chromium" && form.engine === "chromium" && appMode?.chromiumRuntime && createReuseSource.chromiumRuntime !== appMode.chromiumRuntime && <span>{t("This computer requires {runtime}. The source uses {source}; the new environment will use {runtime}.", { runtime: "AliasMode Chromium", source: "CloakBrowser" })}</span>}
+                </div>
+              </div>}
+              <ProfileTemplates disabled={creating} draft={{
+                engine: form.engine,
+                chromiumRuntime: profileCreationRuntime(form.engine, form.chromiumRuntime) ?? "",
+                platformOs: form.platformOs as "" | "windows" | "macos" | "linux", screen: form.screen, platform: form.platform,
+              }} onApply={settings => {
+                if (settings.engine === "chromium" && appMode?.chromiumRuntime && settings.chromiumRuntime && settings.chromiumRuntime !== appMode.chromiumRuntime)
+                  throw new Error("This template uses a browser runtime that is unavailable on this computer.");
+                setForm(previous => ({ ...previous, engine: settings.engine,
+                  chromiumRuntime: settings.engine === "firefox" || settings.chromiumRuntime === "cloakbrowser" ? "" : settings.chromiumRuntime || "auto",
+                  platformOs: settings.platformOs, screen: settings.screen, platform: settings.platform,
+                }));
+                setCreateErr(null);
+              }} />
               <div className="fld-row">
                 <label className="fld grow">
                   <span>{t("Name")}</span>
@@ -2818,7 +3659,8 @@ function App() {
                 },
             ] as const).map(({ engine, label, path }) => {
                 // The help text names the engine that this computer and this form create.
-                const runtime = browserLabel(engine, appMode?.chromiumRuntime ?? form.chromiumRuntime);
+                const selectedRuntime = profileCreationRuntime("chromium", form.chromiumRuntime, appMode?.chromiumRuntime) ?? appMode?.defaultChromiumRuntime;
+                const runtime = browserLabel(engine, selectedRuntime === "cloakbrowser" ? "" : selectedRuntime);
                 return (<div className="browser-option" key={engine}>
                     <label className="browser-card">
                       <input type="radio" name="browser-engine" value={engine} checked={form.engine === engine} onChange={() => setF("engine", engine)} />
@@ -2831,25 +3673,30 @@ function App() {
               </div>
               {form.engine === "chromium" && !appMode?.chromiumRuntime && (<label className="fld">
                   <span>{t("Chrome version")}</span>
-                  <select value={form.chromiumRuntime} onChange={(e) => setF("chromiumRuntime", e.target.value as "" | "aliasmode")}>
+                  <select value={form.chromiumRuntime} onChange={(e) => setF("chromiumRuntime", e.target.value as FormChromiumRuntime)}>
+                    <option value="auto">{t("Device default")}</option>
                     {appMode?.defaultChromiumRuntime
                       ? <><option value="aliasmode">{t("Chromium 155 (default)")}</option><option value="">{t("CloakBrowser 146")}</option></>
                       : <><option value="">{t("CloakBrowser 146 (default)")}</option><option value="aliasmode">{t("Chromium 155")}</option></>}
                   </select>
-                  <small>{!form.chromiumRuntime
+                  <small>{form.chromiumRuntime === "auto" ? t("Uses this computer's default browser runtime.") : !form.chromiumRuntime
                     ? t(CLOAKBROWSER_NOTE)
                     : t("Downloads once (about 190 MB) on each computer that opens it.")}</small>
                 </label>)}
               <details className="fingerprint-settings" open={createProxyOpen} onToggle={(event) => setCreateProxyOpen(event.currentTarget.open)}>
                 <summary>
                   <span>{t("Proxy")}</span>
-                  <span className="automatic-badge">{createHasProxy ? `${form.host}${form.port ? `:${form.port}` : ""}` : t("Optional")}</span>
+                  <span className="automatic-badge">{createHasProxy ? createProxyEndpoint : t("Optional")}</span>
                 </summary>
                 <div className="proxy-settings">
+                  {createProxySource && <p className="formnote local-proxy-draft-note" role="status">{t(createProxySource.socks5AuthRequired
+                    ? "SOCKS5 requires authentication. Enter credentials and verify the exit."
+                    : createProxySource.evidence === "handshake" ? "SOCKS5 handshake detected. Verify the exit before relying on it."
+                    : "A local listener was found. Check the protocol and exit before relying on it.")}</p>}
                   <div className="proxy-paste-row">
                     <label className="fld grow">
                       <span>{t("Paste proxy to autofill")} <span className="muted">{t("(select type first · host:port:username:password)")}</span></span>
-                      <input type="password" autoComplete="off" value={proxyPaste} placeholder={t("Paste here — credentials stay hidden")} onChange={(e) => { setProxyPaste(e.target.value); setProxyPasteOk(null); }} onPaste={(e) => {
+                      <input {...editorFieldAttributes(createProxyFeedback("proxyPaste"))} type="password" autoComplete="off" value={proxyPaste} placeholder={t("Paste here — credentials stay hidden")} onChange={(e) => { setProxyPaste(e.target.value); setProxyPasteOk(null); setProxyPasteInvalid(false); }} onPaste={(e) => {
                           const pasted = e.clipboardData.getData("text");
                           if (pasted) { e.preventDefault(); applyProxyPaste(pasted); }
                         }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); applyProxyPaste(proxyPaste); } }}/>
@@ -2868,7 +3715,7 @@ function App() {
                     </label>
                     <label className="fld grow">
                       <span>{t("Host")}</span>
-                      <input value={form.host} placeholder={t("blank = no proxy")} onChange={(e) => setF("host", e.target.value)} />
+                      <input {...editorFieldAttributes(createProxyFeedback("host"))} value={form.host} placeholder={t("blank = no proxy")} onChange={(e) => setF("host", e.target.value)} />
                     </label>
                     <label className="fld port">
                       <span>{t("Port")}</span>
@@ -2879,8 +3726,9 @@ function App() {
                     <label className="fld grow"><span>{t("Proxy user")}</span><input value={form.user} onChange={(e) => setF("user", e.target.value)} /></label>
                     <label className="fld grow"><span>{t("Proxy pass")}</span><input type="password" value={form.pass} onChange={(e) => setF("pass", e.target.value)} /></label>
                   </div>
+                  {createProxyIssue && <p id="profile-create-validation-error" className="modal-err">{t(createProxyIssue.message)}</p>}
                   <div className="proxy-check-actions">
-                    <button type="button" className="btn proxy-check-btn" disabled={createProxyCheck.checking || !createHasProxy} aria-busy={createProxyCheck.checking} onClick={checkCreateProxy}>
+                    <button type="button" className="btn proxy-check-btn" disabled={createProxyCheck.checking || !form.host.trim()} aria-busy={createProxyCheck.checking} onClick={checkCreateProxy}>
                       <Icon name="activity" className="sm" />
                       {createProxyCheck.checking ? t("Checking…") : t("Check proxy")}
                     </button>
@@ -2888,28 +3736,32 @@ function App() {
                 </div>
               </details>
               <ProxyCheckFeedback hasProxy={createHasProxy} state={createProxyCheck} />
-              <FingerprintSettings engine={form.engine} chromiumRuntime={appMode?.chromiumRuntime ?? form.chromiumRuntime} screen={form.screen} onScreenChange={(value) => setF("screen", value)} platformOs={form.platformOs} onPlatformOsChange={(value) => setF("platformOs", value)}/>
+              <FingerprintSettings engine={form.engine} chromiumRuntime={createFingerprintRuntime} screen={form.screen} onScreenChange={(value) => setF("screen", value)} platformOs={form.platformOs} onPlatformOsChange={(value) => setF("platformOs", value)}/>
+              </fieldset>
             </div>
-            <div className="modal-foot">
-              <button className="btn ghost" onClick={closeCreate}>{t("Cancel")}</button>
-              <button className="btn primary" disabled={creating} onClick={submitCreate}>{creating ? t("Creating…") : t("Create profile")}</button>
+            <div className="modal-foot profile-editor-status-footer">
+              <ProfileEditorStatus kind="create" createSummary={{ browserLabel: browserLabel(form.engine, createFingerprintRuntime), hasProxy: !!form.host.trim(), manualFingerprint: !!(form.screen.trim() || form.platformOs) }}
+                hasValidationError={!!createProxyIssue} hasSaveError={!!createErr} onLocateProblem={locateCreateProblem} />
+              <button className="btn ghost" disabled={creating} onClick={closeCreate}>{t("Cancel")}</button>
+              <button className="btn primary" disabled={creating || !!createProxyIssue} onClick={submitCreate}>{creating ? t("Creating…") : t("Create profile")}</button>
             </div>
           </div>
-        </div>)}
+        </div>)}</MotionPresence>
 
-      {editId && (
+      <MotionPresence present={!!editId}>{() => (
         /* Form dialog: a stray backdrop click must not discard typed input —
            close via Cancel, the X, or Escape (the backdrop has no onClick). */
         <div className="modal-backdrop profile-editor-backdrop">
-          <div ref={editEditorRef} tabIndex={-1} className="modal profile-editor" role="dialog" aria-modal="true" aria-labelledby="edit-profile-title" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-head" id="edit-profile-title">
-              <Icon name="edit" />{t("Edit profile")}<span className="mono muted">{editId}</span>
-              <button type="button" className="modal-close" aria-label={t("Close")} onClick={closeEdit}><Icon name="close" className="sm" /></button>
+          <div ref={editEditorRef} inert={editCloseGuard.pending || undefined} aria-hidden={editCloseGuard.pending || undefined} tabIndex={-1} className="modal profile-editor" role="dialog" aria-modal="true" aria-labelledby="edit-profile-title" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <Icon name="edit" /><span id="edit-profile-title">{t("Edit profile")}</span><span className="mono muted">{editId}</span>
+              <EditorWindowControls chrome={windowChrome} disabled={editSaving || timezoneBusy} />
+              <button type="button" className="modal-close" aria-label={t("Close")} disabled={editSaving || timezoneBusy} onClick={closeEdit}><Icon name="close" className="sm" /></button>
             </div>
             <div className="modal-body">
-              {editErr && <div className="modal-err"><Icon name="alert" className="sm" />{editErr}</div>}
-              {editLoading ? (<p className="hint" role="status">{t("Loading profile…")}</p>) : (<>
-                  {editForm.proxyError && <div className="modal-err"><Icon name="alert" className="sm" />Stored proxy quarantined: {editForm.proxyError}. Replace it below or clear the field.</div>}
+              {editErr && <div className="modal-err profile-edit-save-error" role="alert" tabIndex={-1}><Icon name="alert" className="sm" />{t(editErr)}</div>}
+              {!editReady ? (<><p className="hint" role="status">{t(editLoading ? "Loading profile…" : "Load this profile successfully before saving changes.")}</p><div><button type="button" className="btn" disabled={editLoading} aria-busy={editLoading} onClick={() => { if (editId) void loadEditedProfile(editId); }}>{t("Retry loading profile")}</button></div></>) : (<fieldset className="profile-create-fields profile-edit-fields" disabled={editSaving || timezoneBusy} aria-busy={editSaving || timezoneBusy}>
+                  {editForm.proxyError && <div className="modal-err proxy-quarantine-note"><Icon name="alert" className="sm" /><span>{t("This saved proxy needs repair.")} <small>{editForm.proxyError}</small></span><button type="button" className="btn xs ghost" disabled={editSaving || timezoneBusy} onClick={() => { if (editSaveInFlight.current) return; resetEditProxyCheck(); setEditClearQuarantinedProxy(true); setEditForm(current => ({ ...current, proxy: "", proxyError: "" })); }}>{t("Remove invalid proxy")}</button></div>}{editClearQuarantinedProxy && <p className="hint">{t("The invalid proxy will be removed when you save. This environment will then use a direct connection.")}</p>}
                   {editRunning && (<p className="hint" role="status">
                       {t("This browser is open. Changes save now. Proxy and fingerprint changes apply at the next start.")}
                     </p>)}
@@ -2934,6 +3786,7 @@ function App() {
                     {(<label className="fld no">
                         <span>{t("Custom NO.")}</span>
                         <input
+                          {...editorFieldAttributes(editFieldFeedback("customNo"))}
                           value={editForm.customNo ?? ""}
                           inputMode="numeric"
                           maxLength={MAX_CUSTOM_NO}
@@ -2964,12 +3817,12 @@ function App() {
                   </label>
                   <label className="fld">
                     <span>{t("Tags")} <span className="muted">{t("(comma-separated)")}</span></span>
-                    <input value={editForm.tags ?? ""} placeholder="warmup, us, priority" onChange={(e) => setEF("tags", e.target.value)} />
+                    <input {...editorFieldAttributes(editFieldFeedback("tags"))} value={editForm.tags ?? ""} placeholder="warmup, us, priority" onChange={(e) => setEF("tags", e.target.value)} />
                   </label>
                   <div className="fld-row">
                     <label className="fld type">
                       <span>{t("Proxy type")}</span>
-                      <select value={editForm.proxyType ?? "http"} onChange={(e) => setEF("proxyType", e.target.value)}>
+                      <select {...editorFieldAttributes(editFieldFeedback("proxyType"))} value={editForm.proxyType ?? "http"} onChange={(e) => setEF("proxyType", e.target.value)}>
                         <option value="http">http</option>
                         <option value="https">https</option>
                         <option value="socks5">socks5</option>
@@ -2977,7 +3830,7 @@ function App() {
                     </label>
                     <label className="fld grow">
                       <span>{t("Proxy")}</span>
-                      <input value={editForm.proxy ?? ""} placeholder="host:port:username:password" onChange={(e) => setEF("proxy", e.target.value)} />
+                      <input {...editorFieldAttributes(editFieldFeedback("proxy"))} value={editForm.proxy ?? ""} placeholder="host:port:username:password" onChange={(e) => setEF("proxy", e.target.value)} />
                       <small>{t("Leave blank to launch on a direct connection.")}</small>
                     </label>
                   </div>
@@ -3013,11 +3866,17 @@ function App() {
                       <span className="authlabel">{t("Authenticator")}</span>
                       <span className="authcode">{editTotp.code.slice(0, 3)} {editTotp.code.slice(3)}</span>
                       <span className="authsecs" title={t("seconds until it refreshes")}>{editTotp.secs}s</span>
-                      <button className="btn xs" onClick={() => navigator.clipboard?.writeText(editTotp.code)}>
+                      <button className="btn xs" type="button" onClick={() => {
+                        void copyPlainText(editTotp.code)
+                          .then(() => flash(t("Copied")))
+                          .catch((err) => setEditErr(err instanceof Error ? err.message : t("Could not copy to clipboard.")));
+                      }}>
                         <Icon name="copy" className="sm" />{t("Copy")}
                       </button>
                     </div>)}
                   {editEngine && <FingerprintSettings
+                    allowAutomaticScreen={false}
+                    feedback={editFieldFeedback}
                     engine={editEngine} chromiumRuntime={editChromiumRuntime} screen={editForm.resolution ?? ""} onScreenChange={(value) => setEF("resolution", value)}
                     platformOs={editForm.platformOs ?? ""} onPlatformOsChange={editEngine === "chromium" ? (value) => setEF("platformOs", value) : undefined}
                     timezone={editForm.timezone ?? ""} onTimezoneChange={(value) => setEF("timezone", value)}
@@ -3041,26 +3900,32 @@ function App() {
                     {t("Cookies and locked fingerprint values are preserved. Only editable fields change.")}
                     {editEngine === "chromium" && t(" Extensions load when the browser opens.")}
                   </p>
-                </>)}
+                </fieldset>)}
+              {editReady && editReview.error && <div id="profile-edit-validation-error" className="modal-err" role="alert" tabIndex={-1}>{t(editReview.error)}</div>}
+              {editReady && editReview.summary && <div className="editor-summary-anchor" tabIndex={-1}><EditChangesSummary summary={editReview.summary} running={editRunning} busy={editSaving} /></div>}
             </div>
-            <div className="modal-foot">
-              <button className="btn ghost" onClick={closeEdit}>{t("Cancel")}</button>
-              <button className="btn primary" disabled={editSaving || editLoading || timezoneBusy} onClick={saveEdit}>{editSaving ? t("Saving…") : t("Save changes")}</button>
+            <div className="modal-foot profile-editor-status-footer">
+              {editReady && <ProfileEditorStatus kind="edit" editChangeCount={editReview.summary?.count ?? 0} hasValidationError={!!editReview.error} hasSaveError={!!editErr}
+                onReview={() => focusEditorTarget(editEditorRef.current?.querySelector<HTMLElement>(".editor-summary-anchor"), editorScroll)} onLocateProblem={locateEditProblem} />}
+              <button className="btn ghost" disabled={editSaving || timezoneBusy} onClick={closeEdit}>{t("Cancel")}</button>
+              <button className="btn primary" disabled={!editReady || !editReview.summary?.hasChanges || !!editReview.error || editSaving || editLoading || timezoneBusy} onClick={saveEdit}>{editSaving ? t("Saving…") : t("Save changes")}</button>
             </div>
           </div>
-        </div>)}
+        </div>)}</MotionPresence>
 
-      {showBulk && (
+      <MotionPresence present={showBulk}>{() => (
         /* Form dialog: a stray backdrop click must not discard typed input —
            close via Cancel, the X, or Escape (the backdrop has no onClick). */
         <div className="modal-backdrop">
-          <div className="modal" role="dialog" aria-modal="true" aria-label={t("Import profiles")} onClick={(e) => e.stopPropagation()}>
+          <div className="modal" ref={bulkEditorRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={t("Import profiles")} onClick={(e) => e.stopPropagation()}>
             <div className="modal-head">
               <Icon name="fileImport" />{t("Import profiles")}
-              <button type="button" className="modal-close" aria-label={t("Close")} onClick={closeBulk}><Icon name="close" className="sm" /></button>
+              <button type="button" className="modal-close" aria-label={t("Close")} disabled={bulkBusy} onClick={closeBulk}><Icon name="close" className="sm" /></button>
             </div>
             <div className="modal-body">
-              {bulkErr && <div className="modal-err"><Icon name="alert" className="sm" />{bulkErr}</div>}
+              {bulkErr && <div className="modal-err" role="alert"><Icon name="alert" className="sm" />{bulkErr}</div>}
+              {bulkBusy && <p className="hint" role="status">{t("Importing the selected records. Wait for the result before changing this draft.")}</p>}
+              <fieldset className="import-draft-fields" disabled={bulkBusy} aria-busy={bulkBusy}><legend className="sr-only">{t("Import draft")}</legend>
               <ol className="steps">
                 <li>{t("Export profiles from your previous browser as TXT, CSV, JSON, or XLSX.")}</li>
                 <li>{t("Add the files below and choose a destination group.")}</li>
@@ -3069,16 +3934,16 @@ function App() {
               <p className="hint">{t("Encrypted or proprietary profile archives cannot be imported. Use a readable export instead.")}</p>
 
               <div className="segmented" role="tablist" aria-label={t("Import source")}>
-                <button type="button" role="tab" aria-selected={bulkSource === "file"} className={bulkSource === "file" ? "active" : ""} onClick={() => { setBulkSource("file"); setBulkText(""); }}>
+                <button type="button" role="tab" aria-selected={bulkSource === "file"} className={bulkSource === "file" ? "active" : ""} onClick={() => { if (importInFlight.current) return; setBulkSource("file"); setBulkText(""); }}>
                   <Icon name="fileImport" className="sm" />{t("From file")}
                 </button>
-                <button type="button" role="tab" aria-selected={bulkSource === "paste"} className={bulkSource === "paste" ? "active" : ""} onClick={() => { setBulkSource("paste"); setBulkFiles([]); }}>
+                <button type="button" role="tab" aria-selected={bulkSource === "paste"} className={bulkSource === "paste" ? "active" : ""} onClick={() => { if (importInFlight.current) return; setBulkSource("paste"); setBulkFiles([]); }}>
                   <Icon name="copy" className="sm" />{t("Paste text")}
                 </button>
               </div>
 
               {bulkSource === "file" ? (<>
-                  <div className={`bulkdrop${bulkOver ? " over" : ""}`} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); bulkFileRef.current?.click(); } }} onClick={() => bulkFileRef.current?.click()} onDragOver={(e) => { e.preventDefault(); if (!bulkOver) setBulkOver(true); }} onDragLeave={(e) => { e.preventDefault(); setBulkOver(false); }} onDrop={(e) => { e.preventDefault(); setBulkOver(false); if (e.dataTransfer.files?.length) setBulkFiles(Array.from(e.dataTransfer.files)); }}>
+                  <div className={`bulkdrop${bulkOver ? " over" : ""}`} role="button" tabIndex={bulkBusy ? -1 : 0} aria-disabled={bulkBusy} onKeyDown={(e) => { if (importInFlight.current) return; if (e.key === "Enter" || e.key === " ") { e.preventDefault(); bulkFileRef.current?.click(); } }} onClick={() => { if (!importInFlight.current) bulkFileRef.current?.click(); }} onDragOver={(e) => { e.preventDefault(); if (importInFlight.current) return; if (!bulkOver) setBulkOver(true); }} onDragLeave={(e) => { e.preventDefault(); setBulkOver(false); }} onDrop={(e) => { e.preventDefault(); setBulkOver(false); if (!importInFlight.current && e.dataTransfer.files?.length) setBulkFiles(Array.from(e.dataTransfer.files)); }}>
                     <Icon name="fileImport" />
                     <b>{t("Drag & drop files, or click to choose")}</b>
                     <div className="sub">{t("Readable TXT, CSV, JSON, or XLSX exports from AdsPower, GoLogin, Multilogin, Dolphin Anty, HideMyAcc, Incogniton, Donut, and similar browsers")}</div>
@@ -3090,10 +3955,10 @@ function App() {
                           <button
                             type="button"
                             aria-label={`Remove ${file.name}`}
-                            onClick={() => setBulkFiles((files) => files.filter((candidate) => candidate !== file))}
+                            onClick={() => { if (!importInFlight.current) setBulkFiles((files) => files.filter((candidate) => candidate !== file)); }}
                           ><Icon name="close" className="sm" /></button>
                         </span>))}
-                      <button type="button" className="btn xs ghost" onClick={() => setBulkFiles([])}>{t("Clear all")}</button>
+                      <button type="button" className="btn xs ghost" onClick={() => { if (!importInFlight.current) setBulkFiles([]); }}>{t("Clear all")}</button>
                     </div>)}
                 </>) : (<label className="fld">
                   <span>{t("AdsPower TXT records")}</span>
@@ -3101,7 +3966,7 @@ function App() {
                     rows={9}
                     value={bulkText}
                     placeholder={"id=k1example01\ngroup=Warmup\nname=alice\n…"}
-                    onChange={(event) => setBulkText(event.target.value)}
+                    onChange={(event) => { if (!importInFlight.current) setBulkText(event.target.value); }}
                   />
                   <small>{pastedRecordCount === null
                     ? t("Paste one or more key=value records, separated by a line of asterisks.")
@@ -3110,29 +3975,25 @@ function App() {
                       : t("{count} records detected — each one starts with its own id= line.", { count: pastedRecordCount })}</small>
                 </label>)}
 
-              <input ref={bulkFileRef} type="file" multiple accept=".csv,.txt,.json,.xlsx,text/plain,text/csv,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style={{ display: "none" }} onChange={(e) => { if (e.target.files) setBulkFiles(Array.from(e.target.files)); e.target.value = ""; }}/>
+              <input ref={bulkFileRef} type="file" multiple accept=".csv,.txt,.json,.xlsx,text/plain,text/csv,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style={{ display: "none" }} onChange={(e) => { if (!importInFlight.current && e.target.files) setBulkFiles(Array.from(e.target.files)); e.target.value = ""; }}/>
 
               <div className="fld-row">
                 <label className="fld grow">
                   <span>{t("Assign to group")}</span>
-                  <GroupPicker value={bulkGroup} onChange={setBulkGroup} groups={existingGroups} allowCreate/>
+                  <GroupPicker value={bulkGroup} onChange={value => { if (!importInFlight.current) setBulkGroup(value); }} groups={existingGroups} emptyLabel="Keep source groups" allowCreate/>
                 </label>
                 <label className="fld grow">
                   <span>{t("Platform")}</span>
-                  <select value={bulkPlatform} onChange={(e) => setBulkPlatform(e.target.value)}>
-                    {KNOWN_PLATFORMS.map((platform) => <option key={platform.value} value={platform.value}>{platform.label}</option>)}
+                  <select value={bulkPlatform} onChange={(e) => { if (!importInFlight.current) setBulkPlatform(e.target.value); }}>
+                    {KNOWN_PLATFORMS.map((platform) => <option key={platform.value} value={platform.value}>{platform.value ? platform.label : t("Keep source platforms")}</option>)}
                   </select>
                 </label>
               </div>
               <p className="formnote">
-                {t("Anything chosen above overrides that field on every imported record, including provider exports that already carry a group.")}
+                {t("Keep source values to preserve each record's group and platform. Choosing a specific value applies it to every imported record. Fields absent from a same-ID update keep their saved values.")}
               </p>
-              <p className="formnote">
-                {t("A profile export also carries")} <code>seed</code>{t("(seed)")}、<code>timezone</code>{t("(timezone)")}{t(" and ")}{" "}
-                <code>platform_os</code>{t("(operating system)")}{t(", which recreate the exact browser fingerprint. Its")}{" "}
-                <code>fp_*</code> {t("columns are a")} <b>{t("record")}</b>{" "}
-                {t("of the fingerprint that was measured, not settings — they are checked after the browser opens, never applied to it.")}
-              </p>
+              <details className="import-transfer-details"><summary>{t("Import rules and transferable data")}</summary><p className="formnote">{t("Readable exports can transfer account fields, proxy settings, cookies and supported portable settings. Records with an existing ID update that environment; data missing from the export cannot be reconstructed.")}</p><p className="formnote">{t("Explicit seed, timezone and platform_os values can update supported identity settings. Browser version, operating system and hardware still affect the resulting fingerprint. Historical fp_* measurements are review evidence, not browser configuration.")}</p></details>
+              </fieldset>
             </div>
             <div className="modal-foot">
               <button className="tlink" onClick={() => downloadText("maobu-qianjing-template.csv", CSV_TEMPLATE, "text/csv")}>
@@ -3142,56 +4003,15 @@ function App() {
                 <Icon name="export" className="sm" />{t(".txt example")}
               </button>
               <span className="spacer" />
-              <button className="btn ghost" onClick={closeBulk}>{t("Cancel")}</button>
+              <button className="btn ghost" disabled={bulkBusy} onClick={closeBulk}>{t("Cancel")}</button>
               <button className="btn primary" disabled={bulkBusy || (!bulkFiles.length && !bulkText.trim())} onClick={submitBulk}>
                 <Icon name="fileImport" className="sm" />{bulkBusy ? t("Importing…") : t("Import profiles")}
               </button>
             </div>
           </div>
-        </div>)}
+        </div>)}</MotionPresence>
 
-      {showUpdate && (
-        /* Form dialog: a stray backdrop click must not discard typed input —
-           close via Cancel, the X, or Escape (the backdrop has no onClick). */
-        <div className="modal-backdrop">
-          <div className="modal" role="dialog" aria-modal="true" aria-label={t("Update profiles from file")} onClick={(e) => e.stopPropagation()}>
-            <div className="modal-head">{t("Update profiles from file")}<button type="button" className="modal-close" aria-label={t("Close")} onClick={() => setShowUpdate(false)}><Icon name="close" className="sm" /></button></div>
-            <div className="modal-body">
-              {updateErr && <div className="modal-err"><Icon name="alert" className="sm" />{updateErr}</div>}
-              {updateResult && <div className="modal-ok"><Icon name="check" className="sm" />{updateResult}</div>}
-              <ol className="steps">
-                <li><b>{t("Export")}</b> {t("the profiles you want to change — that gives you a file with each profile's")} <code>id</code> {t("(how rows are matched).")}</li>
-                <li><b>{t("Edit")}</b> {t("the columns you want (name, username, password, 2FA, proxy…). Keep the")} <code>id</code> {t("column; delete any column you don't want to touch.")}</li>
-                {<li>{t("Add a")} <code>custom_no</code> {t("column to renumber profiles in bulk — that number shows in the roster and in the launched browser's window title.")}</li>}
-                <li><b>{t("Re-upload")}</b> {t("the edited file below. IDs in the file determine which profiles change, not the current selection. Cookies & fingerprints are preserved — editing a")} <code>cookie</code> {t("or")} <code>ua</code> {t("column has no effect.")}</li>
-
-              </ol>
-              <div className="updexport">
-                {selected.size > 0 ? (<span>
-                    {t("Export {count} selected:", { count: selected.size })}&nbsp;
-                    <button className="tlink" onClick={() => exportSelected("csv")}><Icon name="export" className="sm" />{t("CSV")}</button>
-                    &nbsp;·&nbsp;
-                    <button className="tlink" onClick={() => exportSelected("txt")}><Icon name="export" className="sm" />{t(".txt")}</button>
-                    &nbsp;·&nbsp;
-                    <button className="tlink" onClick={() => exportSelected("xlsx")}><Icon name="export" className="sm" />{t("Excel")}</button>
-                  </span>) : (<span className="hint">{t("Tip: select profiles first, then export here to get an editable file.")}</span>)}
-                <span className="grow" />
-                <button className="tlink" onClick={() => downloadText("maobu-qianjing-update-template.csv", UPDATE_TEMPLATE_CSV, "text/csv")}><Icon name="export" className="sm" />{t("example sheet")}</button>
-              </div>
-              <div className={`bulkdrop${updateOver ? " over" : ""}`} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); updateFileRef.current?.click(); } }} onClick={() => updateFileRef.current?.click()} onDragOver={(e) => { e.preventDefault(); if (!updateOver) setUpdateOver(true); }} onDragLeave={(e) => { e.preventDefault(); setUpdateOver(false); }} onDrop={(e) => { e.preventDefault(); setUpdateOver(false); if (e.dataTransfer.files?.[0]) setUpdateFile(e.dataTransfer.files[0]); }}>
-                <Icon name="export" />
-                <b>{t("Drag & drop the edited file, or click to choose")}</b>
-                <div className="sub">{t("CSV, TXT, or Excel XLSX files with an id column")}</div>
-              </div>
-              <input ref={updateFileRef} type="file" accept=".csv,.txt,.xlsx,text/plain,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style={{ display: "none" }} onChange={(e) => { if (e.target.files?.[0]) setUpdateFile(e.target.files[0]); e.target.value = ""; }}/>
-              {updateFile && <div className="bulkfiles"><Icon name="file" className="sm" />{t("Selected:")} <b>{updateFile.name}</b></div>}
-            </div>
-            <div className="modal-foot">
-              <button className="btn ghost" onClick={() => setShowUpdate(false)}>{t("Close")}</button>
-              <button className="btn primary" disabled={updateBusy || !updateFile} onClick={submitUpdate}>{updateBusy ? t("Updating…") : t("Update profiles")}</button>
-            </div>
-          </div>
-        </div>)}
+      <ProfileFileUpdateDialog open={showUpdate} task={fileUpdate.task} onClose={() => setShowUpdate(false)} selectedCount={selected.size} onExport={exportSelected} onDownloadTemplate={() => downloadText("maobu-qianjing-update-template.csv", UPDATE_TEMPLATE_CSV, "text/csv")} />
       <ScriptRunPanel
         open={scriptRunOpen}
         selectedProfiles={scriptRunProfiles}
@@ -3200,14 +4020,15 @@ function App() {
     </div>
     </>);
 }
+function DesktopCloseShell() {
+  const registry = useDesktopCloseRegistry();
+  return <DesktopCloseRegistryProvider registry={registry}><DesktopCloseHost registry={registry} returnFocus={() => document.querySelector<HTMLButtonElement>(".command-palette-trigger")} /><App /></DesktopCloseRegistryProvider>;
+}
 const rootElement = document.getElementById("root")!;
-// The desktop shell opens outside links itself, from its allowlist. Its shell plugin also listens on
-// <body>: it cancels the click and asks for a command that the app does not grant, so the link does
-// nothing. Stop the click here, so every outside link takes the allowlist path.
-rootElement.addEventListener("click", (event) => {
-  if (event.target instanceof Element && event.target.closest('a[target="_blank"]')) event.stopPropagation();
-});
+installExternalLinkHandler(rootElement);
 const root = createRoot(rootElement);
 root.render(<I18nProvider>
-    <WorkspaceProvider><App /></WorkspaceProvider>
+    <ErrorBoundary scope="Application">
+      <WorkspaceProvider><DesktopCloseShell /></WorkspaceProvider>
+    </ErrorBoundary>
   </I18nProvider>);

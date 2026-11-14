@@ -9,8 +9,25 @@
  */
 
 import { createHash, createPublicKey, createVerify } from "node:crypto";
-import { join, normalize } from "node:path";
+import { isAbsolute, normalize, relative, resolve, sep } from "node:path";
 import { inflateRawSync } from "node:zlib";
+
+export const DEFAULT_MAX_ZIP_ENTRY_BYTES = 64 * 1024 * 1024;
+export const DEFAULT_MAX_ZIP_TOTAL_BYTES = 128 * 1024 * 1024;
+export const DEFAULT_MAX_ZIP_ENTRIES = 10_000;
+
+export interface ZipExtractLimits {
+  maxEntryBytes?: number;
+  maxTotalBytes?: number;
+  maxEntries?: number;
+}
+
+/** Generous limits strictly for SHA-256-verified official runtime/browser archives. */
+export const TRUSTED_RUNTIME_ZIP_LIMITS: Readonly<ZipExtractLimits> = {
+  maxEntryBytes: 512 * 1024 * 1024,
+  maxTotalBytes: 2 * 1024 * 1024 * 1024,
+  maxEntries: 50_000,
+};
 
 const u16 = (b: Uint8Array, o: number) => b[o]! | (b[o + 1]! << 8);
 const u32 = (b: Uint8Array, o: number) => (b[o]! | (b[o + 1]! << 8) | (b[o + 2]! << 16) | (b[o + 3]! << 24)) >>> 0;
@@ -174,15 +191,35 @@ export function parseArchive(input: Uint8Array): ParsedArchive {
   throw new Error(`unsupported CRX version ${version}`);
 }
 
-async function inflateRaw(data: Uint8Array): Promise<Uint8Array> {
-  return new Uint8Array(inflateRawSync(data));
+async function inflateRaw(data: Uint8Array, maxOutputLength: number): Promise<Uint8Array> {
+  try {
+    return new Uint8Array(inflateRawSync(data, { maxOutputLength }));
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "ERR_BUFFER_TOO_LARGE" || (err instanceof RangeError && /output length|maxOutputLength/i.test(err.message))) {
+      throw new Error(`zip entry exceeds output size limit (${maxOutputLength} bytes)`);
+    }
+    throw err;
+  }
 }
 
-/** True if a zip entry name would escape destDir (path traversal / absolute). */
+/** True if a zip entry name would escape destDir (path traversal / absolute / null byte). */
 function unsafe(name: string): boolean {
-  if (name.startsWith("/") || name.startsWith("\\") || /^[a-zA-Z]:/.test(name)) return true;
+  if (name.includes("\0") || name.startsWith("/") || name.startsWith("\\") || /^[a-zA-Z]:/.test(name)) return true;
+  if (name.split(/[\\/]+/).some((segment) => segment === "..")) return true;
   const norm = normalize(name);
-  return norm.startsWith("..") || norm.includes(".." + "/") || norm.includes(".." + "\\");
+  return isAbsolute(norm) || norm === ".." || norm.startsWith(".." + "/") || norm.startsWith(".." + "\\") || norm.startsWith(".." + sep);
+}
+
+/** Ensure target path stays strictly contained within destRoot. */
+function resolveContainedPath(destRoot: string, entryName: string): string {
+  if (entryName.includes("\0")) throw new Error("unsafe zip entry name: null byte");
+  const target = resolve(destRoot, entryName);
+  const rel = relative(destRoot, target);
+  if (!rel || rel === "." || rel === ".." || rel.startsWith(".." + sep) || rel.startsWith("..") || isAbsolute(rel)) {
+    throw new Error(`zip entry escapes destination directory: ${entryName}`);
+  }
+  return target;
 }
 
 export interface ZipEntry {
@@ -198,7 +235,10 @@ export interface ZipEntry {
  * parts out of a workbook) never pay to inflate the rest, and extractZipTo
  * keeps its original one-entry-at-a-time memory profile.
  */
-export async function* zipEntries(input: Uint8Array): AsyncGenerator<ZipEntry> {
+export async function* zipEntries(input: Uint8Array, limits: ZipExtractLimits = {}): AsyncGenerator<ZipEntry> {
+  const maxEntryBytes = limits.maxEntryBytes ?? DEFAULT_MAX_ZIP_ENTRY_BYTES;
+  const maxTotalBytes = limits.maxTotalBytes ?? DEFAULT_MAX_ZIP_TOTAL_BYTES;
+  const maxEntries = limits.maxEntries ?? DEFAULT_MAX_ZIP_ENTRIES;
   const data = parseArchive(input).zip;
   // Locate End Of Central Directory (scan back over the optional comment).
   let eocd = -1;
@@ -209,35 +249,80 @@ export async function* zipEntries(input: Uint8Array): AsyncGenerator<ZipEntry> {
   if (eocd < 0) throw new Error("not a valid zip/crx (no end-of-central-directory record)");
 
   const total = u16(data, eocd + 10);
+  if (total > maxEntries) throw new Error(`zip archive exceeds entry count limit (${total} > ${maxEntries})`);
   let p = u32(data, eocd + 16); // central directory offset
+  let remainingTotalBytes = maxTotalBytes;
+
   for (let n = 0; n < total; n++) {
+    if (p + 46 > data.length) throw new Error("truncated central directory header");
     if (u32(data, p) !== 0x02014b50) break; // central dir header signature
     const method = u16(data, p + 10);
     const compSize = u32(data, p + 20);
+    const uncompSize = u32(data, p + 24);
     const nameLen = u16(data, p + 28);
     const extraLen = u16(data, p + 30);
     const commentLen = u16(data, p + 32);
     const localOff = u32(data, p + 42);
+    const nextOffset = p + 46 + nameLen + extraLen + commentLen;
+    if (nextOffset > data.length) throw new Error("truncated central directory entry");
     const name = new TextDecoder().decode(data.subarray(p + 46, p + 46 + nameLen));
-    p += 46 + nameLen + extraLen + commentLen;
+    p = nextOffset;
 
-    if (!name || name.endsWith("/")) continue; // directory entry
+    if (name.includes("\0")) throw new Error("zip entry name contains null byte");
+    if (!name || name.endsWith("/") || name.endsWith("\\")) continue; // directory entry
     if (unsafe(name)) continue;
 
+    if (method !== 0 && method !== 8) throw new Error(`unsupported zip compression method (${method}) for ${name}`);
+    if (uncompSize > maxEntryBytes) throw new Error(`zip entry ${name} exceeds entry size limit (${maxEntryBytes} bytes)`);
+
     // Walk the local header to find where the data actually starts.
+    if (localOff + 30 > data.length || u32(data, localOff) !== 0x04034b50) {
+      throw new Error(`invalid local file header for ${name}`);
+    }
     const lNameLen = u16(data, localOff + 26);
     const lExtraLen = u16(data, localOff + 28);
     const start = localOff + 30 + lNameLen + lExtraLen;
-    const comp = data.subarray(start, start + compSize);
-    yield { name, bytes: async () => (method === 0 ? comp : await inflateRaw(comp)) };
+    const end = start + compSize;
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end > data.length) {
+      throw new Error(`zip entry ${name} extends beyond archive bounds`);
+    }
+    const comp = data.subarray(start, end);
+    let cached: Promise<Uint8Array> | null = null;
+    yield {
+      name,
+      bytes: () => {
+        if (!cached) {
+          cached = (async () => {
+            const limit = Math.min(maxEntryBytes, remainingTotalBytes);
+            if (limit <= 0 && (comp.length > 0 || uncompSize > 0)) {
+              throw new Error(`zip archive exceeds total extracted size limit (${maxTotalBytes} bytes)`);
+            }
+            const out = method === 0
+              ? (() => {
+                if (comp.length > limit) throw new Error(`zip entry exceeds output size limit (${limit} bytes)`);
+                return comp;
+              })()
+              : await inflateRaw(comp, limit);
+            remainingTotalBytes -= out.length;
+            if (remainingTotalBytes < 0) {
+              throw new Error(`zip archive exceeds total extracted size limit (${maxTotalBytes} bytes)`);
+            }
+            return out;
+          })();
+        }
+        return cached;
+      },
+    };
   }
 }
 
 /** Extract a ZIP/CRX to destDir. Returns the number of files written. */
-export async function extractZipTo(input: Uint8Array, destDir: string): Promise<number> {
+export async function extractZipTo(input: Uint8Array, destDir: string, limits: ZipExtractLimits = {}): Promise<number> {
+  const destRoot = resolve(destDir);
   let written = 0;
-  for await (const entry of zipEntries(input)) {
-    await Bun.write(join(destDir, entry.name), await entry.bytes());
+  for await (const entry of zipEntries(input, limits)) {
+    const targetPath = resolveContainedPath(destRoot, entry.name);
+    await Bun.write(targetPath, await entry.bytes());
     written++;
   }
   if (written === 0) throw new Error("archive contained no files");

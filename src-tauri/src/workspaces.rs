@@ -291,6 +291,7 @@ pub fn open_workspace_location(
     kind: String,
 ) -> Result<(), String> {
     authorize_workspace_window(&window, &origin)?;
+    crate::acceptance::ensure_action_allowed(&app)?;
     let directory = crate::cli_compatible_windows_path(&workspace.location(&kind)?);
     let path = directory
         .to_str()
@@ -480,9 +481,11 @@ pub async fn export_workspace_backup(
     window: WebviewWindow,
     origin: tauri::State<'_, CredentialOrigin>,
     runtime: tauri::State<'_, crate::runtime_descriptor::RuntimeDescriptorState>,
+    dashboard_session: tauri::State<'_, crate::DesktopDashboardSession>,
     backup_id: String,
 ) -> Result<BackupExportResult, String> {
     authorize_workspace_window(&window, &origin)?;
+    crate::acceptance::ensure_action_allowed(&app)?;
     if !valid_backup_id(&backup_id) {
         return Err("backup export ID is invalid".to_owned());
     }
@@ -524,6 +527,7 @@ pub async fn export_workspace_backup(
             "{source_origin}/ui/api/workspace/backups/{backup_id}/download"
         ))
         .header(header::ACCEPT_ENCODING, "identity")
+        .header(crate::DESKTOP_SESSION_HEADER, dashboard_session.0.as_str())
         .bearer_auth(nonce.as_str())
         .send()
         .await

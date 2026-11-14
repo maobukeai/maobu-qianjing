@@ -1,7 +1,7 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
-import { addProfileCookies, fetchAppMode, fetchRuntimeDownloads, fetchGroupExtensionDefaults, setGroupExtensionDefaults, checkProxy, exportProfiles, fetchProfiles, fetchScripts, openProfile, scriptsDesktopAvailable, startScriptRun, serialLoader, updateProfile } from "./api.ts";
+import { addProfileCookies, extractSessionTokenInput, fetchAppMode, fetchRuntimeDownloads, fetchGroupExtensionDefaults, getStandaloneSessionToken, isUnauthorizedError, setGroupExtensionDefaults, setStandaloneSessionToken, subscribeUnauthorized, UnauthorizedError, checkProxy, exportProfiles, fetchProfiles, fetchExtensions, fetchScripts, openProfile, scriptsDesktopAvailable, startScriptRun, serialLoader, updateProfile } from "./api.ts";
 const realFetch = globalThis.fetch;
-afterEach(() => { globalThis.fetch = realFetch; });
+afterEach(() => { globalThis.fetch = realFetch; setStandaloneSessionToken(null); });
 test("dashboard API reports an HTML/version mismatch instead of a JSON SyntaxError", async () => {
     globalThis.fetch = (async () => new Response("<!doctype html><title>猫步·千境</title>", {
         status: 200,
@@ -165,6 +165,15 @@ test("proxy check client rejects errors and malformed results without exposing c
     await expect(checkProxy({ host: "proxy.example", port: "8080" }))
         .rejects.toThrow("Proxy check returned invalid data");
 });
+test("proxy check preserves reachability and exit comparison as separate evidence", async () => {
+    for (const exitComparison of ["same", "different", "unknown"] as const) {
+        globalThis.fetch = (async () => Response.json({ ok: true, status: "working", attempts: 3, successes: 3,
+            exitComparison, ...(exitComparison === "same" ? { reason: "same_exit" } : {}), ip: "203.0.113.20" })) as unknown as typeof fetch;
+        expect(await checkProxy({ host: "127.0.0.1", port: "7890" })).toMatchObject({ status: "working", exitComparison, ip: "203.0.113.20" });
+    }
+    globalThis.fetch = (async () => Response.json({ ok: true, status: "working", attempts: 3, successes: 3, exitComparison: "verified-private-ip" })) as unknown as typeof fetch;
+    await expect(checkProxy({ host: "127.0.0.1", port: "7890" })).rejects.toThrow("Proxy check returned invalid data");
+});
 test("app mode client reads first-launch state", async () => {
     globalThis.fetch = (async () => Response.json({
         version: 1,
@@ -176,13 +185,17 @@ test("app mode client reads first-launch state", async () => {
 });
 test("runtime downloads client reads the downloads in progress", async () => {
     let requested: RequestInfo | URL | undefined;
-    const downloads = [{ runtime: "aliasmode" as const, receivedBytes: 42, totalBytes: 100 }];
+    const downloads = [{ runtime: "aliasmode" as const, receivedBytes: 42, totalBytes: 100 }, { runtime: "firefox" as const, receivedBytes: 12, totalBytes: 0 }];
     globalThis.fetch = (async (input: RequestInfo | URL) => {
         requested = input;
         return Response.json({ downloads });
     }) as unknown as typeof fetch;
     expect(await fetchRuntimeDownloads()).toEqual(downloads);
     expect(requested).toBe("/ui/api/runtime-downloads");
+    for (const item of [null, { runtime: "external", receivedBytes: 0, totalBytes: 1 }, { ...downloads[0], receivedBytes: 101 }, { ...downloads[0], receivedBytes: -1 }]) {
+        globalThis.fetch = (async () => Response.json({ downloads: [item] })) as unknown as typeof fetch;
+        await expect(fetchRuntimeDownloads()).rejects.toThrow("invalid data");
+    }
     globalThis.fetch = (async () => Response.json({ ok: false, error: "not found" }, { status: 404 })) as unknown as typeof fetch;
     await expect(fetchRuntimeDownloads()).rejects.toThrow("invalid data");
 });
@@ -203,7 +216,7 @@ test("group extension defaults client reads and replaces exact selections", asyn
     }> = [];
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
         requests.push({ input, init });
-        return init
+        return init?.method === "POST"
             ? Response.json({ ok: true, updatedCount: 2 })
             : Response.json({
                 ok: true,
@@ -281,4 +294,45 @@ test("roster loads run one at a time and polls never stack on a slow fetch", asy
     poll();
     expect(runs).toBe(3);
     releases.shift()!();
+});
+
+
+test("extension registry rejects failed and malformed reads instead of pretending the library is empty", async () => {
+  globalThis.fetch = (async () => Response.json({ ok: false, error: "Registry unavailable" }, { status: 503 })) as unknown as typeof fetch;
+  await expect(fetchExtensions()).rejects.toThrow("Registry unavailable");
+  globalThis.fetch = (async () => Response.json({ ok: true, extensions: [{ id: "broken" }] })) as unknown as typeof fetch;
+  await expect(fetchExtensions()).rejects.toThrow("Extension registry is unavailable.");
+  globalThis.fetch = (async () => Response.json({ ok: true, extensions: [{ id: "one", name: "Installed tool" }] })) as unknown as typeof fetch;
+  expect(await fetchExtensions()).toEqual([{ id: "one", name: "Installed tool" }]);
+});
+
+test("standalone session token extracts URLs/raw tokens, attaches X-Maobu-Session without clobbering Authorization, and surfaces 401 guidance", async () => {
+  expect(extractSessionTokenInput("  http://127.0.0.1:50400/?token=abc123def  ")).toBe("abc123def");
+  expect(extractSessionTokenInput("  raw-hex-token  ")).toBe("raw-hex-token");
+  expect(extractSessionTokenInput("   ")).toBe("");
+
+  expect(setStandaloneSessionToken("http://127.0.0.1:50400/?token=tok_standalone")).toBe("tok_standalone");
+  expect(getStandaloneSessionToken()).toBe("tok_standalone");
+
+  const capturedHeaders: Headers[] = [];
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    capturedHeaders.push(new Headers(init?.headers));
+    return Response.json({ ok: true, extensions: [] });
+  }) as unknown as typeof fetch;
+  await fetchExtensions();
+  expect(capturedHeaders[0]?.get("X-Maobu-Session")).toBe("tok_standalone");
+
+  const events: UnauthorizedError[] = [];
+  const unsubscribe = subscribeUnauthorized((err) => events.push(err));
+  try {
+    globalThis.fetch = (async () => Response.json({ ok: false, error: "Invalid session token" }, { status: 401 })) as unknown as typeof fetch;
+    const rejected = await fetchAppMode().catch((err) => err);
+    expect(isUnauthorizedError(rejected)).toBe(true);
+    expect(rejected.message).toContain("/?token=");
+    expect(rejected.message).toContain("X-Maobu-Session");
+    expect(getStandaloneSessionToken()).toBeNull();
+    expect(events).toHaveLength(1);
+  } finally {
+    unsubscribe();
+  }
 });

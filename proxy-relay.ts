@@ -15,12 +15,13 @@
  */
 
 import net from "node:net";
+import tls from "node:tls";
 import { openSocks5Tunnel } from "./geoip.ts";
 import type { ProxySpec } from "./types.ts";
 
 export interface UpstreamProxy {
   /** Omitted for backward-compatible HTTP relay callers. */
-  type?: "http" | "socks5";
+  type?: "http" | "https" | "socks5";
   host: string;
   port: number;
   user: string;
@@ -38,14 +39,37 @@ export interface RelayOptions {
    *  manager restart, since the running browser's `--proxy-server` still points at the old port. */
   port?: number;
   log?: (msg: string) => void;
+  /** Optional TLS overrides for testing against local/custom-CA HTTPS proxies. */
+  tls?: Pick<tls.ConnectionOptions, "ca" | "rejectUnauthorized">;
 }
 
 const MAX_HEAD = 64 * 1024; // cap a request/response head so a never-terminating head can't grow unbounded
 
 type TrackSocket = (socket: net.Socket) => net.Socket;
 
+function openUpstreamSocket(
+  up: UpstreamProxy,
+  opts: RelayOptions,
+  track: TrackSocket,
+  onReady: () => void,
+): net.Socket {
+  if (up.type === "https") {
+    const connOpts: tls.ConnectionOptions = {
+      host: up.host,
+      port: up.port,
+      ...(net.isIP(up.host) ? {} : { servername: up.host }),
+      ...opts.tls,
+    };
+    return track(tls.connect(connOpts, onReady));
+  }
+  return track(net.connect({ host: up.host, port: up.port }, onReady));
+}
+
 /** Start a loopback relay that forwards to `up`, injecting its credentials. Resolves once listening. */
 export function startProxyRelay(up: UpstreamProxy, opts: RelayOptions = {}): Promise<ProxyRelay> {
+  if (/[\r\n\0]/.test(up.user) || /[\r\n\0]/.test(up.pass)) {
+    return Promise.reject(new Error("proxy credentials must not contain control characters"));
+  }
   const auth = up.user ? "Basic " + Buffer.from(`${up.user}:${up.pass}`).toString("base64") : null;
   const log = opts.log ?? (() => {});
   // server.close() only stops accepting new clients; it deliberately waits for
@@ -58,7 +82,7 @@ export function startProxyRelay(up: UpstreamProxy, opts: RelayOptions = {}): Pro
     socket.once("close", () => sockets.delete(socket));
     return socket;
   };
-  const server = net.createServer((client) => handleClient(track(client), up, auth, log, track));
+  const server = net.createServer((client) => handleClient(track(client), up, opts, auth, log, track));
   server.on("error", (e) => log(`proxy relay server error: ${e.message}`));
   return new Promise((resolve, reject) => {
     const onErr = (e: Error) => reject(e);
@@ -85,6 +109,7 @@ export function startProxyRelay(up: UpstreamProxy, opts: RelayOptions = {}): Pro
 function handleClient(
   client: net.Socket,
   up: UpstreamProxy,
+  opts: RelayOptions,
   auth: string | null,
   log: (m: string) => void,
   track: TrackSocket,
@@ -102,16 +127,21 @@ function handleClient(
     const head = buf.subarray(0, headEnd + 4).toString("latin1");
     const rest = buf.subarray(headEnd + 4); // bytes already past the head (a plain-HTTP body, usually empty)
     const firstLine = head.split("\r\n")[0] ?? "";
-    if (/^CONNECT\s/i.test(firstLine)) connectTunnel(client, up, auth, firstLine, rest, log, track);
-    else plainHttp(client, up, auth, head, rest, log, track);
+    if (/^CONNECT\s/i.test(firstLine)) connectTunnel(client, up, opts, auth, firstLine, rest, log, track);
+    else plainHttp(client, up, opts, auth, head, rest, log, track);
   };
   client.on("data", onData);
+}
+
+function formatAuthority(dest: { host: string; port: number }): string {
+  return net.isIPv6(dest.host) ? `[${dest.host}]:${dest.port}` : `${dest.host}:${dest.port}`;
 }
 
 /** HTTPS: open the upstream tunnel with auth, then pipe raw bytes (TLS is opaque). */
 function connectTunnel(
   client: net.Socket,
   up: UpstreamProxy,
+  opts: RelayOptions,
   auth: string | null,
   firstLine: string,
   rest: Buffer,
@@ -123,23 +153,31 @@ function connectTunnel(
     void connectSocksTunnel(client, up, target, rest, log, track);
     return;
   }
-  const upSock = track(net.connect({ host: up.host, port: up.port }));
-  upSock.on("error", (e) => { log(`upstream CONNECT error for ${target}: ${e.message}`); client.destroy(); });
-  client.on("error", () => upSock.destroy());
-  // In particular, cover a browser abandoning CONNECT before the upstream has
-  // replied: the streams are not piped yet, so normal pipe end-propagation does
-  // not exist and the upstream socket otherwise survives the client.
-  client.once("close", () => upSock.destroy());
-  upSock.on("connect", () => {
+  let destination: { host: string; port: number };
+  try {
+    destination = parseAuthority(target, 443);
+  } catch (error) {
+    log(`invalid CONNECT target ${target}: ${error instanceof Error ? error.message : error}`);
+    client.end("HTTP/1.1 400 Bad Request\r\n\r\n");
+    return;
+  }
+  const authority = formatAuthority(destination);
+  const upSock = openUpstreamSocket(up, opts, track, () => {
     const headers = [
-      `CONNECT ${target} HTTP/1.1`,
-      `Host: ${target}`,
+      `CONNECT ${authority} HTTP/1.1`,
+      `Host: ${authority}`,
       ...(auth ? [`Proxy-Authorization: ${auth}`] : []),
       "",
       "",
     ];
     upSock.write(headers.join("\r\n"));
   });
+  upSock.on("error", (e) => { log(`upstream CONNECT error for ${authority}: ${e.message}`); client.destroy(); });
+  client.on("error", () => upSock.destroy());
+  // In particular, cover a browser abandoning CONNECT before the upstream has
+  // replied: the streams are not piped yet, so normal pipe end-propagation does
+  // not exist and the upstream socket otherwise survives the client.
+  client.once("close", () => upSock.destroy());
   let rbuf = Buffer.alloc(0);
   const onUpData = (chunk: Buffer) => {
     rbuf = Buffer.concat([rbuf, chunk]);
@@ -151,7 +189,7 @@ function connectTunnel(
     upSock.removeListener("data", onUpData);
     const status = (rbuf.subarray(0, end).toString("latin1").split("\r\n")[0] ?? "");
     if (!/\s2\d\d\s/.test(status)) { // not 2xx (e.g. 407) → auth/connect failed
-      log(`upstream refused CONNECT ${target}: ${status}`);
+      log(`upstream refused CONNECT ${authority}: ${status}`);
       client.destroy();
       upSock.destroy();
       return;
@@ -168,6 +206,9 @@ function connectTunnel(
 }
 
 function parseAuthority(raw: string, defaultPort: number): { host: string; port: number } {
+  if (!raw || /[\s\r\n\0/?#@\\]/.test(raw)) {
+    throw new Error("invalid proxy target authority");
+  }
   let url: URL;
   try {
     url = new URL(`http://${raw}`);
@@ -176,7 +217,17 @@ function parseAuthority(raw: string, defaultPort: number): { host: string; port:
   }
   const host = url.hostname.replace(/^\[|\]$/g, "");
   const port = Number(url.port || defaultPort);
-  if (!host || !Number.isInteger(port) || port < 1 || port > 65535 || url.username || url.password) {
+  if (
+    !host ||
+    !Number.isInteger(port) ||
+    port < 1 ||
+    port > 65535 ||
+    url.username ||
+    url.password ||
+    (url.pathname && url.pathname !== "/") ||
+    url.search ||
+    url.hash
+  ) {
     throw new Error("invalid proxy target authority");
   }
   return { host, port };
@@ -237,6 +288,7 @@ async function connectSocksTunnel(
 function plainHttp(
   client: net.Socket,
   up: UpstreamProxy,
+  opts: RelayOptions,
   auth: string | null,
   head: string,
   rest: Buffer,
@@ -249,9 +301,14 @@ function plainHttp(
   }
   const lines = head.split("\r\n");
   const reqLine = lines[0] ?? "";
+  if (/[\r\n\0]/.test(reqLine) || !/^(\S+)\s+(\S+)\s+(HTTP\/\d(?:\.\d)?)$/i.test(reqLine)) {
+    log("invalid HTTP proxy request line");
+    client.end("HTTP/1.1 400 Bad Request\r\n\r\n");
+    return;
+  }
   const headers = lines
     .slice(1)
-    .filter((l) => l !== "" && !/^(proxy-authorization|connection|proxy-connection)\s*:/i.test(l));
+    .filter((l) => l !== "" && !/[\r\n\0]/.test(l) && !/^(proxy-authorization|connection|proxy-connection)\s*:/i.test(l));
   const rebuilt = [
     reqLine,
     ...headers,
@@ -262,16 +319,15 @@ function plainHttp(
     "",
   ].join("\r\n");
 
-  const upSock = track(net.connect({ host: up.host, port: up.port }));
-  upSock.on("error", (e) => { log(`upstream HTTP error: ${e.message}`); client.destroy(); });
-  client.on("error", () => upSock.destroy());
-  client.once("close", () => upSock.destroy());
-  upSock.on("connect", () => {
+  const upSock = openUpstreamSocket(up, opts, track, () => {
     upSock.write(rebuilt);
     if (rest.length) upSock.write(rest);
     upSock.pipe(client);
     client.pipe(upSock);
   });
+  upSock.on("error", (e) => { log(`upstream HTTP error: ${e.message}`); client.destroy(); });
+  client.on("error", () => upSock.destroy());
+  client.once("close", () => upSock.destroy());
   upSock.on("close", () => client.destroy());
 }
 
@@ -286,7 +342,9 @@ async function plainHttpViaSocks(
   let upSock: net.Socket | undefined;
   try {
     const lines = head.split("\r\n");
-    const match = (lines[0] ?? "").match(/^(\S+)\s+(\S+)\s+(HTTP\/\d(?:\.\d)?)$/i);
+    const reqLine = lines[0] ?? "";
+    if (/[\r\n\0]/.test(reqLine)) throw new Error("invalid HTTP proxy request line");
+    const match = reqLine.match(/^(\S+)\s+(\S+)\s+(HTTP\/\d(?:\.\d)?)$/i);
     if (!match) throw new Error("invalid HTTP proxy request line");
     const [, method, requestTarget, version] = match;
     const hostHeader = lines.slice(1).find((line) => /^host\s*:/i.test(line))?.replace(/^host\s*:\s*/i, "") ?? "";
@@ -301,7 +359,7 @@ async function plainHttpViaSocks(
     }
     const headers = lines
       .slice(1)
-      .filter((line) => line !== "" && !/^(proxy-authorization|connection|proxy-connection)\s*:/i.test(line));
+      .filter((line) => line !== "" && !/[\r\n\0]/.test(line) && !/^(proxy-authorization|connection|proxy-connection)\s*:/i.test(line));
     const rebuilt = [
       `${method} ${originTarget} ${version}`,
       ...headers,

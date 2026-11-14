@@ -20,6 +20,7 @@
 import type { Profile } from "./types.ts";
 import { fetchDirectEgress, parseEgressResponse, resolveEgressEndpoints, type EgressInfo } from "./egress.ts";
 import { runPlaywrightWorker } from "./playwright-runtime.ts";
+import { canonicalIp, sameIp } from "./ip.ts";
 
 // Preserve diagnose.ts's existing public type surface while sharing the parser.
 export type { EgressInfo } from "./egress.ts";
@@ -42,7 +43,20 @@ export interface FingerprintSample {
   webglRenderer?: string;
   canvasHash?: string;
   audioHash?: string;
+  webgpu?: { available: boolean; vendor?: string; architecture?: string; description?: string; device?: string };
+  clientRects?: { hash?: string; width?: number; height?: number; consistent?: boolean };
+  mediaDevices?: { count: number; audioInput: number; videoInput: number; audioOutput: number; labelsExposed: boolean };
+  speechVoices?: { count: number; defaultVoice?: string; hash?: string };
+  leakIndicators?: { webrtcApiPresent: boolean; rtcIceGathererPresent: boolean; connectionType?: string };
   errors?: Record<string, string>;
+}
+
+export interface LoginProbeConfig {
+  selectors?: {
+    loggedIn?: string[];
+    loggedOut?: string[];
+    loggedOutUrlPattern?: string;
+  };
 }
 
 export interface LoginInfo {
@@ -63,6 +77,7 @@ export interface ProfileReport {
   fingerprint: FingerprintSample | null;
   /** Second sample after a relaunch, when --relaunch is used. */
   fingerprintRelaunch?: FingerprintSample | null;
+  relaunchRequested?: boolean;
   webrtcIps?: string[];
   login: LoginInfo | null;
 }
@@ -77,11 +92,16 @@ export interface DiagnoseReport {
 export interface Analysis {
   total: number;
   okCount: number;
-  proxy: { ok: string[]; bypassed: string[]; matchesConfiguredHost: string[]; noEgress: string[]; inconclusive: string[] };
+  /** `bypassed` is a legacy response key for equal exit addresses, not proof of the route taken. */
+  proxy: { ok: string[]; bypassed: string[]; matchesConfiguredHost: string[]; noEgress: string[]; inconclusive: string[]; notConfigured: string[] };
   webrtcLeaks: string[];
-  fingerprintCollisions: { canvas: Collision[]; audio: Collision[]; webgl: Collision[] };
+  webrtcCoverage: { checked: string[]; inconclusive: string[]; notApplicable: string[] };
+  fingerprintCollisions: { canvas: Collision[]; audio: Collision[]; webgl: Collision[]; clientRects: Collision[]; speechVoices: Collision[] };
+  fingerprintCoverage: { canvas: string[]; audio: string[]; webgl: string[]; webgpu: string[]; clientRects: string[]; mediaDevices: string[]; speechVoices: string[] };
+  leakIndicators: { webrtcExposed: string[]; webrtcApiActive: string[]; mediaLabelsExposed: string[]; dnsRiskProfiles: string[] };
   uaInconsistencies: { profileId: string; reason: string }[];
   unstableFingerprints: string[];
+  stability: { checked: string[]; inconclusive: string[]; notRequested: string[] };
   login: { loggedIn: string[]; loggedOut: string[]; unknown: string[] };
   screenMismatches: { profileId: string; configured: string; seen: string }[];
   verdicts: string[];
@@ -117,37 +137,51 @@ function expectedPlatform(ua: string | undefined): string | null {
 }
 
 export function analyze(profiles: ProfileReport[], baselineRealIp?: string): Analysis {
+  const baseline = baselineRealIp ? canonicalIp(baselineRealIp) : null;
   const a: Analysis = {
     total: profiles.length,
     okCount: profiles.filter((p) => p.ok).length,
-    proxy: { ok: [], bypassed: [], matchesConfiguredHost: [], noEgress: [], inconclusive: [] },
+    proxy: { ok: [], bypassed: [], matchesConfiguredHost: [], noEgress: [], inconclusive: [], notConfigured: [] },
     webrtcLeaks: [],
-    fingerprintCollisions: { canvas: [], audio: [], webgl: [] },
+    webrtcCoverage: { checked: [], inconclusive: [], notApplicable: [] },
+    fingerprintCollisions: { canvas: [], audio: [], webgl: [], clientRects: [], speechVoices: [] },
+    fingerprintCoverage: { canvas: [], audio: [], webgl: [], webgpu: [], clientRects: [], mediaDevices: [], speechVoices: [] },
+    leakIndicators: { webrtcExposed: [], webrtcApiActive: [], mediaLabelsExposed: [], dnsRiskProfiles: [] },
     uaInconsistencies: [],
     unstableFingerprints: [],
+    stability: { checked: [], inconclusive: [], notRequested: [] },
     login: { loggedIn: [], loggedOut: [], unknown: [] },
     screenMismatches: [],
     verdicts: [],
   };
 
   for (const p of profiles) {
-    // Proxy: the critical check is bypass (browser egress == this machine's IP).
-    const egressIp = p.egress?.ip;
-    if (!egressIp) {
+    // Compare observed exits. A shared VPN/NAT can give a working proxy and the
+    // host the same exit, so equality cannot by itself prove a bypass.
+    const egressIp = p.egress?.ip ? canonicalIp(p.egress.ip) : null;
+    if (!p.proxyConfigured) {
+      a.proxy.notConfigured.push(p.profileId);
+    } else if (!egressIp) {
       a.proxy.noEgress.push(p.profileId);
-    } else if (!baselineRealIp) {
-      // Without the real-IP baseline we cannot prove the proxy isn't bypassed —
-      // report as inconclusive rather than falsely green-lighting it.
+    } else if (!baseline) {
+      // Without the system-route baseline there is no exit comparison evidence.
       a.proxy.inconclusive.push(p.profileId);
-    } else if (egressIp === baselineRealIp) {
+    } else if (egressIp === baseline) {
       a.proxy.bypassed.push(p.profileId);
     } else {
       a.proxy.ok.push(p.profileId);
-      if (p.proxyConfigured && egressIp === p.proxyConfigured.host) a.proxy.matchesConfiguredHost.push(p.profileId);
+      if (sameIp(egressIp, p.proxyConfigured.host)) a.proxy.matchesConfiguredHost.push(p.profileId);
     }
 
-    // WebRTC: any candidate equal to the real IP is a leak.
-    if (baselineRealIp && p.webrtcIps?.includes(baselineRealIp)) a.webrtcLeaks.push(p.profileId);
+    // Empty candidates can mean a disabled API, blocked STUN, timeout or probe
+    // failure. None of those are evidence of a successful real-IP leak test.
+    const candidates = (p.webrtcIps ?? []).map(canonicalIp).filter((ip): ip is string => !!ip);
+    if (!p.proxyConfigured) a.webrtcCoverage.notApplicable.push(p.profileId);
+    else if (!baseline || !candidates.length) a.webrtcCoverage.inconclusive.push(p.profileId);
+    else {
+      a.webrtcCoverage.checked.push(p.profileId);
+      if (candidates.includes(baseline)) a.webrtcLeaks.push(p.profileId);
+    }
 
     // UA vs UA-CH consistency.
     const fp = p.fingerprint;
@@ -175,13 +209,31 @@ export function analyze(profiles: ProfileReport[], baselineRealIp?: string): Ana
     else if (p.login?.loggedOut) a.login.loggedOut.push(p.profileId);
     else a.login.unknown.push(p.profileId);
 
-    // Fingerprint stability across relaunch (same profile must look identical).
-    if (p.fingerprintRelaunch && fp) {
-      if (fp.canvasHash && p.fingerprintRelaunch.canvasHash && fp.canvasHash !== p.fingerprintRelaunch.canvasHash) {
-        a.unstableFingerprints.push(p.profileId);
-      }
+    // Compare only stable measured surfaces, not the versioned UA. A missing
+    // value on either side is incomplete evidence, not a stable identity.
+    if (p.fingerprintRelaunch === undefined && !p.relaunchRequested) a.stability.notRequested.push(p.profileId);
+    else if (!p.fingerprintRelaunch || !fp) a.stability.inconclusive.push(p.profileId);
+    else {
+      const next = p.fingerprintRelaunch;
+      const stableFields = ["canvasHash", "audioHash", "webglVendor", "webglRenderer", "platform", "hardwareConcurrency", "deviceMemory", "language", "timezone"] as const;
+      const pairs: Array<[unknown, unknown]> = stableFields.map((field) => [fp[field], next[field]]);
+      pairs.push([fp.languages?.join(","), next.languages?.join(",")]);
+      if (fp.screen || next.screen) pairs.push([fp.screen ? `${fp.screen.width}*${fp.screen.height}` : undefined, next.screen ? `${next.screen.width}*${next.screen.height}` : undefined]);
+      const present = (value: unknown) => value !== undefined && value !== null && value !== "";
+      const comparable = pairs.filter(([left, right]) => present(left) && present(right));
+      const missing = pairs.some(([left, right]) => present(left) !== present(right));
+      if (!comparable.length || missing) a.stability.inconclusive.push(p.profileId);
+      else a.stability.checked.push(p.profileId);
+      if (comparable.some(([left, right]) => left !== right)) a.unstableFingerprints.push(p.profileId);
+    }
+
+    if (fp?.leakIndicators?.webrtcApiPresent) a.leakIndicators.webrtcApiActive.push(p.profileId);
+    if (fp?.mediaDevices?.labelsExposed) a.leakIndicators.mediaLabelsExposed.push(p.profileId);
+    if (p.proxyConfigured && (a.webrtcLeaks.includes(p.profileId) || a.proxy.bypassed.includes(p.profileId))) {
+      a.leakIndicators.dnsRiskProfiles.push(p.profileId);
     }
   }
+  a.leakIndicators.webrtcExposed = [...a.webrtcLeaks];
 
   // Cross-profile uniqueness (noise-based surfaces should differ per seed).
   a.fingerprintCollisions.canvas = dupes(profiles.map((p) => ({ profileId: p.profileId, value: p.fingerprint?.canvasHash })));
@@ -189,19 +241,37 @@ export function analyze(profiles: ProfileReport[], baselineRealIp?: string): Ana
   a.fingerprintCollisions.webgl = dupes(
     profiles.map((p) => ({ profileId: p.profileId, value: p.fingerprint?.webglRenderer })),
   );
+  a.fingerprintCollisions.clientRects = dupes(
+    profiles.map((p) => ({ profileId: p.profileId, value: p.fingerprint?.clientRects?.hash })),
+  );
+  a.fingerprintCollisions.speechVoices = dupes(
+    profiles.map((p) => ({ profileId: p.profileId, value: p.fingerprint?.speechVoices?.hash })),
+  );
+  a.fingerprintCoverage.canvas = profiles.filter((p) => !!p.fingerprint?.canvasHash).map((p) => p.profileId);
+  a.fingerprintCoverage.audio = profiles.filter((p) => !!p.fingerprint?.audioHash).map((p) => p.profileId);
+  a.fingerprintCoverage.webgl = profiles.filter((p) => !!p.fingerprint?.webglRenderer).map((p) => p.profileId);
+  a.fingerprintCoverage.webgpu = profiles.filter((p) => p.fingerprint?.webgpu !== undefined).map((p) => p.profileId);
+  a.fingerprintCoverage.clientRects = profiles.filter((p) => !!p.fingerprint?.clientRects?.hash).map((p) => p.profileId);
+  a.fingerprintCoverage.mediaDevices = profiles.filter((p) => p.fingerprint?.mediaDevices !== undefined).map((p) => p.profileId);
+  a.fingerprintCoverage.speechVoices = profiles.filter((p) => p.fingerprint?.speechVoices !== undefined).map((p) => p.profileId);
 
   // Verdicts: plain-language pass/fail lines for the summary.
   const v = a.verdicts;
-  v.push(`${a.okCount}/${a.total} profiles launched and probed cleanly`);
-  if (a.proxy.bypassed.length) v.push(`❌ PROXY BYPASSED on ${a.proxy.bypassed.length} profile(s): ${a.proxy.bypassed.join(", ")} — egress equals this machine's IP`);
-  else if (a.proxy.inconclusive.length) v.push(`⚠️  proxy bypass could NOT be checked for ${a.proxy.inconclusive.length} profile(s) — this machine's real-IP baseline was unavailable; rerun with the baseline before trusting the proxy`);
-  else if (a.proxy.noEgress.length) v.push(`⚠️  no egress IP captured for ${a.proxy.noEgress.length} profile(s) — cannot confirm proxy`);
-  else v.push(`✅ proxy in use on all ${a.proxy.ok.length} profile(s) (no bypass to host IP)`);
+  v.push(`${a.okCount}/${a.total} profiles launched and sampled`);
+  if (a.proxy.bypassed.length) v.push(`⚠️  browser exit matches the system-route baseline on ${a.proxy.bypassed.length} profile(s): ${a.proxy.bypassed.join(", ")} — exit isolation is unconfirmed; a shared VPN/NAT exit does not prove proxy bypass`);
+  if (a.proxy.inconclusive.length) v.push(`⚠️  proxy bypass could NOT be checked for ${a.proxy.inconclusive.length} profile(s) — this machine's real-IP baseline was unavailable; rerun with the baseline before trusting the proxy`);
+  if (a.proxy.noEgress.length) v.push(`⚠️  no egress IP captured for ${a.proxy.noEgress.length} profile(s) — cannot confirm proxy`);
+  if (a.proxy.ok.length) v.push(`✅ proxy egress differs from the host IP on ${a.proxy.ok.length} measured profile(s)`);
+  if (a.proxy.notConfigured.length) v.push(`ℹ️  ${a.proxy.notConfigured.length} profile(s) have no independent proxy configured; system routing applies`);
   if (a.webrtcLeaks.length) v.push(`❌ WebRTC leaks real IP on: ${a.webrtcLeaks.join(", ")}`);
-  else v.push(`✅ no WebRTC real-IP leak detected`);
+  else if (a.webrtcCoverage.checked.length) v.push(`✅ no baseline IP observed in WebRTC candidates on ${a.webrtcCoverage.checked.length} measured profile(s)`);
+  if (a.webrtcCoverage.inconclusive.length) v.push(`⚠️  WebRTC real-IP leak check inconclusive on ${a.webrtcCoverage.inconclusive.length} profile(s): baseline or candidate evidence missing`);
   if (a.fingerprintCollisions.canvas.length) v.push(`❌ canvas fingerprint COLLISION across profiles: ${a.fingerprintCollisions.canvas.map((c) => c.profiles.join("+")).join("; ")}`);
-  else v.push(`✅ canvas fingerprints unique across profiles`);
+  else if (a.fingerprintCoverage.canvas.length >= 2) v.push(`✅ canvas fingerprints unique across ${a.fingerprintCoverage.canvas.length} measured profiles`);
+  else v.push(`⚠️  canvas uniqueness needs at least two measured profiles; ${a.fingerprintCoverage.canvas.length} available`);
+  if (a.fingerprintCoverage.canvas.length >= 2 && a.fingerprintCoverage.canvas.length < a.total) v.push(`⚠️  canvas uniqueness is unmeasured on ${a.total - a.fingerprintCoverage.canvas.length} profile(s)`);
   if (a.unstableFingerprints.length) v.push(`❌ fingerprint changed across relaunch on: ${a.unstableFingerprints.join(", ")}`);
+  if (a.stability.inconclusive.length) v.push(`⚠️  relaunch stability inconclusive on ${a.stability.inconclusive.length} profile(s): comparable samples missing`);
   if (a.uaInconsistencies.length) v.push(`⚠️  UA/UA-CH mismatch on ${a.uaInconsistencies.length} profile(s)`);
   const screensCompared = profiles.filter((p) => p.fingerprint?.screen && p.screenConfigured).length;
   if (a.screenMismatches.length) v.push(`⚠️  screen resolution mismatch on ${a.screenMismatches.length} profile(s): ${a.screenMismatches.map((s) => `${s.profileId} ${s.seen}≠${s.configured}`).join(", ")}`);
@@ -269,7 +339,12 @@ export async function fingerprintProbe(): Promise<FingerprintSample> {
   }
   const sha = async (s: string) => {
     const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
-    return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+    // Firefox's automation realm exposes content TypedArrays through Xrays:
+    // indexing/iterating them throws, while DataView reads the actual buffer.
+    const bytes = new DataView(buf);
+    let hex = "";
+    for (let i = 0; i < bytes.byteLength; i++) hex += bytes.getUint8(i).toString(16).padStart(2, "0");
+    return hex;
   };
   try {
     const c = document.createElement("canvas");
@@ -298,55 +373,180 @@ export async function fingerprintProbe(): Promise<FingerprintSample> {
     osc.start(0);
     const buf: AudioBuffer = await ac.startRendering();
     const data = buf.getChannelData(0).slice(0, 1000);
+    const samples = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    const littleEndian = new DataView(new Uint16Array([0x0102]).buffer).getUint8(0) === 0x02;
     let sum = 0;
-    for (const x of data) sum += Math.abs(x);
+    for (let i = 0; i < data.length; i++) sum += Math.abs(samples.getFloat32(i * Float32Array.BYTES_PER_ELEMENT, littleEndian));
     out.audioHash = await sha(String(sum));
   } catch (e) {
     err("audio", e);
   }
+  try {
+    const gpu = typeof navigator !== "undefined" ? (navigator as any).gpu : undefined;
+    if (gpu && typeof gpu.requestAdapter === "function") {
+      const adapter = await gpu.requestAdapter();
+      if (adapter) {
+        const info = adapter.info ?? (typeof adapter.requestAdapterInfo === "function" ? await adapter.requestAdapterInfo() : undefined);
+        out.webgpu = {
+          available: true,
+          ...(info?.vendor ? { vendor: String(info.vendor) } : {}),
+          ...(info?.architecture ? { architecture: String(info.architecture) } : {}),
+          ...(info?.description ? { description: String(info.description) } : {}),
+          ...(info?.device ? { device: String(info.device) } : {}),
+        };
+      } else {
+        out.webgpu = { available: false };
+      }
+    }
+  } catch (e) {
+    err("webgpu", e);
+  }
+  try {
+    if (typeof document !== "undefined" && typeof document.createElement === "function" && document.body && typeof document.body.appendChild === "function") {
+      const probe = document.createElement("span");
+      probe.textContent = "Maobu DOMRect Probe 0123456789";
+      probe.style.cssText = "position:fixed;left:-9999px;top:-9999px;font:14.25px/1.3 sans-serif;letter-spacing:0.35px;";
+      document.body.appendChild(probe);
+      try {
+        const r1 = probe.getBoundingClientRect();
+        const r2 = probe.getBoundingClientRect();
+        const raw = `${r1.x}:${r1.y}:${r1.width}:${r1.height}:${r1.top}:${r1.left}`;
+        const consistent = r1.x === r2.x && r1.y === r2.y && r1.width === r2.width && r1.height === r2.height;
+        const hash = typeof crypto !== "undefined" && crypto.subtle ? await sha(raw) : raw;
+        out.clientRects = { hash, width: r1.width, height: r1.height, consistent };
+      } finally {
+        probe.remove?.();
+      }
+    }
+  } catch (e) {
+    err("clientRects", e);
+  }
+  try {
+    const md = typeof navigator !== "undefined" ? (navigator as any).mediaDevices : undefined;
+    if (md && typeof md.enumerateDevices === "function") {
+      const devices = await md.enumerateDevices();
+      const list = Array.isArray(devices) ? devices : [];
+      let audioInput = 0;
+      let videoInput = 0;
+      let audioOutput = 0;
+      let labelsExposed = false;
+      for (const d of list) {
+        if (d?.kind === "audioinput") audioInput++;
+        else if (d?.kind === "videoinput") videoInput++;
+        else if (d?.kind === "audiooutput") audioOutput++;
+        if (typeof d?.label === "string" && d.label.trim().length > 0) labelsExposed = true;
+      }
+      out.mediaDevices = { count: list.length, audioInput, videoInput, audioOutput, labelsExposed };
+    }
+  } catch (e) {
+    err("mediaDevices", e);
+  }
+  try {
+    const ss = typeof speechSynthesis !== "undefined" ? speechSynthesis : (typeof window !== "undefined" ? (window as any).speechSynthesis : undefined);
+    if (ss && typeof ss.getVoices === "function") {
+      const voices = ss.getVoices();
+      const list = Array.isArray(voices) ? voices : [];
+      const sig = list.map((v: any) => `${v?.name ?? ""}|${v?.lang ?? ""}|${v?.localService ? "1" : "0"}`).sort().join("\n");
+      const def = list.find((v: any) => v?.default)?.name;
+      const hash = sig && typeof crypto !== "undefined" && crypto.subtle ? await sha(sig) : undefined;
+      out.speechVoices = { count: list.length, ...(def ? { defaultVoice: String(def) } : {}), ...(hash ? { hash } : {}) };
+    }
+  } catch (e) {
+    err("speechVoices", e);
+  }
+  try {
+    const webrtcApiPresent = typeof RTCPeerConnection !== "undefined" || typeof (globalThis as any).webkitRTCPeerConnection !== "undefined";
+    const rtcIceGathererPresent = typeof (globalThis as any).RTCIceGatherer !== "undefined";
+    const connectionType = typeof navigator !== "undefined" && (navigator as any).connection?.effectiveType
+      ? String((navigator as any).connection.effectiveType)
+      : undefined;
+    out.leakIndicators = { webrtcApiPresent, rtcIceGathererPresent, ...(connectionType ? { connectionType } : {}) };
+  } catch (e) {
+    err("leakIndicators", e);
+  }
   return out;
 }
 
-function loginProbe(): LoginInfo {
+export function loginProbe(config: LoginProbeConfig = {}): LoginInfo {
   const url = location.href;
-  const loggedIn = !!document.querySelector(
-    '[data-testid="SideNav_NewTweet_Button"], [data-testid="AppTabBar_Home_Link"], [aria-label="Home timeline"]',
-  );
-  const loggedOut =
-    !!document.querySelector('input[name="text"], a[href="/login"], [data-testid="loginButton"]') ||
-    /\/login|\/i\/flow\/login|logout/.test(url);
+  const host = (location.hostname || "").toLowerCase();
+  const customLoggedIn = config?.selectors?.loggedIn ?? [];
+  const customLoggedOut = config?.selectors?.loggedOut ?? [];
+  const matchesAny = (selectors: string[]) => selectors.some((selector) => {
+    try { return !!document.querySelector(selector); } catch { return false; }
+  });
+  const isX = host === "x.com" || host.endsWith(".x.com") || host === "twitter.com" || host.endsWith(".twitter.com");
+  const xLoggedInSelectors = ['[data-testid="SideNav_NewTweet_Button"]', '[data-testid="AppTabBar_Home_Link"]', '[aria-label="Home timeline"]'];
+  const xLoggedOutSelectors = ['input[name="text"]', 'a[href="/login"]', '[data-testid="loginButton"]'];
+  const genericLoggedInSelectors = ['a[href*="/logout" i]', 'button[aria-label*="profile" i]', 'button[aria-label*="account" i]', '[data-testid*="avatar" i]'];
+  const genericLoggedOutSelectors = ['input[type="password"]', 'form[action*="login" i]', 'form[action*="signin" i]', 'a[href*="/login" i]', 'a[href*="/signin" i]'];
+
+  let loggedIn = matchesAny(customLoggedIn);
+  let loggedOut = matchesAny(customLoggedOut);
+  if (!loggedIn && !loggedOut) {
+    if (isX) {
+      loggedIn = matchesAny(xLoggedInSelectors);
+      loggedOut = matchesAny(xLoggedOutSelectors);
+    } else {
+      loggedIn = matchesAny(genericLoggedInSelectors);
+      loggedOut = matchesAny(genericLoggedOutSelectors);
+    }
+  }
+  if (!loggedOut) {
+    if (config?.selectors?.loggedOutUrlPattern) {
+      try { loggedOut = new RegExp(config.selectors.loggedOutUrlPattern, "i").test(url); } catch {}
+    } else {
+      loggedOut = /\/(login|signin|sign-in|i\/flow\/login|logout)\b/i.test(url);
+    }
+  }
   return { url, loggedIn, loggedOut, title: document.title };
 }
 
-async function webrtcProbe(): Promise<string[]> {
+export async function webrtcProbe(): Promise<string[]> {
   return new Promise<string[]>((resolve) => {
     const ips = new Set<string>();
+    let pc: RTCPeerConnection | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      if (timer !== undefined) clearTimeout(timer);
+      if (pc) {
+        pc.onicecandidate = null;
+        try { pc.close(); } catch { /* Already closed or unsupported. */ }
+      }
+      resolve([...ips]);
+    };
     try {
-      const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+      pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
       pc.createDataChannel("x");
       pc.onicecandidate = (e) => {
         if (!e.candidate) {
-          resolve([...ips]);
+          finish();
           return;
         }
         const cand = e.candidate;
         // Modern browsers expose the parsed address; prefer it.
         const addr = ((cand as any).address || "").trim();
-        if (addr && !addr.endsWith(".local")) {
+        if (addr && !/\.local$/i.test(addr)) {
           ips.add(addr);
           return;
         }
         // Skip mDNS-anonymized candidates (<uuid>.local) — they carry no real IP
         // and their hex would otherwise be misparsed as an address.
-        const s = cand.candidate;
+        const s = cand.candidate ?? "";
         if (/\.local\b/i.test(s)) return;
-        const m = s.match(/(\d{1,3}(?:\.\d{1,3}){3})|([0-9a-f]{1,4}(?::[0-9a-f]{1,4}){2,7})/i);
-        if (m) ips.add(m[0]);
+        // The fifth ICE candidate token is its address. Do not regex-match the
+        // foundation, related address or an incomplete compressed IPv6 literal.
+        const address = s.trim().split(/\s+/)[4];
+        if (address && !/\.local$/i.test(address)) ips.add(address);
       };
-      pc.createOffer().then((o) => pc.setLocalDescription(o));
-      setTimeout(() => resolve([...ips]), 3000);
+      timer = setTimeout(finish, 3000);
+      const connection = pc;
+      connection.createOffer().then((offer) => connection.setLocalDescription(offer)).catch(finish);
     } catch {
-      resolve([]);
+      finish();
     }
   });
 }
@@ -373,6 +573,25 @@ async function diagnosePageEgress(page: any, timeoutMs: number): Promise<EgressI
 export interface DiagnoseProfileOptions {
   timeoutMs?: number;
   collectLogin?: boolean;
+  loginUrl?: string;
+  loginConfig?: LoginProbeConfig;
+}
+
+function resolveProfileLoginUrl(profile: Profile, explicitUrl?: string): string | null {
+  const candidate = (explicitUrl ?? profile.platform ?? "").trim();
+  if (!candidate) return null;
+  if (/^https?:\/\//i.test(candidate)) {
+    try {
+      const parsed = new URL(candidate);
+      return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : null;
+    } catch {
+      return null;
+    }
+  }
+  if (/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(candidate)) {
+    return `https://${candidate.toLowerCase()}`;
+  }
+  return null;
 }
 
 /** Connect over CDP and collect one profile's full sample. */
@@ -382,6 +601,8 @@ export async function diagnoseOverCDP(
   opts: DiagnoseProfileOptions = {},
 ): Promise<Pick<ProfileReport, "fingerprint" | "egress" | "webrtcIps" | "login">> {
   const timeoutMs = opts.timeoutMs ?? 30_000;
+  const customLoginUrl = opts.collectLogin === false ? null : resolveProfileLoginUrl(profile, opts.loginUrl);
+  const loginExpression = `(${loginProbe.toString()})(${JSON.stringify(opts.loginConfig ?? {})})`;
   const result = await runPlaywrightWorker<{
     fingerprint: FingerprintSample;
     webrtcIps: string[];
@@ -390,18 +611,39 @@ export async function diagnoseOverCDP(
   }>("diagnostics", {
     endpoint: ws,
     timeoutMs,
-    collectLogin: opts.collectLogin !== false,
+    collectLogin: opts.collectLogin !== false && !customLoginUrl,
     fingerprintScript: `(${fingerprintProbe.toString()})()`,
     webrtcScript: `(${webrtcProbe.toString()})()`,
-    loginScript: `(${loginProbe.toString()})()`,
+    loginScript: loginExpression,
     egressUrls: resolveEgressEndpoints(),
     connectTimeoutMs: timeoutMs,
   }, { timeoutMs: timeoutMs * 3 + 20_000 });
+  let login = result.login;
+  if (customLoginUrl && opts.collectLogin !== false) {
+    try {
+      const [evaluated] = await runPlaywrightWorker<unknown[]>("page", {
+        endpoint: ws,
+        kind: "scripts",
+        temporary: true,
+        url: customLoginUrl,
+        timeoutMs,
+        scripts: [loginExpression],
+        connectTimeoutMs: timeoutMs,
+      }, { timeoutMs: timeoutMs * 2 });
+      if (evaluated && typeof evaluated === "object" && !("__aliasmodeError" in evaluated)) {
+        login = evaluated as LoginInfo;
+      } else {
+        login = { loggedIn: false, loggedOut: false, url: customLoginUrl, title: "diagnostic login probe failed" };
+      }
+    } catch {
+      login = { loggedIn: false, loggedOut: false, url: customLoginUrl, title: "diagnostic navigation failed" };
+    }
+  }
   return {
     fingerprint: result.fingerprint,
     egress: result.egress ? parseEgressResponse(result.egress) : null,
     webrtcIps: result.webrtcIps,
-    login: result.login,
+    login,
   };
 }
 
@@ -421,6 +663,13 @@ export interface RunDiagnosticsOptions {
   perProfileTimeoutMs?: number;
 }
 
+/** Replace IO boundaries for alternate local transports and deterministic checks. */
+export interface DiagnosticsDependencies {
+  fetchFn?: typeof fetch;
+  sample?: typeof diagnoseOverCDP;
+  baseline?: () => Promise<string | undefined>;
+}
+
 /** Reject if `p` doesn't settle within `ms`. */
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -429,25 +678,32 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   });
 }
 
-async function apiStart(baseUrl: string, id: string): Promise<{ ws: string; port: number } | null> {
-  const r = await (await fetch(`${baseUrl}/api/v1/browser/start?user_id=${encodeURIComponent(id)}`)).json();
+async function apiStart(baseUrl: string, id: string, fetchFn: typeof fetch): Promise<{ ws: string; port: number } | null> {
+  const r = await (await fetchFn(`${baseUrl}/api/v1/browser/start?user_id=${encodeURIComponent(id)}`)).json();
   if (r.code !== 0) return null;
   return { ws: r.data.ws.puppeteer, port: Number(r.data.debug_port) };
 }
-async function apiStop(baseUrl: string, id: string): Promise<void> {
-  await fetch(`${baseUrl}/api/v1/browser/stop?user_id=${encodeURIComponent(id)}`).catch(() => {});
+async function apiStop(baseUrl: string, id: string, fetchFn: typeof fetch): Promise<boolean> {
+  try {
+    const response = await fetchFn(`${baseUrl}/api/v1/browser/stop?user_id=${encodeURIComponent(id)}`);
+    if (!response.ok) return false;
+    const body = await response.json();
+    return body.code === 0;
+  } catch { return false; }
 }
 
-/** This machine's own outbound IP (no proxy) — the bypass baseline. */
+/** This machine's system-route exit, including a system VPN when one is active. */
 async function baselineRealIp(): Promise<string | undefined> {
   return (await fetchDirectEgress())?.ip;
 }
 
 /** Drive every profile through the manager, collect samples, and analyze. */
-export async function runDiagnostics(opts: RunDiagnosticsOptions): Promise<DiagnoseReport> {
+export async function runDiagnostics(opts: RunDiagnosticsOptions, dependencies: DiagnosticsDependencies = {}): Promise<DiagnoseReport> {
   const log = opts.log ?? ((m) => console.log(`[diagnose] ${m}`));
-  const realIp = await baselineRealIp();
-  log(`this machine's real IP (proxy-bypass baseline): ${realIp ?? "unknown"}`);
+  const fetchFn = dependencies.fetchFn ?? fetch;
+  const sampleProfile = dependencies.sample ?? diagnoseOverCDP;
+  const realIp = await (dependencies.baseline ?? baselineRealIp)();
+  log(`this machine's system-route exit (comparison baseline): ${realIp ?? "unknown"}`);
 
   const timeout = opts.perProfileTimeoutMs ?? 90_000;
   const reports: ProfileReport[] = [];
@@ -457,38 +713,47 @@ export async function runDiagnostics(opts: RunDiagnosticsOptions): Promise<Diagn
     const proxyConfigured = profile.proxy ? { host: profile.proxy.host, port: profile.proxy.port } : null;
     const screenConfigured = { width: profile.screenWidth, height: profile.screenHeight };
     try {
-      const first = await apiStart(opts.baseUrl, profile.id);
+      const first = await apiStart(opts.baseUrl, profile.id, fetchFn);
       if (!first) {
         reports.push({ profileId: profile.id, ok: false, error: "browser/start failed", proxyConfigured, screenConfigured, egress: null, fingerprint: null, login: null });
         continue;
       }
       const sample = await withTimeout(
-        diagnoseOverCDP(first.ws, profile, { collectLogin: opts.collectLogin }),
+        sampleProfile(first.ws, profile, { collectLogin: opts.collectLogin }),
         timeout,
         `diagnose ${profile.id}`,
       );
 
-      let fingerprintRelaunch: FingerprintSample | null | undefined;
+      let fingerprintRelaunch: FingerprintSample | null | undefined = opts.relaunch ? null : undefined;
       if (opts.relaunch) {
-        await apiStop(opts.baseUrl, profile.id);
-        const second = await apiStart(opts.baseUrl, profile.id);
-        if (second) {
-          const s2 = await withTimeout(diagnoseOverCDP(second.ws, profile, { collectLogin: false }), timeout, `relaunch ${profile.id}`);
-          fingerprintRelaunch = s2.fingerprint;
+        // A failed teardown followed by start can return the same generation.
+        // Never call that a relaunch stability measurement.
+        const stopped = await apiStop(opts.baseUrl, profile.id, fetchFn);
+        if (!stopped) log(`${profile.id}: relaunch stability unavailable (teardown unconfirmed)`);
+        else try {
+          const second = await apiStart(opts.baseUrl, profile.id, fetchFn);
+          if (second) {
+            const s2 = await withTimeout(sampleProfile(second.ws, profile, { collectLogin: false }), timeout, `relaunch ${profile.id}`);
+            fingerprintRelaunch = s2.fingerprint;
+          }
+        } catch {
+          // Preserve the valid first sample and mark just the relaunch evidence
+          // inconclusive when the second launch/probe cannot be measured.
+          log(`${profile.id}: relaunch stability unavailable (second sample failed)`);
         }
       }
 
-      const report: ProfileReport = { profileId: profile.id, ok: true, proxyConfigured, screenConfigured, ...sample, fingerprintRelaunch };
+      const report: ProfileReport = { profileId: profile.id, ok: true, proxyConfigured, screenConfigured, ...sample, fingerprintRelaunch, ...(opts.relaunch ? { relaunchRequested: true } : {}) };
       reports.push(report);
       const eg = report.egress?.ip ?? "?";
-      const proxyTag = !realIp ? "baseline?" : eg === realIp ? "❌BYPASS" : "ok";
+      const proxyTag = !proxyConfigured ? "system-route" : !report.egress ? "egress?" : !realIp ? "baseline?" : sameIp(eg, realIp) ? "shared-exit?" : "different-exit";
       const li = report.login?.loggedIn ? "logged-in" : report.login?.loggedOut ? "logged-out" : "login?";
       log(`${profile.id}: egress=${eg} ${proxyTag} canvas=${report.fingerprint?.canvasHash?.slice(0, 8) ?? "?"} ${li}`);
     } catch (e) {
       reports.push({ profileId: profile.id, ok: false, error: e instanceof Error ? e.message : String(e), proxyConfigured, screenConfigured, egress: null, fingerprint: null, login: null });
       log(`${profile.id}: FAILED ${e instanceof Error ? e.message : String(e)}`);
     } finally {
-      await apiStop(opts.baseUrl, profile.id);
+      await apiStop(opts.baseUrl, profile.id, fetchFn);
       opts.onProgress?.(snapshot());
     }
   }

@@ -1,6 +1,7 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   cpSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -9,13 +10,15 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { extractZipTo } from "../unzip.ts";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { TRUSTED_RUNTIME_ZIP_LIMITS, extractZipTo } from "../unzip.ts";
 import { ALIASMODE_VERSION } from "../version.ts";
+import { renameWithWindowsRetrySync } from "../windows-rename.ts";
 
 export const NODE_WINDOWS_X64_VERSION = "22.23.2";
 export const NODE_WINDOWS_X64_SHA256 = "1177b4137ba5adaa56354ae40f1080c7450e8ae09cecb47da459d1c52ac99f97";
 export const NODE_WINDOWS_X64_URL = `https://nodejs.org/dist/v${NODE_WINDOWS_X64_VERSION}/node-v${NODE_WINDOWS_X64_VERSION}-win-x64.zip`;
+export const NODE_WINDOWS_X64_CACHE_NAME = `node-v${NODE_WINDOWS_X64_VERSION}-win-x64.zip`;
 
 export const ALIASMODE_FIREFOX_VERSION = "156.0.1-beta.36";
 export const ALIASMODE_FIREFOX_ARCHIVE_NAME = "aliasmode-156.0.1-beta.36-win.x86_64.zip";
@@ -59,7 +62,99 @@ async function sha256File(path: string): Promise<string> {
 
 function isWithin(parent: string, child: string): boolean {
   const rel = relative(parent, child);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
+/** Validate the lexical path before following any of its project-owned components. */
+function assertManagedPath(cwd: string, target: string, kind: "directory" | "file"): void {
+  if (!isAbsolute(cwd) || !isAbsolute(target) || !isWithin(cwd, target)) throw new Error("bundle path escaped its project directory");
+  const root = lstatSync(cwd);
+  if (root.isSymbolicLink() || !root.isDirectory() || relative(cwd, realpathSync(cwd)) !== "") {
+    throw new Error("bundle project directory must not use symbolic links or junctions");
+  }
+  const parts = relative(cwd, target).split(sep).filter(Boolean);
+  let current = cwd;
+  for (let index = 0; index < parts.length; index++) {
+    current = join(current, parts[index]!);
+    const info = lstatSync(current, { throwIfNoEntry: false });
+    if (!info) continue;
+    if (info.isSymbolicLink()) throw new Error("bundle paths must not use symbolic links or junctions");
+    const directory = index < parts.length - 1 || kind === "directory";
+    if (directory ? !info.isDirectory() : !info.isFile()) throw new Error(`bundle path is not a regular ${directory ? "directory" : "file"}`);
+    if (!isWithin(cwd, realpathSync(current))) throw new Error("bundle path escaped its project directory");
+  }
+}
+
+function assertBundleWorkspace(cwd: string, defaultWorkspace: boolean): void {
+  assertManagedPath(cwd, cwd, "directory");
+  if (defaultWorkspace && relative(realpathSync(resolve(import.meta.dir, "..")), cwd) !== "") {
+    throw new Error("run Windows bundle preparation from this source project root");
+  }
+  const manifest = join(cwd, "package.json"), configuration = join(cwd, "src-tauri", "tauri.conf.json");
+  assertManagedPath(cwd, manifest, "file");
+  assertManagedPath(cwd, configuration, "file");
+  try {
+    if (JSON.parse(readFileSync(manifest, "utf8")).name !== "maobu-browser"
+      || JSON.parse(readFileSync(configuration, "utf8")).identifier !== "com.maobu.local") throw new Error("invalid identity");
+  } catch { throw new Error("bundle preparation requires the Maobu project manifests"); }
+}
+
+/** Refuse a linked descendant as well as a linked deletion root before removing anything. */
+function assertRemovableDirectory(cwd: string, target: string): void {
+  assertManagedPath(cwd, target, "directory");
+  if (!lstatSync(target, { throwIfNoEntry: false })) return;
+  const pending = [target];
+  while (pending.length) {
+    const directory = pending.pop()!;
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name), info = lstatSync(path);
+      if (info.isSymbolicLink()) throw new Error("bundle cleanup refuses symbolic links or junctions");
+      if (info.isDirectory()) pending.push(path);
+    }
+  }
+}
+
+async function downloadOfficialNode(): Promise<Uint8Array> {
+  const response = await fetch(NODE_WINDOWS_X64_URL, { signal: AbortSignal.timeout(120_000) });
+  if (!response.ok) throw new Error("official Node runtime download failed");
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+/** Production always uses the pinned digest; tests may supply a small archive and its digest. */
+export async function loadVerifiedNodeArchive(cwd: string, options: {
+  download?: () => Promise<Uint8Array>; expectedSha256?: string;
+  rename?: (from: string, to: string) => void;
+} = {}): Promise<Uint8Array> {
+  cwd = resolve(cwd);
+  assertBundleWorkspace(cwd, false);
+  const expected = expectedSha256(options.expectedSha256 ?? NODE_WINDOWS_X64_SHA256, "official Node runtime");
+  const cache = join(cwd, "node_modules", ".cache", "maobu-desktop", NODE_WINDOWS_X64_CACHE_NAME);
+  assertManagedPath(cwd, cache, "file");
+  if (lstatSync(cache, { throwIfNoEntry: false })) {
+    const bytes = readFileSync(cache);
+    if (createHash("sha256").update(bytes).digest("hex") === expected) return bytes;
+  }
+  const bytes = await (options.download ?? downloadOfficialNode)();
+  if (createHash("sha256").update(bytes).digest("hex") !== expected) throw new Error("official Node runtime SHA-256 mismatch");
+  // Recheck after the network await. A failed download never changes the previous cache.
+  assertManagedPath(cwd, cache, "file");
+  mkdirSync(dirname(cache), { recursive: true });
+  assertManagedPath(cwd, cache, "file");
+  const temporary = join(dirname(cache), `${NODE_WINDOWS_X64_CACHE_NAME}.${randomUUID()}.tmp`);
+  try {
+    writeFileSync(temporary, bytes, { flag: "wx", mode: 0o600 });
+    assertManagedPath(cwd, temporary, "file");
+    assertManagedPath(cwd, cache, "file");
+    (options.rename ?? renameWithWindowsRetrySync)(temporary, cache);
+  } catch (error) {
+    // Keep the original failure even if cleanup is denied. Never remove the previous cache.
+    try {
+      assertManagedPath(cwd, temporary, "file");
+      rmSync(temporary, { force: true });
+    } catch {}
+    throw error;
+  }
+  return bytes;
 }
 
 function expectedSha256(value: string | undefined, label: string): string {
@@ -117,7 +212,7 @@ async function installFirefoxRuntime(
   }
 
   const extractedRoot = join(staging, "firefox");
-  await extractZipTo(archive.bytes, extractedRoot);
+  await extractZipTo(archive.bytes, extractedRoot, TRUSTED_RUNTIME_ZIP_LIMITS);
   const extractedExecutable = findFirefoxExecutable(extractedRoot);
   const extractedReal = realpathSync(extractedExecutable);
   const extractedRootReal = realpathSync(extractedRoot);
@@ -141,8 +236,20 @@ async function installFirefoxRuntime(
 
 export const WINDOWS_SIDECAR_TARGET = "bun-windows-x64-baseline";
 
-export async function compileSidecar(cwd: string, output: string, target = WINDOWS_SIDECAR_TARGET): Promise<void> {
-  const child = Bun.spawn([
+/** Filter names before reading values so signing secrets are never copied or inspected. */
+export function sidecarCompileEnvironment(environment: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const result: Record<string, string> = Object.create(null);
+  for (const name of Object.keys(environment)) {
+    if (["TAURI_SIGNING_PRIVATE_KEY", "TAURI_SIGNING_PRIVATE_KEY_PASSWORD"].includes(name.toUpperCase())) continue;
+    const value = environment[name];
+    if (value !== undefined) result[name] = value;
+  }
+  return result;
+}
+
+type SidecarSpawn = (command: string[], options: { cwd: string; env: Record<string, string>; stdout: "inherit"; stderr: "inherit" }) => { exited: Promise<number> };
+export async function compileSidecar(cwd: string, output: string, target = WINDOWS_SIDECAR_TARGET, spawn: SidecarSpawn = Bun.spawn): Promise<void> {
+  const child = spawn([
     process.execPath,
     "build",
     "--compile",
@@ -155,7 +262,7 @@ export async function compileSidecar(cwd: string, output: string, target = WINDO
     "sidecar-entry.ts",
     "--outfile",
     output,
-  ], { cwd, stdout: "inherit", stderr: "inherit" });
+  ], { cwd, env: sidecarCompileEnvironment(), stdout: "inherit", stderr: "inherit" });
   const code = await child.exited;
   if (code !== 0) throw new Error(`sidecar compilation exited with code ${code}`);
 }
@@ -215,6 +322,7 @@ export function stageAgentRuntime(cwd: string, playwrightRoot: string): void {
   mkdirSync(agentRoot, { recursive: true });
   for (const file of [
     "mcp-host.mjs",
+    "mcp-scope.mjs",
     "playwright-proxy.mjs",
     "playwright-runner.mjs",
     "script-runner.mjs",
@@ -242,6 +350,7 @@ export async function prepareWindowsBundle(
   if ((options.platform ?? process.platform) !== "win32" || (options.arch ?? process.arch) !== "x64") {
     throw new Error("desktop bundle preparation requires Windows x64");
   }
+  assertBundleWorkspace(cwd, options.cwd === undefined);
 
   const tauri = join(cwd, "src-tauri");
   const generated = join(tauri, "generated");
@@ -252,15 +361,27 @@ export async function prepareWindowsBundle(
   const playwrightRoot = join(resources, "playwright");
   const sidecar = join(binaries, "aliasmode-sidecar-x86_64-pc-windows-msvc.exe");
 
-  rmSync(staging, { recursive: true, force: true });
-  rmSync(firefoxRoot, { recursive: true, force: true });
-  rmSync(playwrightRoot, { recursive: true, force: true });
+  const outputDirectories = [staging, generated, binaries, resources, firefoxRoot, playwrightRoot];
+  const outputFiles = [sidecar, join(generated, "browser.json"), join(generated, "VERSION.txt")];
+  const assertOutputs = () => {
+    for (const directory of outputDirectories) assertManagedPath(cwd, directory, "directory");
+    for (const file of outputFiles) assertManagedPath(cwd, file, "file");
+  };
+  // Preflight all destructive targets before deleting even the first directory.
+  assertOutputs();
+  for (const directory of [staging, firefoxRoot, playwrightRoot]) assertRemovableDirectory(cwd, directory);
+  if (!options.installNode) assertManagedPath(cwd, join(cwd, "node_modules", ".cache", "maobu-desktop", NODE_WINDOWS_X64_CACHE_NAME), "file");
+  for (const directory of [staging, firefoxRoot, playwrightRoot]) {
+    assertRemovableDirectory(cwd, directory);
+    rmSync(directory, { recursive: true, force: true });
+  }
   mkdirSync(staging, { recursive: true });
   mkdirSync(generated, { recursive: true });
   mkdirSync(binaries, { recursive: true });
   mkdirSync(resources, { recursive: true });
 
   await (options.compileSidecar ?? ((output) => compileSidecar(cwd, output)))(sidecar);
+  assertOutputs();
   if (!statSync(sidecar).isFile()) throw new Error("sidecar compiler did not create the expected Windows executable");
 
   mkdirSync(firefoxRoot, { recursive: true });
@@ -278,19 +399,16 @@ export async function prepareWindowsBundle(
     await options.installNode(playwrightRoot);
   } else {
     const nodeStaging = join(staging, "node");
-    const nodeBytes = await (options.downloadNode ?? (async () => {
-      const response = await fetch(NODE_WINDOWS_X64_URL, { signal: AbortSignal.timeout(120_000) });
-      if (!response.ok) throw new Error("official Node runtime download failed");
-      return new Uint8Array(await response.arrayBuffer());
-    }))();
-    const nodeHash = createHash("sha256").update(nodeBytes).digest("hex");
-    if (nodeHash !== NODE_WINDOWS_X64_SHA256) throw new Error("official Node runtime SHA-256 mismatch");
-    await extractZipTo(nodeBytes, nodeStaging);
+    const nodeBytes = await loadVerifiedNodeArchive(cwd, { download: options.downloadNode });
+    assertOutputs();
+    await extractZipTo(nodeBytes, nodeStaging, TRUSTED_RUNTIME_ZIP_LIMITS);
     const extractedNode = join(nodeStaging, `node-v${NODE_WINDOWS_X64_VERSION}-win-x64`, "node.exe");
     if (!statSync(extractedNode).isFile()) throw new Error("official Node runtime archive is incomplete");
     mkdirSync(join(playwrightRoot, "node"), { recursive: true });
     cpSync(extractedNode, join(playwrightRoot, "node", "node.exe"));
   }
+  assertOutputs();
+  assertManagedPath(cwd, join(playwrightRoot, "node", "node.exe"), "file");
   if (!statSync(join(playwrightRoot, "node", "node.exe")).isFile()) throw new Error("official Node runtime is incomplete");
   stageAgentRuntime(cwd, playwrightRoot);
 

@@ -12,6 +12,7 @@ import {
   CLOAKBROWSER_WINDOWS_X64_EXECUTABLE_SHA256, renameWhenUnlocked, sha256File, windowsSystemTool,
 } from "./browser-install.ts";
 import { trackRuntimeDownload } from "./runtime-download.ts";
+import { CURL_ATTEMPT_TIMEOUT_MS, CurlCleanupError, downloadBoundedCurl } from "./bounded-curl.ts";
 
 // AliasMode's own Windows, Linux and macOS arm64 builds of the patch series. The Windows package includes
 // Chromium's version manifest, which upstream's Windows archive omits. Each build gets its
@@ -19,11 +20,12 @@ import { trackRuntimeDownload } from "./runtime-download.ts";
 // A new build changes the version, the release tag, and each target's two SHA-256 values and archive size.
 const OWN_VERSION = "155.0.8059.85";
 const OWN_RELEASE = "aliasmode.5";
+export const ALIASMODE_CHROMIUM_PINNED_VERSION = `${OWN_VERSION}-${OWN_RELEASE}`;
 const OWN_RELEASE_URL = `https://github.com/aliasmode/aliasmode-chromium/releases/download/v${OWN_VERSION}-${OWN_RELEASE}`;
 const WINDOWS_BUILD = {
   root: `aliasmode-chromium-${OWN_VERSION}-windows-x64`,
   url: `${OWN_RELEASE_URL}/aliasmode-chromium-${OWN_VERSION}-windows-x64.zip`,
-  dir: `chromium-${OWN_VERSION}-${OWN_RELEASE}`,
+  dir: `chromium-${ALIASMODE_CHROMIUM_PINNED_VERSION}`,
   archiveSha256: "52ab2c6a616813bd95f5473fd73c492b7ee333ae4f0e57c4a366da956b2a7b8c",
   size: 203517665,
   executable: "chrome.exe",
@@ -43,7 +45,7 @@ const WINDOWS_BUILD = {
 const MACOS_BUILD = {
   root: `aliasmode-chromium-${OWN_VERSION}-macos-arm64`,
   url: `${OWN_RELEASE_URL}/aliasmode-chromium-${OWN_VERSION}-macos-arm64.zip`,
-  dir: `chromium-${OWN_VERSION}-${OWN_RELEASE}`,
+  dir: `chromium-${ALIASMODE_CHROMIUM_PINNED_VERSION}`,
   archiveSha256: "5723d95c1d13e5efa6eba581ff799472cb9f4042a6a46961f43ba7eac7f78084",
   size: 159506881,
   executable: "Chromium.app/Contents/MacOS/Chromium",
@@ -56,7 +58,7 @@ const MACOS_BUILD = {
 const LINUX_BUILD = {
   root: `aliasmode-chromium-${OWN_VERSION}-linux-x64`,
   url: `${OWN_RELEASE_URL}/aliasmode-chromium-${OWN_VERSION}-linux-x64.tar.zst`,
-  dir: `chromium-${OWN_VERSION}-${OWN_RELEASE}`,
+  dir: `chromium-${ALIASMODE_CHROMIUM_PINNED_VERSION}`,
   archiveSha256: "86e6c4304161ece6628ceb79eb6c9e5f57a148f5bec211753b8b4399319220d0",
   size: 197916653,
   executable: "chrome",
@@ -91,7 +93,7 @@ interface PinnedRuntime {
   dir: string;
   url: string;
   archiveSha256: string;
-  /** Archive size in bytes; only download progress uses it. */
+  /** Exact pinned archive size, also used for download progress. */
   size: number;
   /** Directory inside the archive that holds the runtime; empty when the archive root is the runtime. */
   archiveRoot: string;
@@ -183,6 +185,14 @@ export function supportsChromium155Host(platform: NodeJS.Platform, arch: string)
     || (platform === "linux" && arch === "x64");
 }
 
+/** Location of the pinned installer output. This helper does not inspect the cache. */
+export function managedChromiumLocation(runtime: PinnedRuntime["runtime"], platform: NodeJS.Platform, arch: string): { directory: string; executable: string } | undefined {
+  const spec = runtime === "aliasmode"
+    ? supportsChromium155Host(platform, arch) ? chromium155(platform) : undefined
+    : cloakBrowser(platform, arch);
+  return spec && { directory: spec.dir, executable: spec.executable };
+}
+
 /** The AppArmor profile that the Linux install command adds for the downloaded Chrome runtimes. */
 export const LINUX_CHROMIUM_APPARMOR_PROFILE = "/etc/apparmor.d/aliasmode-chromium";
 
@@ -254,6 +264,8 @@ export interface AliasmodeChromiumDeps {
   extract?: (archive: string, directory: string) => Promise<void>;
   hashFile?: (path: string) => Promise<string>;
   sleep?: (ms: number) => Promise<void>;
+  /** Monotonic clock for the overall download budget. */
+  now?: () => number;
   /** Prepare the downloaded runtime's Windows sandbox file access. */
   run?: (command: string[]) => Promise<void>;
 }
@@ -263,44 +275,41 @@ async function run(command: string[]): Promise<void> {
   if (await child.exited !== 0) throw new Error(`${command[0]} exited with code ${child.exitCode}`);
 }
 
-/**
- * curl, not fetch: on Windows curl.exe trusts the Windows certificate store, so a company
- * proxy that inspects TLS works. A download that gets under 1 KB/s for a minute stops,
- * and the next attempt continues it.
- */
-async function curlDownload(url: string, output: string, platform: NodeJS.Platform): Promise<void> {
-  const child = Bun.spawn([
-    platform === "win32" ? windowsSystemTool("curl.exe") : "curl", "--fail", "--location", "--silent", "--show-error",
-    "--continue-at", "-", "--connect-timeout", "30", "--speed-limit", "1024", "--speed-time", "60",
-    "--output", output, url,
-  ], { stdout: "ignore", stderr: "ignore" });
-  const code = await child.exited;
-  // 33: the server cannot continue the saved part, so the next attempt starts over.
-  if (code === 33) rmSync(output, { force: true });
-  if (code !== 0) throw new Error(`curl exited with code ${code}`);
-}
-
-const DOWNLOAD_ATTEMPTS = 5;
+const DOWNLOAD_NO_PROGRESS_ATTEMPTS = 5;
+const DOWNLOAD_MAX_ATTEMPTS = 20;
+const DOWNLOAD_TOTAL_TIMEOUT_MS = 30 * 60_000;
 
 function fileSize(path: string): number {
   return statSync(path, { throwIfNoEntry: false })?.size ?? 0;
 }
 
-/** Retry a broken download. Only attempts that add no bytes count toward the limit. */
+/** Allow more retries while bytes advance, within one total time and attempt budget. */
 async function downloadWithRetry(
-  url: string,
+  spec: PinnedRuntime,
   partial: string,
-  download: (url: string, output: string) => Promise<void>,
+  download: (url: string, output: string, timeoutMs: number) => Promise<void>,
   sleep: (ms: number) => Promise<void>,
+  now: () => number,
 ): Promise<void> {
-  for (let failures = 0; ;) {
-    const before = fileSize(partial);
+  const deadline = now() + DOWNLOAD_TOTAL_TIMEOUT_MS;
+  let failures = 0;
+  for (let attempt = 1; attempt <= DOWNLOAD_MAX_ATTEMPTS; attempt++) {
+    const remaining = Math.ceil(deadline - now());
+    if (remaining < 1) throw new Error(`${spec.label} download timed out`);
+    let before = fileSize(partial);
+    if (before > spec.size) {
+      rmSync(partial, { force: true });
+      before = 0;
+    }
     try {
-      await download(url, partial);
+      await download(spec.url, partial, Math.min(CURL_ATTEMPT_TIMEOUT_MS, remaining));
       return;
     } catch (error) {
-      if (fileSize(partial) <= before && ++failures >= DOWNLOAD_ATTEMPTS) throw error;
-      await sleep(Math.min(30_000, 1000 * 2 ** failures));
+      if (error instanceof CurlCleanupError || attempt === DOWNLOAD_MAX_ATTEMPTS) throw error;
+      if (fileSize(partial) <= before && ++failures >= DOWNLOAD_NO_PROGRESS_ATTEMPTS) throw error;
+      const delay = Math.ceil(deadline - now());
+      if (delay < 1) throw new Error(`${spec.label} download timed out`, { cause: error });
+      await sleep(Math.min(delay, 30_000, 1000 * 2 ** failures));
     }
   }
 }
@@ -426,10 +435,14 @@ async function install(spec: PinnedRuntime, root: string, deps: AliasmodeChromiu
   }
   const partial = join(root, partialName(spec));
   await trackRuntimeDownload(spec.runtime, partial, spec.size, () => downloadWithRetry(
-    spec.url,
+    spec,
     partial,
-    deps.download ?? ((url, output) => curlDownload(url, output, platform)),
+    deps.download ?? ((url, output, timeoutMs) => downloadBoundedCurl(url, output, {
+      executable: platform === "win32" ? windowsSystemTool("curl.exe") : "curl",
+      maxBytes: spec.size, exactSize: true, resume: true, timeoutMs,
+    })),
     deps.sleep ?? Bun.sleep,
+    deps.now ?? (() => performance.now()),
   ));
   if (await hashFile(partial) !== spec.archiveSha256) {
     rmSync(partial, { force: true });

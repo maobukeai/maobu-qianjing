@@ -1,8 +1,10 @@
 import { test, expect } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, readdirSync, readlinkSync, rmSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { clearLocalSecretKeyCacheForTests, ENCRYPTED_VALUE_PREFIX } from "./dpapi.ts";
 import { ProfileStore } from "./store.ts";
 import { parseExport } from "./parse.ts";
 import type { Profile } from "./types.ts";
@@ -22,6 +24,86 @@ resolution=1680*1050
 function memStore(): ProfileStore {
   return new ProfileStore(":memory:");
 }
+
+test("profile incarnation is internal, stable across edits and imports, and cannot be supplied by an import", () => {
+  const store = memStore();
+  try {
+    const profile = parseExport(SAMPLE).profiles[0]!;
+    store.upsertProfile({ ...profile, incarnation: "imported-token" } as Profile);
+    const first = store.getProfileIncarnation(profile.id);
+    expect(first).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+    expect(first).not.toBe("imported-token");
+    store.upsertProfile({ ...store.getProfile(profile.id)!, name: "Edited", incarnation: "another-token" } as Profile);
+    expect(store.getProfileIncarnation(profile.id)).toBe(first);
+    expect(JSON.stringify(store.getProfile(profile.id))).not.toContain("incarnation");
+    store.upsertProfiles([{ ...store.getProfile(profile.id)!, group: "imported" }]);
+    expect(store.getProfileIncarnation(profile.id)).toBe(first);
+    expect(store.getProfileIncarnation("missing")).toBeNull();
+    store.trashProfile(profile.id);
+    expect(store.getProfileIncarnation(profile.id)).toBeNull();
+    store.restoreProfile(profile.id);
+    expect(store.getProfileIncarnation(profile.id)).toBe(first);
+  } finally { store.close(); }
+});
+
+test("deleting and recreating an identical public ID always creates a new incarnation", () => {
+  const store = memStore();
+  try {
+    const profile = parseExport(SAMPLE).profiles[0]!;
+    store.upsertProfile(profile);
+    const first = store.getProfileIncarnation(profile.id);
+    store.deleteProfile(profile.id);
+    store.upsertProfile(profile);
+    expect(store.getProfileIncarnation(profile.id)).not.toBe(first);
+  } finally { store.close(); }
+});
+
+test("old databases receive persistent incarnations without triggers or changing exported identities", () => {
+  const dir = mkdtempSync(join(tmpdir(), "maobu-incarnation-")), path = join(dir, "profiles.sqlite");
+  let store: ProfileStore | undefined;
+  try {
+    const profile = parseExport(SAMPLE).profiles[0]!;
+    store = new ProfileStore(path);
+    store.upsertProfile(profile);
+    store.upsertProfile({ ...profile, id: "trashed-row" });
+    store.trashProfile("trashed-row");
+    const before = store.getProfile(profile.id);
+    store.close(); store = undefined;
+    const db = new Database(path);
+    try { db.exec("ALTER TABLE profiles DROP COLUMN incarnation"); } finally { db.close(); }
+    store = new ProfileStore(path);
+    const first = store.getProfileIncarnation(profile.id);
+    expect(first).toMatch(/^[a-f0-9-]{36}$/);
+    expect(store.getProfile(profile.id)).toEqual(before);
+    store.restoreProfile("trashed-row");
+    const restored = store.getProfileIncarnation("trashed-row");
+    expect(restored).toBeTruthy();
+    expect(restored).not.toBe(first);
+    store.close(); store = new ProfileStore(path);
+    expect(store.getProfileIncarnation(profile.id)).toBe(first);
+    expect(store.getProfileIncarnation("trashed-row")).toBe(restored);
+    const inspect = new Database(path, { readonly: true });
+    try { expect(inspect.query("SELECT name FROM sqlite_master WHERE type = 'trigger'").all()).toEqual([]); }
+    finally { inspect.close(); }
+  } finally { store?.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("guarded observation writes cannot update a trashed or replaced incarnation", () => {
+  const store = memStore();
+  try {
+    const profile = parseExport(SAMPLE).profiles[0]!;
+    store.upsertProfile(profile);
+    const first = store.getProfileIncarnation(profile.id)!;
+    expect(store.saveObservedFingerprint(profile.id, { canvas: "original" }, null, first)).toBe(true);
+    store.trashProfile(profile.id);
+    expect(store.saveObservedFingerprint(profile.id, { canvas: "stale" }, null, first)).toBe(false);
+    store.restoreProfile(profile.id);
+    expect(store.getProfile(profile.id)?.fpObserved?.canvas).toBe("original");
+    store.deleteProfile(profile.id); store.upsertProfile(profile);
+    expect(store.saveObservedFingerprint(profile.id, { canvas: "stale" }, null, first)).toBe(false);
+    expect(store.getProfile(profile.id)?.fpObserved).toBeUndefined();
+  } finally { store.close(); }
+});
 
 test("upsert + get round-trips a full profile", () => {
   const store = memStore();
@@ -650,4 +732,190 @@ test("a launch row keeps the identity the browser was launched with", () => {
   expect(store.getLaunch("k1d0cd11")!.persona).toEqual(persona);
   store.recordLaunch({ profileId: "k1d0cd11", pid: 1, debugPort: 9412, ws: "ws://x", startedAt: 1 });
   expect(store.getLaunch("k1d0cd11")!.persona).toBeUndefined();
+  store.close();
+});
+
+test("sensitive columns are encrypted at rest with enc:v1: while reading and timezone-matching stay transparent", () => {
+  const key = randomBytes(32);
+  const store = new ProfileStore(":memory:", { protection: { key } });
+  const p = parseExport(SAMPLE).profiles[0]!;
+  p.password = "account-secret-pw";
+  p.emailPassword = "mailbox-secret-pw";
+  p.timezone = "Asia/Tokyo";
+  store.upsertProfile(p);
+  store.saveSessionBundle(p.id, JSON.stringify({ session: "top-secret-session" }));
+  (store as any).db.query("UPDATE profiles SET session_restore_pending = 1 WHERE id = ?").run(p.id);
+
+  const raw = (store as any).db
+    .query("SELECT password, email_password, twofa, proxy_json, cookies_json, session_json FROM profiles WHERE id = ?")
+    .get(p.id) as Record<string, string>;
+  for (const col of ["password", "email_password", "twofa", "proxy_json", "cookies_json", "session_json"]) {
+    expect(raw[col]!.startsWith(ENCRYPTED_VALUE_PREFIX)).toBe(true);
+  }
+  expect(raw.password).not.toContain("account-secret-pw");
+  expect(raw.email_password).not.toContain("mailbox-secret-pw");
+  expect(raw.twofa).not.toContain("ABCD");
+  expect(raw.proxy_json).not.toContain("1.2.3.4");
+  expect(raw.cookies_json).not.toContain("auth_token");
+  expect(raw.session_json).not.toContain("top-secret-session");
+
+  const loaded = store.getProfile(p.id)!;
+  expect(loaded.password).toBe("account-secret-pw");
+  expect(loaded.emailPassword).toBe("mailbox-secret-pw");
+  expect(loaded.twofa).toBe("ABCD");
+  expect(loaded.proxy?.host).toBe("1.2.3.4");
+  expect(loaded.cookies[0]?.value).toBe("v");
+  expect(store.getSessionBundle(p.id)).toBe(JSON.stringify({ session: "top-secret-session" }));
+  expect(store.getPendingSessionBundle(p.id)).toBe(JSON.stringify({ session: "top-secret-session" }));
+
+  // Re-importing with identical proxy preserves timezone despite randomized ciphertexts.
+  const reimported = { ...parseExport(SAMPLE).profiles[0]!, emailPassword: "mailbox-secret-pw", timezone: "" };
+  store.upsertProfile(reimported);
+  expect(store.getProfile(p.id)!.timezone).toBe("Asia/Tokyo");
+
+  // markSessionRestored compares decrypted bundle inside a transaction.
+  store.markSessionRestored(p.id, "wrong-bundle");
+  expect(store.getPendingSessionBundle(p.id)).not.toBeNull();
+  store.markSessionRestored(p.id, JSON.stringify({ session: "top-secret-session" }));
+  expect(store.getPendingSessionBundle(p.id)).toBeNull();
+  store.close();
+});
+
+test("legacy plaintext SQLite stores migrate to encrypted columns and PRAGMA user_version = 2", () => {
+  const dir = mkdtempSync(join(tmpdir(), "maobu-store-migrate-"));
+  const dbPath = join(dir, "profiles.sqlite");
+  const keyPath = join(dir, "local.key");
+  try {
+    // Create a legacy unversioned (user_version = 0) plaintext database.
+    const legacy = new Database(dbPath, { create: true });
+    legacy.exec(`
+      CREATE TABLE profiles (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL DEFAULT '',
+        "group" TEXT NOT NULL DEFAULT '',
+        username TEXT NOT NULL DEFAULT '',
+        password TEXT NOT NULL DEFAULT '',
+        email TEXT NOT NULL DEFAULT '',
+        email_password TEXT NOT NULL DEFAULT '',
+        twofa TEXT NOT NULL DEFAULT '',
+        proxy_json TEXT,
+        ua TEXT NOT NULL DEFAULT '',
+        timezone TEXT NOT NULL DEFAULT '',
+        screen_width INTEGER NOT NULL DEFAULT 1920,
+        screen_height INTEGER NOT NULL DEFAULT 1080,
+        fingerprint_seed INTEGER NOT NULL,
+        cookies_json TEXT NOT NULL DEFAULT '[]',
+        seeded INTEGER NOT NULL DEFAULT 0,
+        session_json TEXT NOT NULL DEFAULT ''
+      );
+      INSERT INTO profiles (id, name, username, password, email_password, twofa, proxy_json, ua, fingerprint_seed, cookies_json, session_json)
+      VALUES ('legacy01', 'Legacy', 'u1', 'legacy-pw', 'legacy-mail', 'JBSWY3DPEHPK3PXP',
+              '{"type":"http","host":"9.8.7.6","port":"8080","user":"pu","pass":"pp"}',
+              'Mozilla/5.0', 123456, '[{"name":"sid","value":"legacy-cookie","domain":".example.com","path":"/"}]',
+              '{"cookies":[{"name":"legacy"}]}');
+    `);
+    legacy.close();
+
+    const store = new ProfileStore(dbPath, { protection: { keyPath } });
+    expect((store as any).db.query("PRAGMA user_version").get().user_version).toBe(2);
+    expect((store as any).db.query("PRAGMA busy_timeout").get().timeout).toBe(1500);
+    const encryptedRow = (store as any).db
+      .query("SELECT password, email_password, twofa, proxy_json, cookies_json, session_json FROM profiles WHERE id = 'legacy01'")
+      .get() as Record<string, string>;
+    for (const col of ["password", "email_password", "twofa", "proxy_json", "cookies_json", "session_json"]) {
+      expect(encryptedRow[col]!.startsWith(ENCRYPTED_VALUE_PREFIX)).toBe(true);
+    }
+    store.close();
+
+    // Clear in-memory key cache and reopen from persisted DPAPI / 0o600 key file.
+    clearLocalSecretKeyCacheForTests();
+    expect(existsSync(keyPath)).toBe(true);
+    if (process.platform === "win32") {
+      expect(readFileSync(keyPath, "utf8")).toStartWith("DPAPI:");
+    }
+    const reopened = new ProfileStore(dbPath, { protection: { keyPath } });
+    const profile = reopened.getProfile("legacy01")!;
+    expect(profile.password).toBe("legacy-pw");
+    expect(profile.emailPassword).toBe("legacy-mail");
+    expect(profile.twofa).toBe("JBSWY3DPEHPK3PXP");
+    expect(profile.proxy?.host).toBe("9.8.7.6");
+    expect(profile.cookies[0]?.value).toBe("legacy-cookie");
+    expect(reopened.getSessionBundle("legacy01")).toBe('{"cookies":[{"name":"legacy"}]}');
+    reopened.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("pending_cookies_json is encrypted on write, migrated from plaintext, and tolerates key mismatch on session/pending reads", () => {
+  const dir = mkdtempSync(join(tmpdir(), "maobu-store-pending-"));
+  const dbPath = join(dir, "profiles.sqlite");
+  const keyA = Buffer.alloc(32, 0x11);
+  const keyB = Buffer.alloc(32, 0x22);
+  let storeA: ProfileStore | undefined;
+  let storeB: ProfileStore | undefined;
+  try {
+    // Legacy v1 DB with plaintext pending_cookies_json.
+    const legacy = new Database(dbPath, { create: true });
+    legacy.exec(`
+      CREATE TABLE profiles (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL DEFAULT '',
+        "group" TEXT NOT NULL DEFAULT '',
+        username TEXT NOT NULL DEFAULT '',
+        password TEXT NOT NULL DEFAULT '',
+        email TEXT NOT NULL DEFAULT '',
+        email_password TEXT NOT NULL DEFAULT '',
+        twofa TEXT NOT NULL DEFAULT '',
+        proxy_json TEXT,
+        ua TEXT NOT NULL DEFAULT '',
+        timezone TEXT NOT NULL DEFAULT '',
+        screen_width INTEGER NOT NULL DEFAULT 1920,
+        screen_height INTEGER NOT NULL DEFAULT 1080,
+        fingerprint_seed INTEGER NOT NULL,
+        cookies_json TEXT NOT NULL DEFAULT '[]',
+        seeded INTEGER NOT NULL DEFAULT 0,
+        session_json TEXT NOT NULL DEFAULT '',
+        pending_cookies_json TEXT NOT NULL DEFAULT '[]'
+      );
+      INSERT INTO profiles (id, name, username, ua, fingerprint_seed, pending_cookies_json)
+      VALUES ('pend01', 'PendingLegacy', 'u', 'Mozilla/5.0', 999, '[{"name":"old","value":"legacy-pending","domain":".example.com","path":"/"}]');
+    `);
+    legacy.close();
+
+    storeA = new ProfileStore(dbPath, { protection: { key: keyA } });
+    const migratedRaw = (storeA as any).db.query("SELECT pending_cookies_json FROM profiles WHERE id = 'pend01'").get() as { pending_cookies_json: string };
+    expect(migratedRaw.pending_cookies_json.startsWith(ENCRYPTED_VALUE_PREFIX)).toBe(true);
+    expect(migratedRaw.pending_cookies_json).not.toContain("legacy-pending");
+
+    const count = storeA.addPendingCookies("pend01", [{ name: "newc", value: "new-pending-secret", domain: ".example.com", path: "/" }]);
+    expect(count).toBe(2);
+    const updatedRaw = (storeA as any).db.query("SELECT pending_cookies_json FROM profiles WHERE id = 'pend01'").get() as { pending_cookies_json: string };
+    expect(updatedRaw.pending_cookies_json.startsWith(ENCRYPTED_VALUE_PREFIX)).toBe(true);
+    expect(updatedRaw.pending_cookies_json).not.toContain("new-pending-secret");
+    expect(storeA.pendingCookieCounts().get("pend01")).toBe(2);
+    expect(storeA.getPendingCookies("pend01")).toHaveLength(2);
+
+    storeA.upsertProfiles(
+      [storeA.getProfile("pend01")!],
+      new Map([["pend01", '{"cookies":[{"name":"s"}]}']]),
+    );
+    storeA.close();
+    storeA = undefined;
+
+    // Opening with a different key must not crash session/pending readers.
+    const reopenedB = new ProfileStore(dbPath, { protection: { key: keyB } });
+    storeB = reopenedB;
+    expect(reopenedB.getPendingCookies("pend01")).toEqual([]);
+    expect(reopenedB.pendingCookieCounts().size).toBe(0);
+    expect(reopenedB.getSessionBundle("pend01")).toBeNull();
+    expect(reopenedB.getPendingSessionBundle("pend01")).toBeNull();
+    expect(() => reopenedB.markSessionRestored("pend01", '{"cookies":[{"name":"s"}]}')).not.toThrow();
+    reopenedB.close();
+    storeB = undefined;
+  } finally {
+    try { storeA?.close(); } catch {}
+    try { storeB?.close(); } catch {}
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

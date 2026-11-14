@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { createHash, randomUUID } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statfsSync } from "node:fs";
 import { lstat, mkdir, open, readdir } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -7,17 +7,24 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGunzip, createGzip } from "node:zlib";
 import { isSafeProfileId } from "./profile-id.ts";
+import { createLocalSecretProtector, isEncryptedSecret } from "./dpapi.ts";
 import { ALIASMODE_VERSION } from "./version.ts";
+import { parseAppSettings } from "./app-settings.ts";
+import { ASSISTANT_MODEL_SERVICES_FILE, ASSISTANT_MODEL_SERVICES_FILE_LIMIT, AssistantModelServices } from "./assistant-model-services.ts";
+import { deriveWorkspacePasswordKey } from "./encrypted-sync.ts";
+import { PROFILE_TEMPLATES_FILE, PROFILE_TEMPLATE_LIMITS, ProfileTemplateStore } from "./profile-templates.ts";
 import { WorkspaceCatalog, WORKSPACE_COLORS, WORKSPACE_ICONS, assertNoWorkspaceLinks, plainDirectory, workspaceEntryExists, writeWorkspaceJson } from "./workspaces.ts";
 
 const MAGIC = Buffer.from("MAOBU-WORKSPACE-BACKUP\0v1\n");
+const ENCRYPTED_MAGIC = Buffer.from("MAOBU-ENCRYPTED-BACKUP\0v1\n");
+const SALT_BYTES = 16, NONCE_PREFIX_BYTES = 8, AUTH_TAG_BYTES = 16, FRAME_BYTES = 256 * 1024;
 const BACKUP_ID = /^bak_[0-9a-f]{32}$/;
 const JOB_ID = /^job_[0-9a-f]{32}$/;
-const ROOT_FILES = new Set(["profiles.sqlite", "config.json", "shell.json", "workspace.json", "workspace-settings.json"]);
+const ROOT_FILES = new Set(["profiles.sqlite", "config.json", "app-settings.json", PROFILE_TEMPLATES_FILE, ASSISTANT_MODEL_SERVICES_FILE, "shell.json", "workspace.json", "workspace-settings.json"]);
 const ROOT_DIRECTORIES = new Set(["profiles", "extensions", "custom-scripts"]);
 export interface BackupLimits { maxArchiveBytes: number; maxUnpackedBytes: number; maxFileBytes: number; maxFiles: number; maxManifestBytes: number }
 const DEFAULT_LIMITS: BackupLimits = { maxArchiveBytes: 64 * 1024 ** 3, maxUnpackedBytes: 128 * 1024 ** 3, maxFileBytes: 64 * 1024 ** 3, maxFiles: 500_000, maxManifestBytes: 64 * 1024 ** 2 };
-export interface BackupRecord { id: string; name: string; createdAt: number; bytes: number; profileCount: number; path: string; sha256: string; workspaceId: string; workspaceName: string }
+export interface BackupRecord { id: string; name: string; createdAt: number; bytes: number; profileCount: number; path: string; sha256: string; workspaceId: string; workspaceName: string; encrypted?: boolean }
 export interface BackupJob {
   id: string; type: "create" | "restore"; status: "queued" | "running" | "succeeded" | "failed";
   phase: string; completedBytes: number; totalBytes: number; completedFiles: number; totalFiles: number;
@@ -95,9 +102,72 @@ function rewriteExtensions(database: string, sourceRoot: string, destinationRoot
     }
   } finally { db.close(); }
 }
+function decryptSnapshotForPortableBackup(snapshotPath: string): void {
+  const db = new Database(snapshotPath);
+  try {
+    const columns = ["password", "email_password", "twofa", "proxy_json", "cookies_json", "session_json", "pending_cookies_json"] as const;
+    const rows = db.query<Record<string, string | null>, []>(
+      `SELECT id, ${columns.join(", ")} FROM profiles`,
+    ).all();
+    const hasEncrypted = rows.some((row) => columns.some((col) => isEncryptedSecret(row[col])));
+    if (!hasEncrypted) return;
+    const protector = createLocalSecretProtector();
+    const update = db.query(
+      `UPDATE profiles SET ${columns.map((c) => `${c} = ?`).join(", ")} WHERE id = ?`,
+    );
+    db.exec("BEGIN");
+    try {
+      for (const row of rows) {
+        const next = columns.map((col) => {
+          const val = row[col] ?? null;
+          return typeof val === "string" && isEncryptedSecret(val) ? protector.decrypt(val) : val;
+        });
+        update.run(...next, row.id ?? "");
+      }
+      db.exec("PRAGMA user_version = 1");
+      db.exec("COMMIT");
+    } catch (error) {
+      if (db.inTransaction) db.exec("ROLLBACK");
+      throw error;
+    }
+  } finally {
+    db.close();
+  }
+}
+
 function sufficientSpace(path: string, bytes: number): void {
   const stats = statfsSync(path);
   if (stats.bavail * stats.bsize < bytes + 100 * 1024 ** 2) throw new Error("Not enough free space for a complete workspace backup or restore");
+}
+/** Keep recovered preferences and leave automatic network actions off until reviewed. */
+function prepareRestoredAppSettings(root: string): void {
+  const path = join(root, "app-settings.json");
+  if (!workspaceEntryExists(path)) return;
+  const stat = lstatSync(path);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 64 * 1024) throw new Error("Backup application settings are invalid or unsupported");
+  try {
+    const raw = JSON.parse(readFileSync(path, "utf8"));
+    if (!raw || typeof raw !== "object" || Array.isArray(raw) || !raw.sync || typeof raw.sync !== "object" || Array.isArray(raw.sync) || typeof raw.sync.enabled !== "boolean") throw new Error("invalid");
+    // Disable before host-dependent path validation, preserving a Windows path
+    // when restoring on macOS/Linux (and vice versa) without making it active.
+    const settings = parseAppSettings({ ...raw, sync: { ...raw.sync, enabled: false } });
+    settings.updates.checkOnStartup = false;
+    settings.signedUpdates = { checkOnStartup: false };
+    writeWorkspaceJson(path, settings);
+  } catch { throw new Error("Backup application settings are invalid or unsupported"); }
+}
+/** Only the strict, non-secret template format can enter a restored workspace. */
+function prepareRestoredProfileTemplates(root: string): void {
+  const path = join(root, PROFILE_TEMPLATES_FILE);
+  if (!workspaceEntryExists(path)) return;
+  try { writeWorkspaceJson(path, new ProfileTemplateStore(path).read()); }
+  catch { throw new Error("Backup profile templates are invalid or unsupported"); }
+}
+function backupModelServices(root: string, destination: string): boolean {
+  if (!workspaceEntryExists(join(root, ASSISTANT_MODEL_SERVICES_FILE))) return false;
+  try { writeWorkspaceJson(destination, new AssistantModelServices(root).backupMetadata()); }
+  catch { throw new Error("Backup model services are invalid or unsupported."); }
+  return true;
 }
 function validateManifest(value: unknown, limits: BackupLimits): Manifest {
   const manifest = value as Manifest;
@@ -120,6 +190,8 @@ function validateManifest(value: unknown, limits: BackupLimits): Manifest {
     if (entries.has(key)) throw new Error("Duplicate backup entry");
     entries.add(key); files.add(key);
     if (!Number.isSafeInteger(file.bytes) || file.bytes < 0 || file.bytes > limits.maxFileBytes || !/^[0-9a-f]{64}$/.test(file.sha256)) throw new Error("Invalid backup file metadata");
+    if (file.path === PROFILE_TEMPLATES_FILE && file.bytes > PROFILE_TEMPLATE_LIMITS.fileBytes) throw new Error("Backup profile templates are invalid or unsupported");
+    if (file.path === ASSISTANT_MODEL_SERVICES_FILE && file.bytes > ASSISTANT_MODEL_SERVICES_FILE_LIMIT) throw new Error("Backup model services are invalid or unsupported.");
     total += file.bytes;
     if (!Number.isSafeInteger(total) || total > limits.maxUnpackedBytes) throw new Error("Backup exceeds the unpacked size limit");
   }
@@ -149,6 +221,83 @@ class ArchiveReader {
   async exact(count: number): Promise<Buffer> { const bytes = await this.read(count); if (bytes.length !== count) throw new Error("Truncated workspace backup"); return bytes; }
 }
 
+export function validateBackupPassword(password: unknown): string | undefined {
+  if (password === undefined) return;
+  if (typeof password !== "string" || Array.from(password).length < 10 || Buffer.byteLength(password, "utf8") > 1024) {
+    throw new Error("Backup password must contain at least 10 characters and at most 1024 UTF-8 bytes.");
+  }
+  return password;
+}
+
+function frameNonce(prefix: Buffer, index: number): Buffer {
+  const nonce = Buffer.alloc(12);
+  prefix.copy(nonce);
+  nonce.writeUInt32BE(index, NONCE_PREFIX_BYTES);
+  return nonce;
+}
+
+/** Each GCM frame authenticates its length, position and archive header before being decoded. */
+function encryptArchive(password: string, limit: number) {
+  return async function* (source: AsyncIterable<Buffer>): AsyncGenerator<Buffer> {
+    const salt = randomBytes(SALT_BYTES), prefix = randomBytes(NONCE_PREFIX_BYTES);
+    const header = Buffer.concat([ENCRYPTED_MAGIC, salt, prefix]);
+    const key = await deriveWorkspacePasswordKey(password, salt);
+    const reader = new ArchiveReader(source, limit);
+    try {
+      yield header;
+      for (let index = 0; ; index++) {
+        const clear = await reader.read(FRAME_BYTES), size = Buffer.alloc(4);
+        size.writeUInt32BE(clear.length);
+        const cipher = createCipheriv("aes-256-gcm", key, frameNonce(prefix, index), { authTagLength: AUTH_TAG_BYTES });
+        cipher.setAAD(Buffer.concat([header, size]));
+        yield Buffer.concat([size, cipher.update(clear), cipher.final(), cipher.getAuthTag()]);
+        // An authenticated empty frame commits the end of the stream.
+        if (!clear.length) return;
+      }
+    } finally { key.fill(0); }
+  };
+}
+
+async function* compressedArchive(source: AsyncIterable<Buffer>, password: string | undefined, limit: number): AsyncGenerator<Buffer> {
+  const reader = new ArchiveReader(source, limit);
+  const magic = await reader.read(ENCRYPTED_MAGIC.length);
+  if (!magic.equals(ENCRYPTED_MAGIC)) {
+    yield magic;
+    for (let bytes = await reader.read(FRAME_BYTES); bytes.length; bytes = await reader.read(FRAME_BYTES)) yield bytes;
+    return;
+  }
+  if (password === undefined) throw new Error("Enter the password for this encrypted backup.");
+  const damaged = "The backup password is incorrect or the encrypted backup is damaged.";
+  const suffix = await reader.read(SALT_BYTES + NONCE_PREFIX_BYTES);
+  if (suffix.length !== SALT_BYTES + NONCE_PREFIX_BYTES) throw new Error(damaged);
+  const salt = suffix.subarray(0, SALT_BYTES), prefix = suffix.subarray(SALT_BYTES);
+  const header = Buffer.concat([magic, salt, prefix]);
+  const key = await deriveWorkspacePasswordKey(password, salt);
+  try {
+    let finalDataFrame = false;
+    for (let index = 0; ; index++) {
+      const size = await reader.read(4);
+      if (size.length !== 4) throw new Error(damaged);
+      const bytes = size.readUInt32BE();
+      if (bytes > FRAME_BYTES || finalDataFrame && bytes !== 0) throw new Error(damaged);
+      const frame = await reader.read(bytes + AUTH_TAG_BYTES);
+      if (frame.length !== bytes + AUTH_TAG_BYTES) throw new Error(damaged);
+      const decipher = createDecipheriv("aes-256-gcm", key, frameNonce(prefix, index), { authTagLength: AUTH_TAG_BYTES });
+      decipher.setAAD(Buffer.concat([header, size]));
+      decipher.setAuthTag(frame.subarray(bytes));
+      let clear: Buffer;
+      try { clear = Buffer.concat([decipher.update(frame.subarray(0, bytes)), decipher.final()]); }
+      catch { throw new Error(damaged); }
+      if (bytes === 0) {
+        if ((await reader.read(1)).length) throw new Error(damaged);
+        return;
+      }
+      finalDataFrame = bytes < FRAME_BYTES;
+      yield clear;
+    }
+  } finally { key.fill(0); }
+}
+
 export class WorkspaceBackupService {
   readonly directory: string;
   private readonly limits: BackupLimits;
@@ -170,7 +319,7 @@ export class WorkspaceBackupService {
       const saved = JSON.parse(readFileSync(this.historyPath, "utf8"));
       if (saved?.version !== 1 || !Array.isArray(saved.backups) || !Array.isArray(saved.jobs)) throw new Error("Invalid backup history");
       this.records = saved.backups.map((record: BackupRecord) => {
-        if (!BACKUP_ID.test(record.id) || !Number.isSafeInteger(record.bytes) || record.bytes < 0 || !/^[a-f0-9]{64}$/.test(record.sha256) || !Number.isSafeInteger(record.profileCount) || record.profileCount < 0 || typeof record.name !== "string" || !Number.isSafeInteger(record.createdAt) || record.createdAt < 0) throw new Error("Invalid backup history record");
+        if (!BACKUP_ID.test(record.id) || !Number.isSafeInteger(record.bytes) || record.bytes < 0 || !/^[a-f0-9]{64}$/.test(record.sha256) || !Number.isSafeInteger(record.profileCount) || record.profileCount < 0 || typeof record.name !== "string" || !Number.isSafeInteger(record.createdAt) || record.createdAt < 0 || record.encrypted !== undefined && typeof record.encrypted !== "boolean") throw new Error("Invalid backup history record");
         return { ...record, path: this.archivePath(record.id) };
       });
       const interrupted: string[] = [];
@@ -181,6 +330,11 @@ export class WorkspaceBackupService {
       }).slice(-100);
       for (const id of interrupted) {
         for (const name of readdirSync(this.directory)) if (name.startsWith(`.create-${id}-`)) removeStaging(this.directory, join(this.directory, name), `.create-${id}-`);
+        const partial = this.partialArchivePath(id);
+        if (workspaceEntryExists(partial)) {
+          const entry = lstatSync(partial);
+          if (entry.isFile() && !entry.isSymbolicLink() && entry.nlink === 1) rmSync(partial);
+        }
         const parent = join(options.catalog.home, "workspaces");
         if (workspaceEntryExists(parent)) { plainDirectory(parent); for (const name of readdirSync(parent)) if (name.startsWith(`.restore-${id}-`)) removeStaging(parent, join(parent, name), `.restore-${id}-`); }
       }
@@ -188,6 +342,7 @@ export class WorkspaceBackupService {
     }
   }
   private archivePath(id: string): string { if (!BACKUP_ID.test(id)) throw new Error("Invalid backup ID"); return join(this.directory, `${id}.mqbackup`); }
+  private partialArchivePath(id: string): string { if (!JOB_ID.test(id)) throw new Error("Invalid backup job ID"); return join(this.directory, `.create-${id}.partial`); }
   private persist(): void { plainDirectory(this.directory); writeWorkspaceJson(this.historyPath, { version: 1, backups: this.records.map(({ path, ...record }) => record), jobs: this.history }); }
   busy(): boolean { return this.active !== null; }
   jobs(): BackupJob[] { return structuredClone(this.history); }
@@ -225,18 +380,25 @@ export class WorkspaceBackupService {
     this.pending.set(job.id, pending);
     return structuredClone(job);
   }
-  startCreate(): BackupJob { return this.launch("create", job => this.createArchive(job)); }
-  startRestore(input: { backupId?: string; archivePath?: string; name?: string }): BackupJob {
-    if (!!input.backupId === !!input.archivePath) throw new Error("Choose exactly one backup source");
-    const file = input.backupId ? this.getBackupFile(input.backupId) : { path: resolve(input.archivePath!), sha256: undefined };
-    return this.launch("restore", job => this.restoreArchive(job, file.path, input.name, file.sha256));
+  startCreate(passwordInput?: unknown, options: { allowUnencrypted?: boolean } = {}): BackupJob {
+    const password = validateBackupPassword(passwordInput);
+    if (password === undefined && options.allowUnencrypted !== true) {
+      throw new Error("Backup password is required unless unencrypted backup is explicitly allowed.");
+    }
+    return this.launch("create", job => this.createArchive(job, password));
   }
-  private async createArchive(job: BackupJob): Promise<void> {
+  startRestore(input: { backupId?: string; archivePath?: string; name?: string; password?: unknown }): BackupJob {
+    if (!!input.backupId === !!input.archivePath) throw new Error("Choose exactly one backup source");
+    const password = validateBackupPassword(input.password);
+    const file = input.backupId ? this.getBackupFile(input.backupId) : { path: resolve(input.archivePath!), sha256: undefined };
+    return this.launch("restore", job => this.restoreArchive(job, file.path, input.name, file.sha256, password));
+  }
+  private async createArchive(job: BackupJob, password?: string): Promise<void> {
     const root = this.options.catalog.currentRoot;
     const workspace = this.options.catalog.list().find(item => item.id === this.options.catalog.currentId())!;
     const staging = mkdtempSync(join(this.directory, `.create-${job.id}-`));
     const id = `bak_${randomUUID().replaceAll("-", "")}`;
-    const partial = join(this.directory, `.${id}.partial`);
+    const partial = this.partialArchivePath(job.id);
     try {
       const source = join(root, "profiles.sqlite");
       const sourceStat = lstatSync(source); if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) throw new Error("Workspace database is missing or linked");
@@ -245,9 +407,18 @@ export class WorkspaceBackupService {
       const db = new Database(source, { readonly: true });
       const snapshot = join(staging, "profiles.sqlite");
       try { db.exec(`VACUUM INTO '${snapshot.replaceAll("'", "''")}'`); } finally { db.close(); }
+      if (password !== undefined) decryptSnapshotForPortableBackup(snapshot);
       rewriteExtensions(snapshot, root);
       const profileCount = inspectDatabase(snapshot);
       const directories: string[] = [], sources = new Map<string, string>([["profiles.sqlite", snapshot]]);
+      if (workspaceEntryExists(join(root, PROFILE_TEMPLATES_FILE))) {
+        // Capture validated settings once. A later template edit cannot change this archive's copy.
+        const templates = new ProfileTemplateStore(join(root, PROFILE_TEMPLATES_FILE)).read();
+        const snapshot = join(staging, PROFILE_TEMPLATES_FILE); writeWorkspaceJson(snapshot, templates);
+        sources.set(PROFILE_TEMPLATES_FILE, snapshot);
+      }
+      const modelSnapshot = join(staging, ASSISTANT_MODEL_SERVICES_FILE);
+      if (backupModelServices(root, modelSnapshot)) sources.set(ASSISTANT_MODEL_SERVICES_FILE, modelSnapshot);
       const walk = async (physical: string, path: string): Promise<void> => {
         const stat = await lstat(physical);
         if (stat.isSymbolicLink() || !stat.isFile() && !stat.isDirectory()) throw new Error("Linked or special workspace files cannot be backed up");
@@ -257,7 +428,7 @@ export class WorkspaceBackupService {
         if (sources.size + directories.length > this.limits.maxFiles) throw new Error("Workspace has too many backup entries");
       };
       for (const name of ROOT_DIRECTORIES) if (workspaceEntryExists(join(root, name))) await walk(join(root, name), name);
-      for (const name of ROOT_FILES) if (name !== "profiles.sqlite" && workspaceEntryExists(join(root, name))) await walk(join(root, name), name);
+      for (const name of ROOT_FILES) if (!sources.has(name) && workspaceEntryExists(join(root, name))) await walk(join(root, name), name);
       const files: ArchiveFile[] = [];
       this.progress(job, { phase: "hashing", totalFiles: sources.size });
       for (const [path, physical] of sources) {
@@ -290,22 +461,26 @@ export class WorkspaceBackupService {
         compressed += chunk.length; if (compressed > this.limits.maxArchiveBytes) { callback(new Error("Backup exceeds the compressed size limit")); return; }
         hash.update(chunk); callback(null, chunk);
       } });
-      await pipeline(Readable.from(contents()), createGzip(), measure, createWriteStream(partial, { flags: "wx", mode: 0o600 }));
+      const archive = createWriteStream(partial, { flags: "wx", mode: 0o600 });
+      if (password === undefined) await pipeline(Readable.from(contents()), createGzip(), measure, archive);
+      else await pipeline(Readable.from(contents()), createGzip(), encryptArchive(password, this.limits.maxArchiveBytes), measure, archive);
       const completedArchive = await open(partial, "r+");
       try { await completedArchive.sync(); } finally { await completedArchive.close(); }
       const path = this.archivePath(id); renameSync(partial, path);
-      const record: BackupRecord = { id, name: workspace.name, createdAt: manifest.createdAt, bytes: compressed, profileCount, path, sha256: hash.digest("hex"), workspaceId: workspace.id, workspaceName: workspace.name };
+      const record: BackupRecord = { id, name: workspace.name, createdAt: manifest.createdAt, bytes: compressed, profileCount, path, sha256: hash.digest("hex"), workspaceId: workspace.id, workspaceName: workspace.name, ...(password === undefined ? {} : { encrypted: true }) };
       this.records.push(record); job.backupId = id;
     } finally { if (workspaceEntryExists(partial)) { if (lstatSync(partial).isSymbolicLink()) throw new Error("Linked backup output cannot be removed"); rmSync(partial); } removeStaging(this.directory, staging, `.create-${job.id}-`); }
   }
-  private async restoreArchive(job: BackupJob, archive: string, requestedName?: string, expectedHash?: string): Promise<void> {
+  private async restoreArchive(job: BackupJob, archive: string, requestedName?: string, expectedHash?: string, password?: string): Promise<void> {
     const stat = await lstat(archive);
     if (stat.isSymbolicLink() || !stat.isFile() || stat.size > this.limits.maxArchiveBytes) throw new Error("Invalid or oversized backup file");
     this.progress(job, { phase: "validating" });
     if (expectedHash && await hashFile(archive) !== expectedHash) throw new Error("Backup archive checksum does not match its history record");
     const parent = join(this.options.catalog.home, "workspaces"); plainDirectory(parent, true);
     const staging = mkdtempSync(join(parent, `.restore-${job.id}-`));
-    const source = createReadStream(archive); const decoded = createGunzip(); source.on("error", error => decoded.destroy(error)); source.pipe(decoded);
+    const source = createReadStream(archive), decoded = createGunzip();
+    const transfer = pipeline(source, input => compressedArchive(input, password, this.limits.maxArchiveBytes), decoded);
+    void transfer.catch(() => {});
     try {
       const reader = new ArchiveReader(decoded, this.limits.maxUnpackedBytes + this.limits.maxManifestBytes + MAGIC.length + 4);
       if (!(await reader.exact(MAGIC.length)).equals(MAGIC)) throw new Error("Not a workspace backup");
@@ -331,8 +506,12 @@ export class WorkspaceBackupService {
         this.progress(job, { completedFiles: ++completed });
       }
       if ((await reader.read(1)).length) throw new Error("Unexpected trailing backup data");
+      await transfer;
       const database = join(staging, "profiles.sqlite");
       if (inspectDatabase(database) !== manifest.profileCount) throw new Error("Backup profile count does not match its manifest");
+      prepareRestoredAppSettings(staging);
+      prepareRestoredProfileTemplates(staging);
+      backupModelServices(staging, join(staging, ASSISTANT_MODEL_SERVICES_FILE));
       const id = `ws_${randomUUID().replaceAll("-", "")}`; const destination = join(parent, id);
       rewriteExtensions(database, staging, destination); inspectDatabase(database); assertNoWorkspaceLinks(staging);
       let name = requestedName;
@@ -344,6 +523,10 @@ export class WorkspaceBackupService {
       this.progress(job, { phase: "publishing" });
       const restored = this.options.catalog.publishRestored({ name, color: manifest.workspace.color, icon: manifest.workspace.icon }, staging, id);
       job.restoredWorkspaceId = restored.id;
-    } finally { source.destroy(); decoded.destroy(); removeStaging(parent, staging, `.restore-${job.id}-`); }
+    } finally {
+      source.destroy(); decoded.destroy();
+      await transfer.catch(() => {});
+      removeStaging(parent, staging, `.restore-${job.id}-`);
+    }
   }
 }

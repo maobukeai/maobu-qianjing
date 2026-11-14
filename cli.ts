@@ -7,14 +7,17 @@ import { Launcher } from "./launcher.ts";
 import { linuxChromiumSandboxBlocked } from "./aliasmode-chromium.ts";
 import { AutofillBridge } from "./autofill-bridge.ts";
 import { defaultPlaywrightRuntimeRoot, runPlaywrightWorker, verifyPlaywrightRuntime } from "./playwright-runtime.ts";
-import { serveDashboard, serveDesktopAutomationApi } from "./web.ts";
+import { isStandaloneRequestAuthorized, serveDashboard, serveDesktopAutomationApi } from "./web.ts";
 import { LifecycleAdmissionController, type LifecycleAdmissionOptions } from "./lifecycle-admission.ts";
 import { playwrightTransportAttribution, readSession, readSessionInSubprocess, READ_SESSION_WORKER_ARG, runReadSessionWorker, writeSession } from "./session.ts";
 import { importBuffers, importInbox, watchInbox } from "./inbox.ts";
 import { ensureStateDirectories, resolveStateRoot, statePaths, type StatePaths } from "./paths.ts";
 import { migrateLegacyState, type LegacyMigrationResult, type MigrationOptions } from "./migration.ts";
 import { AppConfigStore } from "./app-config.ts";
+import { AppSettingsStore } from "./app-settings.ts";
+import { createLocalProxyPreflight } from "./local-proxy-preflight.ts";
 import { runDiagnostics } from "./diagnose.ts";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { ensureDuckDuckGoDefault } from "./search-provider.ts";
@@ -22,7 +25,7 @@ import { installCloakBrowser } from "./browser-install.ts";
 import { installFirefox } from "./firefox-install.ts";
 import { applySourceRuntime, setupSourceRuntime } from "./source-runtime.ts";
 import { ALIASMODE_VERSION } from "./version.ts";
-import { DESKTOP_PROTOCOL, ManagedDesktopRuntime, agentControlNonce, desktopHealthMetadata, desktopReadyRecord, isDesktopShutdownCommand, type DesktopHealthMetadata } from "./desktop-runtime.ts";
+import { DESKTOP_PROTOCOL, DESKTOP_SESSION_HEADER, ManagedDesktopRuntime, agentControlNonce, desktopAutomationToken, desktopDashboardSession, desktopHealthMetadata, desktopReadyRecord, isDesktopShutdownCommand, type DesktopHealthMetadata } from "./desktop-runtime.ts";
 import { WorkspaceManagement } from "./workspace-management.ts";
 
 function flag(args: string[], name: string): string | undefined {
@@ -152,13 +155,17 @@ function makeLauncher(
   defaultDataRoot = "profiles",
   // Browser runtimes are downloaded only when a profile is explicitly opened.
   chromiumRuntimeRoot?: string,
+  settingsPath?: string,
 ): Launcher {
   const unsafeCanary = has(rest, "unsafe-disable-identity-gates");
   const autofill = new AutofillBridge(store);
   autofill.listen();
+  const preferences = settingsPath ? new AppSettingsStore(settingsPath) : undefined;
   return new Launcher({
     store,
     autofill,
+    ...(preferences ? { checkLocalProxyBeforeLaunch: createLocalProxyPreflight(() => preferences.read()) } : {}),
+    ...(preferences ? { chromiumPreloading: () => preferences.read().network?.chromiumPreloading ?? "browser-default" } : {}),
     dataRoot: defaultDataRoot,
     ...(chromiumRuntimeRoot ? { chromiumRuntimeRoot } : {}),
     headless: has(rest, "headless"),
@@ -344,23 +351,45 @@ function installLocalShutdown(runtime: ManagedDesktopRuntime): void {
   process.on("SIGTERM", shutdown);
 }
 
+function matchesHexSecret(supplied: string | null, expected: string): boolean {
+  return supplied !== null && /^[a-f0-9]{64}$/.test(supplied)
+    && timingSafeEqual(Buffer.from(supplied, "hex"), Buffer.from(expected, "hex"));
+}
+
 async function startLocalServer(
   rest: string[], paths: StatePaths, dbPath: string, profileDataRoot: string, appConfig: AppConfigStore,
   health: DesktopHealthMetadata | null, nonce: string | null, importOnStart: boolean,
+  desktopAccess?: { dashboardSession: string; automationToken?: string },
+  standaloneAccessToken?: string,
 ): Promise<void> {
   const store = new ProfileStore(dbPath);
   const workspaceHome = resolve(flag(rest, "workspace-home") ?? paths.root);
   const admission = new LifecycleAdmissionController(lifecycleAdmissionOptionsFromEnv());
   console.log("local mode: preparing browser recovery");
   console.log("startup: initializing autofill bridge");
-  const launcher = makeLauncher(store, rest, profileDataRoot, join(workspaceHome, "runtimes"));
+  const launcher = makeLauncher(store, rest, profileDataRoot, join(workspaceHome, "runtimes"), join(paths.root, "app-settings.json"));
   console.log("startup: checking " + store.listLaunches().length + " saved browser process(es)");
   await launcher.reconcileOrphans();
   console.log("startup: verifying surviving local browsers");
   await launcher.certifySurvivors();
   console.log("startup: browser recovery checks complete");
   startMemoryAttributionLog();
-  const workspaceManagement = new WorkspaceManagement({ home: workspaceHome, paths, store, launcher, agentNonce: nonce ?? undefined });
+  const workspaceManagement = new WorkspaceManagement({
+    home: workspaceHome,
+    paths,
+    store,
+    launcher,
+    agentNonce: nonce ?? undefined,
+    authorizeSession: (request) => {
+      if (desktopAccess?.dashboardSession) {
+        return matchesHexSecret(request.headers.get(DESKTOP_SESSION_HEADER), desktopAccess.dashboardSession);
+      }
+      if (standaloneAccessToken) {
+        return isStandaloneRequestAuthorized(request, standaloneAccessToken);
+      }
+      return true;
+    },
+  });
   let stopInbox: (() => void) | undefined;
   if (importOnStart) {
     const imported = await importInbox(store, paths.inbox).catch((error) => {
@@ -373,11 +402,19 @@ async function startLocalServer(
   const requestedWorkspaceId = flag(rest, "workspace-id");
   if (requestedWorkspaceId && requestedWorkspaceId !== workspaceManagement.currentId()) throw new Error("The desktop workspace does not match its data directory");
   if (workspaceManagement.catalog.activeId() === workspaceManagement.currentId()) workspaceManagement.catalog.setActive(workspaceManagement.currentId());
-  const automationServer = health ? serveDesktopAutomationApi({ launcher, store, lifecycleAdmission: admission, appConfig, workspaceManagement }) : undefined;
+  const automationServer = desktopAccess?.automationToken ? serveDesktopAutomationApi({
+    launcher, store, lifecycleAdmission: admission, appConfig, workspaceManagement, automationToken: desktopAccess.automationToken,
+  }) : undefined;
   const server = serveDashboard({
     launcher, store, port: Number(flag(rest, "port") ?? 50400), lifecycleAdmission: admission, appConfig, paths,
-    health, agentNonce: nonce ?? undefined, workspaceManagement, workspaceHome,
+    health, agentNonce: nonce ?? undefined, workspaceManagement, workspaceHome, runtimeInventory: launcher.browserRuntimeDeployment,
+    dashboardSession: desktopAccess?.dashboardSession,
+    accessToken: standaloneAccessToken,
   });
+  if (!health && standaloneAccessToken && server.port) {
+    console.log(`dashboard access URL: http://127.0.0.1:${server.port}/?token=${standaloneAccessToken}`);
+    console.log("standalone access token required (pass --no-auth or MAOBU_NO_AUTH=1 to disable)");
+  }
   const runtime = new ManagedDesktopRuntime({ server, automationServer, admission, store, launcher, stopInbox });
   if (health) {
     if (!server.port) throw new Error("desktop sidecar did not receive a loopback port");
@@ -413,7 +450,8 @@ async function main() {
       console.error("[aliasmode] (non-fatal) Bun ws-upgrade noise");
       return;
     }
-    console.error("[aliasmode] FATAL unhandled rejection");
+    const detail = reason instanceof Error ? (reason.stack || reason.message) : String(reason);
+    console.error(`[aliasmode] FATAL unhandled rejection: ${detail}`);
     process.exit(1);
   });
   const compiled = typeof ALIASMODE_COMPILED !== "undefined" && ALIASMODE_COMPILED === true;
@@ -455,6 +493,16 @@ async function main() {
     : null;
   const agentNonce = desktop ? agentControlNonce(process.env) : null;
   if (desktop && !agentNonce) throw new Error("ALIASMODE_AGENT_NONCE is required in desktop mode");
+  const desktopAccess = desktop ? { dashboardSession: desktopDashboardSession(process.env), automationToken: desktopAutomationToken(process.env) } : undefined;
+  const noAuth = has(rest, "no-auth") || process.env.MAOBU_NO_AUTH === "1";
+  const standaloneToken = !desktop && (cmd === "start" || cmd === "serve") && !noAuth
+    ? randomBytes(32).toString("hex")
+    : undefined;
+  // Do not pass desktop HTTP credentials through to browser and script children.
+  delete process.env.ALIASMODE_DESKTOP_NONCE;
+  delete process.env.ALIASMODE_AGENT_NONCE;
+  delete process.env.MAOBU_DESKTOP_SESSION;
+  delete process.env.MAOBU_DESKTOP_AUTOMATION_TOKEN;
   ensureStateDirectories(paths);
   const appConfig = new AppConfigStore(paths.config);
   const dbPath = flag(rest, "db") ? resolve(flag(rest, "db")!) : paths.database;
@@ -570,15 +618,16 @@ async function main() {
     }
     case "start":
     case "serve": {
-      await startLocalServer(rest, paths, dbPath, profileDataRoot, appConfig, desktopHealth, agentNonce, cmd === "start");
+      await startLocalServer(rest, paths, dbPath, profileDataRoot, appConfig, desktopHealth, agentNonce, cmd === "start", desktopAccess, standaloneToken);
       break;
     }
   }
 }
 
 export function runCli(): void {
-  main().catch(() => {
-    console.error("[aliasmode] FATAL command failure");
+  main().catch((error) => {
+    const detail = error instanceof Error ? (error.stack || error.message) : String(error);
+    console.error(`[aliasmode] FATAL command failure: ${detail}`);
     process.exit(1);
   });
 }

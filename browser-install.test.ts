@@ -10,6 +10,7 @@ import {
   CLOAKBROWSER_WINDOWS_X64_ARCHIVE_SHA256,
   CLOAKBROWSER_WINDOWS_X64_EXECUTABLE_SHA256,
   CLOAKBROWSER_WRAPPER_VERSION,
+  downloadPinnedWindowsArchive,
   installCloakBrowser,
   windowsSystemTool,
 } from "./browser-install.ts";
@@ -109,4 +110,55 @@ test("Windows system tools start by full path, also when PATH has no System32", 
     if (saved === undefined) delete process.env.SystemRoot;
     else process.env.SystemRoot = saved;
   }
+});
+
+test("the legacy Windows archive falls back after a stalled origin and reaps it before trying the mirror", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "maobu-legacy-archive-"));
+  dirs.push(dir);
+  const archive = join(dir, "fixture.zip");
+  const commands: string[][] = [];
+  let killed = false;
+  let reaped = false;
+  let hashes = 0;
+  await downloadPinnedWindowsArchive(archive, {
+    attemptMs: 80,
+    spawn(command) {
+      commands.push(command);
+      if (commands.length === 1) {
+        let exit!: (code: number) => void;
+        const exited = new Promise<number>(resolve => { exit = resolve; });
+        return { stdout: new ReadableStream<Uint8Array>(), exited, kill(signal) {
+          expect(signal).toBe("SIGKILL"); killed = true;
+          setTimeout(() => { reaped = true; exit(137); }, 15);
+        } };
+      }
+      expect(reaped).toBe(true);
+      return { stdout: new Response("mirror archive200").body!, exited: Promise.resolve(0), kill() { throw new Error("completed mirror must not be killed"); } };
+    },
+    async hashFile(path) {
+      hashes++;
+      expect(readFileSync(path, "utf8")).toBe("mirror archive");
+      return CLOAKBROWSER_WINDOWS_X64_ARCHIVE_SHA256;
+    },
+  });
+  expect(killed).toBe(true);
+  expect(hashes).toBe(1);
+  expect(commands).toHaveLength(2);
+  expect(commands[0]![0]).toBe(windowsSystemTool("curl.exe"));
+  expect(commands[0]!.at(-1)).toStartWith("https://github.com/");
+  expect(commands[1]!.at(-1)).toStartWith("https://cloakbrowser.dev/");
+  for (const command of commands) expect(command[command.indexOf("--max-filesize") + 1]).toBe(String(1024 ** 3));
+});
+
+test("the legacy Windows archive rejects mismatched hashes from both sources and removes the file", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "maobu-legacy-archive-"));
+  dirs.push(dir);
+  const archive = join(dir, "fixture.zip");
+  let checked = 0;
+  await expect(downloadPinnedWindowsArchive(archive, {
+    spawn: () => ({ stdout: new Response("wrong archive200").body!, exited: Promise.resolve(0), kill() {} }),
+    async hashFile(path) { checked++; expect(readFileSync(path, "utf8")).toBe("wrong archive"); return "0".repeat(64); },
+  })).rejects.toThrow("did not match the pinned Windows x64 SHA-256");
+  expect(checked).toBe(2);
+  expect(existsSync(archive)).toBe(false);
 });

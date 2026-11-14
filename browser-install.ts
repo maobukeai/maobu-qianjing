@@ -6,10 +6,12 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, win32 } from "node:path";
+import { CURL_ATTEMPT_TIMEOUT_MS, CurlCleanupError, downloadBoundedCurl, type CurlDownloadSpawn } from "./bounded-curl.ts";
 
 /** A program in Windows' System32 folder by full path, so it starts even when PATH has no System32. */
 export function windowsSystemTool(name: string): string {
@@ -32,6 +34,9 @@ const WINDOWS_ARCHIVE_URLS = [
   `https://github.com/CloakHQ/CloakBrowser/releases/download/chromium-v${CLOAKBROWSER_VERSION}/${WINDOWS_ARCHIVE_NAME}`,
   `https://cloakbrowser.dev/chromium-v${CLOAKBROWSER_VERSION}/${WINDOWS_ARCHIVE_NAME}`,
 ];
+// This legacy repair path has a SHA-256 pin but no size in its release record.
+// Allow the known release ample room while bounding writes from either origin.
+const WINDOWS_ARCHIVE_LIMIT = 1024 * 1024 * 1024;
 
 export interface BrowserInstallOptions {
   cwd?: string;
@@ -67,39 +72,41 @@ export async function renameWhenUnlocked(from: string, to: string): Promise<void
   }
 }
 
+/** @internal Download the verified Windows archive from one of its fixed origins. */
+export async function downloadPinnedWindowsArchive(archivePath: string, deps: {
+  spawn?: CurlDownloadSpawn;
+  hashFile?: (path: string) => Promise<string>;
+  attemptMs?: number;
+} = {}): Promise<void> {
+  const attemptMs = deps.attemptMs ?? CURL_ATTEMPT_TIMEOUT_MS;
+  const deadline = performance.now() + attemptMs * WINDOWS_ARCHIVE_URLS.length;
+  let lastError: unknown;
+  for (const url of WINDOWS_ARCHIVE_URLS) {
+    const remaining = Math.ceil(deadline - performance.now());
+    if (remaining < 1) break;
+    try {
+      await downloadBoundedCurl(url, archivePath, {
+        executable: windowsSystemTool("curl.exe"), maxBytes: WINDOWS_ARCHIVE_LIMIT,
+        timeoutMs: Math.min(attemptMs, remaining), spawn: deps.spawn,
+      });
+      if (await (deps.hashFile ?? sha256File)(archivePath) === CLOAKBROWSER_WINDOWS_X64_ARCHIVE_SHA256) return;
+      lastError = new Error("official CloakBrowser archive did not match the pinned Windows x64 SHA-256");
+    } catch (error) {
+      if (error instanceof CurlCleanupError) throw error;
+      lastError = error;
+    }
+    rmSync(archivePath, { force: true });
+  }
+  throw lastError ?? new Error("official CloakBrowser archive download timed out");
+}
+
 async function preparePinnedWindowsArchive(cacheDir: string): Promise<void> {
   mkdirSync(cacheDir, { recursive: true });
   const archivePath = join(cacheDir, `${CLOAKBROWSER_VERSION}-${WINDOWS_ARCHIVE_NAME}`);
-  const archiveIsPinned = existsSync(archivePath) &&
+  const archive = statSync(archivePath, { throwIfNoEntry: false });
+  const archiveIsPinned = archive?.isFile() && archive.size <= WINDOWS_ARCHIVE_LIMIT &&
     await sha256File(archivePath) === CLOAKBROWSER_WINDOWS_X64_ARCHIVE_SHA256;
-  if (!archiveIsPinned) {
-    rmSync(archivePath, { force: true });
-    let downloaded = false;
-    for (const url of WINDOWS_ARCHIVE_URLS) {
-      try {
-        const download = Bun.spawn([
-          windowsSystemTool("curl.exe"),
-          "--fail",
-          "--location",
-          "--retry",
-          "2",
-          "--retry-all-errors",
-          "--output",
-          archivePath,
-          url,
-        ], { stdout: "inherit", stderr: "inherit" });
-        if (await download.exited === 0 &&
-          await sha256File(archivePath) === CLOAKBROWSER_WINDOWS_X64_ARCHIVE_SHA256) {
-          downloaded = true;
-          break;
-        }
-      } catch {
-        // Try the signed release origin.
-      }
-      rmSync(archivePath, { force: true });
-    }
-    if (!downloaded) throw new Error("official CloakBrowser archive did not match the pinned Windows x64 SHA-256");
-  }
+  if (!archiveIsPinned) await downloadPinnedWindowsArchive(archivePath);
 
   const extractRoot = join(cacheDir, `_aliasmode_extract_${process.pid}`);
   const binaryDir = join(cacheDir, `chromium-${CLOAKBROWSER_VERSION}`);

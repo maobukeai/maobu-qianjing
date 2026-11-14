@@ -1,0 +1,32 @@
+.profile-tags-backdrop { position: fixed; inset: 0; z-index: calc(var(--z-modal, 75) + 5); display: flex; align-items: center; justify-content: center; padding: 24px; background: rgb(15 16 25 / .3); backdrop-filter: blur(3px); }
+.profile-tags-dialog { width: 490px; max-width: 100%; max-height: min(760px, calc(100dvh - 48px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-lg); color: var(--ink); background: var(--surface); box-shadow: var(--shadow-lg, 0 24px 80px rgb(0 0 0 / .18)); }
+.profile-tags-dialog > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 21px 24px 10px; }
+.profile-tags-eyebrow { color: var(--accent-ink); font-size: 10px; line-height: 1.6; }
+.profile-tags-dialog h2 { margin: 3px 0 0; font-size: 20px; font-weight: 550; letter-spacing: -.025em; }
+.profile-tags-dialog .profile-tags-description { margin: 0; padding: 0 24px 19px; color: var(--muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.profile-tags-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 18px 24px 22px; border-top: 1px solid var(--line-soft); }
+.profile-tags-list-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.profile-tags-list-heading h3 { margin: 0; color: var(--ink-soft); font-size: 12px; font-weight: 500; }
+.profile-tags-list-heading > span { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.profile-tags-chips { display: flex; flex-wrap: wrap; gap: 7px; list-style: none; margin: 12px 0 20px; padding: 0; }
+.profile-tags-chips > li { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; gap: 6px; padding: 4px 5px 4px 9px; border: 1px solid var(--accent-line); border-radius: 7px; background: var(--accent-soft); color: var(--accent-ink); font-size: 12px; line-height: 1.5; }
+.profile-tags-chips > li > span { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.profile-tags-chips button { flex: 0 0 24px; width: 24px; height: 24px; border: 0; border-radius: 4px; background: transparent; color: inherit; cursor: pointer; font: inherit; font-size: 17px; }
+.profile-tags-chips button:hover:not(:disabled) { background: var(--surface); }
+.profile-tags-chips button:disabled { opacity: .45; cursor: default; }
+.profile-tags-empty { margin: 12px 0 22px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.profile-tags-entry { display: flex; flex-direction: column; gap: 7px; }
+.profile-tags-entry > label { color: var(--ink-soft); font-size: 12px; }
+.profile-tags-entry > div { display: flex; align-items: center; gap: 8px; }
+.profile-tags-entry input { flex: 1; width: 0; min-width: 0; }
+.profile-tags-entry > div > button { flex-shrink: 0; }
+.profile-tags-dialog .profile-tags-hint { margin: 8px 0 0; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.profile-tags-dialog .profile-tags-error { margin: 12px 0 0; color: var(--danger-ink); font-size: 12px; line-height: 1.7; }
+.profile-tags-dialog .profile-tags-feedback { margin: 12px 0 0; color: var(--accent-ink); font-size: 12px; line-height: 1.7; }
+.profile-tags-dialog > footer { display: flex; flex-shrink: 0; justify-content: flex-end; gap: 9px; padding: 15px 24px; border-top: 1px solid var(--line-soft); background: var(--surface-sunken); }
+.profile-tags-dialog :is(input, button):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.profile-tags-dialog:focus { outline: none; }
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="dialog"] > .profile-tags-backdrop > .profile-tags-dialog { transform: none; transition: transform var(--desktop-motion-enter) var(--desktop-motion-ease); }
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="dialog"]:is([data-motion-phase="entering"], [data-motion-phase="exiting"]) > .profile-tags-backdrop > .profile-tags-dialog { transform: translateY(8px) scale(.992); }
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-phase="exiting"] > .profile-tags-backdrop > .profile-tags-dialog { transition-duration: var(--desktop-motion-exit); }
+@media (max-width: 520px) { .profile-tags-backdrop { padding: 12px; } .profile-tags-dialog { max-height: calc(100dvh - 24px); } .profile-tags-dialog > header { padding: 17px 17px 9px; } .profile-tags-dialog .profile-tags-description { padding: 0 17px 16px; } .profile-tags-body { padding: 16px 17px 20px; } .profile-tags-dialog > footer { padding: 14px 17px; } }

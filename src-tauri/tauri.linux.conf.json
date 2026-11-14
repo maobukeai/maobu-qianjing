@@ -3,7 +3,8 @@
   "bundle": {
     "createUpdaterArtifacts": false,
     "targets": [
-      "deb"
+      "deb",
+      "appimage"
     ],
     "icon": [
       "icons/icon.png"

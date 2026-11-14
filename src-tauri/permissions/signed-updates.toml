@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-signed-updates"
+description = "Allows the trusted main window to use its build-pinned, signed application update channel."
+commands.allow = ["signed_update_status", "signed_update_check", "signed_update_install"]

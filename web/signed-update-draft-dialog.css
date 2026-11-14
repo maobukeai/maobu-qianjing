@@ -1,0 +1,30 @@
+.signed-update-dialog-layer { display: contents; }
+.signed-update-dialog-backdrop {
+  position: fixed; inset: 0; z-index: calc(var(--z-confirm, 100) + 10); display: grid; place-items: center;
+  padding: 24px; background: var(--backdrop, #1114);
+}
+.signed-update-dialog {
+  width: min(460px, 100%); max-height: calc(100vh - 48px); overflow: auto;
+  padding: 26px; border: 1px solid var(--line); border-radius: var(--r-xl, 16px);
+  background: var(--surface); color: var(--ink); box-shadow: var(--sh-modal);
+}
+.signed-update-dialog h2 { margin: 0 0 12px; font-size: 18px; line-height: 1.4; }
+.signed-update-dialog p { margin: 0; color: var(--ink-soft); font-size: 13px; line-height: 1.75; }
+.signed-update-dialog ul { margin: 14px 0 0; padding-left: 20px; color: var(--ink-soft); font-size: 12px; line-height: 1.8; }
+.signed-update-dialog .signed-update-dialog-note { margin-top: 12px; color: var(--warn-ink); }
+.signed-update-dialog .signed-update-progress { margin-top: 18px; }
+.signed-update-dialog-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; margin-top: 24px; }
+.signed-update-discard { color: var(--danger-ink); }
+:root[data-desktop-motion="full"] .signed-update-dialog {
+  transition: transform var(--desktop-motion-enter) var(--desktop-motion-ease);
+}
+:root[data-desktop-motion="full"] .signed-update-dialog-layer :is([data-motion-phase="entering"], [data-motion-phase="exiting"]) .signed-update-dialog {
+  transform: translateY(8px) scale(.992);
+}
+:root[data-desktop-motion="full"] .signed-update-dialog-layer [data-motion-phase="exiting"] .signed-update-dialog {
+  transition-duration: var(--desktop-motion-exit);
+}
+@media (max-width: 540px) {
+  .signed-update-dialog-backdrop { padding: 16px; }
+  .signed-update-dialog { padding: 22px; }
+}

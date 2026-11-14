@@ -11,7 +11,7 @@ import type { CookieRecord } from "./types.ts";
 import { createHash } from "node:crypto";
 import { PlaywrightWorkerError, resolvePlaywrightRuntime, runPlaywrightWorker, type PlaywrightWorkerOptions } from "./playwright-runtime.ts";
 
-const SESSION_URLS = [
+export const DEFAULT_SESSION_URLS = [
   "https://x.com",
   "https://web.telegram.org",
   "https://www.linkedin.com",
@@ -24,8 +24,10 @@ const SESSION_URLS = [
   "https://tiktok.com",
   "https://www.reddit.com",
   "https://reddit.com",
-];
-const SESSION_HOSTS = [...new Set(SESSION_URLS.map((url) => new URL(url).hostname))];
+] as const;
+const SESSION_URLS = [...DEFAULT_SESSION_URLS];
+export const DEFAULT_SESSION_HOSTS = [...new Set(SESSION_URLS.map((url) => new URL(url).hostname))];
+const SESSION_HOSTS = DEFAULT_SESSION_HOSTS;
 const TELEGRAM_ORIGIN = "https://web.telegram.org";
 const UNGOOGLED_FIRST_RUN_URL = "chrome://ungoogled-first-run/";
 const INTERNAL_NEW_TAB_URLS = new Set([
@@ -200,9 +202,85 @@ function domainMatchesHost(domain: string | undefined, host: string): boolean {
   return d === host || d.endsWith(`.${host}`);
 }
 
-/** True for a cookie belonging to one of the supported platform hosts (mirrors the old `ctx.cookies(SESSION_URLS)` filter). */
-export function isSessionCookie(cookie: { domain?: string }): boolean {
-  return SESSION_HOSTS.some((host) => domainMatchesHost(cookie.domain, host));
+function parseTargetHost(target: string): string | null {
+  const trimmed = target.trim().toLowerCase();
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      return new URL(trimmed).hostname.toLowerCase() || null;
+    } catch {
+      return null;
+    }
+  }
+  const host = trimmed.replace(/^\./, "").split("/")[0]?.split(":")[0]?.trim();
+  return host && !/\s/.test(host) ? host : null;
+}
+
+function parseTargetOrigin(target: string): string | null {
+  const trimmed = target.trim();
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      const parsed = new URL(trimmed);
+      return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.origin : null;
+    } catch {
+      return null;
+    }
+  }
+  const host = parseTargetHost(trimmed);
+  return host ? `https://${host}` : null;
+}
+
+/** Normalize arbitrary domains or URLs into canonical lowercase hostnames. */
+export function normalizeTargetDomains(targets?: readonly string[]): string[] {
+  if (!targets?.length) return [];
+  const hosts = new Set<string>();
+  for (const target of targets) {
+    if (typeof target !== "string") continue;
+    const host = parseTargetHost(target);
+    if (host) hosts.add(host);
+  }
+  return [...hosts];
+}
+
+/** Normalize arbitrary domains or URLs into canonical HTTP(S) origins. */
+export function normalizeTargetUrls(targets?: readonly string[]): string[] {
+  if (!targets?.length) return [];
+  const urls = new Set<string>();
+  for (const target of targets) {
+    if (typeof target !== "string") continue;
+    const trimmed = target.trim();
+    if (/^https?:\/\//i.test(trimmed)) {
+      try {
+        const parsed = new URL(trimmed);
+        if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+          urls.add(parsed.href);
+          continue;
+        }
+      } catch {}
+    }
+    const origin = parseTargetOrigin(trimmed);
+    if (origin) urls.add(origin);
+  }
+  return [...urls];
+}
+
+export interface SessionCookieFilterOptions {
+  targetDomains?: readonly string[];
+  includeAnyDomain?: boolean;
+}
+
+/**
+ * True for a cookie belonging to the configured target domains (or any domain when
+ * `includeAnyDomain` is set), falling back to `DEFAULT_SESSION_HOSTS` presets.
+ */
+export function isSessionCookie(
+  cookie: { domain?: string },
+  options: SessionCookieFilterOptions = {},
+): boolean {
+  if (options.includeAnyDomain) return Boolean(cookie.domain?.replace(/^\./, "").trim());
+  const hosts = options.targetDomains?.length ? normalizeTargetDomains(options.targetDomains) : SESSION_HOSTS;
+  return hosts.some((host) => domainMatchesHost(cookie.domain, host));
 }
 
 function canonicalWebOrigin(value: string): string | null {
@@ -251,9 +329,14 @@ export function normalizeOriginStorage(origin: string, storage: any): OriginStor
   return { origin: normalizedOrigin, localStorage, ...(indexedDB.length ? { indexedDB } : {}) };
 }
 
-// Per-platform auth cookie — the one whose live presence means "logged in". Telegram is deliberately
-// excluded here for reset safety: Telegram Web's restorable auth is in origin storage, not cookies.
-const AUTH_COOKIES: Array<{ platform: string; parentDomain: string; cookie: string }> = [
+export interface AuthCookieRule {
+  platform: string;
+  parentDomain: string;
+  cookie: string;
+}
+
+// Optional preset auth cookie rules. Callers can supply custom `authCookies` or arbitrary `targetDomains`.
+export const DEFAULT_AUTH_COOKIES: readonly AuthCookieRule[] = [
   { platform: "x.com", parentDomain: "x.com", cookie: "auth_token" },
   { platform: "instagram.com", parentDomain: "instagram.com", cookie: "sessionid" },
   { platform: "facebook.com", parentDomain: "facebook.com", cookie: "c_user" },
@@ -262,6 +345,7 @@ const AUTH_COOKIES: Array<{ platform: string; parentDomain: string; cookie: stri
   { platform: "linkedin.com", parentDomain: "linkedin.com", cookie: "li_at" },
   { platform: "reddit.com", parentDomain: "reddit.com", cookie: "reddit_session" },
 ];
+const AUTH_COOKIES = DEFAULT_AUTH_COOKIES;
 
 function parseBundle(bundle: string): any | null {
   try {
@@ -527,24 +611,79 @@ export function stripTelegramOrigin(bundle: string): string {
   return JSON.stringify(parsed);
 }
 
-/**
- * Changes when a supported site logs in, logs out or switches account, but not on other cookie or
- * storage churn: the live auth cookie values and the Telegram auth storage.
- */
-export function sessionLoginSignature(bundle: string, now = Date.now()): string {
-  const parsed = parseBundle(bundle);
-  const cookies = (parsed?.cookies ?? []) as Array<{ name?: string; value?: string; domain?: string; expires?: number }>;
-  const logins = AUTH_COOKIES.flatMap((auth) => cookies
-    .filter((c) => c?.name === auth.cookie && cookieDomainMatches(c.domain, auth.parentDomain) && cookieIsLive(c, now))
-    .map((c) => `${auth.parentDomain}:${auth.cookie}=${c.value ?? ""}`)).sort();
-  return createHash("sha256").update(JSON.stringify({ logins, telegram: telegramAuthSignature(bundle) })).digest("hex");
+export interface SessionLoginOptions {
+  now?: number;
+  authCookies?: readonly AuthCookieRule[];
+  targetDomains?: readonly string[];
 }
 
-/** Which supported platforms this bundle is actually logged in for, derived from the bundle's auth material. */
-export function bundleLoggedInPlatforms(bundle: string, now: number): Set<string> {
+function resolveLoginOptions(nowOrOptions: number | SessionLoginOptions): {
+  now: number;
+  authCookies: readonly AuthCookieRule[];
+  targetDomains: string[];
+} {
+  if (typeof nowOrOptions === "number") {
+    return { now: nowOrOptions, authCookies: AUTH_COOKIES, targetDomains: [] };
+  }
+  return {
+    now: nowOrOptions.now ?? Date.now(),
+    authCookies: nowOrOptions.authCookies ?? AUTH_COOKIES,
+    targetDomains: normalizeTargetDomains(nowOrOptions.targetDomains),
+  };
+}
+
+/**
+ * Changes when a tracked site logs in, logs out or switches account. Supports arbitrary
+ * `targetDomains` or custom `authCookies` rules in addition to the preset defaults.
+ */
+export function sessionLoginSignature(
+  bundle: string,
+  nowOrOptions: number | SessionLoginOptions = Date.now(),
+): string {
+  const { now, authCookies, targetDomains } = resolveLoginOptions(nowOrOptions);
+  const parsed = parseBundle(bundle);
+  const cookies = (parsed?.cookies ?? []) as Array<{ name?: string; value?: string; domain?: string; expires?: number }>;
+  const logins = new Set<string>(
+    authCookies.flatMap((auth) => cookies
+      .filter((c) => c?.name === auth.cookie && cookieDomainMatches(c.domain, auth.parentDomain) && cookieIsLive(c, now))
+      .map((c) => `${auth.parentDomain}:${auth.cookie}=${c.value ?? ""}`)),
+  );
+  if (targetDomains.length > 0) {
+    for (const c of cookies) {
+      if (!c?.name || !cookieIsLive(c, now)) continue;
+      for (const domain of targetDomains) {
+        if (cookieDomainMatches(c.domain, domain)) {
+          logins.add(`${domain}:${c.name}=${c.value ?? ""}`);
+        }
+      }
+    }
+  }
+  return createHash("sha256").update(JSON.stringify({ logins: [...logins].sort(), telegram: telegramAuthSignature(bundle) })).digest("hex");
+}
+
+/** Which platforms or configured target domains this bundle holds a live session for. */
+export function bundleLoggedInPlatforms(
+  bundle: string,
+  nowOrOptions: number | SessionLoginOptions = Date.now(),
+): Set<string> {
+  const { now, authCookies, targetDomains } = resolveLoginOptions(nowOrOptions);
   const set = new Set<string>();
-  for (const a of AUTH_COOKIES) if (bundleHasLiveAuthCookie(bundle, a.cookie, a.parentDomain, now)) set.add(a.platform);
+  for (const a of authCookies) if (bundleHasLiveAuthCookie(bundle, a.cookie, a.parentDomain, now)) set.add(a.platform);
   if (bundleHasTelegramSession(bundle)) set.add("telegram.org");
+  if (targetDomains.length > 0) {
+    const parsed = parseBundle(bundle);
+    const cookies = Array.isArray(parsed?.cookies) ? parsed.cookies as Array<{ name?: string; domain?: string; expires?: number }> : [];
+    const origins = Array.isArray(parsed?.origins) ? parsed.origins as Array<{ origin?: string; localStorage?: unknown[] }> : [];
+    for (const domain of targetDomains) {
+      const hasCookie = cookies.some((c) => c?.name && cookieDomainMatches(c.domain, domain) && cookieIsLive(c, now));
+      const hasOriginStorage = origins.some((o) => {
+        if (typeof o?.origin !== "string" || !Array.isArray(o.localStorage) || o.localStorage.length === 0) return false;
+        const host = parseTargetHost(o.origin);
+        return !!host && domainMatchesHost(host, domain);
+      });
+      if (hasCookie || hasOriginStorage) set.add(domain);
+    }
+  }
   return set;
 }
 
@@ -577,10 +716,15 @@ export function bundleTabUrls(bundle: string): string[] {
   return normalizeBundle(parseBundle(bundle)).tabs;
 }
 
-export function sessionCaptureSeed(bundle: string): SessionCaptureSeed {
+export function sessionCaptureSeed(bundle: string, targetDomainsOrUrls?: readonly string[]): SessionCaptureSeed {
   const normalized = normalizeBundle(parseBundle(bundle));
+  const origins = new Set(normalized.origins.map((origin) => origin.origin));
+  for (const target of targetDomainsOrUrls ?? []) {
+    const origin = parseTargetOrigin(target);
+    if (origin && !WEB_STORE_ORIGINS.has(origin)) origins.add(origin);
+  }
   return {
-    origins: normalized.origins.map((origin) => origin.origin),
+    origins: [...origins],
     ...(normalized.telegramClient ? { telegramClient: normalized.telegramClient } : {}),
     ...(normalized.origins.length ? { saved: normalized.origins } : {}),
   };
@@ -1028,10 +1172,11 @@ export async function addBrowserCookie(ws: string, cookie: CookieRecord): Promis
  * Compatibility clients can call this over HTTP to harvest auth cookies instead of fighting the
  * blocked raw-CDP read. Returns the raw Playwright cookie records (httpOnly included).
  */
-export async function harvestCookies(ws: string, urls: string[]): Promise<CookieRecord[]> {
+export async function harvestCookies(ws: string, urls: string[] = [...DEFAULT_SESSION_URLS]): Promise<CookieRecord[]> {
+  const targets = normalizeTargetUrls(urls);
   return runPlaywrightWorker<CookieRecord[]>("cookie-harvest", {
     endpoint: ws,
-    urls,
+    urls: targets.length > 0 ? targets : urls,
     connectTimeoutMs: 30_000,
   });
 }
@@ -1274,6 +1419,8 @@ export interface WriteSessionOptions {
   contextRetryMs?: number;
   writeTimeoutMs?: number;
   disconnectTimeoutMs?: number;
+  /** Optional target URLs to warm/open alongside restored state. */
+  urls?: string[];
   /** Clear stale browser auth even when the authoritative bundle is empty. */
   authoritative?: boolean;
   connect?: (endpoint: string, timeoutMs: number) => Promise<any>;
@@ -1357,7 +1504,7 @@ export async function writeSession(
     await runPlaywrightWorker("session-restore", {
       endpoint: ws,
       bundle,
-      urls: [],
+      urls: options.urls ?? [],
       authoritative: !!options.authoritative,
       connectTimeoutMs: options.connectTimeoutMs ?? SESSION_CONNECT_TIMEOUT_MS,
     }, { timeoutMs: options.writeTimeoutMs ?? SESSION_WRITE_TIMEOUT_MS });

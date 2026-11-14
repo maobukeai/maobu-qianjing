@@ -10,6 +10,9 @@
  */
 
 import { Database } from "bun:sqlite";
+import { randomUUID } from "node:crypto";
+import { createLocalSecretProtector, type LocalProtectionOptions, type LocalSecretProtector } from "./dpapi.ts";
+import { runStoreMigrations } from "./src/store-migrations.ts";
 import { folderTree } from "./folders.ts";
 import type {
   CookieRecord,
@@ -27,238 +30,26 @@ import { normalizeProxySpec } from "./proxy.ts";
 import { assertSafeProfileId } from "./profile-id.ts";
 import { assertValidProfile } from "./profile-validation.ts";
 import { mergeCookies } from "./parse.ts";
+import { fingerprintLaunchDigest, parseFingerprintSource, type FingerprintCaptureSource } from "./fingerprint-source.ts";
+import { assertExtensionGroupRevision, canonicalExtensionSelection, createExtensionGroupReview, ExtensionGroupRevisionError, parseExtensionGroupSelection, type ExtensionGroupReview, type ExtensionGroupRevisionState } from "./extension-group-revision.ts";
+
+export interface ProfileStoreOptions {
+  /** Overrides for at-rest sensitive column encryption (key, keyPath, inMemory). */
+  protection?: LocalProtectionOptions;
+}
 
 export class ProfileStore {
   private db: Database;
+  private readonly protector: LocalSecretProtector;
+  private readonly extensionGroupReviewScope = randomUUID();
   /** Called after each profile save, so the app can start the downloads that profile needs. */
   onProfileSaved?: (profile: Profile) => void;
 
-  constructor(path = "profiles.sqlite") {
+  constructor(path = "profiles.sqlite", options: ProfileStoreOptions = {}) {
     this.db = new Database(path, { create: true });
-    this.db.exec("PRAGMA journal_mode = WAL;");
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS profiles (
-        id TEXT PRIMARY KEY,
-        engine TEXT NOT NULL DEFAULT 'chromium',
-        chromium_runtime TEXT NOT NULL DEFAULT '',
-        hardware_json TEXT NOT NULL DEFAULT '',
-        firefox_config_json TEXT NOT NULL DEFAULT '',
-        acc_id TEXT NOT NULL DEFAULT '',
-        name TEXT NOT NULL DEFAULT '',
-        "group" TEXT NOT NULL DEFAULT '',
-        platform TEXT NOT NULL DEFAULT '',
-        username TEXT NOT NULL DEFAULT '',
-        password TEXT NOT NULL DEFAULT '',
-        email TEXT NOT NULL DEFAULT '',
-        email_password TEXT NOT NULL DEFAULT '',
-        twofa TEXT NOT NULL DEFAULT '',
-        proxy_json TEXT,
-        ua TEXT NOT NULL DEFAULT '',
-        timezone TEXT NOT NULL DEFAULT '',
-        timezone_manual INTEGER NOT NULL DEFAULT 0,
-        display_scale REAL NOT NULL DEFAULT 0,
-        locale TEXT NOT NULL DEFAULT '',
-        screen_width INTEGER NOT NULL DEFAULT 1920,
-        screen_height INTEGER NOT NULL DEFAULT 1080,
-        fingerprint_seed INTEGER NOT NULL,
-        platform_os TEXT NOT NULL DEFAULT '',
-        fp_observed_json TEXT NOT NULL DEFAULT '',
-        fp_expected_json TEXT NOT NULL DEFAULT '',
-        fp_verdict_json TEXT NOT NULL DEFAULT '',
-        cookies_json TEXT NOT NULL DEFAULT '[]',
-        seeded INTEGER NOT NULL DEFAULT 0,
-        created_at INTEGER NOT NULL DEFAULT 0,
-        last_open_at INTEGER NOT NULL DEFAULT 0
-      );
-    `);
-    try {
-      this.db.exec(`ALTER TABLE profiles ADD COLUMN trashed_at INTEGER NOT NULL DEFAULT 0`);
-    } catch {
-      /* column already exists */
-    }
-    // Cookies added while the profile was closed. The next launch sets them, then clears them.
-    try {
-      this.db.exec(`ALTER TABLE profiles ADD COLUMN pending_cookies_json TEXT NOT NULL DEFAULT '[]'`);
-    } catch {
-      /* column already exists */
-    }
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS launches (
-        profile_id TEXT PRIMARY KEY,
-        pid INTEGER NOT NULL,
-        debug_port INTEGER NOT NULL,
-        ws TEXT NOT NULL,
-        started_at INTEGER NOT NULL,
-        relay_port INTEGER,
-        binary_path TEXT,
-        user_data_dir TEXT,
-        binary_sha256 TEXT,
-        persona_digest TEXT,
-        headless INTEGER,
-        search_bootstrap_revision INTEGER,
-        process_group_id INTEGER,
-        root_start_time TEXT,
-        engine TEXT,
-        firefox_owner_json TEXT,
-        owner_binary_path TEXT
-      );
-    `);
-    // Migration for stores predating the proxy-auth relay (nullable: only authed-proxy launches set it).
-    try {
-      this.db.exec(`ALTER TABLE launches ADD COLUMN relay_port INTEGER`);
-    } catch {
-      /* column already exists */
-    }
-    for (const column of [
-      "binary_path TEXT",
-      "user_data_dir TEXT",
-      "binary_sha256 TEXT",
-      "persona_digest TEXT",
-      "headless INTEGER",
-      "search_bootstrap_revision INTEGER",
-      "process_group_id INTEGER",
-      "root_start_time TEXT",
-      "engine TEXT",
-      "firefox_owner_json TEXT",
-      "owner_binary_path TEXT",
-      "persona_json TEXT",
-    ]) {
-      try {
-        this.db.exec(`ALTER TABLE launches ADD COLUMN ${column}`);
-      } catch {
-        /* column already exists */
-      }
-    }
-    // Group registry: lets a folder exist (and stay listed) with zero profiles,
-    // matching AdsPower's folders. group_id == name everywhere. Backfill from any
-    // labels already on profiles so pre-existing groups persist even once emptied.
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS groups (
-        name TEXT PRIMARY KEY,
-        extension_defaults_json TEXT NOT NULL DEFAULT '[]'
-      );
-    `);
-    try {
-      this.db.exec(`ALTER TABLE groups ADD COLUMN extension_defaults_json TEXT NOT NULL DEFAULT '[]'`);
-    } catch {
-      /* column already exists */
-    }
-    for (const column of ["parent_name TEXT", "label TEXT"]) {
-      try {
-        this.db.exec(`ALTER TABLE groups ADD COLUMN ${column}`);
-      } catch {
-        /* column already exists */
-      }
-    }
-    this.db.exec(`INSERT OR IGNORE INTO groups (name) SELECT DISTINCT "group" FROM profiles WHERE "group" <> '' AND trashed_at = 0`);
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS agent_temporary_profiles (
-        profile_id TEXT PRIMARY KEY,
-        created_at INTEGER NOT NULL
-      );
-    `);
-    // Uploaded browser extensions (files live on disk; this is the registry).
-    // load_dir is the directory handed to --load-extension (has manifest.json).
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS extensions (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL DEFAULT '',
-        load_dir TEXT NOT NULL,
-        created_at INTEGER NOT NULL DEFAULT 0
-      );
-    `);
-    // Migration for persisted browser-engine identity. Legacy profiles are Chromium.
-    for (const col of [
-      "engine TEXT NOT NULL DEFAULT 'chromium'",
-      "firefox_config_json TEXT NOT NULL DEFAULT ''",
-      "chromium_runtime TEXT NOT NULL DEFAULT ''",
-      "hardware_json TEXT NOT NULL DEFAULT ''",
-      "timezone_manual INTEGER NOT NULL DEFAULT 0",
-      "display_scale REAL NOT NULL DEFAULT 0",
-    ]) {
-      try {
-        this.db.exec(`ALTER TABLE profiles ADD COLUMN ${col}`);
-      } catch {
-        /* column already exists */
-      }
-    }
-    // Migration for stores created before the timezone column existed.
-    try {
-      this.db.exec(`ALTER TABLE profiles ADD COLUMN timezone TEXT NOT NULL DEFAULT ''`);
-    } catch {
-      /* column already exists */
-    }
-    // Migration for stores created before the platform column existed.
-    try {
-      this.db.exec(`ALTER TABLE profiles ADD COLUMN platform TEXT NOT NULL DEFAULT ''`);
-    } catch {
-      /* column already exists */
-    }
-    // Separate account and mailbox credentials. Older stores are upgraded in
-    // place; blank defaults preserve every existing profile.
-    for (const col of ["email TEXT NOT NULL DEFAULT ''", "email_password TEXT NOT NULL DEFAULT ''"]) {
-      try {
-        this.db.exec(`ALTER TABLE profiles ADD COLUMN ${col}`);
-      } catch {
-        /* column already exists */
-      }
-    }
-    // Migration for stores created before per-profile extension assignment.
-    try {
-      this.db.exec(`ALTER TABLE profiles ADD COLUMN extensions_json TEXT NOT NULL DEFAULT '[]'`);
-    } catch {
-      /* column already exists */
-    }
-    // Migration for stores created before per-profile custom tags.
-    try {
-      this.db.exec(`ALTER TABLE profiles ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'`);
-    } catch {
-      /* column already exists */
-    }
-    // Invalid legacy proxies are quarantined instead of making every profile
-    // read fail or being silently converted into a direct/no-proxy launch.
-    try {
-      this.db.exec(`ALTER TABLE profiles ADD COLUMN proxy_error TEXT`);
-    } catch {
-      /* column already exists */
-    }
-    // Migration for stores predating the operator-chosen "custom NO." serial.
-    try {
-      this.db.exec(`ALTER TABLE profiles ADD COLUMN custom_no TEXT NOT NULL DEFAULT ''`);
-    } catch {
-      /* column already exists */
-    }
-    // Migrations for the full-fidelity identity export. platform_os makes the
-    // desktop platform an explicit stored value instead of one inferred from
-    // the UA (a blank UA previously meant no --fingerprint-platform flag at
-    // all, so the browser silently inherited the HOST os). The fp_* columns
-    // hold the measured fingerprint, the fingerprint an import claimed, and
-    // the comparison between them.
-    for (const col of [
-      "platform_os TEXT NOT NULL DEFAULT ''",
-      "locale TEXT NOT NULL DEFAULT ''",
-      "fp_observed_json TEXT NOT NULL DEFAULT ''",
-      "fp_expected_json TEXT NOT NULL DEFAULT ''",
-      "fp_verdict_json TEXT NOT NULL DEFAULT ''",
-      "session_json TEXT NOT NULL DEFAULT ''",
-      "session_restore_pending INTEGER NOT NULL DEFAULT 0",
-    ]) {
-      try {
-        this.db.exec(`ALTER TABLE profiles ADD COLUMN ${col}`);
-      } catch {
-        /* column already exists */
-      }
-    }
-    // Migrations for stores predating the AdsPower-parity bookkeeping columns
-    // (created_at: profile creation; last_open_at: most recent launch). Both
-    // surface through the AdsPower /api/v1/user/list facade.
-    for (const col of ["created_at INTEGER NOT NULL DEFAULT 0", "last_open_at INTEGER NOT NULL DEFAULT 0"]) {
-      try {
-        this.db.exec(`ALTER TABLE profiles ADD COLUMN ${col}`);
-      } catch {
-        /* column already exists */
-      }
-    }
+    const inMemory = options.protection?.inMemory ?? (!path || path === ":memory:");
+    this.protector = createLocalSecretProtector({ ...options.protection, inMemory });
+    runStoreMigrations(this.db, this.transaction.bind(this), this.protector);
     this.completeClosedFingerprints();
   }
 
@@ -273,7 +64,7 @@ export class ProfileStore {
       for (const row of rows) {
         // Corrupt identities must still fail when read, not prevent the whole store from opening.
         let profile: Profile;
-        try { profile = completeProfileFingerprint(rowToProfile(row)); } catch { continue; }
+        try { profile = completeProfileFingerprint(rowToProfile(row, this.protector)); } catch { continue; }
         const firefox = profile.firefox ? JSON.stringify(profile.firefox) : "";
         // A Firefox engine update also changes the version in the user agent.
         if (profile.locale !== row.locale || firefox !== row.firefox_config_json || profile.ua !== row.ua) {
@@ -284,7 +75,14 @@ export class ProfileStore {
   }
 
   close(): void {
-    this.db.close();
+    try {
+      this.db.close(true);
+    } catch {
+      // bun:sqlite's db.query() LRU cache evicts older prepared statements without
+      // finalizing them until GC runs, keeping Windows file locks held on close().
+      if (typeof Bun !== "undefined" && typeof Bun.gc === "function") Bun.gc(true);
+      this.db.close();
+    }
   }
 
   /**
@@ -293,10 +91,10 @@ export class ProfileStore {
    * after close() and Windows refuses to delete or rename it. Nested calls
    * become savepoints, as they do there.
    */
-  private transaction<A extends unknown[], T>(fn: (...args: A) => T): (...args: A) => T {
+  private transaction<A extends unknown[], T>(fn: (...args: A) => T, mode: "deferred" | "immediate" = "deferred"): (...args: A) => T {
     return (...args) => {
       const nested = this.db.inTransaction;
-      this.db.exec(nested ? "SAVEPOINT store_tx" : "BEGIN");
+      this.db.exec(nested ? "SAVEPOINT store_tx" : mode === "immediate" ? "BEGIN IMMEDIATE" : "BEGIN");
       try {
         const result = fn(...args);
         this.db.exec(nested ? "RELEASE store_tx" : "COMMIT");
@@ -315,7 +113,7 @@ export class ProfileStore {
     // parser. Invalid full-profile JSON must never reach persistent identity.
     assertValidProfile(p);
     const existing = this.db
-      .query<{ seeded: number; trashed_at: number; engine: unknown; chromium_runtime: unknown; hardware_json: string; locale: string }, [string]>("SELECT seeded, trashed_at, engine, chromium_runtime, hardware_json, locale FROM profiles WHERE id = ?")
+      .query<{ seeded: number; trashed_at: number; engine: unknown; chromium_runtime: unknown; hardware_json: string; locale: string; proxy_json: string | null }, [string]>("SELECT seeded, trashed_at, engine, chromium_runtime, hardware_json, locale, proxy_json FROM profiles WHERE id = ?")
       .get(p.id);
     if (!p.locale && existing?.locale) p = { ...p, locale: existing.locale };
     // The runtime is fixed at creation. An edit or re-import that omits it keeps it.
@@ -340,16 +138,26 @@ export class ProfileStore {
     const hardware = normalizeProfileHardware(p.hardware);
     const hardwareJson = hardware ? JSON.stringify(hardware) : "";
     const seeded = existing ? existing.seeded : p.seeded ? 1 : 0;
+    const nextProxyJson = proxy ? JSON.stringify(proxy) : null;
+    let existingProxyJson: string | null = null;
+    if (existing?.proxy_json) {
+      try {
+        existingProxyJson = this.protector.decrypt(existing.proxy_json);
+      } catch {
+        existingProxyJson = existing.proxy_json;
+      }
+    }
+    const proxySame = existing ? (existingProxyJson === nextProxyJson ? 1 : 0) : 0;
     this.db
       .query(
         `INSERT INTO profiles
            (id, engine, chromium_runtime, hardware_json, firefox_config_json, acc_id, name, "group", platform, username, password, email, email_password, twofa, proxy_json, proxy_error, extensions_json, tags_json, custom_no, ua, timezone, timezone_manual, locale,
-            screen_width, screen_height, fingerprint_seed, platform_os, fp_observed_json, fp_expected_json, fp_verdict_json, cookies_json, seeded, created_at)
+            screen_width, screen_height, fingerprint_seed, platform_os, fp_observed_json, fp_expected_json, fp_verdict_json, cookies_json, seeded, created_at, incarnation)
          -- fp_verdict_json is literal '': a verdict is a COMPUTED fact, written
          -- only by saveObservedFingerprint from a real measurement. If a caller
          -- could supply one, an import could hand itself a "verified" badge and
          -- the badge would mean nothing.
-         VALUES ($id,$engine,$chromiumRuntime,$hardware,$firefox,$acc,$name,$group,$platform,$user,$pass,$email,$emailPass,$twofa,$proxy,$proxyError,$ext,$tags,$customNo,$ua,$tz,$tzManual,$locale,$w,$h,$seed,$platformOs,$fpObserved,$fpExpected,'',$cookies,$seeded,$created)
+         VALUES ($id,$engine,$chromiumRuntime,$hardware,$firefox,$acc,$name,$group,$platform,$user,$pass,$email,$emailPass,$twofa,$proxy,$proxyError,$ext,$tags,$customNo,$ua,$tz,$tzManual,$locale,$w,$h,$seed,$platformOs,$fpObserved,$fpExpected,'',$cookies,$seeded,$created,$incarnation)
          ON CONFLICT(id) DO UPDATE SET
            engine=$engine, firefox_config_json=$firefox, hardware_json=$hardware, timezone_manual=$tzManual,
            acc_id=$acc, name=$name, "group"=$group, platform=$platform, username=$user, password=$pass,
@@ -367,12 +175,10 @@ export class ProfileStore {
            --   * else proxy changed/removed + no new tz   -> clear it
            --     (keeping it would emit --fingerprint-timezone for a proxy the
            --      profile no longer uses — a worse mismatch than the default).
-           -- In ON CONFLICT DO UPDATE the bare column (proxy_json) is the OLD
-           -- row value; $proxy is the incoming value. IS is null-safe.
            timezone = CASE
              WHEN $tz <> '' THEN $tz
              WHEN $proxyError <> '' THEN timezone
-             WHEN proxy_json IS $proxy THEN timezone
+             WHEN $proxySame = 1 THEN timezone
              ELSE ''
            END,
            screen_width=$w, screen_height=$h, locale=$locale,
@@ -380,6 +186,7 @@ export class ProfileStore {
            -- An ordinary profile edit carries no capture. Preserving the stored
            -- one keeps a rename from erasing a measurement that is still true.
            fp_observed_json = CASE WHEN $fpObserved <> '' THEN $fpObserved ELSE fp_observed_json END,
+           fp_source_json = CASE WHEN $fpObserved <> '' AND $fpObserved IS NOT fp_observed_json THEN '' ELSE fp_source_json END,
            fp_expected_json = CASE WHEN $fpExpected <> '' THEN $fpExpected ELSE fp_expected_json END,
            -- A CHANGED expectation invalidates the verdict: one computed
            -- against the previous expectation must never be read as if it
@@ -403,11 +210,12 @@ export class ProfileStore {
         $group: p.group,
         $platform: p.platform ?? "",
         $user: p.username,
-        $pass: p.password,
+        $pass: p.password ? this.protector.encrypt(p.password) : "",
         $email: p.email ?? "",
-        $emailPass: p.emailPassword ?? "",
-        $twofa: p.twofa,
-        $proxy: proxy ? JSON.stringify(proxy) : null,
+        $emailPass: p.emailPassword ? this.protector.encrypt(p.emailPassword) : "",
+        $twofa: p.twofa ? this.protector.encrypt(p.twofa) : "",
+        $proxy: nextProxyJson ? this.protector.encrypt(nextProxyJson) : null,
+        $proxySame: proxySame,
         $proxyError: proxyError || null,
         $ext: JSON.stringify(p.extensions ?? []),
         $tags: JSON.stringify(p.tags ?? []),
@@ -422,12 +230,14 @@ export class ProfileStore {
         $platformOs: p.platformOs ?? "",
         $fpObserved: p.fpObserved ? JSON.stringify(p.fpObserved) : "",
         $fpExpected: p.fpExpected ? JSON.stringify(p.fpExpected) : "",
-        $cookies: JSON.stringify(p.cookies),
+        $cookies: this.protector.encrypt(JSON.stringify(p.cookies)),
         $seeded: seeded,
         // Set on INSERT; preserved on re-import (the ON CONFLICT clause never
         // updates created_at). New profiles get a real timestamp; rows imported
         // before this column stay 0 (creation time was never recorded then).
         $created: Date.now(),
+        // ON CONFLICT deliberately leaves the original incarnation unchanged.
+        $incarnation: randomUUID(),
       });
     // An edit or re-import that omits the display scale keeps the stored value.
     if (p.displayScale !== undefined) this.setDisplayScale(p.id, p.displayScale);
@@ -465,36 +275,71 @@ export class ProfileStore {
     apply(profiles);
   }
 
+  /** Profiles in Trash and launch records also reserve their case-insensitive IDs. */
+  listSyncConflictIds(): Set<string> {
+    const rows = this.db.query<{ id: string }, []>("SELECT id FROM profiles UNION ALL SELECT profile_id FROM launches").all();
+    return new Set(rows.map(row => row.id.toLowerCase()));
+  }
+
+  /** Check the reviewed additions and write the batch under the same SQLite write lock. */
+  importSyncProfiles(profiles: readonly Profile[], sessions: ReadonlyMap<string, string>, matchesPreview: (newIds: readonly string[]) => boolean): number | null {
+    return this.transaction(() => {
+      const occupied = this.listSyncConflictIds();
+      const additions = profiles.filter(profile => !occupied.has(profile.id.toLowerCase()));
+      if (!matchesPreview(additions.map(profile => profile.id))) return null;
+      if (additions.length) this.upsertProfiles(additions, sessions);
+      return additions.length;
+    }, "immediate")();
+  }
+
   getSessionBundle(id: string): string | null {
-    return this.db.query<{ session_json: string }, [string]>(
+    const raw = this.db.query<{ session_json: string }, [string]>(
       `SELECT session_json FROM profiles WHERE id = ?`,
-    ).get(id)?.session_json || null;
+    ).get(id)?.session_json;
+    return decryptOptionalSecret(raw, this.protector);
   }
 
   getPendingSessionBundle(id: string): string | null {
-    return this.db.query<{ session_json: string }, [string]>(
+    const raw = this.db.query<{ session_json: string }, [string]>(
       `SELECT session_json FROM profiles WHERE id = ? AND session_restore_pending = 1`,
-    ).get(id)?.session_json || null;
+    ).get(id)?.session_json;
+    return decryptOptionalSecret(raw, this.protector);
   }
 
   /** Capturing live state must never arm an import restore. */
   saveSessionBundle(id: string, bundle: string): void {
-    this.db.query(`UPDATE profiles SET session_json = ? WHERE id = ?`).run(bundle, id);
+    const stored = bundle ? this.protector.encrypt(bundle) : "";
+    this.db.query(`UPDATE profiles SET session_json = ? WHERE id = ?`).run(stored, id);
   }
 
   markSessionRestored(id: string, bundle: string): void {
-    this.db.query(`UPDATE profiles SET session_restore_pending = 0 WHERE id = ? AND session_json = ?`).run(id, bundle);
+    this.transaction(() => {
+      const row = this.db.query<{ session_json: string }, [string]>(
+        `SELECT session_json FROM profiles WHERE id = ? AND session_restore_pending = 1`,
+      ).get(id);
+      if (!row?.session_json) return;
+      if (decryptOptionalSecret(row.session_json, this.protector) === bundle) {
+        this.db.query(`UPDATE profiles SET session_restore_pending = 0 WHERE id = ?`).run(id);
+      }
+    })();
   }
 
   getProfile(id: string): Profile | null {
     const row = this.db
       .query<any, [string]>(`SELECT * FROM profiles WHERE id = ? AND trashed_at = 0`)
       .get(id);
-    return row ? rowToProfile(row) : null;
+    return row ? rowToProfile(row, this.protector) : null;
+  }
+
+  /** Private persistence identity for async work; never part of profile exports. */
+  getProfileIncarnation(id: string): string | null {
+    return this.db.query<{ incarnation: string }, [string]>(
+      "SELECT incarnation FROM profiles WHERE id = ? AND trashed_at = 0",
+    ).get(id)?.incarnation || null;
   }
 
   listProfiles(): Profile[] {
-    return this.db.query<any, []>(`SELECT * FROM profiles WHERE trashed_at = 0 ORDER BY id`).all().map(rowToProfile);
+    return this.db.query<any, []>(`SELECT * FROM profiles WHERE trashed_at = 0 ORDER BY id`).all().map((row) => rowToProfile(row, this.protector));
   }
 
   count(): number {
@@ -538,8 +383,10 @@ export class ProfileStore {
         `SELECT pending_cookies_json FROM profiles WHERE id = ? AND trashed_at = 0`,
       ).get(id);
       if (!row) throw new Error(`Unknown profile: ${id}`);
-      const merged = mergeCookies(safeParse<CookieRecord[]>(row.pending_cookies_json, []), cookies);
-      this.db.query(`UPDATE profiles SET pending_cookies_json = ? WHERE id = ?`).run(JSON.stringify(merged), id);
+      const existingRaw = decryptField(row.pending_cookies_json, this.protector, "[]");
+      const merged = mergeCookies(safeParse<CookieRecord[]>(existingRaw, []), cookies);
+      const stored = merged.length > 0 ? this.protector.encrypt(JSON.stringify(merged)) : "[]";
+      this.db.query(`UPDATE profiles SET pending_cookies_json = ? WHERE id = ?`).run(stored, id);
       return merged.length;
     })();
   }
@@ -548,7 +395,9 @@ export class ProfileStore {
     const row = this.db.query<{ pending_cookies_json: string }, [string]>(
       `SELECT pending_cookies_json FROM profiles WHERE id = ?`,
     ).get(id);
-    return row ? safeParse<CookieRecord[]>(row.pending_cookies_json, []) : [];
+    if (!row) return [];
+    const decrypted = decryptField(row.pending_cookies_json, this.protector, "[]");
+    return safeParse<CookieRecord[]>(decrypted, []);
   }
 
   /** Remove the pending cookies a launch set. Cookies added during that launch stay pending. */
@@ -556,15 +405,23 @@ export class ProfileStore {
     this.transaction(() => {
       const done = new Set(applied.map((cookie) => JSON.stringify(cookie)));
       const left = this.getPendingCookies(id).filter((cookie) => !done.has(JSON.stringify(cookie)));
-      this.db.query(`UPDATE profiles SET pending_cookies_json = ? WHERE id = ?`).run(JSON.stringify(left), id);
+      const stored = left.length > 0 ? this.protector.encrypt(JSON.stringify(left)) : "[]";
+      this.db.query(`UPDATE profiles SET pending_cookies_json = ? WHERE id = ?`).run(stored, id);
     })();
   }
 
   /** Pending cookie count per profile with any. */
   pendingCookieCounts(): Map<string, number> {
-    return new Map(this.db.query<{ id: string; n: number }, []>(
-      `SELECT id, json_array_length(pending_cookies_json) AS n FROM profiles WHERE pending_cookies_json <> '[]'`,
-    ).all().map((row) => [row.id, row.n] as const));
+    const counts = new Map<string, number>();
+    const rows = this.db.query<{ id: string; pending_cookies_json: string }, []>(
+      `SELECT id, pending_cookies_json FROM profiles WHERE pending_cookies_json <> '[]' AND pending_cookies_json <> ''`,
+    ).all();
+    for (const row of rows) {
+      const decrypted = decryptField(row.pending_cookies_json, this.protector, "[]");
+      const cookies = safeParse<CookieRecord[]>(decrypted, []);
+      if (cookies.length > 0) counts.set(row.id, cookies.length);
+    }
+    return counts;
   }
 
   markSeeded(id: string): void {
@@ -576,14 +433,37 @@ export class ProfileStore {
    * verdict. Deliberately narrow: this is the launch path's only write, and it
    * must not be able to touch identity, credentials or the expectation.
    */
+  saveObservedFingerprint(profileId: string, observed: ObservedFingerprint, verdict: FingerprintVerdict | null): void;
+  saveObservedFingerprint(profileId: string, observed: ObservedFingerprint, verdict: FingerprintVerdict | null, expectedIncarnation: string): boolean;
+  saveObservedFingerprint(profileId: string, observed: ObservedFingerprint, verdict: FingerprintVerdict | null, expectedIncarnation: string | undefined, source: FingerprintCaptureSource | undefined): boolean;
   saveObservedFingerprint(
     profileId: string,
     observed: ObservedFingerprint,
     verdict: FingerprintVerdict | null,
-  ): void {
-    this.db
-      .query(`UPDATE profiles SET fp_observed_json = ?, fp_verdict_json = ? WHERE id = ?`)
-      .run(JSON.stringify(observed), verdict ? JSON.stringify(verdict) : "", profileId);
+    expectedIncarnation?: string,
+    source?: FingerprintCaptureSource,
+  ): void | boolean {
+    const provenance = source === undefined ? null : parseFingerprintSource(source);
+    if (source !== undefined && !provenance) throw new Error("Invalid fingerprint measurement source");
+    const save = () => {
+      if (provenance?.launchDigest) {
+        const launch = this.getLaunch(profileId);
+        if (!launch || fingerprintLaunchDigest(launch) !== provenance.launchDigest) return false;
+      }
+      const result = this.db
+        .query(`UPDATE profiles SET fp_observed_json = ?1, fp_verdict_json = ?2, fp_source_json = ?5 WHERE id = ?3
+          AND (?4 IS NULL OR (incarnation = ?4 AND trashed_at = 0))`)
+        .run(JSON.stringify(observed), verdict ? JSON.stringify(verdict) : "", profileId, expectedIncarnation ?? null, provenance ? JSON.stringify(provenance) : "");
+      return Number(result.changes) > 0;
+    };
+    const changed = provenance ? this.transaction(save)() : save();
+    if (expectedIncarnation !== undefined || arguments.length >= 5) return changed;
+  }
+
+  /** Local capture metadata is deliberately absent from Profile and portable exports. */
+  getFingerprintSource(profileId: string): FingerprintCaptureSource | null {
+    const row = this.db.query<{ source: string }, [string]>("SELECT fp_source_json AS source FROM profiles WHERE id = ? AND trashed_at = 0").get(profileId);
+    return row?.source ? parseFingerprintSource(safeParse(row.source, null)) : null;
   }
 
   /** Delete a profile and its launch row. Returns true if a row was removed. */
@@ -727,20 +607,50 @@ export class ProfileStore {
     }));
   }
 
-  /** Replace a group's default and every current member's materialized assignment. */
-  setGroupExtensionDefaults(name: string, extensionIds: string[]): number {
+  private extensionGroupRevisionState(group: string): ExtensionGroupRevisionState {
+    try {
+      // Review needs no credentials/cookies and no per-member lookup. Read only
+      // its group in one narrow query; malformed stored JSON must remain unknown.
+      const defaults = this.db.query<{ extensions: string }, [string]>("SELECT extension_defaults_json AS extensions FROM groups WHERE name=?").get(group);
+      const members = this.db.query<{ id: string; name: string; engine: unknown; extensions: string; incarnation: string; running: number }, [string]>(
+        `SELECT p.id,p.name,p.engine,p.extensions_json AS extensions,p.incarnation,
+          EXISTS(SELECT 1 FROM launches l WHERE l.profile_id=p.id) AS running
+          FROM profiles p WHERE p."group"=? AND p.trashed_at=0 ORDER BY p.id`,
+      ).all(group);
+      return {
+        scope: this.extensionGroupReviewScope, group, exists: defaults !== null || members.length > 0,
+        defaults: defaults ? JSON.parse(defaults.extensions) : [],
+        members: members.map(member => ({ id: member.id, incarnation: member.incarnation, engine: storedProfileEngine(member.engine), extensions: JSON.parse(member.extensions), name: member.name, running: member.running === 1 })),
+      };
+    } catch { throw new ExtensionGroupRevisionError("state-unavailable"); }
+  }
+
+  /** A complete, redacted review, measured in one database transaction. Never writes assignments. */
+  previewGroupExtensionDefaults(name: string, extensionIds: string[]): ExtensionGroupReview {
+    const selection = parseExtensionGroupSelection({ group: name, extensions: extensionIds });
+    return this.transaction(() => createExtensionGroupReview(this.extensionGroupRevisionState(selection.group), selection.extensions))();
+  }
+
+  /** Replace defaults and member assignments; a reviewed caller checks its snapshot in this SAME transaction. */
+  setGroupExtensionDefaults(name: string, extensionIds: string[], expectedFingerprint?: unknown): number {
     const group = name.trim();
     if (!group) throw new Error("group name required");
-    const defaultExtensions = normalizeExtensionIds(extensionIds);
+    const reviewed = expectedFingerprint !== undefined;
+    const defaultExtensions = reviewed ? parseExtensionGroupSelection({ group, extensions: extensionIds }).extensions : normalizeExtensionIds(extensionIds);
     const apply = this.transaction(() => {
+      // Must precede registerGroup and every write: a deleted/moved/recreated member
+      // or an external assignment edit cannot be silently adopted by an old review.
+      if (reviewed) assertExtensionGroupRevision(expectedFingerprint, this.extensionGroupRevisionState(group), defaultExtensions);
       this.registerGroup(group);
-      this.db.query(`UPDATE groups SET extension_defaults_json = ? WHERE name = ?`)
-        .run(JSON.stringify(defaultExtensions), group);
+      if (!reviewed || !sameStrings(canonicalExtensionSelection(this.getGroupExtensionDefaults(group)), defaultExtensions)) {
+        this.db.query(`UPDATE groups SET extension_defaults_json = ? WHERE name = ?`)
+          .run(JSON.stringify(defaultExtensions), group);
+      }
       let changed = 0;
       for (const profile of this.listProfiles()) {
         if (profile.group !== group) continue;
         const extensions = profile.engine === "firefox" ? [] : defaultExtensions;
-        if (sameStrings(profile.extensions ?? [], extensions)) continue;
+        if (sameStrings(reviewed ? canonicalExtensionSelection(profile.extensions ?? []) : profile.extensions ?? [], extensions)) continue;
         profile.extensions = [...extensions];
         this.upsertProfile(profile);
         changed++;
@@ -1061,9 +971,33 @@ function optionalJson<T>(key: string, raw: unknown): Record<string, T> {
   }
 }
 
-function rowToProfile(row: any): Profile {
+function decryptField(raw: unknown, protector?: LocalSecretProtector, fallback?: string): unknown {
+  if (!protector || typeof raw !== "string" || !raw) return raw;
+  try {
+    return protector.decrypt(raw);
+  } catch {
+    return fallback ?? raw;
+  }
+}
+
+function decryptOptionalSecret(raw: unknown, protector?: LocalSecretProtector): string | null {
+  if (typeof raw !== "string" || !raw) return null;
+  if (!protector) return raw;
+  try {
+    return protector.decrypt(raw);
+  } catch {
+    return null;
+  }
+}
+
+function rowToProfile(row: any, protector?: LocalSecretProtector): Profile {
   const browser = normalizeProfileEngine(row.engine, readStoredFirefoxConfig(row.firefox_config_json));
-  const stored = readStoredProxy(row.proxy_json, row.proxy_error);
+  const decryptedProxy = decryptField(row.proxy_json, protector);
+  const stored = readStoredProxy(decryptedProxy, row.proxy_error);
+  const password = decryptField(row.password, protector, "");
+  const emailPassword = decryptField(row.email_password, protector, "");
+  const twofa = decryptField(row.twofa, protector, "");
+  const cookiesRaw = decryptField(row.cookies_json, protector, "[]");
   return {
     id: row.id,
     engine: browser.engine,
@@ -1075,10 +1009,10 @@ function rowToProfile(row: any): Profile {
     group: row.group ?? "",
     platform: row.platform ?? "",
     username: row.username ?? "",
-    password: row.password ?? "",
+    password: typeof password === "string" ? password : "",
     email: row.email ?? "",
-    emailPassword: row.email_password ?? "",
-    twofa: row.twofa ?? "",
+    emailPassword: typeof emailPassword === "string" ? emailPassword : "",
+    twofa: typeof twofa === "string" ? twofa : "",
     proxy: stored.proxy,
     ...(stored.error ? { proxyError: stored.error } : {}),
     extensions: safeParse<string[]>(row.extensions_json, []),
@@ -1096,7 +1030,7 @@ function rowToProfile(row: any): Profile {
     ...optionalJson<ObservedFingerprint>("fpObserved", row.fp_observed_json),
     ...optionalJson<ObservedFingerprint>("fpExpected", row.fp_expected_json),
     ...optionalJson<FingerprintVerdict>("fpVerdict", row.fp_verdict_json),
-    cookies: safeParse<CookieRecord[]>(row.cookies_json, []),
+    cookies: safeParse<CookieRecord[]>(cookiesRaw, []),
     seeded: Boolean(row.seeded),
   };
 }

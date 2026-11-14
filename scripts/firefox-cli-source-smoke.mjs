@@ -12,6 +12,7 @@ const binary = resolve(binaryArg);
 const root = resolve(rootArg);
 const agentNonce = "a".repeat(64);
 const desktopNonce = "b".repeat(64);
+const dashboardSession = "c".repeat(64);
 await mkdir(root, { recursive: false });
 // Keep the source smoke state isolated from the normal desktop workspace.
 await mkdir(join(root, "state"));
@@ -35,6 +36,11 @@ const scriptHeaders = {
   authorization: `Bearer ${agentNonce}`,
   "content-type": "application/json",
 };
+function dashboardFetch(path, init = {}) {
+  const headers = new Headers(init.headers);
+  headers.set("X-Maobu-Desktop-Session", dashboardSession);
+  return fetch(baseUrl + path, { ...init, headers, redirect: "error" });
+}
 const child = Bun.spawn([
   process.execPath,
   "--no-env-file",
@@ -55,6 +61,8 @@ const child = Bun.spawn([
     ALIASMODE_AGENT_NONCE: agentNonce,
     ALIASMODE_DESKTOP_NONCE: desktopNonce,
     ALIASMODE_DESKTOP_VERSION: "source-smoke",
+    MAOBU_DESKTOP_SESSION: dashboardSession,
+    MAOBU_DESKTOP_AUTOMATION_TOKEN: "",
     ALIASMODE_FIREFOX_BINARY_PATH: binary,
     ALIASMODE_FIREFOX_BINARY_SHA256: expectedSha256,
     CLOAKBROWSER_BINARY_PATH: process.execPath,
@@ -105,7 +113,7 @@ try {
   let ready = false;
   for (let attempt = 0; attempt < 120; attempt++) {
     try {
-      const response = await fetch(`${baseUrl}/ui/api/health`);
+      const response = await dashboardFetch("/ui/api/health");
       if (response.ok && (await response.json()).ok === true) {
         ready = true;
         break;
@@ -115,7 +123,7 @@ try {
   }
   assert.equal(ready, true, "bun cli.ts start serves the source dashboard");
 
-  const created = await fetch(`${baseUrl}/ui/api/profiles`, {
+  const created = await dashboardFetch("/ui/api/profiles", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ engine: "firefox", name: "Firefox CLI source smoke", screen: "1440x900" }),
@@ -126,21 +134,21 @@ try {
   assert.equal(typeof createdBody.id, "string", "Firefox profile creation returns an id");
   profileId = createdBody.id;
 
-  const opened = await fetch(`${baseUrl}/ui/api/profiles/${encodeURIComponent(profileId)}/open`, { method: "POST" });
+  const opened = await dashboardFetch(`/ui/api/profiles/${encodeURIComponent(profileId)}/open`, { method: "POST" });
   assert.equal(opened.ok, true, "source API opens the Firefox profile");
   const openedBody = await opened.json();
   assert.equal(openedBody.ok, true, "Firefox open reports success");
   assert.equal(openedBody.engine, "firefox", "source API reports a native Firefox launch");
   started = true;
 
-  const profiles = await fetch(`${baseUrl}/ui/api/profiles`);
+  const profiles = await dashboardFetch("/ui/api/profiles");
   assert.equal(profiles.ok, true, "source API lists profiles after launch");
   const listed = (await profiles.json()).profiles;
   const profile = listed.find((item) => item.id === profileId);
   assert.equal(profile?.engine, "firefox", "source API preserves the Firefox engine");
   assert.equal(profile?.running, true, "source API reports the Firefox profile as running");
 
-  const closed = await fetch(`${baseUrl}/ui/api/profiles/${encodeURIComponent(profileId)}/close`, { method: "POST" });
+  const closed = await dashboardFetch(`/ui/api/profiles/${encodeURIComponent(profileId)}/close`, { method: "POST" });
   assert.equal(closed.ok, true, "source API closes the Firefox profile");
   assert.equal((await closed.json()).ok, true, "Firefox close reports success");
   started = false;
@@ -167,7 +175,7 @@ try {
   console.log(JSON.stringify(result));
 } finally {
   if (started && profileId) {
-    await fetch(`${baseUrl}/ui/api/profiles/${encodeURIComponent(profileId)}/close`, { method: "POST" }).catch(() => {});
+    await dashboardFetch(`/ui/api/profiles/${encodeURIComponent(profileId)}/close`, { method: "POST" }).catch(() => {});
   }
   try {
     child.stdin.write(`${JSON.stringify({ protocol: "aliasmode-desktop-v1", command: "shutdown", nonce: desktopNonce })}\n`);

@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { connect } from "node:net";
 import { join, posix, win32 } from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
@@ -11,6 +12,8 @@ export const AGENT_PROTOCOL = "aliasmode-agent-v1";
 export const AGENT_PATH = "/api/agent/v1/connect";
 export const RUNTIME_VERSION = process.env.ALIASMODE_APP_VERSION || "0.1.0-local.1";
 const STARTUP_WAIT_MS = 180_000;
+const MAX_HEALTH_BYTES = 16 * 1024;
+const MAX_HEALTH_HEADERS = 4 * 1024;
 // Replies can be much larger than requests, e.g. a large local profile list.
 const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
@@ -121,6 +124,46 @@ function processExists(pid) {
   }
 }
 
+function connectLoopback(port) {
+  return connect({ host: "127.0.0.1", port, family: 4 });
+}
+
+function readLocalHealth(descriptor) {
+  // Bun's HTTP client can consult proxy variables even with agent: false.
+  // This fixed HTTP/1.0 request uses a direct socket and a bounded, close-delimited reply.
+  return new Promise((resolve, reject) => {
+    const socket = connectLoopback(descriptor.port);
+    const chunks = [];
+    let received = 0;
+    const timer = setTimeout(() => socket.destroy(new Error("猫步·千境 health proof timed out")), 2_000);
+    socket.once("connect", () => socket.write(
+      `GET /ui/api/health HTTP/1.0\r\nHost: 127.0.0.1:${descriptor.port}\r\nAuthorization: Bearer ${descriptor.nonce}\r\nConnection: close\r\n\r\n`,
+    ));
+    socket.on("data", chunk => {
+      if (received + chunk.length > MAX_HEALTH_HEADERS + MAX_HEALTH_BYTES) {
+        socket.destroy(new Error("猫步·千境 health proof is oversized"));
+        return;
+      }
+      received += chunk.length;
+      chunks.push(chunk);
+    });
+    socket.once("end", () => {
+      const response = Buffer.concat(chunks, received);
+      const split = response.indexOf("\r\n\r\n");
+      const headers = split < 0 || split > MAX_HEALTH_HEADERS ? "" : response.toString("latin1", 0, split);
+      const body = response.subarray(split + 4);
+      if (!/^HTTP\/1\.[01] 200(?: |\r\n|$)/.test(headers) || /\r\ntransfer-encoding:/i.test(headers) || body.length > MAX_HEALTH_BYTES) {
+        reject(new Error("猫步·千境 health proof failed"));
+      } else resolve(body);
+    });
+    socket.once("error", reject);
+    socket.once("close", () => {
+      clearTimeout(timer);
+      reject(new Error("猫步·千境 health connection closed"));
+    });
+  });
+}
+
 async function verifyHealth(descriptor) {
   if (!processExists(descriptor.desktopPid) || !processExists(descriptor.sidecarPid)) {
     throw new Error("猫步·千境 runtime processes are not active");
@@ -128,16 +171,7 @@ async function verifyHealth(descriptor) {
   if (await processStartIdentity(descriptor.desktopPid) !== descriptor.desktopStartedAt) {
     throw new Error("猫步·千境 desktop process identity changed");
   }
-  const response = await fetch(`http://127.0.0.1:${descriptor.port}/ui/api/health`, {
-    signal: AbortSignal.timeout(2_000),
-    redirect: "error",
-  });
-  if (!response.ok || Number(response.headers.get("content-length") || 0) > 16 * 1024) {
-    throw new Error("猫步·千境 health proof failed");
-  }
-  const bytes = await response.arrayBuffer();
-  if (bytes.byteLength > 16 * 1024) throw new Error("猫步·千境 health proof is oversized");
-  const health = JSON.parse(new TextDecoder().decode(bytes));
+  const health = JSON.parse((await readLocalHealth(descriptor)).toString("utf8"));
   if (
     health.ok !== true ||
     health.version !== descriptor.appVersion ||
@@ -251,18 +285,14 @@ export class AgentRuntimeClient {
 async function connectAgent(descriptor) {
   await verifyHealth(descriptor);
   const url = `ws://127.0.0.1:${descriptor.port}${AGENT_PATH}`;
-  const bunNative = typeof process.versions.bun === "string";
-  const socket = bunNative
-    ? new globalThis.WebSocket(url, {
-        protocol: AGENT_PROTOCOL,
-        headers: { Authorization: `Bearer ${descriptor.nonce}` },
-      })
-    : new NodeWebSocket(url, AGENT_PROTOCOL, {
-        headers: { Authorization: `Bearer ${descriptor.nonce}` },
-        maxPayload: MAX_RESPONSE_BYTES,
-        handshakeTimeout: 5_000,
-        followRedirects: false,
-      });
+  const socket = new NodeWebSocket(url, AGENT_PROTOCOL, {
+    agent: false,
+    createConnection: () => connectLoopback(descriptor.port),
+    headers: { Authorization: `Bearer ${descriptor.nonce}` },
+    maxPayload: MAX_RESPONSE_BYTES,
+    handshakeTimeout: 5_000,
+    followRedirects: false,
+  });
   await new Promise((resolve, reject) => {
     let settled = false;
     const failed = (message) => {
@@ -279,13 +309,11 @@ async function connectAgent(descriptor) {
     listen(socket, "error", (error) => {
       failed(`猫步·千境 agent handshake failed: ${error?.message || "connection error"}`);
     }, true);
-    if (!bunNative) {
-      listen(socket, "unexpected-response", (_request, response) => {
-        failed(`猫步·千境 agent handshake was rejected with status ${response.statusCode}`);
-      }, true);
-    }
+    listen(socket, "unexpected-response", (_request, response) => {
+      failed(`猫步·千境 agent handshake was rejected with status ${response.statusCode}`);
+    }, true);
   });
-  if (!bunNative && socket.protocol !== AGENT_PROTOCOL) {
+  if (socket.protocol !== AGENT_PROTOCOL) {
     socket.close();
     throw new Error("猫步·千境 agent protocol negotiation failed");
   }

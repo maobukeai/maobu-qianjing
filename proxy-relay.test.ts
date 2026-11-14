@@ -1,5 +1,8 @@
 import { test, expect } from "bun:test";
+import { readFileSync } from "node:fs";
 import net from "node:net";
+import tls from "node:tls";
+import { join } from "node:path";
 import { startProxyRelay } from "./proxy-relay.ts";
 
 const EXPECTED_AUTH = "Basic " + Buffer.from("puser:ppass").toString("base64");
@@ -278,6 +281,16 @@ test("SOCKS5 wrong credentials never expose a successful local tunnel", async ()
   up.close();
 });
 
+test("SOCKS5 plain HTTP rejects NUL bytes in request line", async () => {
+  const up = await fakeSocksUpstream();
+  const relay = await startProxyRelay({ type: "socks5", host: "127.0.0.1", port: up.port, user: "puser", pass: "ppass" });
+  const got = await clientExchange(relay.port, "GET http://example.com/a\x00b HTTP/1.1\r\nHost: example.com\r\n\r\n");
+  expect(got).toBe("");
+  expect(up.targets()).toHaveLength(0);
+  relay.close();
+  up.close();
+});
+
 test("re-bind on a specific port (restart survival)", async () => {
   const up = await fakeUpstream();
   const first = await startProxyRelay({ host: "127.0.0.1", port: up.port, user: "puser", pass: "ppass" });
@@ -326,4 +339,58 @@ test("relay.close destroys accepted clients and upstream sockets, not only the l
 
   await Promise.all([clientClosed, upstreamClosed]);
   up.close();
+});
+
+test("rejects control characters in relay credentials", async () => {
+  await expect(startProxyRelay({ host: "127.0.0.1", port: 8080, user: "u\r\nX: 1", pass: "p" })).rejects.toThrow("control characters");
+  await expect(startProxyRelay({ host: "127.0.0.1", port: 8080, user: "u", pass: "p\nX: 1" })).rejects.toThrow("control characters");
+});
+
+test("rejects malformed CONNECT targets in HTTP mode without forwarding to upstream", async () => {
+  const up = await fakeUpstream();
+  const relay = await startProxyRelay({ host: "127.0.0.1", port: up.port, user: "puser", pass: "ppass" });
+  const badPath = await clientExchange(relay.port, "CONNECT evil.com:443/smuggled HTTP/1.1\r\nHost: evil.com:443\r\n\r\n");
+  expect(badPath).toContain("400 Bad Request");
+  const badUserinfo = await clientExchange(relay.port, "CONNECT user@evil.com:443 HTTP/1.1\r\nHost: evil.com:443\r\n\r\n");
+  expect(badUserinfo).toContain("400 Bad Request");
+  expect(up.connectCount()).toBe(0);
+  relay.close();
+  up.close();
+});
+
+test("HTTPS upstream: performs TLS handshake and injects Proxy-Authorization", async () => {
+  const cert = readFileSync(join(import.meta.dir, "test-fixtures/local-json-tls/cert.pem"));
+  const key = readFileSync(join(import.meta.dir, "test-fixtures/local-json-tls/key.pem"));
+  let sawAuth: string | null = null;
+  const server = tls.createServer({ cert, key }, (sock) => {
+    let buf = Buffer.alloc(0);
+    const onData = (chunk: Buffer) => {
+      buf = Buffer.concat([buf, chunk]);
+      const end = buf.indexOf("\r\n\r\n");
+      if (end === -1) return;
+      sock.removeListener("data", onData);
+      const head = buf.subarray(0, end).toString("latin1");
+      const authLine = head.split("\r\n").find((l) => /^proxy-authorization:/i.test(l));
+      sawAuth = authLine ? authLine.split(/:\s*/).slice(1).join(": ") : null;
+      if (sawAuth !== EXPECTED_AUTH) {
+        sock.end("HTTP/1.1 407 Proxy Authentication Required\r\n\r\n");
+        return;
+      }
+      sock.write("HTTP/1.1 200 Connection established\r\n\r\n");
+      sock.on("data", (d) => sock.write(d));
+    };
+    sock.on("data", onData);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as net.AddressInfo).port;
+  const relay = await startProxyRelay(
+    { type: "https", host: "127.0.0.1", port, user: "puser", pass: "ppass" },
+    { tls: { ca: cert, rejectUnauthorized: false } },
+  );
+  const got = await clientExchange(relay.port, "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n", undefined, "tls-ping");
+  expect(got).toContain("200 Connection established");
+  expect(got).toContain("tls-ping");
+  expect(sawAuth as string | null).toBe(EXPECTED_AUTH);
+  relay.close();
+  server.close();
 });

@@ -22,6 +22,8 @@ function harness(execute: ScriptExecution = async () => { }, options: {
     firefoxOwner?: any;
     realExecute?: boolean;
     python?: PythonRuntime;
+    maxConcurrentRuns?: number;
+    maxRunHistory?: number;
 } = {}) {
     const directory = root();
     const events: string[] = [];
@@ -32,7 +34,7 @@ function harness(execute: ScriptExecution = async () => { }, options: {
     const profiles = (options.profileIds ?? ["a", "b", "c"]).map((id) => ({ id, name: id, group: "", platform: "", username: `user-${id}`, password: `test-password-${id}`, twofa: "" }));
     const library = new ScriptLibrary(directory);
     const supervisor = new ScriptSupervisor({
-        root: directory, library, python: options.python, ...(options.realExecute ? {} : { execute }),
+        root: directory, library, python: options.python, maxConcurrentRuns: options.maxConcurrentRuns, maxRunHistory: options.maxRunHistory, ...(options.realExecute ? {} : { execute }),
         store: { getProfile: (id: string) => profiles.find((p) => p.id === id), getLaunch: (id: string) => launches.get(id), listAgentTemporary: () => [] } as any,
         launcher: {
             certifiedActive: async (id: string) => launches.has(id),
@@ -658,4 +660,52 @@ test("shutdown rejects new script runs before any browser opens", async () => {
     await h.supervisor.shutdown();
     expect(() => h.supervisor.start({ scriptId: script.id, profileIds: ["a"], inputs: {}, useCredentials: false })).toThrow("shuts down");
     expect(h.events).toEqual([]);
+});
+test("disjoint profiles run concurrently while overlapping profiles and explicit single-slot limits reject", async () => {
+    const gates = new Map<string, () => void>();
+    const running = new Set<string>();
+    const h = harness(async ({ input: data, logFd }) => {
+        running.add(data.profile.id);
+        writeFileSync(logFd, `running:${data.profile.id}\n`);
+        await new Promise<void>((resolve) => gates.set(data.profile.id, resolve));
+        running.delete(data.profile.id);
+    }, { profileIds: ["a", "b", "c", "d"] });
+    const script = await h.library.save(input);
+    const run1 = h.supervisor.start({ scriptId: script.id, profileIds: ["a", "b"], inputs: {}, useCredentials: false });
+    await until(() => gates.has("a") && gates.has("b"));
+    expect(() => h.supervisor.start({ scriptId: script.id, profileIds: ["b", "c"], inputs: {}, useCredentials: false })).toThrow("already running");
+    const run2 = h.supervisor.start({ scriptId: script.id, profileIds: ["c", "d"], inputs: {}, useCredentials: false });
+    await until(() => gates.has("c") && gates.has("d"));
+    expect(running.size).toBe(4);
+    for (const resolve of gates.values()) resolve();
+    await h.supervisor.settled();
+    expect(h.supervisor.status(run1.id)?.status).toBe("finished");
+    expect(h.supervisor.status(run2.id)?.status).toBe("finished");
+    expect(h.supervisor.log(run1.id, 0).text).toContain("running:a");
+    expect(h.supervisor.log(run2.id, 0).text).toContain("running:c");
+
+    const single = harness(async ({ input: data }) => {
+        await new Promise<void>((resolve) => gates.set(`single-${data.profile.id}`, resolve));
+    }, { maxConcurrentRuns: 1 });
+    const s2 = await single.library.save(input);
+    single.supervisor.start({ scriptId: s2.id, profileIds: ["a"], inputs: {}, useCredentials: false });
+    await until(() => gates.has("single-a"));
+    expect(() => single.supervisor.start({ scriptId: s2.id, profileIds: ["b"], inputs: {}, useCredentials: false })).toThrow("already running");
+    gates.get("single-a")!();
+    await single.supervisor.settled();
+});
+test("retains bounded run history and logs across subsequent runs", async () => {
+    let counter = 0;
+    const h = harness(async ({ logFd }) => { writeFileSync(logFd, `run-log-${++counter}\n`); }, { maxRunHistory: 3 });
+    const script = await h.library.save(input);
+    const ids: string[] = [];
+    for (let i = 0; i < 4; i++) {
+        const run = h.supervisor.start({ scriptId: script.id, profileIds: ["a"], inputs: {}, useCredentials: false });
+        ids.push(run.id);
+        await h.supervisor.settled(run.id);
+    }
+    expect(h.supervisor.listRuns().map((r) => r.id)).toEqual([ids[3]!, ids[2]!, ids[1]!]);
+    expect(() => h.supervisor.log(ids[0]!, 0)).toThrow("Run not found");
+    expect(h.supervisor.log(ids[1]!, 0).text).toContain("run-log-2");
+    expect(h.supervisor.log(ids[3]!, 0).text).toContain("run-log-4");
 });

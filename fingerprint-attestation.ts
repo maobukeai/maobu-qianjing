@@ -92,6 +92,11 @@ export const VERDICT_FIELDS: ReadonlyArray<keyof ObservedFingerprint> = [
   "platform",
 ];
 
+/** Legacy comparisons accept nonempty strings and finite numbers, including numeric strings. */
+export function comparableAttestationScalar(value: unknown): value is string | number {
+  return typeof value === "string" && value.length > 0 || typeof value === "number" && Number.isFinite(value);
+}
+
 /** Pull the Chrome version out of a UA, e.g. "146.0.0.0". */
 function chromeVersion(ua: string | undefined): string | undefined {
   return ua?.match(/Chrome\/([\d.]+)/)?.[1];
@@ -145,7 +150,7 @@ export function attestationFields(fp: ObservedFingerprint | undefined): Record<s
   const out: Record<string, string> = {};
   for (const key of FP_BLOCK_KEYS) {
     const value = fp?.[FIELD_BY_KEY[key]];
-    out[key] = value === undefined || value === null ? "" : String(value);
+    out[key] = comparableAttestationScalar(value) ? String(value) : "";
   }
   return out;
 }
@@ -185,11 +190,19 @@ export function compareAttestation(
   const differences: FingerprintDifference[] = [];
   for (const field of VERDICT_FIELDS) {
     const want = expected[field];
-    if (want === undefined || want === null || want === "") continue;
+    if (!comparableAttestationScalar(want)) continue;
     const got = observed[field];
-    if (String(got ?? "") !== String(want)) {
-      differences.push({ field, expected: String(want), observed: String(got ?? "") });
+    const expectedText = String(want);
+    const observedText = comparableAttestationScalar(got) ? String(got) : "";
+    if (observedText !== expectedText) {
+      differences.push({ field, expected: expectedText, observed: observedText });
     }
   }
   return { verdict: differences.length ? "mismatch" : "match", differences };
+}
+
+/** A persisted verdict requires at least one comparable expectation. */
+export function captureAttestationVerdict(expected: ObservedFingerprint | null | undefined, observed: ObservedFingerprint): FingerprintVerdict | null {
+  if (!expected || !VERDICT_FIELDS.some(field => comparableAttestationScalar(expected[field]))) return null;
+  return compareAttestation(expected, observed);
 }

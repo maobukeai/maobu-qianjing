@@ -1,0 +1,117 @@
+name: Prepare signed Windows release draft
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact version already committed in the app and helper sources (without v)
+        required: true
+        type: string
+      prerelease:
+        description: Mark this release as a prerelease (the stable native channel ignores prereleases)
+        default: true
+        type: boolean
+      notes:
+        description: Release notes for the draft and update manifest
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maobu-signed-release
+  cancel-in-progress: false
+
+jobs:
+  windows-draft:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    environment: release
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_NOTES: ${{ inputs.notes }}
+      IS_PRERELEASE: ${{ inputs.prerelease }}
+      MAOBU_UPDATE_PUBLIC_KEY: ${{ vars.MAOBU_UPDATE_PUBLIC_KEY }}
+      MAOBU_UPDATE_ENDPOINT: https://github.com/${{ github.repository }}/releases/latest/download/latest.json
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Check publisher configuration
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if (-not $env:MAOBU_UPDATE_PUBLIC_KEY) { throw 'Set the MAOBU_UPDATE_PUBLIC_KEY repository or release-environment variable.' }
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { throw 'Set the TAURI_SIGNING_PRIVATE_KEY release-environment secret. This workflow never generates a production signing key.' }
+          if ($env:IS_PRERELEASE -eq 'false' -and $env:RELEASE_VERSION.Split('+')[0].Contains('-')) { throw 'A semantic prerelease version must be marked as a prerelease.' }
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.13
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: 1.95.0
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test --timeout 10000
+      - run: bun run docs:public:check
+      - name: Prepare notes
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path node_modules/.cache/release | Out-Null
+          [IO.File]::WriteAllText((Join-Path (Get-Location) 'node_modules/.cache/release/notes.md'), $env:RELEASE_NOTES, [Text.UTF8Encoding]::new($false))
+      - name: Build and verify signed release assets
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          ./scripts/release-build-windows.ps1 -ReleaseVersion $env:RELEASE_VERSION -Repository $env:GITHUB_REPOSITORY -NotesFile node_modules/.cache/release/notes.md
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --features release-tools --bin maobu-release-verify
+      - name: Select verified release files
+        id: release-assets
+        shell: pwsh
+        run: |
+          $selection = & node scripts/release-manifest.mjs --assets-dir "dist/release-$env:RELEASE_VERSION" --repository $env:GITHUB_REPOSITORY --version $env:RELEASE_VERSION --list-assets true
+          if ($LASTEXITCODE -ne 0) { throw 'The verified release asset set is incomplete or invalid.' }
+          $files = @(($selection | ConvertFrom-Json).files)
+          if ($files.Count -ne 6) { throw 'The verified release asset set must contain six files.' }
+          $artifactPaths = ($files | ForEach-Object { $_.Replace('\', '/') }) -join "`n"
+          $output = "selection=$selection`npaths<<MAOBU_RELEASE_ASSET_PATHS`n$artifactPaths`nMAOBU_RELEASE_ASSET_PATHS`n"
+          [IO.File]::AppendAllText($env:GITHUB_OUTPUT, $output, [Text.UTF8Encoding]::new($false))
+      - name: Retain verified release artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: maobu-signed-${{ inputs.version }}-windows-x64
+          path: ${{ steps.release-assets.outputs.paths }}
+          if-no-files-found: error
+      - name: Create a draft only
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ASSET_SELECTION: ${{ steps.release-assets.outputs.selection }}
+        run: |
+          $files = @(($env:RELEASE_ASSET_SELECTION | ConvertFrom-Json).files)
+          if ($files.Count -ne 6) { throw 'The verified release asset selection is unavailable.' }
+          $tag = "v$env:RELEASE_VERSION"
+          & gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName 2>$null
+          if ($LASTEXITCODE -eq 0) { throw 'A release with this tag already exists; artifacts will not be overwritten.' }
+          $tagRefs = & git ls-remote origin "refs/tags/$tag" "refs/tags/$tag^{}"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not verify the release tag before creating its draft.' }
+          if ($tagRefs) {
+            $peeled = $tagRefs | Where-Object { $_.EndsWith('^{}') } | Select-Object -First 1
+            $selected = if ($peeled) { $peeled } else { $tagRefs | Select-Object -First 1 }
+            $tagCommit = ($selected -split '\s+')[0]
+            if ($tagCommit -ne $env:GITHUB_SHA) { throw 'The release tag already points to a different commit; it will not be moved.' }
+          }
+          $arguments = @('release', 'create', $tag, '--repo', $env:GITHUB_REPOSITORY, '--target', $env:GITHUB_SHA, '--draft', '--title', "猫步·千境 $env:RELEASE_VERSION", '--notes-file', 'node_modules/.cache/release/notes.md')
+          if ($env:IS_PRERELEASE -eq 'true') { $arguments += '--prerelease' }
+          & gh @arguments @files
+          if ($LASTEXITCODE -ne 0) { throw 'Draft release creation failed. Nothing was published.' }

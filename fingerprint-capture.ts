@@ -11,8 +11,10 @@
 
 import { runPlaywrightWorker, type PlaywrightWorkerOptions } from "./playwright-runtime.ts";
 import { fingerprintProbe, type FingerprintSample } from "./diagnose.ts";
-import { compareAttestation, observedFromSample, VERDICT_FIELDS } from "./fingerprint-attestation.ts";
+import { captureAttestationVerdict, observedFromSample } from "./fingerprint-attestation.ts";
 import type { FingerprintVerdict, ObservedFingerprint, Profile } from "./types.ts";
+import type { LaunchInfo } from "./types.ts";
+import { createFingerprintSource, type FingerprintCaptureSource } from "./fingerprint-source.ts";
 
 const DEFAULT_CAPTURE_TIMEOUT_MS = 15_000;
 
@@ -34,7 +36,8 @@ export async function captureFingerprint(
 export interface RecordCaptureArgs {
   profile: Profile;
   capture: () => Promise<FingerprintSample | null>;
-  save: (profileId: string, observed: ObservedFingerprint, verdict: FingerprintVerdict | null) => void;
+  save: (profileId: string, observed: ObservedFingerprint, verdict: FingerprintVerdict | null, source: FingerprintCaptureSource) => unknown;
+  launch?: LaunchInfo | null;
   log: (msg: string) => void;
   /** WebRTC policy in force for this launch; recorded, never compared. */
   webrtc?: string;
@@ -50,6 +53,7 @@ export interface RecordCaptureArgs {
  */
 export async function recordCapture(args: RecordCaptureArgs): Promise<boolean> {
   const { profile, capture, save, log, webrtc } = args;
+  const source = createFingerprintSource(profile, args.launch);
   let sample: FingerprintSample | null;
   try {
     sample = await capture();
@@ -59,12 +63,10 @@ export async function recordCapture(args: RecordCaptureArgs): Promise<boolean> {
   }
   if (!sample) return false;
   const observed = observedFromSample(sample, { webrtc, capturedAt: new Date().toISOString() });
-  const expected = profile.fpExpected;
-  const comparable = expected && VERDICT_FIELDS.some((field) => expected[field] !== undefined && expected[field] !== "");
-  const verdict = comparable ? compareAttestation(expected, observed) : null;
+  const verdict = captureAttestationVerdict(profile.fpExpected, observed);
   if (observed.errors) log(`${profile.id}: fingerprint fields unavailable (${Object.keys(sample.errors!).join(", ")})`);
   try {
-    save(profile.id, observed, verdict);
+    if (save(profile.id, observed, verdict, source) === false) return false;
   } catch (err) {
     log(
       `fingerprint capture could not be stored for ${profile.id} (continuing): ${err instanceof Error ? err.message : err}`,

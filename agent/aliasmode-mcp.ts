@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { discoverRuntime } from "./runtime-client.mjs";
 import { configureClients, type SetupClient } from "./setup.ts";
+import { MCP_SCOPE_USAGE, parseMcpScopeArgs, READ_ONLY_MCP_ARGS, type McpScope } from "./mcp-scope.mjs";
 import { ALIASMODE_VERSION } from "../version.ts";
 
 const VERSION = ALIASMODE_VERSION;
@@ -119,12 +120,12 @@ async function runProcess(command: string, args: string[], env: NodeJS.ProcessEn
   });
 }
 
-async function serve(): Promise<never> {
+async function serve(scope: McpScope): Promise<never> {
   const root = runtimeRoot();
   const node = nodeExecutable(root);
   const host = join(root, "agent", "mcp-host.mjs");
   if (!existsSync(node) || !existsSync(host)) throw new Error("packaged 猫步·千境 MCP runtime is incomplete");
-  const code = await runProcess(node, [host], childEnvironment({
+  const code = await runProcess(node, [host, "--scope", scope], childEnvironment({
     ALIASMODE_APP_VERSION: VERSION,
     ALIASMODE_DESKTOP_EXE: desktopExecutable(),
   }));
@@ -264,6 +265,7 @@ async function setup(args: string[]): Promise<unknown> {
   else throw new Error("--client must be auto, claude, codex, openclaw, hermes, or generic");
   const result = await configureClients({
     helper: helperExecutable(),
+    args: [...READ_ONLY_MCP_ARGS],
     clients,
   });
   if (result.clients.some((client) => client.status === "failed")) {
@@ -274,7 +276,11 @@ async function setup(args: string[]): Promise<unknown> {
 
 async function main(argv: string[]): Promise<void> {
   const [command = "serve", ...args] = argv;
-  if (command === "serve") return await serve();
+  if (command === "--help" || command === "help" || command === "serve" && args.length === 1 && args[0] === "--help") {
+    process.stdout.write(`aliasmode-mcp ${MCP_SCOPE_USAGE}\nThe default scope allows read-only inventory and local diagnostics.\nUse profiles to create, edit, or delete environments.\nUse browser to control browsers.\nUse full to enable both.\n`);
+    return;
+  }
+  if (command === "serve") return await serve(parseMcpScopeArgs(args));
   if (command === "version") {
     process.stdout.write(`${JSON.stringify({ ok: true, result: { version: VERSION } })}\n`);
     return;

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { renameWithWindowsRetrySync } from "./windows-rename.ts";
 
 export const WORKSPACE_COLORS = ["#8169c8", "#628ac7", "#638f77", "#c4905b", "#b87594", "#7c7d8e"] as const;
 export const WORKSPACE_ICONS = ["laptop", "folder", "briefcase", "globe", "star", "layers"] as const;
@@ -40,11 +41,16 @@ export function writeWorkspaceJson(path: string, value: unknown): void {
   if (workspaceEntryExists(path) && (lstatSync(path).isSymbolicLink() || !lstatSync(path).isFile())) throw new Error("Linked workspace metadata is not supported");
   const temporary = `${path}.${randomUUID()}.tmp`;
   const fd = openSync(temporary, "wx", 0o600);
+  let failed = false;
   try {
     try { writeFileSync(fd, JSON.stringify(value, null, 2) + "\n"); fsyncSync(fd); }
     finally { closeSync(fd); }
-    renameSync(temporary, path);
-  } finally { if (workspaceEntryExists(temporary)) unlinkSync(temporary); }
+    renameWithWindowsRetrySync(temporary, path);
+  } catch (error) { failed = true; throw error; }
+  finally {
+    try { if (workspaceEntryExists(temporary)) unlinkSync(temporary); }
+    catch (error) { if (!failed) throw error; }
+  }
 }
 function workspaceName(value: unknown): string {
   if (typeof value !== "string") throw new Error("Workspace name is required");
@@ -172,10 +178,10 @@ export class WorkspaceCatalog {
       const parent = join(this.home, "workspaces"); plainDirectory(parent, true);
       const target = this.location(entry.id);
       if (existsSync(target)) throw new Error("Workspace destination already exists");
-      if (staging) renameSync(staging, target); else mkdirSync(target);
+      if (staging) renameWithWindowsRetrySync(staging, target); else mkdirSync(target);
       try { registry.workspaces.push(entry); writeWorkspaceJson(this.registryPath, registry); }
       catch (error) {
-        if (staging) renameSync(target, staging);
+        if (staging) renameWithWindowsRetrySync(target, staging);
         else { try { rmdirSync(target); } catch {} }
         throw error;
       }

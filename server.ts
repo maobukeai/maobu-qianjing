@@ -9,17 +9,24 @@
  *   active -> data.data.status === "Inactive"
  *   status -> data.code === 0 (health)
  */
-import type { Launcher } from "./launcher.ts";
+import { BrowserLaunchError, type Launcher } from "./launcher.ts";
 import { callFirefoxOwner, type FirefoxOwner } from "./firefox-runtime.ts";
 import type { ProfileStore } from "./store.ts";
 import { normalizeProfileIds, type LifecycleAdmissionController, type LifecycleState, } from "./lifecycle-admission.ts";
 import { harvestCookies, keepUnreadableOrigins, parseCapturedSessionBundle, sessionCaptureSeed, workerCaptureSeed } from "./session.ts";
+import { canonicalIp } from "./ip.ts";
+
+export const API_SECURITY_HEADERS = {
+    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+} as const;
 
 function ok(data?: unknown) {
-    return Response.json({ code: 0, msg: "success", data: data ?? {} });
+    return Response.json({ code: 0, msg: "success", data: data ?? {} }, { headers: API_SECURITY_HEADERS });
 }
 function fail(msg: string) {
-    return Response.json({ code: -1, msg, data: {} });
+    return Response.json({ code: -1, msg, data: {} }, { headers: API_SECURITY_HEADERS });
 }
 const FIREFOX_CAPABILITIES = ["firefox-native", "cookies", "navigation", "sessions", "mcp", "scripts"] as const;
 type FirefoxLaunch = {
@@ -97,15 +104,63 @@ function parseLaunchArgs(raw: string | null): string[] {
     }
 }
 export function isLoopbackAddress(address: string | null | undefined): boolean {
-    return !!address && (address.startsWith("127.") || address === "::1" || address.startsWith("::ffff:127."));
+    const ip = address ? canonicalIp(address) : null;
+    return !!ip && (ip.startsWith("127.") || ip === "::1");
+}
+export interface LocalHttpBoundaryOptions {
+    port?: number;
+    requireHost?: boolean;
+    /** Provided by the actual TCP server; absent only for in-process dispatch. */
+    clientAddress?: string | null;
+}
+function localBoundaryFailure(error: string): Response {
+    return Response.json({ ok: false, error, code: -1, msg: error, data: {} }, { status: 403,
+        headers: { ...API_SECURITY_HEADERS, "cache-control": "no-store", vary: "Origin, Sec-Fetch-Site" } });
+}
+function loopbackAuthority(authority: string, protocol: string): URL | null {
+    if (!/^(?:127\.0\.0\.1|localhost|\[::1\])(?::[1-9]\d{0,4})?$/i.test(authority)) return null;
+    try { return new URL(`${protocol}//${authority}`); } catch { return null; }
+}
+/** Guard before routing: local TCP alone does not prevent DNS rebinding or browser CSRF. */
+export function rejectUntrustedLocalRequest(req: Request, options: LocalHttpBoundaryOptions = {}): Response | null {
+    if ("clientAddress" in options && !isLoopbackAddress(options.clientAddress)) return localBoundaryFailure("Local API requires a loopback connection");
+    let url: URL;
+    try { url = new URL(req.url); } catch { return localBoundaryFailure("Local API requires a loopback URL"); }
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || !loopbackAuthority(url.host, url.protocol)) {
+        return localBoundaryFailure("Local API requires a loopback URL");
+    }
+    const port = Number(url.port || (url.protocol === "https:" ? 443 : 80));
+    if (options.port !== undefined && port !== options.port) return localBoundaryFailure("Local API port does not match this server");
+    const host = req.headers.get("host");
+    if (host === null) {
+        if (options.requireHost) return localBoundaryFailure("Local API Host does not match this server");
+    } else {
+        const authority = loopbackAuthority(host, url.protocol);
+        if (!authority || authority.host.toLowerCase() !== url.host.toLowerCase()) return localBoundaryFailure("Local API Host does not match this server");
+    }
+    // This permanently removed route has no state or payload processing. Keep
+    // its existing 410 contract even for requests from the retired service.
+    if (url.pathname === "/api/xactions/health-snapshot") return null;
+    const origin = req.headers.get("origin");
+    if (origin !== null && origin !== url.origin) return localBoundaryFailure("Cross-origin local API requests are forbidden");
+    const site = req.headers.get("sec-fetch-site");
+    if (site !== null && !["same-origin", "none"].includes(site.toLowerCase())) return localBoundaryFailure("Cross-site local API requests are forbidden");
+    const referer = req.headers.get("referer");
+    if (referer !== null) {
+        try { if (new URL(referer).origin !== url.origin) return localBoundaryFailure("Cross-origin local API requests are forbidden"); }
+        catch { return localBoundaryFailure("Invalid local API request context"); }
+    }
+    return null;
 }
 /** Handle one request. Exposed so the dashboard server (web.ts) and tests can call it directly. */
 export async function handleRequest(req: Request, launcher: Launcher, store: ProfileStore, lifecycle?: BrowserLifecycleContext): Promise<Response> {
+    const boundary = rejectUntrustedLocalRequest(req);
+    if (boundary) return boundary;
     const url = new URL(req.url);
     const { pathname, searchParams } = url;
     const userId = searchParams.get("user_id") ?? "";
     if (pathname === "/api/xactions/health-snapshot") {
-        return Response.json({ ok: false, error: "This endpoint was removed from the local edition" }, { status: 410 });
+        return Response.json({ ok: false, error: "This endpoint was removed from the local edition" }, { status: 410, headers: API_SECURITY_HEADERS });
     }
     // `/status` is the path AdsPower's own local API serves; `/api/v1/status`
     // is accepted for compatibility, so any AdsPower REST client is a base-URL flip.
@@ -131,7 +186,7 @@ export async function handleRequest(req: Request, launcher: Launcher, store: Pro
             });
         }
         catch (err) {
-            return fail(err instanceof Error ? err.message : String(err));
+            return fail(err instanceof BrowserLaunchError ? err.guidance ?? err.message : err instanceof Error ? err.message : String(err));
         }
     }
     if (pathname === "/api/v1/browser/stop") {

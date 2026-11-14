@@ -6,6 +6,8 @@
 }
 .workspace.proxy-page[hidden] { display: none; }
 .workspace.proxy-page > * { flex: 0 0 auto; min-width: 0; }
+.workspace.proxy-manager > * { width: 100%; max-width: 1320px; margin-inline: auto; }
+.proxy-manager .tools-intro h1 { margin: 0 0 8px; color: var(--ink); font-size: 24px; font-weight: 550; line-height: 1.25; letter-spacing: -.035em; }
 .proxy-page h2, .proxy-page h3, .proxy-page p { margin: 0; }
 .proxy-page h3 { font-size: 13px; font-weight: 500; }
 .tools-intro { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
@@ -25,15 +27,26 @@
 .tools-tabs button small { display: block; margin-top: 3px; font-size: 11px; font-weight: 400; }
 .tools-tabs button.selected { color: var(--accent-ink); background: transparent; border-bottom-color: var(--accent); box-shadow: none; }
 .tools-tabs button:hover { color: var(--ink); }
+.tools-tabs button:disabled { cursor: default; opacity: .6; }
+.tools-tabs button:disabled.selected { opacity: 1; }
 .tools-tabs button:focus-visible, .folder-all:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .proxy-folder-list, .proxy-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .proxy-folder-list { padding: 0 20px 20px; gap: 8px; }
 .folder-chip { display: inline-flex; gap: 7px; align-items: center; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px 10px; color: var(--muted); background: var(--surface); font-size: 12px; cursor: pointer; overflow-wrap: anywhere; }
 .folder-chip.selected { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-ink); }
+.folder-chip.partial { background: var(--surface-hover); border-color: var(--accent-line); color: var(--accent-ink); }
 .proxy-page input[type=checkbox] { accent-color: var(--accent); width: 14px; height: 14px; flex-shrink: 0; cursor: pointer; }
 .proxy-choice { display: inline-flex; align-items: center; gap: 6px; color: var(--ink); font-size: 12px; }
 .proxy-page .tools-hint { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .proxy-scope > .tools-hint { padding: 0 20px 16px; }
+.proxy-scope-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin: 0 20px 18px; padding: 0 0 16px; border-bottom: 1px solid var(--line-soft); }
+.proxy-scope-summary > div { min-width: 0; }
+.proxy-scope-summary strong { display: block; color: var(--ink-soft); font-size: 22px; font-weight: 500; line-height: 1.4; font-variant-numeric: tabular-nums; }
+.proxy-scope-summary span { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
+.proxy-scope .proxy-scope-note { padding-top: 0; margin-top: -4px; }
+.proxy-repair-return { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; }
+.proxy-repair-scope .proxy-affected { width: fit-content; max-width: 100%; }
+.proxy-affected > .btn { margin-top: 8px; white-space: normal; }
 .proxy-page .tools-footnote { font-size: 11px; color: var(--faint); line-height: 1.6; }
 .tools-step { display: inline-flex; align-items: center; justify-content: center; width: 23px; height: 23px; border-radius: 50%; background: var(--accent-soft); color: var(--accent-ink); font-size: 11px; }
 .tools-stats { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); background: var(--surface-sunken); }
@@ -53,6 +66,35 @@
 .tools-alert { border-color: var(--danger-line); background: var(--danger-soft); color: var(--danger-ink); }
 .tools-progress .proxy-actions { justify-content: space-between; }
 .tools-progress progress { display: block; width: 100%; height: 5px; margin-top: 10px; accent-color: var(--accent); }
+.tools-progress .proxy-operation-note { margin-top: 8px; font-size: 11px; font-weight: 400; line-height: 1.7; }
+.proxy-outcome { display: flex; flex-direction: column; gap: 5px; margin: 0; padding: 15px 20px; border-bottom: 1px solid var(--line-soft); }
+.proxy-outcome strong { color: var(--ink-soft); font-size: 12px; font-weight: 500; line-height: 1.6; }
+.proxy-outcome span { color: var(--muted); font-size: 11px; line-height: 1.6; }
+.proxy-results-search { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 0 20px 15px; }
+.proxy-results-search > label { flex: 1; min-width: 220px; max-width: 620px; }
+.proxy-results-search .input { width: 100%; min-width: 0; font-size: 12px; }
+.proxy-results-search > span { color: var(--faint); font-size: 11px; line-height: 1.6; }
+.proxy-summary-help { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 0 20px 14px; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.proxy-summary-help strong { color: var(--accent-ink); font-weight: 500; }
+.proxy-summary-fallback { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin: 0 20px 16px; padding: 12px; border: 1px solid var(--accent-line); border-radius: var(--r-sm); background: var(--accent-soft); font-size: 12px; line-height: 1.6; }
+.proxy-summary-fallback > label { display: flex; flex-direction: column; gap: 6px; width: 100%; min-width: 0; color: var(--muted); }
+.proxy-summary-fallback textarea { width: 100%; min-width: 0; resize: vertical; padding: 10px; color: var(--ink-soft); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm); font: 11px/1.6 var(--font-mono, monospace); }
+.proxy-summary-fallback textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.proxy-partial-note { padding: 0 20px 16px; }
+.proxy-format-help { color: var(--muted); font-size: 12px; line-height: 1.7; padding: 0 0 4px; }
+.proxy-format-help summary { width: fit-content; cursor: pointer; color: var(--accent-ink); }
+.proxy-format-help pre { margin: 10px 0 8px; padding: 11px 13px; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r-sm); color: var(--ink-soft); background: var(--surface-sunken); font: 11px/1.8 var(--mono); }
+.proxy-format-help > p { font-size: 11px; }
+.proxy-per-proxy > input { width: 150px; max-width: 100%; }
+.proxy-input-error { color: var(--danger-ink); font-size: 11px; }
+.proxy-input-feedback { display: flex; flex-direction: column; gap: 5px; padding: 12px 14px; color: var(--muted); background: var(--surface-sunken); border: 1px solid var(--line); border-radius: var(--r-sm); font-size: 11.5px; line-height: 1.7; overflow-wrap: anywhere; }
+.proxy-input-feedback strong { color: var(--ink-soft); font-weight: 500; }
+.proxy-input-feedback > span { font-size: 11px; color: var(--faint); }
+.proxy-input-feedback.has-errors { border-color: var(--danger-line); }
+.proxy-input-feedback.has-errors strong { color: var(--danger-ink); }
+.proxy-preview-warning { display: flex; align-items: center; flex-wrap: wrap; gap: 7px 12px; padding: 14px 20px; color: var(--warn-ink); background: var(--warn-soft); border-top: 1px solid var(--warn-line); border-bottom: 1px solid var(--warn-line); font-size: 12px; line-height: 1.7; }
+.proxy-preview-warning > strong { width: 100%; font-weight: 550; }
+.proxy-preview-warning > span { flex: 1; min-width: 220px; font-size: 11px; }
 .proxy-upload { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--muted); font-size: 12px; }
 .proxy-upload input { max-width: 250px; font-size: 11px; }
 .proxy-input-panel textarea { font: 12px/1.8 var(--mono); resize: vertical; min-height: 120px; }
@@ -71,6 +113,20 @@
 .tools-status.ready { background: var(--accent-soft); color: var(--accent-ink); }
 .tools-status.failed, .tools-status.invalid { background: var(--danger-soft); color: var(--danger-ink); }
 .tools-status.unstable, .tools-status.skipped, .tools-status.missing { background: var(--warn-soft); color: var(--warn-ink); }
+.tools-status.unknown, .tools-status.not-started { background: var(--warn-soft); color: var(--warn-ink); }
+.tools-status.applying { background: var(--accent-soft); color: var(--accent-ink); }
+.proxy-task-card [data-proxy-task-title]:focus-visible, .proxy-manager [data-proxy-review-title]:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 3px; }
+.proxy-task-notes, .proxy-task-counts, .proxy-task-meter, .proxy-task-history { margin: 0; padding: 0 20px 14px; }
+.proxy-task-notes { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
+.proxy-task-notes p { margin: 0; }
+.proxy-task-counts, .proxy-task-meter { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; color: var(--muted); font-size: 12px; }
+.proxy-task-meter progress { width: min(100%, 340px); accent-color: var(--accent); }
+.proxy-task-history { font-size: 12px; color: var(--ink-soft); }
+.proxy-task-history summary { cursor: pointer; width: fit-content; }
+.proxy-task-history ul { padding: 8px 0 0; margin: 0; list-style: none; }
+.proxy-task-history li { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 6px 0; border-top: 1px solid var(--line-soft); }
+.proxy-task-history time { color: var(--muted); font-variant-numeric: tabular-nums; }
+.proxy-workspace-blocked { margin: 0; padding: 0 20px 14px; }
 .proxy-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 11px; }
 .proxy-pager > span:first-child { margin-right: auto; }
 .proxy-affected summary { cursor: pointer; color: var(--accent-ink); font-size: 11px; }
@@ -122,6 +178,7 @@
   .tools-count { display: none; }
   .tools-tabs button { padding: 0 1px 11px; }
   .tools-stats { grid-template-columns: repeat(2, 1fr); }
+  .proxy-scope-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
   .tools-stats > div { padding: 12px 16px; }
   .proxy-actions { gap: 8px; }
 }
@@ -132,6 +189,10 @@
   .tools-panel-head { padding: 16px 14px; gap: 11px; }
   .tools-panel-body { padding: 0 14px 16px; }
   .proxy-folder-list { padding-left: 14px; padding-right: 14px; }
+  .proxy-scope-summary { margin-left: 14px; margin-right: 14px; }
+  .proxy-results-search, .proxy-outcome, .proxy-preview-warning, .proxy-summary-help, .proxy-partial-note { padding-left: 14px; padding-right: 14px; }
+  .proxy-summary-fallback { margin-left: 14px; margin-right: 14px; }
+  .proxy-results-search > label { min-width: 0; flex-basis: 100%; }
   .trash-folder-list { grid-template-columns: minmax(0, 1fr); }
   .trash-search { padding-left: 14px; padding-right: 14px; align-items: stretch; }
   .trash-search input { width: 100%; flex-basis: 100%; }

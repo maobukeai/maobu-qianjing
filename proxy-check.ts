@@ -4,6 +4,8 @@ import { fetchDirectEgress, type EgressInfo, type EgressLookupOptions } from "./
 import { normalizeProxySpec, type ProxyInput } from "./proxy.ts";
 import { startProxyRelay, type ProxyRelay, type RelayOptions, type UpstreamProxy } from "./proxy-relay.ts";
 import type { ProxySpec } from "./types.ts";
+import { fetchEgressEndpoint } from "./egress-transport.ts";
+import { canonicalIp, sameIp } from "./ip.ts";
 
 const ATTEMPT_COUNT = 3;
 
@@ -16,11 +18,12 @@ export type ProxyCheckReason =
   | "connection_failed"
   | "intermittent"
   | "proxy_bypassed"
+  | "same_exit"
   | "check_unavailable";
 
 type ProxyConnectionFailureReason = Exclude<
   ProxyCheckReason,
-  "intermittent" | "proxy_bypassed" | "check_unavailable"
+  "intermittent" | "proxy_bypassed" | "same_exit" | "check_unavailable"
 >;
 
 export interface ProxyCheckAttempt {
@@ -38,6 +41,8 @@ export interface ProxyCheckResult {
   region?: string;
   city?: string;
   rotating?: boolean;
+  /** Exit address comparison, not proof of browser routing or DNS/WebRTC isolation. */
+  exitComparison?: "same" | "different" | "unknown";
 }
 
 type RelayFactory = (upstream: UpstreamProxy, options?: RelayOptions) => Promise<ProxyRelay>;
@@ -81,15 +86,15 @@ export function classifyProxyAttempts(
 ): ProxyCheckResult {
   const successful = attempts.flatMap((attempt) => attempt.info ? [attempt.info] : []);
   const failed = attempts.filter((attempt) => !attempt.info);
-  const base = { attempts: attempts.length, successes: successful.length };
-
-  if (direct && successful.some((info) => info.ip === direct.ip)) {
-    return { ...base, status: "failed", reason: "proxy_bypassed" };
-  }
+  const baseline = direct ? canonicalIp(direct.ip) : null;
+  const exitComparison: NonNullable<ProxyCheckResult["exitComparison"]> = !successful.length || !baseline ? "unknown"
+    : successful.some(info => sameIp(info.ip, baseline)) ? "same" : "different";
+  const base = { attempts: attempts.length, successes: successful.length, exitComparison };
   if (successful.length > 0 && failed.every((attempt) => attempt.reason === "check_unavailable")) {
     return {
       ...base,
       status: "working",
+      ...(exitComparison === "same" ? { reason: "same_exit" as const } : {}),
       ...egressFields(successful[0]!),
       rotating: new Set(successful.map((info) => info.ip)).size > 1,
     };
@@ -122,7 +127,7 @@ export function classifyProxyAttempts(
 
 async function proxyAttempt(
   proxy: ProxySpec,
-  options: Required<Pick<ProxyCheckOptions, "fetchFn" | "relayFactory">> & EgressLookupOptions,
+  options: Pick<ProxyCheckOptions, "fetchFn"> & Required<Pick<ProxyCheckOptions, "relayFactory">> & EgressLookupOptions,
 ): Promise<ProxyCheckAttempt> {
   const logs: string[] = [];
   let relay: ProxyRelay | undefined;
@@ -135,8 +140,9 @@ async function proxyAttempt(
       pass: proxy.pass,
     }, { log: (message) => logs.push(message) });
     const proxyUrl = `http://127.0.0.1:${relay.port}`;
-    const proxiedFetch = ((input: RequestInfo | URL, init?: RequestInit) =>
-      options.fetchFn(input, { ...init, proxy: proxyUrl })) as typeof fetch;
+    const proxiedFetch = ((input: RequestInfo | URL, init?: RequestInit) => options.fetchFn
+      ? options.fetchFn(input, { ...init, proxy: proxyUrl })
+      : fetchEgressEndpoint(String(input), { relayPort: relay!.port, signal: init?.signal, timeoutMs: options.timeoutMs ?? 15_000 })) as typeof fetch;
     let serviceFailed = false;
     let authenticationFailed = false;
     const info = await fetchDirectEgress({
@@ -172,7 +178,7 @@ export async function checkProxy(
     throw new Error("unsupported proxy type (use http or socks5)");
   }
 
-  const fetchFn = options.fetchFn ?? fetch;
+  const fetchFn = options.fetchFn;
   const relayFactory = options.relayFactory ?? startProxyRelay;
   const lookupOptions = { endpoints: options.endpoints, timeoutMs: options.timeoutMs };
   const [direct, attempts] = await Promise.all([

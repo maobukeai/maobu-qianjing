@@ -1,0 +1,58 @@
+.browser-runtime-settings [data-browser-runtime-settings-heading] {
+  width: fit-content;
+  scroll-margin-block: 16px;
+}
+.browser-runtime-settings [data-browser-runtime-settings-heading]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 3px;
+}
+.browser-runtime-settings .browser-runtime-host { margin-bottom: 10px; }
+.browser-runtime-cards {
+  display: grid;
+  gap: 9px;
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+.browser-runtime-card {
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.browser-runtime-card-meta {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+.browser-runtime-card-meta h4 { margin: 0 0 3px; color: var(--ink); font-size: 13px; font-weight: 620; }
+.browser-runtime-card-meta p { font-size: 12px; overflow-wrap: anywhere; }
+.browser-runtime-badges { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
+.browser-runtime-badges .feature-badge { flex-shrink: 1; overflow-wrap: anywhere; }
+.browser-runtime-downloads {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+  padding: 9px 11px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: var(--surface-sunken);
+}
+.browser-runtime-downloads > p { color: var(--ink-soft); font-size: 12px; font-weight: 550; }
+.browser-runtime-downloads ul { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; }
+.browser-runtime-transfer { display: grid; gap: 4px; min-width: 0; }
+.browser-runtime-transfer-label {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 9px;
+  align-items: baseline;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+.browser-runtime-transfer-label strong { margin-inline-start: auto; color: var(--accent-ink); font-weight: 620; }
+.browser-runtime-transfer progress { width: 100%; height: 6px; accent-color: var(--accent); }

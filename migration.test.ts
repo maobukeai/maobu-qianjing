@@ -462,3 +462,41 @@ test("second process scan rejects and commit failure restores initialized destin
   expect(readFileSync(join(second.destination.inbox, "keep.txt"), "utf8")).toBe("keep");
   expect(existsSync(second.destination.migration)).toBe(false);
 });
+
+test("a transient Windows publish lock retries the same validated staging paths without changing source data", async () => {
+  const { source, destination } = roots(); sourceDb(source).close(); addBrowserState(join(source, "profiles"), "legacy1");
+  const original = treeHash(source), delays: number[] = [], publications: Array<[string, string]> = [];
+  const result = await migrateLegacyState(source, destination, {
+    ...stopped, renameSleep: async delay => { delays.push(delay); },
+    rename: (from, to) => {
+      if (from.includes(".migrating-") && to === destination.root) {
+        publications.push([from, to]);
+        if (process.platform === "win32" && publications.length < 3) {
+          expect(existsSync(destination.root)).toBe(false); expect(treeHash(source)).toBe(original);
+          throw Object.assign(new Error("temporary publication sharing violation"), { code: "EPERM" });
+        }
+      }
+      renameSync(from, to);
+    },
+  });
+  expect(result.status).toBe("migrated"); expect(treeHash(source)).toBe(original);
+  expect(delays).toEqual(process.platform === "win32" ? [10, 20] : []);
+  expect(new Set(publications.map(paths => JSON.stringify(paths))).size).toBe(1);
+});
+
+test("a lasting publication lock preserves its original error and restores the previous destination", async () => {
+  const { source, destination } = roots(); sourceDb(source).close(); addBrowserState(join(source, "profiles"), "legacy1");
+  const original = treeHash(source); mkdirSync(destination.root); mkdirSync(destination.inbox);
+  writeFileSync(join(destination.inbox, "keep.txt"), "original destination");
+  const held = Object.assign(new Error("persistent publication sharing violation"), { code: "EPERM" });
+  const delays: number[] = []; let attempts = 0, thrown: unknown;
+  try { await migrateLegacyState(source, destination, {
+    ...stopped, renameSleep: async delay => { delays.push(delay); },
+    rename: (from, to) => { if (from.includes(".migrating-") && to === destination.root) { attempts++; throw held; } renameSync(from, to); },
+  }); } catch (error) { thrown = error; }
+  expect(thrown).toBe(held); expect(attempts).toBe(process.platform === "win32" ? 5 : 1);
+  expect(delays).toEqual(process.platform === "win32" ? [10, 20, 40, 80] : []);
+  expect(treeHash(source)).toBe(original);
+  expect(readFileSync(join(destination.inbox, "keep.txt"), "utf8")).toBe("original destination");
+  expect(existsSync(destination.migration)).toBe(false); expect(existsSync(`${destination.root}.pre-cloakpit-import`)).toBe(false);
+});

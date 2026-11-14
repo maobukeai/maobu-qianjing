@@ -1,6 +1,8 @@
 use std::{env, fs, path::PathBuf};
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=MAOBU_UPDATE_PUBLIC_KEY");
+    println!("cargo:rerun-if-env-changed=MAOBU_UPDATE_ENDPOINT");
     tauri_build::build();
 
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("manifest directory"));

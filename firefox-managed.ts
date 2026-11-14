@@ -5,6 +5,11 @@ import { firefoxBuildForHost, installFirefox, type FirefoxRuntimeBuild } from ".
 import { sha256File } from "./browser-install.ts";
 
 const installations = new Map<string, Promise<string>>();
+export const FIREFOX_MANAGED_RECORD = "installed.json";
+
+export function firefoxManagedDirectory(platform: NodeJS.Platform, arch: string): string {
+  return `firefox-${platform}-${arch}-managed`;
+}
 
 function contained(root: string, path: string): boolean {
   const value = relative(root, path);
@@ -21,7 +26,7 @@ export async function ensureManagedFirefox(
   } = {},
 ): Promise<string> {
   const build = dependencies.build ?? firefoxBuildForHost(platform, arch);
-  const root = resolve(runtimeRoot, `firefox-${platform}-${arch}-managed`);
+  const root = resolve(runtimeRoot, firefoxManagedDirectory(platform, arch));
   const key = `${root}:${build.executableSha256}`;
   const pending = installations.get(key);
   if (pending) return pending;
@@ -31,7 +36,7 @@ export async function ensureManagedFirefox(
     mkdirSync(root, { recursive: true });
     const canonicalRoot = realpathSync(root);
     if (!contained(canonicalParent, canonicalRoot)) throw new Error("Firefox managed directory escaped its runtime root");
-    const metadata = join(canonicalRoot, "installed.json");
+    const metadata = join(canonicalRoot, FIREFOX_MANAGED_RECORD);
     const verify = async (path: string): Promise<string> => {
       const canonical = realpathSync(path);
       if (!contained(canonicalRoot, canonical)) throw new Error("Firefox executable escaped its managed directory");

@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createAliasModeMcp, sanitizeEnvironment } from "./mcp-host.mjs";
+import { READ_ONLY_MCP_TOOLS } from "./mcp-scope.mjs";
 
 class FakeRuntime {
   events: string[] = [];
@@ -12,6 +13,7 @@ class FakeRuntime {
     this.events.push(`${method}:${params.profileId ?? ""}`);
     this.calls.push({ method, params: structuredClone(params) });
     if (method === "profiles.list") return { profiles: [] };
+    if (method === "profiles.inventory") return { profiles: [], liveness: "not-checked" };
     if (method === "profiles.create") return { id: "created-profile", temporary: params.temporary === true };
     if (method === "profiles.update") return { profileId: params.profileId, updated: true };
     if (method === "profiles.replaceProxies") {
@@ -131,8 +133,49 @@ test("MCP host preserves Windows environment keys case-insensitively", () => {
   expect(env).toEqual({ APPDATA: "appdata", Path: "system path", TEMP: "temp" });
 });
 
+for (const { scope, profiles, browser } of [
+  { scope: undefined, profiles: false, browser: false },
+  { scope: "profiles", profiles: true, browser: false },
+  { scope: "browser", profiles: false, browser: true },
+] as const) {
+  test(`MCP ${scope ?? "default read-only"} scope enforces the tool catalog and direct calls`, async () => {
+    const runtime = new FakeRuntime(), playwright = new FakePlaywright();
+    // Delegated tool names cannot shadow a local tool's permission requirement.
+    playwright.tools.push({ ...playwright.tools[0]!, name: "aliasmode_profile_delete" });
+    const host = await createAliasModeMcp({ scope, discovered: { client: runtime }, playwright });
+    const client = new Client({ name: "scope-fixture", version: "1" });
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await Promise.all([host.server.connect(serverTransport), client.connect(clientTransport)]);
+      const listed = (await client.listTools()).tools;
+      const names = listed.map(tool => tool.name);
+      if (!scope) expect(names).toEqual([...READ_ONLY_MCP_TOOLS]);
+      expect(listed.find(tool => tool.name === "aliasmode_profiles_list")?.annotations?.readOnlyHint).toBe(true);
+      expect(names.includes("aliasmode_profile_delete")).toBe(profiles);
+      expect(names.includes("aliasmode_browser_status")).toBe(browser);
+      expect(names.includes("browser_snapshot")).toBe(browser);
+      const forbidden = [
+        ...(!profiles ? ["aliasmode_profile_delete"] : []),
+        ...(!browser ? ["aliasmode_browser_open", "aliasmode_browser_status", "aliasmode_browser_close", "browser_close", "browser_snapshot"] : []),
+      ];
+      for (const name of forbidden) {
+        expect(await client.callTool({ name, arguments: { profileId: "fixture" } })).toMatchObject({
+          isError: true, content: [{ type: "text", text: "This tool is unavailable in the configured MCP scope." }],
+        });
+      }
+      expect(runtime.calls).toEqual([]);
+      const inventory = await client.callTool({ name: "aliasmode_profiles_list", arguments: {} });
+      expect(inventory.structuredContent).toEqual({ profiles: [], liveness: "not-checked" });
+      expect(runtime.calls).toEqual([{ method: "profiles.inventory", params: {} }]);
+      expect(playwright.events).toEqual(browser ? ["initialize"] : []);
+    } finally { await client.close(); await host.close(); }
+    if (!browser) expect(playwright.events).toEqual([]);
+  });
+}
+
 test("MCP lifecycle tools include directory annotations", async () => {
   const host = await createAliasModeMcp({
+    scope: "full",
     discovered: { client: new FakeRuntime() },
     playwright: new FakePlaywright(),
   });
@@ -173,7 +216,7 @@ test("MCP lifecycle tools include directory annotations", async () => {
 
 test("MCP profile creation forwards the selected browser engine", async () => {
   const runtime = new FakeRuntime();
-  const host = await createAliasModeMcp({ discovered: { client: runtime }, playwright: new FakePlaywright() });
+  const host = await createAliasModeMcp({ scope: "profiles", discovered: { client: runtime }, playwright: new FakePlaywright() });
   const client = new Client({ name: "test", version: "1" }, { capabilities: {} });
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([host.server.connect(serverTransport), client.connect(clientTransport)]);
@@ -206,7 +249,7 @@ test("MCP profile creation forwards the selected browser engine", async () => {
 
 test("MCP profile update forwards local edits without returning credentials", async () => {
   const runtime = new FakeRuntime();
-  const host = await createAliasModeMcp({ discovered: { client: runtime }, playwright: new FakePlaywright() });
+  const host = await createAliasModeMcp({ scope: "profiles", discovered: { client: runtime }, playwright: new FakePlaywright() });
   const client = new Client({ name: "test", version: "1" }, { capabilities: {} });
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([host.server.connect(serverTransport), client.connect(clientTransport)]);
@@ -235,6 +278,7 @@ test("MCP profile update forwards local edits without returning credentials", as
 test("MCP host exposes strict proxy replacement input and forwards safe results", async () => {
   const runtime = new FakeRuntime();
   const host = await createAliasModeMcp({
+    scope: "profiles",
     discovered: { client: runtime },
     playwright: new FakePlaywright(),
   });
@@ -288,6 +332,7 @@ test("MCP host exposes Playwright tools before selection and uses safe close", a
   const runtime = new FakeRuntime();
   const playwright = new FakePlaywright();
   const host = await createAliasModeMcp({
+    scope: "browser",
     discovered: { client: runtime },
     playwright,
   });
@@ -331,7 +376,7 @@ test("MCP host exposes Playwright tools before selection and uses safe close", a
 
 test("MCP host relays Firefox native tools without transport, PDF, or lifecycle tools", async () => {
   const runtime = new FirefoxRuntime();
-  const host = await createAliasModeMcp({ discovered: { client: runtime }, playwright: new FakePlaywright() });
+  const host = await createAliasModeMcp({ scope: "browser", discovered: { client: runtime }, playwright: new FakePlaywright() });
   const client = new Client({ name: "test", version: "1" }, { capabilities: {} });
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([host.server.connect(serverTransport), client.connect(clientTransport)]);
@@ -356,6 +401,7 @@ test("MCP host relays Firefox native tools without transport, PDF, or lifecycle 
 test("MCP shutdown closes owned browsers but preserves pre-existing browsers", async () => {
   const runtime = new FakeRuntime();
   const host = await createAliasModeMcp({
+    scope: "browser",
     discovered: { client: runtime },
     playwright: new FakePlaywright(),
   });
@@ -382,7 +428,7 @@ test("MCP shutdown closes owned browsers but preserves pre-existing browsers", a
 test("a failed profile switch clears the stale selection", async () => {
   const runtime = new FakeRuntime();
   const playwright = new FakePlaywright();
-  const host = await createAliasModeMcp({ discovered: { client: runtime }, playwright });
+  const host = await createAliasModeMcp({ scope: "browser", discovered: { client: runtime }, playwright });
   const client = new Client({ name: "test", version: "1" }, { capabilities: {} });
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([host.server.connect(serverTransport), client.connect(clientTransport)]);
@@ -408,7 +454,7 @@ test("a failed profile switch clears the stale selection", async () => {
 test("browser actions require one selected profile", async () => {
   const runtime = new FakeRuntime();
   const playwright = new FakePlaywright();
-  const host = await createAliasModeMcp({ discovered: { client: runtime }, playwright });
+  const host = await createAliasModeMcp({ scope: "browser", discovered: { client: runtime }, playwright });
   const client = new Client({ name: "test", version: "1" }, { capabilities: {} });
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([host.server.connect(serverTransport), client.connect(clientTransport)]);

@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
 import {
+  assessFingerprintCoverage,
   deterministicSeed,
   parseResolution,
   platformFromUA,
@@ -186,4 +187,26 @@ test("with neither, no platform flag is emitted", () => {
 
 test("hostPlatformOs reports one of the three CloakBrowser understands", () => {
   expect(["windows", "macos", "linux"]).toContain(hostPlatformOs());
+});
+
+test("assessFingerprintCoverage reports active surfaces and clear gaps per engine", () => {
+  const full = assessFingerprintCoverage(profile({ timezone: "America/New_York", locale: "en-US", hardware: { cores: 8 } }));
+  expect(full.engine).toBe("cloakbrowser");
+  expect(full.gaps).toEqual([]);
+  expect(full.surfaces.canvasWebglNoise).toBe(true);
+  expect(full.surfaces.hardwareConcurrency).toBe(true);
+
+  const sparse = assessFingerprintCoverage(profile({ ua: "", timezone: "", proxy: null }));
+  expect(sparse.gaps).toContain("platform-unspecified");
+  expect(sparse.gaps).toContain("timezone-unspecified");
+  expect(sparse.gaps).toContain("locale-unspecified");
+  expect(sparse.gaps).toContain("no-proxy-webrtc-host-ip-risk");
+
+  const chromium = assessFingerprintCoverage(profile({ chromiumRuntime: "aliasmode" }));
+  expect(chromium.engine).toBe("chromium155");
+  expect(chromium.appliedFlags).toContain("--fingerprint-noise");
+
+  const camoufox = assessFingerprintCoverage(profile({ engine: "firefox" }));
+  expect(camoufox.engine).toBe("camoufox");
+  expect(camoufox.appliedFlags).toEqual([]);
 });

@@ -1,0 +1,35 @@
+.local-proxy-assignment { border-color: var(--accent-line); }
+.local-proxy-assignment [data-local-proxy-draft-title]:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 3px;
+}
+.local-proxy-assignment-body { gap: 12px; }
+.local-proxy-assignment-toolbar, .local-proxy-assignment-actions, .local-proxy-selection-warning {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px;
+}
+.local-proxy-assignment-toolbar > label:first-child { flex: 1 1 220px; min-width: 0; }
+.local-proxy-assignment-toolbar input[type="search"] { width: 100%; }
+.local-proxy-assignment-list {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 295px), 1fr));
+  gap: 1px; margin: 0; padding: 0; list-style: none;
+  border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; background: var(--line-soft);
+}
+.local-proxy-assignment-list li { min-width: 0; background: var(--surface); }
+.local-proxy-assignment-list label { display: flex; align-items: center; gap: 9px; min-height: 48px; padding: 7px 10px; cursor: pointer; }
+.local-proxy-assignment-list label:has(input:checked) { background: var(--accent-soft); }
+.local-proxy-assignment-list label:has(input:disabled) { cursor: default; }
+.local-proxy-profile-name { display: grid; gap: 3px; flex: 1; min-width: 0; }
+.local-proxy-profile-name strong, .local-proxy-profile-name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.local-proxy-profile-name strong { color: var(--ink-soft); font-size: 12px; font-weight: 550; }
+.local-proxy-profile-name small, .local-proxy-running { color: var(--muted); font-size: 11px; }
+.local-proxy-running { color: var(--warn-ink); }
+.local-proxy-assignment .local-proxy-assignment-pages { padding: 0; }
+.local-proxy-assignment-empty { padding: 10px 0; }
+.local-proxy-auth summary { color: var(--accent-ink); cursor: pointer; font-size: 12px; width: fit-content; }
+.local-proxy-auth-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 10px; margin-top: 10px; }
+.local-proxy-auth-fields input { width: 100%; }
+.local-proxy-assignment-actions { justify-content: flex-end; }
+.local-proxy-review-prompt, .local-proxy-selection-warning {
+  border: 1px solid var(--warn-line); border-radius: var(--r-sm); background: var(--warn-soft); color: var(--warn-ink);
+  padding: 9px 12px; font-size: 12px; line-height: 1.6;
+}
+.local-proxy-selection-warning { justify-content: space-between; }

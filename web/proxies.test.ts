@@ -102,6 +102,13 @@ test("preview errors and malformed results never repeat input credentials", asyn
   }
 });
 
+test("a stale or busy server preview explains how to recover without repeating server text", async () => {
+  globalThis.fetch = (async () => Response.json({ error: "PRIVATE_SERVER_CONTENT" }, { status: 409 })) as unknown as typeof fetch;
+  const message = "The preview may have expired, or another replacement is still running. Wait for it to finish, then preview again.";
+  await expect(requestProxyPreview({ scope: { all: true }, mode: "list", input: "private-draft" }, t)).rejects.toThrow(message);
+  await expect(readProxyProgress(Response.json({ error: "PRIVATE_SERVER_CONTENT" }, { status: 409 }), () => {}, t)).rejects.toThrow(message);
+});
+
 test("proxy progress reads split UTF-8 records and requires a completed stream", async () => {
   const records: ProxyProgressEvent[] = [
     { type: "progress", phase: "checking", completed: 0, total: 1 },

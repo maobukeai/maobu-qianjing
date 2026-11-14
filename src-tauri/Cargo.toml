@@ -21,11 +21,22 @@ path = "src/main.rs"
 name = "aliasmode-mcp"
 path = "src/bin/aliasmode-mcp.rs"
 
+[[bin]]
+name = "maobu-release-verify"
+path = "../scripts/release-verify.rs"
+required-features = ["release-tools"]
+
+[features]
+release-tools = ["dep:minisign-verify"]
+
 [build-dependencies]
 serde_json = "1.0.145"
 tauri-build = { version = "=2.6.3", features = [] }
 
 [dependencies]
+base64 = "=0.22.1"
+minisign-verify = { version = "=0.2.5", optional = true }
+percent-encoding = "2.3"
 hex = "0.4.3"
 rand = "0.9.2"
 reqwest = { version = "0.13.4", default-features = false, features = ["gzip", "json", "native-tls-no-alpn"] }
@@ -36,7 +47,8 @@ tauri = { version = "=2.11.5", features = [] }
 tauri-plugin-dialog = "=2.7.2"
 tauri-plugin-shell = "=2.3.5"
 tauri-plugin-single-instance = "=2.4.3"
-tokio = { version = "1.48.0", features = ["sync", "time"] }
+tauri-plugin-updater = { version = "=2.12.0", default-features = false, features = ["native-tls", "system-proxy", "zip"] }
+tokio = { version = "1.48.0", features = ["sync", "time", "macros"] }
 url = "2.5.7"
 zeroize = "1.8.2"
 
@@ -49,6 +61,7 @@ windows = { version = "0.62.2", features = [
   "Win32_System_JobObjects",
   "Win32_System_Registry",
   "Win32_System_Threading",
+  "Win32_UI_WindowsAndMessaging",
 ] }
 
 [dev-dependencies]

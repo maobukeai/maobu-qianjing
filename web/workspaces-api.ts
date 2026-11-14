@@ -4,12 +4,12 @@ export type WorkspaceIcon = typeof WORKSPACE_ICONS[number];
 export interface WorkspaceRecord { id: string; name: string; color: string; icon: WorkspaceIcon; archived: boolean; createdAt: number; updatedAt: number; lastOpenedAt: number; }
 export interface WorkspaceCatalog { currentId: string; activeId: string; workspaces: WorkspaceRecord[]; }
 export interface WorkspaceOverview { workspaceId: string; root: string; profileCount: number; trashCount: number; runningCount: number; bytes: number | null; freeBytes: number | null; lastBackupAt: number | null; backupBusy: boolean; scriptRunning: boolean; }
-export interface WorkspaceBackup { id: string; name: string; createdAt: number; bytes: number; profileCount: number; }
+export interface WorkspaceBackup { id: string; name: string; createdAt: number; bytes: number; profileCount: number; encrypted?: boolean; }
 export interface WorkspaceJob { id: string; kind: "backup" | "restore"; status: "queued" | "running" | "succeeded" | "failed"; phase: string; completed: number; total: number; error?: string; result?: { backupId?: string; workspaceId?: string }; }
 export interface WorkspaceBackups { backups: WorkspaceBackup[]; jobs: WorkspaceJob[]; }
 export type WorkspaceMetadata = Pick<WorkspaceRecord, "name" | "color" | "icon">;
 export type WorkspaceLocation = "data" | "backups" | "logs";
-export const WORKSPACE_PREFERENCE_KEYS = ["aliasmode.roster.hiddenColumns", "aliasmode.roster.pageSize", "aliasmode.shell.sidebarCollapsed", "aliasmode.roster.groupDisclosure"] as const;
+export const WORKSPACE_PREFERENCE_KEYS = ["aliasmode.roster.hiddenColumns", "aliasmode.roster.pageSize", "aliasmode.shell.sidebarCollapsed", "aliasmode.roster.groupDisclosure", "aliasmode.roster.favorites", "aliasmode.roster.savedViews", "aliasmode.roster.density"] as const;
 type DesktopInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 
 export const WORKSPACE_API_MESSAGES = [
@@ -18,6 +18,10 @@ export const WORKSPACE_API_MESSAGES = [
   "Open this action in the desktop app.",
   "Backup files must be 20 GB or smaller.",
   "Unsupported workspace preference.",
+  "Backup password must contain at least 10 characters and at most 1024 UTF-8 bytes.",
+  "Enter the password for this encrypted backup.",
+  "The backup password is incorrect or the encrypted backup is damaged.",
+  "Backup model services are invalid or unsupported.",
 ] as const;
 
 let capability: string | undefined;
@@ -70,8 +74,18 @@ export async function fetchWorkspaces(signal?: AbortSignal): Promise<WorkspaceCa
   return { currentId: body.currentId, activeId: body.activeId, workspaces: body.workspaces.map(record) };
 }
 export async function createWorkspace(metadata: WorkspaceMetadata): Promise<WorkspaceRecord> { return record((await request("/workspaces", json("POST", metadata))).workspace); }
-export async function updateWorkspace(id: string, metadata: WorkspaceMetadata): Promise<WorkspaceRecord> { return record((await request(`/workspaces/${encodeURIComponent(id)}`, json("PATCH", metadata))).workspace); }
-export async function archiveWorkspace(id: string, archived: boolean): Promise<void> { await request(`/workspaces/${encodeURIComponent(id)}/archive`, json("POST", { archived })); }
+export async function updateWorkspace(id: string, metadata: Partial<WorkspaceMetadata>): Promise<WorkspaceRecord> {
+  const saved = record((await request(`/workspaces/${encodeURIComponent(id)}`, json("PATCH", metadata))).workspace);
+  if (saved.id !== id) return incomplete();
+  return saved;
+}
+export async function archiveWorkspace(id: string, archived: boolean): Promise<WorkspaceRecord> {
+  const { workspace } = await request(`/workspaces/${encodeURIComponent(id)}/archive`, json("POST", { archived }));
+  if (!object(workspace) || workspace.archived !== archived) return incomplete();
+  const saved = record(workspace);
+  if (saved.id !== id) return incomplete();
+  return saved;
+}
 export async function activateWorkspace(id: string, closeRunning: boolean): Promise<void> {
   await flushWorkspacePreferences();
   const body = await request(`/workspaces/${encodeURIComponent(id)}/activate`, json("POST", { closeRunning }));
@@ -97,16 +111,18 @@ export async function fetchWorkspaceOverview(signal?: AbortSignal): Promise<Work
 export async function fetchWorkspaceBackups(signal?: AbortSignal): Promise<WorkspaceBackups> {
   const b = await request("/workspace/backups", { signal });
   if (!Array.isArray(b.backups) || !Array.isArray(b.jobs)) return incomplete();
-  const backups = b.backups.map((v: unknown) => { if (!object(v) || typeof v.id !== "string" || typeof v.name !== "string" || !finite(v.createdAt) || !finite(v.bytes) || !finite(v.profileCount)) return incomplete(); return { id: v.id, name: v.name, createdAt: v.createdAt, bytes: v.bytes, profileCount: v.profileCount }; });
+  const backups = b.backups.map((v: unknown) => { if (!object(v) || typeof v.id !== "string" || typeof v.name !== "string" || !finite(v.createdAt) || !finite(v.bytes) || !finite(v.profileCount) || v.encrypted !== undefined && typeof v.encrypted !== "boolean") return incomplete(); return { id: v.id, name: v.name, createdAt: v.createdAt, bytes: v.bytes, profileCount: v.profileCount, ...(v.encrypted === undefined ? {} : { encrypted: v.encrypted }) }; });
   return { backups, jobs: b.jobs.map(job) };
 }
-export async function startWorkspaceBackup(): Promise<WorkspaceJob> { await flushWorkspacePreferences(); return job((await request("/workspace/backups", json("POST", {}))).job); }
-export async function restoreWorkspace(source: File | { backupId: string }): Promise<WorkspaceJob> {
+export async function startWorkspaceBackup(password?: string): Promise<WorkspaceJob> { await flushWorkspacePreferences(); return job((await request("/workspace/backups", json("POST", { password }))).job); }
+export async function restoreWorkspace(source: File | { backupId: string }, password?: string): Promise<WorkspaceJob> {
   if (typeof File !== "undefined" && source instanceof File) {
     if (source.size > 20 * 1024 ** 3) throw new Error("Backup files must be 20 GB or smaller.");
-    return job((await request("/workspace/restore", { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: source })).job);
+    const headers: Record<string, string> = { "Content-Type": "application/octet-stream" };
+    if (password !== undefined) headers["X-Maobu-Backup-Password"] = encodeURIComponent(password);
+    return job((await request("/workspace/restore", { method: "POST", headers, body: source })).job);
   }
-  return job((await request("/workspace/restore", json("POST", source))).job);
+  return job((await request("/workspace/restore", json("POST", { ...source, password }))).job);
 }
 export async function fetchWorkspaceJob(id: string, signal?: AbortSignal): Promise<WorkspaceJob> { return job((await request(`/workspace/jobs/${encodeURIComponent(id)}`, { signal })).job); }
 export function workspaceBackupDownloadUrl(id: string, token: string): string { return `/ui/api/workspace/backups/${encodeURIComponent(id)}/download?capability=${encodeURIComponent(token)}`; }

@@ -3,8 +3,9 @@ import { checkProxy, type ProxyCheckOptions, type ProxyCheckResult } from "./pro
 import { fetchDirectEgress, type EgressInfo } from "./egress.ts";
 import { normalizeProxySpec, parseProxySpec, proxyHostPort, proxyIdentityKey } from "./proxy.ts";
 import { parseProxyReplacementCsv } from "./proxy-replacements.ts";
+import type { ValidatedSingleProxyPreviewInput } from "./proxy-single-preview.ts";
 import type { ProxySpec } from "./types.ts";
-import type { ProxyCheckView, ProxyPreviewInput, ProxyProgressEvent, ProxyReplacementView, ProxyScope } from "./proxy-tools-types.ts";
+import type { ProxyCheckView, ProxyTextPreviewInput, ProxyProgressEvent, ProxyReplacementView, ProxyScope } from "./proxy-tools-types.ts";
 
 export interface ProxyInventoryProfile {
   id: string;
@@ -44,7 +45,33 @@ export function replacementState(profile: ProxyInventoryProfile | undefined, nex
   return { status: "ready" };
 }
 
-export function buildProxyPreview(profiles: ProxyInventoryProfile[], input: ProxyPreviewInput): { rows: PlannedProxyReplacement[]; unusedProxies: number } {
+/** The typed local connection serves each requested ID, in the reviewed order. */
+export function buildSingleProxyPreview(profiles: readonly ProxyInventoryProfile[], input: ValidatedSingleProxyPreviewInput): { rows: PlannedProxyReplacement[]; unusedProxies: number } {
+  const next = normalizeProxySpec(input.proxy)!;
+  const proxy = `${next.type}://${proxyHostPort(next)}`;
+  const byId = new Map(profiles.map(profile => [profile.id, profile]));
+  const rows = input.ids.map<PlannedProxyReplacement>((profileId, index) => {
+    const profile = byId.get(profileId);
+    if (!profile) {
+      return { view: { index, profileId, previousProxy: null, proxy, status: "missing", code: "no_editable_match" }, originalKey: proxyIdentityKey(null) };
+    }
+    if (profile.permission !== "edit") {
+      return { view: { index, profileId, previousProxy: null, proxy, status: "skipped", code: "no_editable_match" }, originalKey: proxyIdentityKey(null) };
+    }
+    return {
+      view: {
+        index, profileId, name: profile.name, group: profile.group,
+        previousProxy: profile.proxy ? `${profile.proxy.type}://${proxyHostPort(profile.proxy)}` : null,
+        proxy, ...replacementState(profile, next),
+      },
+      next,
+      originalKey: proxyIdentityKey(profile.proxy),
+    };
+  });
+  return { rows, unusedProxies: 0 };
+}
+
+export function buildProxyPreview(profiles: ProxyInventoryProfile[], input: ProxyTextPreviewInput): { rows: PlannedProxyReplacement[]; unusedProxies: number } {
   if (!input || typeof input.input !== "string" || !input.input.trim()) throw new ProxyToolsError("Paste or upload replacement proxies");
   const selected = selectProxyProfiles(profiles, input.scope).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   const byId = new Map(selected.map((p) => [p.id, p]));
@@ -145,7 +172,7 @@ export async function checkProfileProxies(
       if (item.row.status !== "unsupported") {
         try {
           const result = await (deps.check ?? checkProxy)(item.proxy, { direct });
-          item.row = { ...item.row, status: result.status, reason: result.reason, ip: result.ip, country: result.country, checkedAt: Date.now() };
+          item.row = { ...item.row, status: result.status, reason: result.reason, ip: result.ip, country: result.country, exitComparison: result.exitComparison, checkedAt: Date.now() };
         } catch { item.row = { ...item.row, status: "unavailable", reason: "check_unavailable", checkedAt: Date.now() }; }
       }
       send({ type: "check", row: item.row });

@@ -1,0 +1,15 @@
+.edit-changes-summary { padding: 13px 15px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-sunken); transition: border-color var(--desktop-motion-control, 0ms) ease; }
+.edit-changes-summary.has-changes { border-color: var(--accent-line); }
+.edit-changes-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 7px 12px; }
+.edit-changes-summary .edit-changes-heading h3 { margin: 0; color: var(--ink-soft); font-size: 12px; font-weight: 500; }
+.edit-changes-heading > span { color: var(--accent-ink); font-size: 11px; font-variant-numeric: tabular-nums; }
+.edit-changes-summary .edit-changes-note, .edit-changes-summary .edit-changes-caveat { margin: 7px 0 0; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.edit-changes-summary .edit-changes-caveat { color: var(--warn-ink); }
+.edit-changes-fields { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; padding: 0; list-style: none; }
+.edit-changes-fields > li { display: inline-flex; align-items: baseline; gap: 7px; max-width: 100%; padding: 5px 8px; color: var(--ink-soft); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; font-size: 11px; line-height: 1.5; }
+.edit-changes-fields small { color: var(--muted); font-size: 10px; }
+@media (max-width: 540px) { .edit-changes-summary { padding: 11px 12px; } .edit-changes-fields > li { min-width: 0; } }
+
+.proxy-quarantine-note { flex-wrap: wrap; }
+.proxy-quarantine-note > span { flex: 1; min-width: 0; }
+.proxy-quarantine-note small { display: block; margin-top: 3px; font-size: 11px; overflow-wrap: anywhere; }

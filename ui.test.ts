@@ -8,7 +8,8 @@ import { BrowserLaunchError, Launcher, launchPersona } from "./launcher.ts";
 import { parseExport } from "./parse.ts";
 import { deriveFingerprintFlags, editedProfileHardware } from "./fingerprint.ts";
 import { listUiProfiles, handleUiRequest, LOW_DISK_SPACE_BYTES } from "./ui.ts";
-import { supportsChromium155Host } from "./aliasmode-chromium.ts";
+import { defaultChromiumRuntime as defaultRuntimePolicy } from "./aliasmode-chromium.ts";
+import { buildNewProfile } from "./create.ts";
 import { trackRuntimeDownload } from "./runtime-download.ts";
 import { readXlsx, writeXlsx } from "./xlsx.ts";
 import { AppConfigStore } from "./app-config.ts";
@@ -49,7 +50,7 @@ function firefoxProfile(s: ProfileStore, id: string): Profile {
     };
 }
 /** One exit lookup asks GeoJS (MaxMind's data) and ip-api.com at once. */
-const EXIT_LOOKUP_CALLS = [["https://get.geojs.io/v1/ip/geo.json"], ["http://ip-api.com/json/?fields=status,timezone,countryCode,query"]];
+const EXIT_LOOKUP_CALLS = [["https://get.geojs.io/v1/ip/geo.json"], ["https://ipinfo.io/json"]];
 function timezoneFetch(timezones: Record<string, string>, calls?: string[][]) {
     return async (url: string, _init: RequestInit) => {
         calls?.push([url]);
@@ -87,15 +88,93 @@ function extensionResponse(): Response {
 }
 test("listUiProfiles exposes metadata but redacts every secret", () => {
     const s = store();
+    const saved = s.getProfile("k1d0cd11")!;
+    s.upsertProfile({ ...saved, extensions: ["extension-alpha", "extension-beta"] });
     const list = listUiProfiles(s);
     const p = list[0]!;
     expect(p.proxy).toBe("1.2.3.4:8080"); // host:port only
     expect(p.cookieCount).toBe(1);
     expect(p.screen).toBe("1680x1050");
     expect(p.running).toBe(false);
+    expect(p.extensions).toEqual(["extension-alpha", "extension-beta"]);
     const json = JSON.stringify(list);
     for (const secret of ["account-user", "SECRETpw", "MAILSECRETpw", "mailbox@example.com", "TOTPSEED", "COOKIEVAL", "PROXYPASS", "proxyuser"]) {
         expect(json.includes(secret)).toBe(false);
+    }
+    s.close();
+});
+test("configuration reuse reads only safe creation fields for both browser engines without changing the source", async () => {
+    const s = store();
+    const base = s.getProfile("k1d0cd11")!;
+    const setups: Profile[] = [
+        { ...base, id: "reuse-cloak", engine: "chromium", chromiumRuntime: undefined, platformOs: "windows" },
+        { ...base, id: "reuse-alias", engine: "chromium", chromiumRuntime: "aliasmode", platformOs: "linux" },
+        { ...firefoxProfile(s, "reuse-firefox"), chromiumRuntime: undefined, platformOs: "macos" },
+    ];
+    const sources = setups.map(source => ({ ...source, name: "Reuse source", group: "QA group", platform: "EXAMPLE.COM", fingerprintSeed: 9283746, customNo: "8024", extensions: ["PRIVATE_EXTENSION"], tags: ["PRIVATE_TAG"] }));
+    for (const source of sources) s.upsertProfile(source);
+    s.recordLaunch({ profileId: "reuse-cloak", pid: 1, debugPort: 9412, ws: "ws://PRIVATE_CONTROL_ENDPOINT", startedAt: 123 });
+    const before = s.listProfiles();
+    const launch = s.getLaunch("reuse-cloak");
+    const launcher = new Proxy({}, { get() { throw new Error("Reading reuse settings must not invoke the launcher"); } }) as any;
+    for (const source of sources) {
+        const response = await handleUiRequest(new Request(`http://x/ui/api/profiles/${source.id}/reuse`), launcher, s);
+        expect(response!.status).toBe(200);
+        expect(response!.headers.get("cache-control")).toBe("no-store");
+        const text = await response!.text(), body = JSON.parse(text);
+        const runtime = source.engine === "firefox" ? {} : { chromiumRuntime: source.chromiumRuntime ?? "cloakbrowser" };
+        expect(body).toEqual({ ok: true, profile: {
+            sourceId: source.id, name: "Reuse source", group: "QA group", engine: source.engine,
+            ...runtime, platformOs: source.platformOs, screen: "1680x1050", platform: "example.com",
+        } });
+        for (const secret of ["account-user", "SECRETpw", "MAILSECRETpw", "mailbox@example.com", "TOTPSEED", "COOKIEVAL", "PROXYPASS", "proxyuser", "PRIVATE_EXTENSION", "PRIVATE_TAG", "PRIVATE_CONTROL_ENDPOINT", "9283746", "8024", source.ua]) expect(text).not.toContain(secret);
+    }
+    expect(s.listProfiles()).toEqual(before);
+    expect(s.getLaunch("reuse-cloak")).toEqual(launch);
+    s.close();
+});
+test("configuration reuse rejects missing or unsafe source IDs and cannot create through another method", async () => {
+    const s = store(), before = s.listProfiles();
+    const launcher = new Proxy({}, { get() { throw new Error("reuse route must remain read-only"); } }) as any;
+    const missing = await handleUiRequest(new Request("http://x/ui/api/profiles/missing-profile/reuse"), launcher, s);
+    expect(missing!.status).toBe(404);
+    expect(await missing!.json()).toMatchObject({ ok: false, code: "not-found" });
+    for (const encoded of ["", "%ZZ", "CON", "_invalid", "bad%2Fid", "a".repeat(129)]) {
+        const response = await handleUiRequest(new Request(`http://x/ui/api/profiles/${encoded}/reuse`), launcher, s);
+        expect(response!.status).toBe(400);
+        expect(await response!.json()).toMatchObject({ ok: false, code: "invalid-id" });
+    }
+    for (const method of ["POST", "PUT", "DELETE"]) {
+        const response = await handleUiRequest(new Request("http://x/ui/api/profiles/k1d0cd11/reuse", { method }), launcher, s);
+        expect(response!.status).toBe(405);
+        expect(response!.headers.get("allow")).toBe("GET");
+        expect(response!.headers.get("cache-control")).toBe("no-store");
+    }
+    expect(s.listProfiles()).toEqual(before);
+    s.close();
+});
+test("configuration reuse leaves unsupported mobile and legacy settings untouched with a fixed explanation", async () => {
+    const s = store(), base = s.getProfile("k1d0cd11")!;
+    s.upsertProfile({ ...base, id: "reuse-mobile", ua: "Mozilla/5.0 (Linux; Android 14) Mobile PRIVATE_UA", platformOs: "windows", screenWidth: 390, screenHeight: 844 });
+    const mobile = await handleUiRequest(new Request("http://x/ui/api/profiles/reuse-mobile/reuse"), {} as any, s);
+    expect(mobile!.status).toBe(409);
+    expect(await mobile!.json()).toMatchObject({ ok: false, code: "mobile-profile" });
+    for (const [id, sql] of [
+        ["reuse-legacy-screen", "UPDATE profiles SET screen_width = 0 WHERE id = ?"],
+        ["reuse-legacy-os", "UPDATE profiles SET platform_os = 'android' WHERE id = ?"],
+        ["reuse-legacy-platform", "UPDATE profiles SET platform = 'https://PRIVATE_USER:PRIVATE_PASSWORD@example.com/private' WHERE id = ?"],
+    ] as const) {
+        s.upsertProfile({ ...base, id });
+        // Simulate rows saved by an older build; current writes correctly
+        // reject these values before they can enter the database.
+        (s as any)["db"].query(sql).run(id);
+        const before = s.getProfile(id);
+        const response = await handleUiRequest(new Request(`http://x/ui/api/profiles/${id}/reuse`), {} as any, s);
+        expect(response!.status).toBe(409);
+        const text = await response!.text();
+        expect(JSON.parse(text)).toMatchObject({ ok: false, code: "invalid-settings" });
+        expect(text).not.toContain("PRIVATE_");
+        expect(s.getProfile(id)).toEqual(before);
     }
     s.close();
 });
@@ -123,6 +202,8 @@ test("proxy check route works locally without storing proxy data", async () => {
     const checked: ProxySpec[] = [];
     const results: ProxyCheckResult[] = [
         { status: "working", attempts: 3, successes: 3, ip: "203.0.113.10", country: "US", rotating: false },
+        { status: "working", attempts: 3, successes: 3, ip: "203.0.113.10", reason: "same_exit", exitComparison: "same" },
+        { status: "working", attempts: 3, successes: 3, ip: "203.0.113.12", exitComparison: "different" },
         { status: "unstable", attempts: 3, successes: 2, reason: "intermittent", ip: "203.0.113.11" },
         { status: "failed", attempts: 3, successes: 0, reason: "authentication_failed" },
         { status: "unavailable", attempts: 3, successes: 0, reason: "check_unavailable" },
@@ -229,8 +310,7 @@ test("full profile edit keeps account and mailbox credentials in separate fields
         twofa: "TOTPSEED",
     });
     const updated = await handleUiRequest(new Request("http://x/ui/api/profiles/k1d0cd11/update", {
-        method: "POST",
-        body: JSON.stringify({ set: {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ set: {
                 username: "account-user", password: "linkedin-pass",
                 email: "new-mail@example.com", emailPassword: "new-mail-pass", twofa: "NEWSEED",
             } }),
@@ -523,7 +603,7 @@ test("Local folder routes preserve explicit parents through create, rename and m
 });
 test("move route reassigns selected profiles' group", async () => {
     const s = store();
-    const res = await handleUiRequest(new Request("http://x/ui/api/profiles/move", { method: "POST", body: JSON.stringify({ ids: ["k1d0cd11"], group: "newgrp" }) }), {} as any, s);
+    const res = await handleUiRequest(new Request("http://x/ui/api/profiles/move", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: ["k1d0cd11"], group: "newgrp" }) }), {} as any, s);
     const body = await res!.json();
     expect(body.ok).toBe(true);
     expect(body.moved).toBe(1);
@@ -559,8 +639,7 @@ test("new profiles and moves inherit Local group extension defaults", async () =
     const createdId = (await created!.json()).id;
     expect(s.getProfile(createdId)!.extensions).toEqual(["e1"]);
     const moved = await handleUiRequest(new Request("http://x/ui/api/profiles/move", {
-        method: "POST",
-        body: JSON.stringify({ ids: ["k1d0cd11"], group: "With defaults" }),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: ["k1d0cd11"], group: "With defaults" }),
     }), {} as any, s);
     expect(moved!.status).toBe(200);
     expect(s.getProfile("k1d0cd11")!.extensions).toEqual(["e1"]);
@@ -571,14 +650,12 @@ test("single and file group edits inherit unless extensions are explicit", async
     s.registerGroup("Defaulted");
     s.setGroupExtensionDefaults("Defaulted", ["group-extension"]);
     const inherited = await handleUiRequest(new Request("http://x/ui/api/profiles/k1d0cd11/update", {
-        method: "POST",
-        body: JSON.stringify({ set: { group: "Defaulted" } }),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ set: { group: "Defaulted" } }),
     }), {} as any, s);
     expect(inherited!.status).toBe(200);
     expect(s.getProfile("k1d0cd11")!.extensions).toEqual(["group-extension"]);
     const explicit = await handleUiRequest(new Request("http://x/ui/api/profiles/k1d0cd11/update", {
-        method: "POST",
-        body: JSON.stringify({ set: { group: "va1", extensions: ["chosen"] } }),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ set: { group: "va1", extensions: ["chosen"] } }),
     }), {} as any, s);
     expect(explicit!.status).toBe(200);
     expect(s.getProfile("k1d0cd11")!.extensions).toEqual(["chosen"]);
@@ -591,7 +668,7 @@ test("single and file group edits inherit unless extensions are explicit", async
 });
 test("move route with no ids is a 400", async () => {
     const s = store();
-    const res = await handleUiRequest(new Request("http://x/ui/api/profiles/move", { method: "POST", body: JSON.stringify({ ids: [], group: "x" }) }), {} as any, s);
+    const res = await handleUiRequest(new Request("http://x/ui/api/profiles/move", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: [], group: "x" }) }), {} as any, s);
     expect(res!.status).toBe(400);
     s.close();
 });
@@ -760,8 +837,7 @@ test("single edits reject malformed resolutions without changing stored identity
         const s = store();
         const before = s.getProfile("k1d0cd11")!;
         const res = await handleUiRequest(new Request("http://x/ui/api/profiles/k1d0cd11/update", {
-            method: "POST",
-            body: JSON.stringify({ set: { resolution } }),
+            method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ set: { resolution } }),
         }), {} as any, s);
         expect(res!.status).toBe(500);
         expect((await res!.json()).error).toContain("invalid resolution");
@@ -774,8 +850,7 @@ test("Firefox profiles reject Chrome extension changes", async () => {
     const s = store();
     s.upsertProfile(firefoxProfile(s, "firefox-ext"));
     const res = await handleUiRequest(new Request("http://x/ui/api/profiles/firefox-ext/update", {
-        method: "POST",
-        body: JSON.stringify({ set: { extensions: ["chrome-extension"] } }),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ set: { extensions: ["chrome-extension"] } }),
     }), {} as any, s);
     expect(res!.status).toBe(500);
     expect((await res!.json()).error).toMatch(/Firefox profiles/);
@@ -791,7 +866,7 @@ test("a Firefox screen edit saves the screen with its usable area and a window i
         "window.outerWidth": 1664, "window.outerHeight": 1296, "window.innerWidth": 1648, "window.innerHeight": 1190,
     };
     s.upsertProfile(profile);
-    const edit = () => handleUiRequest(new Request("http://x/ui/api/profiles/firefox-screen/update", { method: "POST", body: JSON.stringify({ set: { resolution: "1366x768" } }) }), {} as any, s);
+    const edit = () => handleUiRequest(new Request("http://x/ui/api/profiles/firefox-screen/update", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ set: { resolution: "1366x768" } }) }), {} as any, s);
     s.recordLaunch({
         profileId: "firefox-screen", pid: 1, debugPort: 9412, ws: "firefox://live", startedAt: 123,
         persona: launchPersona(s.getProfile("firefox-screen")!),
@@ -816,8 +891,7 @@ test("a malformed nonblank proxy edit is rejected without removing the existing 
     before.timezone = "America/Los_Angeles";
     s.upsertProfile(before);
     const res = await handleUiRequest(new Request("http://x/ui/api/profiles/k1d0cd11/update", {
-        method: "POST",
-        body: JSON.stringify({ set: { proxy: "proxy.example:not-a-port" } }),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ set: { proxy: "proxy.example:not-a-port" } }),
     }), {} as any, s);
     expect(res!.status).toBe(500);
     expect((await res!.json()).error).toContain("invalid proxy port");
@@ -833,8 +907,7 @@ test("a changed proxy gets its exit timezone", async () => {
     s.upsertProfile(before);
     const calls: string[][] = [];
     const res = await handleUiRequest(new Request("http://x/ui/api/profiles/k1d0cd11/update", {
-        method: "POST",
-        body: JSON.stringify({ set: { proxyType: "socks5", proxy: "new-proxy.example:1080:user:pass" } }),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ set: { proxyType: "socks5", proxy: "new-proxy.example:1080:user:pass" } }),
     }), {} as any, s, { timezoneFetch: timezoneFetch({ "new-proxy.example": "Europe/Paris" }, calls) });
     expect(res!.status).toBe(200);
     expect(calls).toEqual(EXIT_LOOKUP_CALLS);
@@ -846,7 +919,7 @@ test("a changed proxy gets its exit timezone", async () => {
 });
 test("a typed timezone stays when the proxy changes, and a blank one follows the proxy again", async () => {
     const s = store();
-    const update = (set: Record<string, unknown>) => handleUiRequest(new Request("http://x/ui/api/profiles/k1d0cd11/update", { method: "POST", body: JSON.stringify({ set }) }), {} as any, s, { timezoneFetch: timezoneFetch({ "new-proxy.example": "Europe/Paris" }, []) });
+    const update = (set: Record<string, unknown>) => handleUiRequest(new Request("http://x/ui/api/profiles/k1d0cd11/update", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ set }) }), {} as any, s, { timezoneFetch: timezoneFetch({ "new-proxy.example": "Europe/Paris" }, []) });
     expect((await update({ timezone: "America/Chicago" }))!.status).toBe(200);
     expect(s.getProfile("k1d0cd11")).toMatchObject({ timezone: "America/Chicago", timezoneManual: true });
     expect((await update({ proxyType: "http", proxy: "new-proxy.example:8080" }))!.status).toBe(200);
@@ -859,7 +932,7 @@ test("a typed timezone stays when the proxy changes, and a blank one follows the
 });
 test("CPU cores and the seed can be typed, and a blank count goes back to automatic", async () => {
     const s = store();
-    const update = (set: Record<string, unknown>) => handleUiRequest(new Request("http://x/ui/api/profiles/k1d0cd11/update", { method: "POST", body: JSON.stringify({ set }) }), {} as any, s);
+    const update = (set: Record<string, unknown>) => handleUiRequest(new Request("http://x/ui/api/profiles/k1d0cd11/update", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ set }) }), {} as any, s);
     const seed = s.getProfile("k1d0cd11")!.fingerprintSeed;
     expect((await update({ cores: "6", fingerprintSeed: String(seed + 1) }))!.status).toBe(200);
     expect(s.getProfile("k1d0cd11")).toMatchObject({ hardware: { cores: 6 }, fingerprintSeed: seed + 1 });
@@ -876,8 +949,7 @@ test("a proxy edit keeps changes saved during its timezone lookup", async () => 
         before.timezone = "America/Los_Angeles";
         s.upsertProfile(before);
         const res = await handleUiRequest(new Request("http://x/ui/api/profiles/k1d0cd11/update", {
-            method: "POST",
-            body: JSON.stringify({ set: { proxyType: "http", proxy: "new-proxy.example:8080" } }),
+            method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ set: { proxyType: "http", proxy: "new-proxy.example:8080" } }),
         }), {} as any, s, { timezoneFetch: async () => {
                 const updated = s.getProfile("k1d0cd11")!;
                 updated.name = "renamed during lookup";
@@ -1038,8 +1110,7 @@ test("an explicit blank proxy edit preserves the stored timezone", async () => {
     s.upsertProfile(before);
     const calls: string[][] = [];
     const res = await handleUiRequest(new Request("http://x/ui/api/profiles/k1d0cd11/update", {
-        method: "POST",
-        body: JSON.stringify({ set: { proxy: "" } }),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ set: { proxy: "" } }),
     }), {} as any, s, { timezoneFetch: timezoneFetch({}, calls) });
     expect(res!.status).toBe(200);
     expect(calls).toEqual([]);
@@ -1058,8 +1129,7 @@ test("an IPv6 proxy round-trips through the edit view without losing its identit
     const edit = (await detail!.json()).profile;
     expect(edit.proxy).toBe("[2001:db8::1]:1080:user:p:ss");
     const saved = await handleUiRequest(new Request("http://x/ui/api/profiles/k1d0cd11/update", {
-        method: "POST",
-        body: JSON.stringify({ set: { proxy: edit.proxy, proxyType: edit.proxyType } }),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ set: { proxy: edit.proxy, proxyType: edit.proxyType } }),
     }), {} as any, s, { timezoneFetch: timezoneFetch({}, calls) });
     expect(saved!.status).toBe(200);
     expect(calls).toEqual([]);
@@ -1142,8 +1212,7 @@ test("extension assignment also saves open profiles for their next start", async
     s.addExtension({ id: "ext-one", name: "Extension One", loadDir: "/tmp/ext-one" });
     s.recordLaunch({ profileId: "k1d0cd11", pid: 123, debugPort: 9333, ws: "ws://x", startedAt: 1 });
     const res = await handleUiRequest(new Request("http://x/ui/api/profiles/extensions", {
-        method: "POST",
-        body: JSON.stringify({ ids: ["k1d0cd11", "k1d0cd22"], extensionId: "ext-one", op: "add" }),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: ["k1d0cd11", "k1d0cd22"], extensionId: "ext-one", op: "add" }),
     }), {} as any, s);
     expect(res!.status).toBe(200);
     expect(s.getProfile("k1d0cd11")!.extensions).toEqual(["ext-one"]);
@@ -1156,8 +1225,7 @@ test("extension deletion cannot mutate the persona of an open profile", async ()
     expect(s.assignExtension(["k1d0cd11"], "ext-one", true)).toBe(1);
     s.recordLaunch({ profileId: "k1d0cd11", pid: 123, debugPort: 9333, ws: "ws://x", startedAt: 1 });
     const res = await handleUiRequest(new Request("http://x/ui/api/extensions/delete", {
-        method: "POST",
-        body: JSON.stringify({ id: "ext-one" }),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: "ext-one" }),
     }), {} as any, s);
     expect(res!.status).toBe(409);
     expect(s.getExtension("ext-one")).not.toBeNull();
@@ -1175,7 +1243,7 @@ test("closed fingerprint edits persist and preserve the rest of the identity", a
         for (const timezone of ["Europe/Paris", ""]) {
             const set = { timezone, proxy: "next-proxy.example:8080", ...(engine === "chromium" ? { platformOs: "macos", resolution: "1920x1080" } : {}) };
             const res = await handleUiRequest(new Request(`http://x/ui/api/profiles/${id}/update`, {
-                method: "POST", body: JSON.stringify({ set }),
+                method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ set }),
             }), {} as any, s, { timezoneFetch: timezoneFetch({}, calls) });
             expect(res!.status).toBe(200);
             const saved = s.getProfile(id)!;
@@ -1208,7 +1276,7 @@ test("Firefox rejects OS edits and invalid timezone edits leave the profile unch
     const before = s.getProfile("firefox-edit");
     for (const set of [{ platformOs: "macos" }, { timezone: "Europe/Not_A_Zone" }]) {
         const res = await handleUiRequest(new Request("http://x/ui/api/profiles/firefox-edit/update", {
-            method: "POST", body: JSON.stringify({ set }),
+            method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ set }),
         }), {} as any, s);
         expect((await res!.json()).ok).toBe(false);
         expect(s.getProfile("firefox-edit")).toEqual(before);
@@ -1295,8 +1363,7 @@ test("create (local mode) sets the timezone from the proxy", async () => {
         const s = new ProfileStore(":memory:");
         const calls: string[][] = [];
         const res = await handleUiRequest(new Request("http://x/ui/api/profiles", {
-            method: "POST",
-            body: JSON.stringify({ engine, name: "fresh", proxy: { type: "http", host: "new-proxy.example", port: "8080" } }),
+            method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ engine, name: "fresh", proxy: { type: "http", host: "new-proxy.example", port: "8080" } }),
         }), {} as any, s, { timezoneFetch: timezoneFetch({ "new-proxy.example": "Europe/Paris" }, calls) });
         const body = await res!.json();
         expect(body.ok).toBe(true);
@@ -1311,8 +1378,7 @@ test("create (local mode) sets the timezone from the proxy", async () => {
 test("create (local mode) keeps the host timezone when the proxy lookup fails", async () => {
     const s = new ProfileStore(":memory:");
     const res = await handleUiRequest(new Request("http://x/ui/api/profiles", {
-        method: "POST",
-        body: JSON.stringify({ name: "fresh", proxy: { type: "http", host: "new-proxy.example", port: "8080" } }),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "fresh", proxy: { type: "http", host: "new-proxy.example", port: "8080" } }),
     }), {} as any, s, { timezoneFetch: async () => { throw new Error("offline"); } });
     const body = await res!.json();
     expect(body.ok).toBe(true);
@@ -1324,15 +1390,13 @@ test("blank Local creation and edit do not request timezones for either browser"
         const s = new ProfileStore(":memory:");
         const calls: string[][] = [];
         const created = await handleUiRequest(new Request("http://x/ui/api/profiles", {
-            method: "POST",
-            body: JSON.stringify({ engine }),
+            method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ engine }),
         }), {} as any, s, { timezoneFetch: timezoneFetch({ "1.2.3.4": "Europe/London" }, calls) });
         const body = await created!.json();
         expect(body.ok).toBe(true);
         expect(calls).toEqual([]);
         const edited = await handleUiRequest(new Request(`http://x/ui/api/profiles/${body.id}/update`, {
-            method: "POST",
-            body: JSON.stringify({ set: { name: `${engine}-edited` } }),
+            method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ set: { name: `${engine}-edited` } }),
         }), {} as any, s, { timezoneFetch: timezoneFetch({ "1.2.3.4": "Europe/London" }, calls) });
         expect((await edited!.json()).ok).toBe(true);
         expect(calls).toEqual([]);
@@ -1342,7 +1406,7 @@ test("blank Local creation and edit do not request timezones for either browser"
 });
 test("create (local mode) adds a new profile", async () => {
     const s = new ProfileStore(":memory:");
-    const res = await handleUiRequest(new Request("http://x/ui/api/profiles", { method: "POST", body: JSON.stringify({ name: "fresh", group: "g" }) }), {} as any, s);
+    const res = await handleUiRequest(new Request("http://x/ui/api/profiles", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "fresh", group: "g" }) }), {} as any, s);
     const body = await res!.json();
     expect(body.ok).toBe(true);
     expect(s.getProfile(body.id)!.name).toBe("fresh");
@@ -1352,7 +1416,7 @@ test("creating a Firefox profile starts the background download of its font pack
     const s = new ProfileStore(":memory:");
     const prefetched: Profile[][] = [];
     const launcher = { prefetchFirefoxFontPacks: (profiles: Profile[]) => { prefetched.push(profiles); } } as any;
-    const res = await handleUiRequest(new Request("http://x/ui/api/profiles", { method: "POST", body: JSON.stringify({ name: "mac", engine: "firefox", platformOs: "macos" }) }), launcher, s);
+    const res = await handleUiRequest(new Request("http://x/ui/api/profiles", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "mac", engine: "firefox", platformOs: "macos" }) }), launcher, s);
     const body = await res!.json();
     expect(body.ok).toBe(true);
     expect(prefetched.map((profiles) => profiles.map((profile) => [profile.id, profile.engine, profile.platformOs])))
@@ -1365,8 +1429,7 @@ test("local-mode streamed export reports progress after each profile", async () 
     const captured: string[] = [];
     const launcher = { async captureLocalSession(id: string) { captured.push(id); return false; } } as any;
     const response = await handleUiRequest(new Request("http://x/ui/api/profiles/export", {
-        method: "POST",
-        body: JSON.stringify({ ids: ["k1d0cd11", "local0002"], format: "txt", stream: true }),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: ["k1d0cd11", "local0002"], format: "txt", stream: true }),
     }), launcher, s);
     const records = (await response!.text()).trim().split("\n").map((line) => JSON.parse(line));
     expect(records.filter((record) => record.type === "progress").map((record) => record.completed)).toEqual([0, 1, 2]);
@@ -1380,8 +1443,7 @@ test("local-mode streamed export reports progress after each profile", async () 
 test("export as xlsx returns a workbook carrying the full identity", async () => {
     const s = store();
     const res = await handleUiRequest(new Request("http://x/ui/api/profiles/export", {
-        method: "POST",
-        body: JSON.stringify({ ids: ["k1d0cd11"], format: "xlsx" }),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: ["k1d0cd11"], format: "xlsx" }),
     }), new Launcher({ store: s }), s, null as any);
     expect(res!.status).toBe(200);
     expect(res!.headers.get("content-disposition")).toContain("aliasmode-export.xlsx");
@@ -1425,7 +1487,7 @@ test("delete (standalone) blocks an open profile without stopping it or removing
     const dir = join(dataRoot, "k1d0cd11");
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "Cookies"), "logged-in");
-    const res = await handleUiRequest(new Request("http://x/ui/api/profiles/delete", { method: "POST", body: JSON.stringify({ ids: ["k1d0cd11"] }) }), launcher, s);
+    const res = await handleUiRequest(new Request("http://x/ui/api/profiles/delete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: ["k1d0cd11"] }) }), launcher, s);
     const body = await res!.json();
     expect(res!.status).toBe(409);
     expect(body).toMatchObject({ ok: false, deleted: 0, locked: ["k1d0cd11"] });
@@ -1453,7 +1515,7 @@ test("delete (standalone) keeps a mixed open and closed selection atomic", async
         removeUserDataDir: () => { throw new Error("must not mutate a blocked batch"); },
     };
     const res = await handleUiRequest(new Request("http://x/ui/api/profiles/delete", {
-        method: "POST", body: JSON.stringify({ ids: [closedId, "k1d0cd11"] }),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: [closedId, "k1d0cd11"] }),
     }), launcher, s);
     expect(res!.status).toBe(409);
     expect(await res!.json()).toMatchObject({ deleted: 0, locked: ["k1d0cd11"] });
@@ -1473,7 +1535,7 @@ test("delete (standalone) trashes a closed profile without calling stop or remov
         stop: async () => { throw new Error("delete must not stop a profile"); },
         removeUserDataDir: (id: string) => { calls.push(id); return true; },
     };
-    const res = await handleUiRequest(new Request("http://x/ui/api/profiles/delete", { method: "POST", body: JSON.stringify({ ids: ["k1d0cd11"] }) }), launcher, s);
+    const res = await handleUiRequest(new Request("http://x/ui/api/profiles/delete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: ["k1d0cd11"] }) }), launcher, s);
     expect(await res!.json()).toMatchObject({ ok: true, deleted: 1, locked: [] });
     expect(calls).toEqual([]);
     expect(s.getProfile("k1d0cd11")).toBeNull();
@@ -1488,7 +1550,7 @@ test("delete (standalone) keeps recoverable data without cleanup and is idempote
         removeUserDataDir: () => { throw new Error("Trash must not clean up saved data"); },
     };
     const request = () => new Request("http://x/ui/api/profiles/delete", {
-        method: "POST", body: JSON.stringify({ ids: ["k1d0cd11"] }),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: ["k1d0cd11"] }),
     });
     const first = await handleUiRequest(request(), launcher, s);
     expect(first!.status).toBe(200);
@@ -1507,7 +1569,7 @@ test("delete with an unknown id never touches the launcher (no rmSync on a craft
         stop: async () => { throw new Error("must not be called"); },
         userDataDir: () => { throw new Error("must not be called"); },
     };
-    const res = await handleUiRequest(new Request("http://x/ui/api/profiles/delete", { method: "POST", body: JSON.stringify({ ids: ["../../etc"] }) }), launcher, s);
+    const res = await handleUiRequest(new Request("http://x/ui/api/profiles/delete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: ["../../etc"] }) }), launcher, s);
     expect((await res!.json()).deleted).toBe(0);
     s.close();
 });
@@ -1524,8 +1586,8 @@ test("app mode API exposes a local-only first launch and persists Local selectio
     const initial = await handleUiRequest(new Request("http://x/ui/api/app-mode"), {} as any, s, { appConfig });
     const { chromiumRuntime: _forcedRuntime, defaultChromiumRuntime, defaultEngine, ...config } = await initial!.json();
     expect(config).toEqual({ version: 1, mode: "local", localOnly: true, localAnalytics: false, restartRequired: false });
-    // The dashboard starts new Chrome profiles on Chromium 155 only where this computer can run it.
-    expect(defaultChromiumRuntime).toBe(supportsChromium155Host(process.platform, process.arch) ? "aliasmode" : undefined);
+    // Auto must describe the same runtime policy used by the new-profile builder.
+    expect(defaultChromiumRuntime).toBe(defaultRuntimePolicy());
     // New profiles start on AliasMode Chromium on Windows and AliasMode Firefox on macOS and Linux.
     expect(defaultEngine).toBe(process.platform === "win32" ? "chromium" : "firefox");
     const selected = await handleUiRequest(new Request("http://x/ui/api/app-mode", {
@@ -1541,6 +1603,39 @@ test("app mode API exposes a local-only first launch and persists Local selectio
     expect(appConfig.read().mode).toBe("local");
     s.close();
 });
+test("app mode Auto matches actual profile creation across Windows and Mac runtime policies", async () => {
+    const platformProperty = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const archProperty = Object.getOwnPropertyDescriptor(process, "arch")!;
+    const hadBinary = Object.hasOwn(process.env, "CLOAKBROWSER_BINARY_PATH"), originalBinary = process.env.CLOAKBROWSER_BINARY_PATH;
+    const forbidden = new Proxy({}, { get() { throw new Error("App mode policy must not access profiles or launch browsers"); } });
+    const cases: Array<{ platform: NodeJS.Platform; arch: string; binary?: string; expected?: "aliasmode"; forced?: "aliasmode"; defaultEngine: string }> = [
+        { platform: "win32", arch: "x64", expected: "aliasmode", defaultEngine: "chromium" },
+        { platform: "win32", arch: "x64", binary: "C:\\inert-config\\chrome.exe", expected: "aliasmode", defaultEngine: "chromium" },
+        { platform: "darwin", arch: "arm64", expected: "aliasmode", forced: "aliasmode", defaultEngine: "firefox" },
+        { platform: "darwin", arch: "arm64", binary: "/inert-config/cloakbrowser", defaultEngine: "firefox" },
+        { platform: "darwin", arch: "x64", defaultEngine: "firefox" },
+        { platform: "linux", arch: "x64", expected: "aliasmode", defaultEngine: "firefox" },
+    ];
+    try {
+        for (const scenario of cases) {
+            Object.defineProperty(process, "platform", { ...platformProperty, value: scenario.platform });
+            Object.defineProperty(process, "arch", { ...archProperty, value: scenario.arch });
+            if (scenario.binary) process.env.CLOAKBROWSER_BINARY_PATH = scenario.binary; else delete process.env.CLOAKBROWSER_BINARY_PATH;
+            const result = await handleUiRequest(new Request("http://127.0.0.1/ui/api/app-mode"), forbidden as any, forbidden as any);
+            expect(result?.status).toBe(200);
+            const config = await result!.json(), profile = buildNewProfile({ engine: "chromium" }, () => false);
+            expect(config.defaultChromiumRuntime).toBe(scenario.expected);
+            expect(config.defaultChromiumRuntime).toBe(profile.chromiumRuntime);
+            expect(Object.hasOwn(config, "defaultChromiumRuntime")).toBe(scenario.expected !== undefined);
+            expect(config.chromiumRuntime).toBe(scenario.forced);
+            expect(config.defaultEngine).toBe(scenario.defaultEngine);
+            expect(JSON.stringify(config)).not.toContain("inert-config");
+        }
+    } finally {
+        Object.defineProperty(process, "platform", platformProperty); Object.defineProperty(process, "arch", archProperty);
+        if (hadBinary && originalBinary !== undefined) process.env.CLOAKBROWSER_BINARY_PATH = originalBinary; else delete process.env.CLOAKBROWSER_BINARY_PATH;
+    }
+});
 test("runtime downloads route lists each download in progress with the bytes of its part", async () => {
     const s = store();
     const read = async () => {
@@ -1551,15 +1646,23 @@ test("runtime downloads route lists each download in progress with the bytes of 
     expect(await read()).toEqual({ downloads: [] });
     const dir = mkdtempSync(join(tmpdir(), "aliasmode-runtime-download-"));
     const partial = join(dir, "runtime.part");
+    const unknownPartial = join(dir, "unknown-runtime.part");
     writeFileSync(partial, "x".repeat(42));
-    let finish!: () => void;
+    writeFileSync(unknownPartial, "x".repeat(13));
+    let finish!: () => void, finishUnknown!: () => void;
     const download = trackRuntimeDownload("aliasmode", partial, 100, () => new Promise<void>((resolve) => { finish = resolve; }));
-    expect(await read()).toEqual({ downloads: [{ runtime: "aliasmode", receivedBytes: 42, totalBytes: 100 }] });
-    finish();
-    await download;
+    const unknown = trackRuntimeDownload("firefox", unknownPartial, 0, () => new Promise<void>((resolve) => { finishUnknown = resolve; }));
+    try {
+      expect(await read()).toEqual({ downloads: [{ runtime: "aliasmode", receivedBytes: 42, totalBytes: 100 }, { runtime: "firefox", receivedBytes: 13, totalBytes: 0 }] });
+      writeFileSync(unknownPartial, "x".repeat(27));
+      expect((await read()).downloads[1]).toEqual({ runtime: "firefox", receivedBytes: 27, totalBytes: 0 });
+    } finally {
+      finish(); finishUnknown();
+      await Promise.all([download, unknown]);
+      rmSync(dir, { recursive: true, force: true });
+      s.close();
+    }
     expect(await read()).toEqual({ downloads: [] });
-    rmSync(dir, { recursive: true, force: true });
-    s.close();
 });
 test("app mode API rejects cross-origin JSON requests", async () => {
     const s = store();
@@ -1599,8 +1702,7 @@ test("the roster carries each profile's serial and custom NO.", () => {
 test("editing a custom NO. validates digits and survives a reopen of the editor", async () => {
     const s = store();
     const save = (customNo: string) => handleUiRequest(new Request("http://x/ui/api/profiles/k1d0cd11/update", {
-        method: "POST",
-        body: JSON.stringify({ set: { customNo } }),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ set: { customNo } }),
     }), {} as any, s);
     expect((await save("4421"))!.status).toBe(200);
     expect(s.getProfile("k1d0cd11")!.customNo).toBe("4421");
@@ -1617,8 +1719,7 @@ test("editing a custom NO. validates digits and survives a reopen of the editor"
 test("creating a profile stores the credentials supplied with it", async () => {
     const s = store();
     const response = await handleUiRequest(new Request("http://x/ui/api/profiles", {
-        method: "POST",
-        body: JSON.stringify({
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
             name: "fresh", group: "Warmup", platform: "x.com", customNo: "5150",
             username: "fresh_user", password: "fresh-pass",
             email: "fresh@example.com", emailPassword: "mailbox-pass",
@@ -1637,13 +1738,17 @@ test("creating a profile stores the credentials supplied with it", async () => {
     });
     s.close();
 });
-test("the dashboard profile payload carries the fingerprint verdict", () => {
+test("the dashboard profile payload carries a redacted recomputed import comparison alongside the legacy verdict", () => {
     const s = store();
+    s.upsertProfile({ ...s.getProfile("k1d0cd11")!, fpExpected: { canvas: "a3f19c8e" } });
     s.saveObservedFingerprint("k1d0cd11", { canvas: "deadbeef", capturedAt: "2026-08-29T11:04:22Z" }, { verdict: "mismatch", differences: [{ field: "canvas", expected: "a3f19c8e", observed: "deadbeef" }] });
     const row = listUiProfiles(s).find((p) => p.id === "k1d0cd11")!;
     expect(row.fpVerdict!.verdict).toBe("mismatch");
     expect(row.fpVerdict!.differences[0]!.field).toBe("canvas");
     expect(row.fpCapturedAt).toBe("2026-08-29T11:04:22Z");
+    expect(row.fpImportComparison).toEqual({ expectedCount: 1, comparedCount: 1, matchedCount: 0, differenceFields: ["canvas"], missingFields: [], capturedAt: "2026-08-29T11:04:22.000Z" });
+    expect(JSON.stringify(row.fpImportComparison)).not.toContain("a3f19c8e");
+    expect(JSON.stringify(row.fpImportComparison)).not.toContain("deadbeef");
     s.close();
 });
 test("a profile that has never been probed carries no verdict", () => {
@@ -1651,7 +1756,46 @@ test("a profile that has never been probed carries no verdict", () => {
     const row = listUiProfiles(s).find((p) => p.id === "k1d0cd11")!;
     expect(row.fpVerdict).toBeNull();
     expect(row.fpCapturedAt).toBe("");
+    expect(row.fpImportComparison).toBeNull();
     s.close();
+});
+test("the roster never promotes an empty or incomplete legacy stored match into a full import match", async () => {
+    const s = store();
+    try {
+        s.saveObservedFingerprint("k1d0cd11", { canvas: "PRIVATE_SAMPLE", capturedAt: "PRIVATE_TIME" }, { verdict: "match", differences: [] });
+        expect(listUiProfiles(s)[0]!.fpImportComparison).toBeNull();
+        s.upsertProfile({ ...s.getProfile("k1d0cd11")!, fpExpected: { canvas: "PRIVATE_SAMPLE", audio: "PRIVATE_MISSING" } });
+        expect(listUiProfiles(s)[0]!.fpImportComparison).toEqual({ expectedCount: 2, comparedCount: 1, matchedCount: 1, differenceFields: [], missingFields: ["audio"] });
+        const malformed = { toString: 0, valueOf: 0 };
+        s.upsertProfile({
+            ...s.getProfile("k1d0cd11")!, id: "legacy-bad-sample",
+            fpExpected: { canvas: "fixture", audio: malformed, hardwareConcurrency: 8 } as unknown as Profile["fpExpected"],
+            fpObserved: { canvas: malformed, audio: "fixture", hardwareConcurrency: "8" } as unknown as Profile["fpObserved"],
+        });
+        const launcher = { reconcileOrphans: async () => {} } as unknown as Launcher;
+        const response = await handleUiRequest(new Request("http://x/ui/api/profiles"), launcher, s);
+        expect(response!.status).toBe(200);
+        const roster = await response!.json() as { profiles: ReturnType<typeof listUiProfiles> };
+        expect(roster.profiles).toHaveLength(2);
+        expect(roster.profiles.find(p => p.id === "legacy-bad-sample")?.fpImportComparison).toEqual({
+            expectedCount: 2, comparedCount: 1, matchedCount: 1, differenceFields: [], missingFields: ["canvas"],
+        });
+    } finally { s.close(); }
+});
+test("roster import summaries reuse the bulk profile mapping without per-profile provenance or IO calls", () => {
+    const s = store();
+    try {
+        s.upsertProfile({ ...s.getProfile("k1d0cd11")!, fpExpected: { canvas: "PRIVATE" }, fpObserved: { canvas: "PRIVATE" } });
+        const calls: string[] = [];
+        const allowed = new Set(["listLaunches", "listProfileMeta", "pendingCookieCounts", "listProfiles"]);
+        const bulkOnly = new Proxy(s, { get(target, property) {
+            const name = String(property); calls.push(name);
+            if (!allowed.has(name)) throw new Error("The roster must not add provenance, liveness or per-profile IO");
+            return (target as any)[property].bind(target);
+        } });
+        expect(listUiProfiles(bulkOnly)[0]!.fpImportComparison).toMatchObject({ expectedCount: 1, comparedCount: 1, matchedCount: 1 });
+        expect(calls).toEqual(["listLaunches", "listProfileMeta", "pendingCookieCounts", "listProfiles"]);
+    } finally { s.close(); }
 });
 test("shell-language round-trips through the server and rejects invalid tags", async () => {
     const s = store();
@@ -1710,4 +1854,123 @@ test("retired hosted fingerprint checks never navigate a running profile to an a
     expect(closed!.status).toBe(410);
     expect(opened).toHaveLength(0);
     s.close();
+});
+
+test("tags-only edits normalize labels without reading credentials or changing browser identity", async () => {
+    const s = store();
+    try {
+        const before = s.getProfile("k1d0cd11")!;
+        let networkCalls = 0;
+        const response = await handleUiRequest(new Request("http://x/ui/api/profiles/k1d0cd11/update", {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ set: { tags: [" Work ", "work", "e\u0301", "é"] } }),
+        }), {} as Launcher, s, { timezoneFetch: async () => { networkCalls++; throw new Error("Unexpected network call"); } });
+        expect(response!.status).toBe(200);
+        expect(await response!.json()).toEqual({ ok: true });
+        expect(s.getProfile("k1d0cd11")).toEqual({ ...before, tags: ["Work", "é"] });
+        expect(networkCalls).toBe(0);
+    } finally { s.close(); }
+});
+
+test("invalid tags return a bounded validation error and leave the complete profile untouched", async () => {
+    const s = store();
+    try {
+        const before = s.getProfile("k1d0cd11")!;
+        for (const tags of [["SECRET\u0000tag"], ["x".repeat(41)], Array.from({ length: 21 }, (_, index) => String(index)), [42], null]) {
+            const response = await handleUiRequest(new Request("http://x/ui/api/profiles/k1d0cd11/update", {
+                method: "POST", headers: { "content-type": "application/json" },
+                body: JSON.stringify({ set: { name: "Must not persist", tags } }),
+            }), {} as Launcher, s);
+            expect(response!.status).toBe(400);
+            const result = await response!.json();
+            expect(result.ok).toBe(false);
+            expect(result.error).not.toContain("SECRET");
+            expect(s.getProfile("k1d0cd11")).toEqual(before);
+        }
+    } finally { s.close(); }
+});
+
+test("a tags-only empty list clears labels and preserves all other fields", async () => {
+    const s = store();
+    try {
+        const existing = s.getProfile("k1d0cd11")!;
+        existing.tags = ["Existing"];
+        s.upsertProfile(existing);
+        const before = s.getProfile("k1d0cd11")!;
+        const response = await handleUiRequest(new Request("http://x/ui/api/profiles/k1d0cd11/update", {
+            method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ set: { tags: [] } }),
+        }), {} as Launcher, s);
+        expect(response!.status).toBe(200);
+        expect(s.getProfile("k1d0cd11")).toEqual({ ...before, tags: [] });
+    } finally { s.close(); }
+});
+
+test(":id routes return 400 JSON on malformed percent-encoding and unsafe profile ids", async () => {
+    const s = store();
+    try {
+        const routes: Array<[string, RequestInit?]> = [
+            ["/ui/api/profiles/%ZZ"],
+            ["/ui/api/profiles/%ZZ/totp"],
+            ["/ui/api/profiles/%ZZ/pending-cookies"],
+            ["/ui/api/profiles/%ZZ/open", { method: "POST" }],
+            ["/ui/api/profiles/%ZZ/raise", { method: "POST" }],
+            ["/ui/api/profiles/%ZZ/convert-mobile", { method: "POST" }],
+            ["/ui/api/profiles/%ZZ/update", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }],
+            ["/ui/api/profiles/CON"],
+            ["/ui/api/profiles/CON/totp"],
+            ["/ui/api/profiles/..%2Fevil/open", { method: "POST" }],
+            ["/ui/api/profiles/_bad/raise", { method: "POST" }],
+        ];
+        for (const [path, init] of routes) {
+            const res = await handleUiRequest(new Request(`http://x${path}`, init), {} as Launcher, s);
+            expect(res!.status).toBe(400);
+            expect((await res!.json()).ok).toBe(false);
+            expect(res!.headers.get("x-content-type-options")).toBe("nosniff");
+            expect(res!.headers.get("x-frame-options")).toBe("DENY");
+            expect(res!.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+        }
+    } finally { s.close(); }
+});
+
+test("mutating JSON POST routes reject non-JSON Content-Type (415) and cross-origin requests (403) before modifying state", async () => {
+    const s = store();
+    try {
+        const beforeCount = s.count();
+        const beforeName = s.getProfile("k1d0cd11")!.name;
+        const cases: Array<[string, unknown]> = [
+            ["/ui/api/profiles", { name: "csrf-profile" }],
+            ["/ui/api/profiles/move", { ids: ["k1d0cd11"], group: "csrf" }],
+            ["/ui/api/profiles/delete", { ids: ["k1d0cd11"] }],
+            ["/ui/api/profiles/k1d0cd11/update", { set: { name: "hacked" } }],
+            ["/ui/api/profiles/extensions", { ids: ["k1d0cd11"], extensionId: "ext1", op: "add" }],
+            ["/ui/api/groups/create", { name: "csrf-group" }],
+            ["/ui/api/groups/rename", { from: "g", to: "csrf" }],
+            ["/ui/api/groups/delete", { name: "g" }],
+            ["/ui/api/extensions/delete", { id: "ext1" }],
+            ["/ui/api/shell-language", { language: "zh-CN" }],
+        ];
+        for (const [path, payload] of cases) {
+            const noCt = await handleUiRequest(new Request(`http://x${path}`, {
+                method: "POST",
+                body: JSON.stringify(payload),
+            }), {} as Launcher, s);
+            expect(noCt!.status).toBe(415);
+
+            const crossOrigin = await handleUiRequest(new Request(`http://x${path}`, {
+                method: "POST",
+                headers: { "content-type": "application/json", origin: "https://evil.example" },
+                body: JSON.stringify(payload),
+            }), {} as Launcher, s);
+            expect(crossOrigin!.status).toBe(403);
+
+            const crossSite = await handleUiRequest(new Request(`http://x${path}`, {
+                method: "POST",
+                headers: { "content-type": "application/json", "sec-fetch-site": "cross-site" },
+                body: JSON.stringify(payload),
+            }), {} as Launcher, s);
+            expect(crossSite!.status).toBe(403);
+        }
+        expect(s.count()).toBe(beforeCount);
+        expect(s.getProfile("k1d0cd11")!.name).toBe(beforeName);
+    } finally { s.close(); }
 });

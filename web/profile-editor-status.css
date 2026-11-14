@@ -1,0 +1,29 @@
+/* Opt-in companion for the existing fixed footer; no global modal rule changes. */
+.profile-editor-status-footer { flex-wrap: wrap; row-gap: 10px; }
+.profile-editor-status-footer > .btn:first-of-type { margin-left: auto; }
+.profile-editor-status {
+  flex: 1 1 220px; min-width: 0; max-width: 100%; margin-right: auto;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 5px 12px;
+  color: var(--muted); font-size: 11.5px; line-height: 1.6;
+}
+.profile-editor-status-copy { display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px 10px; min-width: 0; overflow-wrap: anywhere; }
+.profile-editor-status-live:empty { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.profile-editor-status-live { color: var(--danger, #b84a62); }
+.profile-editor-status-count { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.profile-editor-status-count.is-secondary { color: var(--muted); }
+.profile-editor-status-summary { display: inline-flex; align-items: baseline; flex-wrap: wrap; gap: 2px 6px; min-width: 0; }
+.profile-editor-status-summary > span[aria-hidden="true"] { color: var(--faint); }
+.profile-editor-status-action {
+  flex: 0 1 auto; max-width: 100%; min-height: 30px; padding: 3px 2px;
+  border: 0; border-radius: var(--r-xs, 4px); background: transparent;
+  color: var(--accent-ink); font: inherit; line-height: 1.5; text-align: start;
+  white-space: normal; overflow-wrap: anywhere; cursor: pointer;
+  text-decoration: underline; text-underline-offset: 3px;
+  transition: color var(--desktop-motion-control, 0ms) ease, background-color var(--desktop-motion-control, 0ms) ease;
+}
+.profile-editor-status-action:hover { color: var(--ink); }
+.profile-editor-status-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.profile-editor-status.has-problem .profile-editor-status-action { color: var(--danger, #b84a62); }
+@media (max-width: 540px) {
+  .profile-editor-status-footer > .profile-editor-status { flex-basis: 100%; }
+}

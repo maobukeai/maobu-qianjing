@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { ProfileStore } from "./store.ts";
-import { Launcher, type SpawnFn, type FetchFn, type CookieEnsurer } from "./launcher.ts";
-import { handleRequest, isLoopbackAddress } from "./server.ts";
+import { BrowserLaunchError, Launcher, type SpawnFn, type FetchFn, type CookieEnsurer } from "./launcher.ts";
+import { handleRequest, isLoopbackAddress, rejectUntrustedLocalRequest } from "./server.ts";
 import { LifecycleAdmissionController, dispatchWithLifecycleAdmission, } from "./lifecycle-admission.ts";
 import { parseExport } from "./parse.ts";
 import { handleUiRequest } from "./ui.ts";
@@ -14,6 +14,26 @@ proxy=1.2.3.4:8080:u:p
 ua=Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/143.0.0.0 Safari/537.36
 resolution=1680*1050
 ******************`;
+test("AdsPower launch errors use fixed preflight guidance and retain the existing HTTP/code envelope", async () => {
+    const { store } = harness();
+    try {
+        for (const [error, message] of [
+            [new BrowserLaunchError("preflight", "local_proxy_unavailable"), "The configured local proxy is not listening or did not respond in time. Open your desktop proxy client, enable its local port, then retry."],
+            [new BrowserLaunchError("mode_conflict"), "browser_launch/mode_conflict (failed)"],
+            [new BrowserLaunchError("cdp_readiness"), "browser_launch/cdp_readiness (failed)"],
+            [new BrowserLaunchError("preflight"), "browser_launch/preflight (failed)"],
+            [new Error("legacy failure"), "legacy failure"],
+        ] as const) {
+            Object.assign(error, { cause: new Error("PRIVATE_CAUSE_PASSWORD") });
+            const launcher = { start: async () => { throw error; } } as unknown as Launcher;
+            const response = await handleRequest(req("/api/v1/browser/start?user_id=k1d0cd11"), launcher, store);
+            expect(response.status).toBe(200);
+            const data = await response.json();
+            expect(data).toEqual({ code: -1, msg: message, data: {} });
+            expect(JSON.stringify(data)).not.toContain("PRIVATE_CAUSE_PASSWORD");
+        }
+    } finally { store.close(); }
+});
 interface Harness {
     store: ProfileStore;
     launcher: Launcher;
@@ -212,6 +232,47 @@ test("health ingestion accepts only loopback peer addresses", () => {
     expect(isLoopbackAddress("::ffff:127.0.0.1")).toBe(true);
     expect(isLoopbackAddress("192.168.1.10")).toBe(false);
     expect(isLoopbackAddress(null)).toBe(false);
+    expect(isLoopbackAddress("127.attacker.test")).toBe(false);
+    expect(isLoopbackAddress("::ffff:127.attacker.test")).toBe(false);
+    expect(isLoopbackAddress("0:0:0:0:0:0:0:1")).toBe(true);
+});
+
+test("local HTTP boundary accepts native CLI and same-origin requests for the supported loopback hosts", () => {
+    for (const host of ["127.0.0.1:50400", "localhost:50400", "[::1]:50400"]) {
+        const url = `http://${host}/api/v1/status`;
+        expect(rejectUntrustedLocalRequest(new Request(url), { port: 50400 })).toBeNull();
+        expect(rejectUntrustedLocalRequest(new Request(url, { headers: { Host: host, Origin: new URL(url).origin, "Sec-Fetch-Site": "same-origin", Referer: `http://${host}/` } }), { port: 50400, requireHost: true, clientAddress: "127.0.0.1" })).toBeNull();
+        expect(rejectUntrustedLocalRequest(new Request(url, { headers: { Host: host, "Sec-Fetch-Site": "none" } }), { port: 50400, requireHost: true, clientAddress: "::1" })).toBeNull();
+    }
+});
+
+test("local HTTP boundary validates peer, Host, port and browser request context independently", () => {
+    const url = "http://127.0.0.1:50400/api/v1/browser/start?user_id=fixture";
+    const headers = { Host: "127.0.0.1:50400" };
+    const options = { port: 50400, requireHost: true, clientAddress: "127.0.0.1" };
+    for (const extra of [
+        { Host: "evil.test:50400" }, { Host: "127.0.0.1:50401" }, { Host: "localhost:50400" },
+        { Host: "127.0.0.1.evil.test:50400" }, { Host: "2130706433:50400" },
+        { Origin: "https://evil.test" }, { Origin: "null" }, { Origin: "http://127.0.0.1:50401" },
+        { "Sec-Fetch-Site": "cross-site" }, { "Sec-Fetch-Site": "same-site" },
+        { Referer: "https://evil.test/image" }, { Referer: "invalid-referrer" },
+    ] as Array<Record<string, string>>) expect(rejectUntrustedLocalRequest(new Request(url, { headers: { ...headers, ...extra } }), options)?.status).toBe(403);
+    expect(rejectUntrustedLocalRequest(new Request(url), options)?.status).toBe(403);
+    expect(rejectUntrustedLocalRequest(new Request(url, { headers }), { ...options, clientAddress: "203.0.113.9" })?.status).toBe(403);
+    expect(rejectUntrustedLocalRequest(new Request(url, { headers }), { ...options, clientAddress: undefined })?.status).toBe(403);
+    expect(rejectUntrustedLocalRequest(new Request("http://evil.test:50400/api/v1/status", { headers: { Host: "evil.test:50400" } }), options)?.status).toBe(403);
+});
+
+test("standalone API blocks browser CSRF before touching profiles or the launcher", async () => {
+    let touched = 0;
+    const launcher = { start: async () => { touched++; } } as any;
+    const store = { getProfile: () => { touched++; return null; } } as any;
+    for (const request of [
+        new Request("http://127.0.0.1:50400/api/v1/browser/start?user_id=fixture", { headers: { "Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Dest": "image" } }),
+        new Request("http://127.0.0.1:50400/api/v1/browser/start?user_id=fixture", { method: "POST", headers: { Origin: "https://evil.test", "Content-Type": "application/x-www-form-urlencoded" }, body: "x=1" }),
+        new Request("http://evil.test:50400/api/v1/browser/start?user_id=fixture"),
+    ]) expect((await handleRequest(request, launcher, store)).status).toBe(403);
+    expect(touched).toBe(0);
 });
 test("status returns code 0", async () => {
     const { launcher, store } = harness();
@@ -404,7 +465,7 @@ test("CDP-dead/live-process start returns AdsPower failure so stop+retry recover
     h.setCdpAlive(false); // Chromium still exists, but memory pressure wedged CDP.
     const failed = await (await handleRequest(req("/api/v1/browser/start?user_id=k1d0cd11"), h.launcher, h.store)).json();
     expect(failed.code).toBe(-1);
-    expect(failed.msg).toBe("browser_launch/preflight (failed)");
+    expect(failed.msg).toBe("This profile's browser is still running but does not answer. Close the profile in 猫步·千境, then open it again.");
     expect(h.spawnedArgs.length).toBe(1); // no duplicate profile process
     expect(h.store.getLaunch("k1d0cd11")?.debugPort).toBe(Number(first.data.debug_port));
     const stopped = await (await handleRequest(req("/api/v1/browser/stop?user_id=k1d0cd11"), h.launcher, h.store)).json();
@@ -420,5 +481,8 @@ test("delete-cache (AdsPower V2 shape) returns success", async () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ profile_id: ["k1d0cd11"], type: ["image_file"] }),
     }), h.launcher, h.store);
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
+    expect(res.headers.get("content-security-policy")).toBe("default-src 'none'; frame-ancestors 'none'");
     expect((await res.json()).code).toBe(0);
 });

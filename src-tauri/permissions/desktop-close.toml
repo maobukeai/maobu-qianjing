@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-desktop-close"
+description = "Allows only the trusted main window to coordinate native close requests without sending draft values."
+commands.allow = ["desktop_close_register", "desktop_close_unregister", "desktop_close_resolve"]

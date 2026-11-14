@@ -1,6 +1,7 @@
 import type { LifecycleAdmissionController } from "./lifecycle-admission.ts";
 
 export const DESKTOP_PROTOCOL = "aliasmode-desktop-v1";
+export const DESKTOP_SESSION_HEADER = "X-Maobu-Desktop-Session";
 const NONCE_RE = /^[a-f0-9]{64}$/;
 
 export interface DesktopHealthMetadata {
@@ -51,6 +52,19 @@ export function agentControlNonce(
     throw new Error("ALIASMODE_AGENT_NONCE must be 64 lowercase hexadecimal characters");
   }
   return nonce;
+}
+
+export function desktopDashboardSession(env: Record<string, string | undefined>): string {
+  const session = env.MAOBU_DESKTOP_SESSION;
+  if (!session || !NONCE_RE.test(session)) throw new Error("MAOBU_DESKTOP_SESSION must be 64 lowercase hexadecimal characters");
+  return session;
+}
+
+export function desktopAutomationToken(env: Record<string, string | undefined>): string | undefined {
+  const token = env.MAOBU_DESKTOP_AUTOMATION_TOKEN;
+  if (!token) return undefined;
+  if (!NONCE_RE.test(token)) throw new Error("MAOBU_DESKTOP_AUTOMATION_TOKEN must be 64 lowercase hexadecimal characters");
+  return token;
 }
 
 export function desktopHealthMetadata(

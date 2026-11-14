@@ -14,14 +14,23 @@ export class WorkspaceMaintenance {
   label(): string | null { return this.reason; }
   assertWritable(): void { if (this.busy()) throw new WorkspaceBusyError(); }
 
-  async mutation<T>(work: () => T | Promise<T>): Promise<T> {
+  /** A response can return before its admitted streaming worker has finished. */
+  acquireMutationLease(): () => void {
     this.assertWritable();
     this.writers++;
-    try { return await work(); }
-    finally {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
       this.writers--;
       if (!this.writers) for (const wake of [...this.waiters]) wake();
-    }
+    };
+  }
+
+  async mutation<T>(work: () => T | Promise<T>): Promise<T> {
+    const release = this.acquireMutationLease();
+    try { return await work(); }
+    finally { release(); }
   }
 
   /** Owned session teardown waits for a snapshot, but must finish during restart. */

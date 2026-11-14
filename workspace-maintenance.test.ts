@@ -45,3 +45,26 @@ test("owned cleanup waits for a snapshot but remains available during a restart"
   expect(await gate.cleanup(async () => "closed")).toBe("closed");
   restarting();
 });
+
+test("explicit streaming writer outlives its response wrapper and releases exactly once", async () => {
+  const gate = new WorkspaceMaintenance();
+  let finishStream!: () => void;
+  expect(await gate.mutation(async () => {
+    finishStream = gate.acquireMutationLease();
+    return "response headers";
+  })).toBe("response headers");
+  let ready = false;
+  const acquired = gate.acquire("backup").then(release => { ready = true; return release; });
+  await Promise.resolve();
+  expect(ready).toBe(false);
+  expect(() => gate.acquireMutationLease()).toThrow(WorkspaceBusyError);
+  finishStream(); finishStream();
+  const release = await acquired;
+  expect(ready).toBe(true);
+  release();
+  const next = gate.acquireMutationLease();
+  let nextReady = false;
+  const nextAcquire = gate.acquire("restore").then(release => { nextReady = true; return release; });
+  await Promise.resolve(); expect(nextReady).toBe(false);
+  next(); (await nextAcquire)();
+});

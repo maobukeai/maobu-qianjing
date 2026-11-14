@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { fetchDirectEgress, parseEgressResponse, resolveEgressEndpoints } from "./egress.ts";
+import { EgressResponseError } from "./egress-transport.ts";
 
 test("parseEgressResponse accepts JSON and plain IPv4/IPv6 responses", () => {
   expect(parseEgressResponse('{"ip":"203.0.113.4","country":"US"}')).toEqual({ ip: "203.0.113.4", country: "US" });
@@ -52,4 +53,30 @@ test("direct egress reports request and service failures without exposing raw er
     "service_failed",
     "proxy_authentication_failed",
   ]);
+});
+
+test("invalid checker protocol data is a service failure and endpoint errors redact credentials", async () => {
+  const failures: string[] = [];
+  await expect(fetchDirectEgress({ endpoints: ["https://fixture.test/ip"] },
+    (async () => { throw new EgressResponseError("Invalid response framing"); }) as unknown as typeof fetch,
+    (failure) => failures.push(failure),
+  )).resolves.toBeNull();
+  expect(failures).toEqual(["service_failed"]);
+  expect(() => resolveEgressEndpoints("https://user:private-password@fixture.test/ip")).toThrow("must not contain credentials");
+  try { resolveEgressEndpoints("https://user:private-password@"); } catch (error) {
+    expect(String(error)).not.toContain("private-password");
+  }
+});
+
+test("default egress ignores global fetch replacement while explicit injection remains supported", async () => {
+  const previous = globalThis.fetch;
+  let calls = 0;
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => Response.json({ ip: "198.51.100.50" }) });
+  globalThis.fetch = (async () => { calls++; return Response.json({ ip: "203.0.113.50" }); }) as unknown as typeof fetch;
+  try {
+    expect(await fetchDirectEgress({ endpoints: [`http://127.0.0.1:${server.port}/ip`] })).toEqual({ ip: "198.51.100.50" });
+    expect(calls).toBe(0);
+    expect(await fetchDirectEgress({ endpoints: ["https://must-not-resolve.invalid/ip"] }, globalThis.fetch)).toEqual({ ip: "203.0.113.50" });
+    expect(calls).toBe(1);
+  } finally { globalThis.fetch = previous; server.stop(true); }
 });

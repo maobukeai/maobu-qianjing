@@ -1,0 +1,68 @@
+/* Interface motion is shared by DOM surfaces, never by native OS windows. */
+:root[data-desktop-motion="full"] {
+  --desktop-motion-control: 120ms;
+  --desktop-motion-enter: 180ms;
+  --desktop-motion-exit: 120ms;
+  --desktop-motion-ease: cubic-bezier(.22,.72,.25,1);
+}
+:root[data-desktop-motion="full"] :is(.btn, .iconbtn, .rail-toggle, .command-palette-trigger) {
+  transition-duration: var(--desktop-motion-control);
+}
+:root[data-desktop-motion="full"] :is(.btn, .iconbtn):active:not(:disabled) { transform: translateY(1px) scale(.985); }
+:root[data-desktop-motion="full"] :is(.modal-backdrop, .extensions-confirm-backdrop, .wm-confirm-backdrop, .command-palette-backdrop) {
+  animation: desktop-motion-fade var(--desktop-motion-enter) ease-out;
+}
+:root[data-desktop-motion="full"] :is(.modal, .extensions-confirm, .wm-confirm, .command-palette) {
+  animation: desktop-motion-dialog var(--desktop-motion-enter) var(--desktop-motion-ease);
+}
+:root[data-desktop-motion="full"] :is(.popover, .wm-switcher-popover, .wm-device-popover) {
+  animation: desktop-motion-menu var(--desktop-motion-enter) var(--desktop-motion-ease);
+}
+@keyframes desktop-motion-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes desktop-motion-dialog { from { transform: translateY(8px) scale(.992); } to { transform: none; } }
+@keyframes desktop-motion-menu { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+.desktop-motion-presence { display: contents; }
+/* Presence owns its surfaces: suppress their older entrance keyframes so an
+   overlay fades once while its dialog only moves, rather than fading twice. */
+:root[data-desktop-motion] .desktop-motion-presence :is(.modal-backdrop, .extensions-confirm-backdrop, .wm-confirm-backdrop, .command-palette-backdrop, .modal, .extensions-confirm, .wm-confirm, .command-palette, .popover, .wm-switcher-popover, .wm-device-popover) { animation: none; }
+:root[data-desktop-motion="full"] .desktop-motion-presence > * {
+  opacity: 1;
+  transition: opacity var(--desktop-motion-enter) ease;
+}
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="dialog"] > * > :is(.modal, .extensions-confirm, .wm-confirm, .command-palette) {
+  transform: none;
+  transition: transform var(--desktop-motion-enter) var(--desktop-motion-ease);
+}
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="popover"] > * {
+  transform: none;
+  transition: opacity var(--desktop-motion-enter) ease, transform var(--desktop-motion-enter) var(--desktop-motion-ease);
+}
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-phase="entering"] > *,
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-phase="exiting"] > * { opacity: 0; }
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="dialog"]:is([data-motion-phase="entering"], [data-motion-phase="exiting"]) > * > :is(.modal, .extensions-confirm, .wm-confirm, .command-palette) { transform: translateY(8px) scale(.992); }
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="popover"]:is([data-motion-phase="entering"], [data-motion-phase="exiting"]) > * { transform: translateY(-4px); }
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-phase="exiting"] > *,
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-phase="exiting"] > * > :is(.modal, .extensions-confirm, .wm-confirm, .command-palette) { transition-duration: var(--desktop-motion-exit); }
+.desktop-motion-presence[aria-hidden="true"] > * { pointer-events: none; }
+
+:root[data-desktop-motion="reduced"] *,
+:root[data-desktop-motion="reduced"] *::before,
+:root[data-desktop-motion="reduced"] *::after { animation: none !important; transition-duration: 0ms !important; scroll-behavior: auto !important; }
+@media (prefers-reduced-motion: reduce) {
+  :root[data-desktop-motion] *, :root[data-desktop-motion] *::before, :root[data-desktop-motion] *::after { animation: none !important; transition-duration: 0ms !important; scroll-behavior: auto !important; }
+}
+
+.desktop-motion-settings fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.desktop-motion-settings .card-body > p:first-child { margin-top: 0; }
+.desktop-motion-options { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
+.desktop-motion-option { display: flex; align-items: flex-start; gap: 9px; min-width: 0; padding: 13px 12px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); color: var(--muted); cursor: pointer; }
+.desktop-motion-option:hover { background: var(--surface-hover); }
+.desktop-motion-option.selected { border-color: var(--accent-line); color: var(--accent-ink); background: var(--accent-soft); }
+.desktop-motion-option:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.desktop-motion-option input { flex: 0 0 auto; width: 14px; height: 14px; margin: 2px 0 0; accent-color: var(--accent); }
+.desktop-motion-option > span { min-width: 0; }
+.desktop-motion-option strong { display: block; color: inherit; font-size: 12px; font-weight: 550; }
+.desktop-motion-option small { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.desktop-motion-note { margin-bottom: 0; color: var(--faint); font-size: 11px; line-height: 1.8; }
+@media (max-width: 650px) { .desktop-motion-options { grid-template-columns: minmax(0,1fr); } }

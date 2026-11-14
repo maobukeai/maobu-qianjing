@@ -4,7 +4,7 @@ import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { installCloakBrowser } from "./browser-install.ts";
 import { installFirefox } from "./firefox-install.ts";
 import { verifyPlaywrightRuntime } from "./playwright-runtime.ts";
-import { extractZipTo } from "./unzip.ts";
+import { TRUSTED_RUNTIME_ZIP_LIMITS, extractZipTo } from "./unzip.ts";
 
 interface BrowserPin { path: string; sha256: string }
 export interface SourceRuntime {
@@ -40,7 +40,7 @@ export async function installSourceNode(
   const destination = join(root, "node");
   mkdirSync(destination, { recursive: true });
   if (platform === "win32") {
-    await extractZipTo(bytes, destination);
+    await extractZipTo(bytes, destination, TRUSTED_RUNTIME_ZIP_LIMITS);
   } else {
     const archive = join(root, `${name}.${extension}`);
     try {

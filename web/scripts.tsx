@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import "./scripts.css";
 import type {
+  ScriptInput,
   ScriptLanguage,
   ScriptRecord,
   ScriptSummary,
@@ -9,6 +10,12 @@ import type { ScriptRun } from "../scripts.ts";
 import type { PythonRuntimeStatus } from "../python-runtime.ts";
 import type { UiProfile } from "./api.ts";
 import { useTranslation } from "./i18n.tsx";
+import { MotionPresence } from "./desktop-motion.tsx";
+import { useConfirmDialog } from "./ui-primitives.tsx";
+import { useDesktopCloseDraft } from "./desktop-close.tsx";
+import { hasActiveWorkbenchModal } from "./workbench-shortcuts.ts";
+import { backgroundScriptRuns, useBackgroundScriptRun } from "./background-script-run.tsx";
+import { createScriptDetailsDrafts, scriptDetailsWithDraft } from "./script-details-drafts.ts";
 import {
   createScript,
   deleteScript,
@@ -17,7 +24,6 @@ import {
   fetchScript,
   fetchScripts,
   fetchScriptLog,
-  fetchScriptRun,
   scriptsDesktopAvailable,
   startScriptRun,
   stopScriptRun,
@@ -61,13 +67,17 @@ function usePythonRuntime(active: boolean): [PythonRuntimeStatus | null, () => v
         if (!live) return;
         setStatus(next);
         if (next?.state === "downloading") timer = window.setTimeout(poll, 1000);
-      }).catch(() => {});
+      }).catch((error) => {
+        console.warn("Failed to fetch Python runtime status:", error);
+      });
     };
     poll();
     return () => { live = false; window.clearTimeout(timer); };
   }, [active, round]);
   const download = () => {
-    void downloadPythonRuntime().then(() => setRound((value) => value + 1)).catch(() => {});
+    void downloadPythonRuntime().then(() => setRound((value) => value + 1)).catch((error) => {
+      console.warn("Failed to start Python runtime download:", error);
+    });
   };
   return [active ? status : null, download];
 }
@@ -88,140 +98,394 @@ function PythonRuntimeNote({ status, onDownload }: { status: PythonRuntimeStatus
   return <p className="formnote">{t("Python scripts need the Python runtime ({size}). It downloads once, before the first Python script runs.", { size })} <button className="btn" type="button" onClick={onDownload}>{t("Download now")}</button></p>;
 }
 
-export function ScriptsPage({ onViewRun }: { onViewRun: () => void }) {
+const SCRIPT_RELOAD_REQUIRED = new Set([
+  "Script changed; reload before saving",
+  "Script changed; reload before deleting",
+  "Script not found",
+]);
+const SCRIPT_RECORD_UNCONFIRMED = "The script response could not be confirmed. Reload the saved script and review your draft.";
+
+function validScriptRecord(record: ScriptRecord | null | undefined): record is ScriptRecord {
+  return !!record && typeof record.id === "string" && record.id.length > 0
+    && Number.isSafeInteger(record.revision) && record.revision > 0
+    && typeof record.name === "string" && typeof record.description === "string"
+    && typeof record.source === "string" && typeof record.createdAt === "string" && typeof record.updatedAt === "string"
+    && (record.language === "javascript" || record.language === "python");
+}
+
+function confirmsScriptWrite(record: ScriptRecord, input: ScriptInput, before?: ScriptRecord): boolean {
+  return validScriptRecord(record) && record.revision === (before?.revision ?? 0) + 1
+    && (!before || record.id === before.id && record.createdAt === before.createdAt)
+    && record.name === input.name.trim() && record.description === input.description
+    && record.language === input.language && record.source === input.source;
+}
+
+export function ScriptsPage({ onViewRun, active = true }: { onViewRun: () => void; active?: boolean }) {
   const { t } = useTranslation();
+  const { requestConfirm, confirmDialogNode } = useConfirmDialog();
   const [scripts, setScripts] = useState<ScriptSummary[]>([]);
   const [script, setScript] = useState<ScriptRecord | null>(null);
+  const [drafts] = useState(createScriptDetailsDrafts);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [currentRun, setCurrentRun] = useState<ScriptRun | null>(null);
+  const [mutation, setMutation] = useState<"import" | "save" | "replace" | "delete" | null>(null);
+  const [notice, setNotice] = useState("");
+  const [, setDraftVersion] = useState(0);
+  const [restoredDraft, setRestoredDraft] = useState(false);
+  const [reloadRequired, setReloadRequired] = useState<ReadonlySet<string>>(() => new Set());
+  const runSnapshot = useBackgroundScriptRun();
+  const currentRun = runSnapshot.run;
   const importRef = useRef<HTMLInputElement>(null);
   const replaceRef = useRef<HTMLInputElement>(null);
-  const selectionRequest = useRef(0);
+  const savedRecord = useRef<ScriptRecord | null>(null);
+  const operation = useRef(false);
+  const mounted = useRef(true);
+  const initiallyLoaded = useRef(false);
+  const visible = useRef(active);
+  visible.current = active;
+  const draft = script ? drafts.get(script.id) : undefined;
+  const dirty = !!draft;
+  const staleDraft = !!draft && draft.baseline.revision !== script?.revision;
+  const needsReload = !!script && reloadRequired.has(script.id);
+  const undo = !!script && drafts.canUndo(script.id);
+  const missingDrafts = drafts.ids().flatMap(id => {
+    const missingDraft = drafts.get(id);
+    return missingDraft && !scripts.some(item => item.id === id) ? [missingDraft] : [];
+  });
   const desktop = scriptsDesktopAvailable();
-  const [python, downloadPython] = usePythonRuntime(desktop && scripts.some((item) => item.language === "python"));
+  useDesktopCloseDraft("script-details", { active: desktop, dirty: drafts.count() > 0, busy: mutation !== null });
+  const [python, downloadPython] = usePythonRuntime(active && desktop && scripts.some(item => item.language === "python"));
 
-  const reload = async () => {
-    const [nextScripts, nextRun] = await Promise.all([fetchScripts(), fetchScriptRun()]);
-    setScripts(nextScripts);
-    if (nextRun) setCurrentRun(nextRun);
-  };
-
-  useEffect(() => {
-    if (!desktop) return;
-    void reload().catch((nextError) => setError(errorText(nextError)));
-  }, [desktop]);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   useEffect(() => {
-    if (!desktop || (currentRun?.status !== "running" && currentRun?.status !== "stopping")) return;
-    const timer = window.setInterval(() => {
-      void fetchScriptRun().then((nextRun) => {
-        if (nextRun) setCurrentRun(nextRun);
-      }).catch(() => {});
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [desktop, currentRun?.status]);
+    if (!active || !desktop || initiallyLoaded.current) return;
+    initiallyLoaded.current = true;
+    void refreshList();
+    void backgroundScriptRuns.refresh().catch((error) => {
+      console.warn("Failed to refresh background script runs:", error);
+    });
+  }, [active, desktop]);
 
-  const select = async (id: string) => {
-    const request = ++selectionRequest.current;
+  function beginOperation(nextMutation: typeof mutation = null): boolean {
+    if (operation.current || !visible.current) return false;
+    operation.current = true;
     setBusy(true);
+    setMutation(nextMutation);
     setError(null);
-    setScript(null);
-    try {
-      const nextScript = await fetchScript(id);
-      if (request === selectionRequest.current) setScript(nextScript);
-    } catch (nextError) {
-      if (request === selectionRequest.current) setError(errorText(nextError));
-    } finally {
-      if (request === selectionRequest.current) setBusy(false);
+    setNotice("");
+    return true;
+  }
+
+  function endOperation() {
+    operation.current = false;
+    if (!mounted.current) return;
+    setBusy(false);
+    setMutation(null);
+  }
+
+  function requireReload(id: string) {
+    setReloadRequired(current => new Set([...current, id]));
+  }
+
+  function resolveReload(id: string) {
+    setReloadRequired(current => {
+      if (!current.has(id)) return current;
+      const next = new Set(current);
+      next.delete(id);
+      return next;
+    });
+  }
+
+  function reportError(nextError: unknown, id?: string) {
+    if (!mounted.current) return;
+    const message = errorText(nextError);
+    if (id && (SCRIPT_RELOAD_REQUIRED.has(message) || message === SCRIPT_RECORD_UNCONFIRMED)) requireReload(id);
+    setError(t(message));
+  }
+
+  async function reload() {
+    const list = await fetchScripts();
+    if (!mounted.current) return list;
+    setScripts(list);
+    const selected = savedRecord.current;
+    if (selected) {
+      const summary = list.find(item => item.id === selected.id);
+      if (!summary) {
+        savedRecord.current = null;
+        setScript(null);
+        resolveReload(selected.id);
+      } else if (summary.revision !== selected.revision) {
+        requireReload(selected.id);
+      }
     }
-  };
+    return list;
+  }
 
-  const importFile = async (file: File) => {
+  async function readScript(id: string) {
+    const record = await fetchScript(id);
+    if (!mounted.current) return;
+    const previous = savedRecord.current;
+    if (!validScriptRecord(record) || record.id !== id || previous?.id === id && previous.revision > record.revision) {
+      throw new Error(SCRIPT_RECORD_UNCONFIRMED);
+    }
+    acceptRecord(record, true);
+  }
+
+  async function refreshList() {
+    if (!beginOperation()) return;
+    const selected = savedRecord.current;
+    try {
+      const list = await reload();
+      if (mounted.current && visible.current && selected && list.some(item => item.id === selected.id)) await readScript(selected.id);
+    } catch (nextError) {
+      reportError(nextError, selected?.id);
+    } finally {
+      endOperation();
+    }
+  }
+
+  async function select(id: string) {
+    if (!beginOperation()) return;
+    try {
+      await readScript(id);
+    } catch (nextError) {
+      reportError(nextError, id);
+    } finally {
+      endOperation();
+    }
+  }
+
+  function acceptRecord(record: ScriptRecord, restore: boolean) {
+    savedRecord.current = record;
+    resolveReload(record.id);
+    const activeDraft = drafts.observe(record);
+    setScript(scriptDetailsWithDraft(record, activeDraft));
+    setRestoredDraft(restore && !!activeDraft);
+  }
+
+  function editDetails(key: "name" | "description", value: string) {
+    const saved = savedRecord.current;
+    if (!script || !saved || operation.current) return;
+    drafts.edit(saved, key, value);
+    setScript({ ...script, [key]: value });
+    setRestoredDraft(false);
+    setNotice("");
+  }
+
+  function discardDraft() {
+    const saved = savedRecord.current;
+    if (!saved || operation.current || !drafts.discard(saved.id)) return;
+    setScript(saved);
+    setRestoredDraft(false);
+    setNotice("Draft discarded. You can undo this.");
+  }
+
+  function undoDiscard() {
+    const saved = savedRecord.current;
+    if (!saved || operation.current || !drafts.canUndo(saved.id)) return;
+    const restored = drafts.undo(saved);
+    setScript(scriptDetailsWithDraft(saved, restored));
+    setRestoredDraft(!!restored);
+    setNotice(restored ? "Draft restored." : "");
+  }
+
+  function reviewDraft() {
+    const saved = savedRecord.current;
+    if (!saved || !draft || needsReload || operation.current || !drafts.rebase(saved, draft)) return;
+    acceptRecord(saved, false);
+  }
+
+  async function refreshAfterSave() {
+    setMutation(null);
+    if (!visible.current) return;
+    try {
+      await reload();
+    } catch {
+      if (mounted.current) setError(t("Your change was saved, but the script list could not refresh. Refresh the list to continue."));
+    }
+  }
+
+  function updateSummary(record: ScriptRecord) {
+    const { source: _source, ...summary } = record;
+    setScripts(list => [...list.filter(item => item.id !== record.id), summary]);
+  }
+
+  async function importFile(file: File) {
     const language = languageFor(file);
     if (!language) { setError(t("Choose a .js, .mjs, or .py file.")); return; }
-    setBusy(true);
-    setError(null);
+    if (!beginOperation("import")) return;
     try {
-      const created = await createScript({ name: fileTitle(file), description: "", language, source: await file.text() });
-      setScript(created);
-      await reload();
-    } catch (nextError) { setError(errorText(nextError)); }
-    finally { setBusy(false); }
-  };
+      const input = { name: fileTitle(file), description: "", language, source: await file.text() };
+      if (!mounted.current) return;
+      const created = await createScript(input);
+      if (!mounted.current) return;
+      if (!confirmsScriptWrite(created, input)) throw new Error(SCRIPT_RECORD_UNCONFIRMED);
+      updateSummary(created);
+      acceptRecord(created, false);
+      setNotice("Script imported.");
+      await refreshAfterSave();
+    } catch (nextError) {
+      reportError(nextError);
+    } finally {
+      endOperation();
+    }
+  }
 
-  const replaceFile = async (file: File) => {
-    if (!script) return;
+  async function replaceFile(file: File) {
+    const saved = savedRecord.current;
+    if (!saved || needsReload) return;
     const language = languageFor(file);
     if (!language) { setError(t("Choose a .js, .mjs, or .py file.")); return; }
-    setBusy(true);
-    setError(null);
+    if (!beginOperation("replace")) return;
     try {
-      const updated = await updateScript(script.id, { ...script, language, source: await file.text() });
-      setScript(updated);
-      await reload();
-    } catch (nextError) { setError(errorText(nextError)); }
-    finally { setBusy(false); }
-  };
+      const input = { ...saved, language, source: await file.text() };
+      if (!mounted.current) return;
+      const updated = await updateScript(saved.id, input);
+      if (!mounted.current) return;
+      if (!confirmsScriptWrite(updated, input, saved)) throw new Error(SCRIPT_RECORD_UNCONFIRMED);
+      drafts.acknowledgeSourceReplacement(saved, updated);
+      updateSummary(updated);
+      acceptRecord(updated, true);
+      setNotice(drafts.get(saved.id) ? "Script file replaced. Your detail draft is still unsaved." : "Script file replaced.");
+      await refreshAfterSave();
+    } catch (nextError) {
+      reportError(nextError, saved.id);
+    } finally {
+      endOperation();
+    }
+  }
 
-  const saveDetails = async () => {
-    if (!script) return;
-    setBusy(true);
-    setError(null);
+  async function saveDetails() {
+    const saved = savedRecord.current;
+    if (!saved || !draft || draft.baseline.id !== saved.id || draft.baseline.revision !== saved.revision || needsReload || !beginOperation("save")) return;
     try {
-      const updated = await updateScript(script.id, script);
-      setScript(updated);
-      await reload();
-    } catch (nextError) { setError(errorText(nextError)); }
-    finally { setBusy(false); }
-  };
+      const input = scriptDetailsWithDraft(saved, draft);
+      const updated = await updateScript(saved.id, input);
+      if (!mounted.current) return;
+      if (!confirmsScriptWrite(updated, input, saved) || !drafts.acknowledgeSave(updated, draft)) throw new Error(SCRIPT_RECORD_UNCONFIRMED);
+      updateSummary(updated);
+      acceptRecord(updated, false);
+      setNotice("Script details saved.");
+      await refreshAfterSave();
+    } catch (nextError) {
+      reportError(nextError, saved.id);
+    } finally {
+      endOperation();
+    }
+  }
 
-  const remove = async () => {
-    if (!script) return;
-    if (!window.confirm(t("Delete {name}?", { name: script.name }))) return;
-    setBusy(true);
-    setError(null);
+  async function remove() {
+    const saved = savedRecord.current;
+    if (!saved || operation.current || !visible.current || needsReload) return;
+    const confirmed = await requestConfirm({
+      title: t("Delete script"),
+      message: t("Delete {name}?", { name: saved.name }),
+      confirmLabel: t("Delete"),
+      cancelLabel: t("Cancel"),
+      tone: "danger",
+    });
+    if (!confirmed || !visible.current || operation.current || savedRecord.current?.id !== saved.id || needsReload) return;
+    if (!beginOperation("delete")) return;
     try {
-      await deleteScript(script.id, script.revision);
+      await deleteScript(saved.id, saved.revision);
+      if (!mounted.current) return;
+      drafts.forget(saved.id);
+      savedRecord.current = null;
       setScript(null);
-      await reload();
-    } catch (nextError) { setError(errorText(nextError)); }
-    finally { setBusy(false); }
-  };
+      setScripts(list => list.filter(item => item.id !== saved.id));
+      setNotice("Script deleted.");
+      await refreshAfterSave();
+    } catch (nextError) {
+      reportError(nextError, saved.id);
+    } finally {
+      endOperation();
+    }
+  }
 
+
+  const visibility = { hidden: !active, inert: !active || undefined, style: !active ? { display: "none" } : undefined };
   if (!desktop) {
-    return <div className="workspace scripts-page"><header className="scripts-head page-heading"><div><h2 className="sect-title">{t("Scripts")}</h2><p className="page-subtitle">{t("Scripts, runs, and logs stay on this computer.")}</p></div></header><div className="emptystate scripts-empty"><span className="scripts-empty-symbol" aria-hidden="true">{"</>"}</span><b>{t("Scripts require the desktop app.")}</b><p>{t("Open the desktop app to manage local scripts.")}</p></div></div>;
+    return <div className="workspace scripts-page" {...visibility}><header className="scripts-head page-heading"><div><h2 className="sect-title">{t("Scripts")}</h2><p className="page-subtitle">{t("Scripts, runs, and logs stay on this computer.")}</p></div></header><div className="emptystate scripts-empty"><span className="scripts-empty-symbol" aria-hidden="true">{"</>"}</span><b>{t("Scripts require the desktop app.")}</b><p>{t("Open the desktop app to manage local scripts.")}</p></div></div>;
   }
 
   return (
-    <div className="workspace scripts-page" aria-busy={busy} aria-labelledby="scripts-page-title">
+    <div className="workspace scripts-page" {...visibility} aria-busy={busy} aria-labelledby="scripts-page-title">
       <header className="scripts-head page-heading">
         <div><h2 className="sect-title" id="scripts-page-title">{t("Scripts")}</h2><p className="page-subtitle">{t("Scripts, runs, and logs stay on this computer.")}</p></div>
-        <div className="page-actions"><button className="btn primary" type="button" disabled={busy} onClick={() => importRef.current?.click()}>{t("Import script")}</button></div>
+        <div className="page-actions"><button className="btn ghost" type="button" disabled={busy} onClick={() => void refreshList()}>{t("Refresh scripts")}</button><button className="btn primary" type="button" disabled={busy} onClick={() => importRef.current?.click()}>{t("Import script")}</button></div>
       </header>
       {error && <div className="modal-err" role="alert">{error}</div>}
-        {currentRun && <button className="scripts-run-note" type="button" onClick={onViewRun}>{t("{scriptName}: {status}. View run", { scriptName: currentRun.scriptName, status: scriptStatusLabel(currentRun.status, t) })}</button>}
+      {notice && <p className="script-notice" role="status">{t(notice)}{undo && <button className="btn xs ghost" type="button" disabled={busy} onClick={undoDiscard}>{t("Undo discard")}</button>}</p>}
+        {currentRun && <button className="scripts-run-note" type="button" onClick={onViewRun}>{t("{scriptName}: {status}. View run", { scriptName: currentRun.scriptName, status: runSnapshot.state === "unavailable" ? t("Status unavailable") : scriptStatusLabel(currentRun.status, t) })}</button>}
         <PythonRuntimeNote status={python} onDownload={downloadPython} />
         <div className="scripts-layout">
           <aside className="scripts-list" aria-label={t("Saved scripts")}>
             <div className="scripts-list-head"><h3>{t("Saved scripts")}</h3><span>{scripts.length.toLocaleString()}</span></div>
             <div className="scripts-list-body">{scripts.length === 0 ? <p className="scripts-list-empty">{t("No scripts yet.")}</p> : scripts.map((item) => (
-              <button className={`script-row${script?.id === item.id ? " active" : ""}`} type="button" key={item.id} disabled={busy} aria-pressed={script?.id === item.id} onClick={() => void select(item.id)}>
-                <b>{item.name}</b><span>{languageName(item.language)}</span>
+              <button className={`script-row${script?.id === item.id ? " active" : ""}`} type="button" key={item.id} data-script-id={item.id} disabled={busy} aria-pressed={script?.id === item.id} onClick={() => void select(item.id)}>
+                <b>{item.name}{drafts.get(item.id) && <em className="script-draft-badge">{t("Unsaved")}</em>}</b><span>{languageName(item.language)}</span>
                 {item.description && <small>{item.description}</small>}
               </button>
             ))}</div>
+            {missingDrafts.length > 0 && (
+              <div className="script-missing-drafts">
+                <h4>{t("Unavailable script drafts")}</h4>
+                {missingDrafts.map(missing => {
+                  const details = scriptDetailsWithDraft(missing.baseline, missing);
+                  return (
+                    <details key={details.id}>
+                      <summary>{details.name}</summary>
+                      {details.description && <p>{details.description}</p>}
+                      <button className="btn xs ghost" type="button" disabled={busy} onClick={() => {
+                        drafts.forget(details.id);
+                        setDraftVersion(value => value + 1);
+                      }}>{t("Discard draft")}</button>
+                    </details>
+                  );
+                })}
+              </div>
+            )}
           </aside>
           {script ? (
             <section className="settings-card script-detail">
-              <header><h2>{script.name}</h2><span className="chip">{languageName(script.language)}</span></header>
+              <header><h2>{script.name}</h2>{dirty && <span className="script-draft-badge">{t("Unsaved")}</span>}<span className="chip">{languageName(script.language)}</span></header>
               <div className="card-body">
-                <label className="fld"><span>{t("Title")}</span><input className="input" value={script.name} onChange={(event) => setScript({ ...script, name: event.target.value })} /></label>
-                <label className="fld"><span>{t("Description")}</span><input className="input" value={script.description} onChange={(event) => setScript({ ...script, description: event.target.value })} /></label>
+                {needsReload && (
+                  <div className="script-draft-note has-conflict">
+                    <p role="status">{t("Reload the saved script before making another change.")}</p>
+                    <button className="btn xs" type="button" disabled={busy} onClick={() => void refreshList()}>{t("Reload saved script")}</button>
+                  </div>
+                )}
+                {dirty && (
+                  <div className={`script-draft-note${staleDraft ? " has-conflict" : ""}`}>
+                    <div role="status">
+                      <strong>{t(restoredDraft ? "Unsaved draft restored." : "Your changes are not saved yet.")}</strong>
+                      <p>{t(staleDraft ? "The saved script changed since this draft began. Review the latest source before saving." : "You can switch scripts or pages. This draft stays in memory until you close or reload the app.")}</p>
+                    </div>
+                    <button className="btn xs ghost" type="button" disabled={busy} onClick={discardDraft}>{t("Discard draft")}</button>
+                  </div>
+                )}
+                {staleDraft && !needsReload && savedRecord.current && (
+                  <section className="script-draft-review" aria-labelledby="script-draft-review-title">
+                    <h3 id="script-draft-review-title">{t("Latest saved details")}</h3>
+                    <dl>
+                      <dt>{t("Title")}</dt><dd>{savedRecord.current.name}</dd>
+                      <dt>{t("Description")}</dt><dd>{savedRecord.current.description || "—"}</dd>
+                    </dl>
+                    <button className="btn xs" type="button" disabled={busy} onClick={reviewDraft}>{t("Keep my edits on this version")}</button>
+                  </section>
+                )}
+                {!dirty && undo && !notice && <p className="script-notice" role="status">{t("A discarded draft is available for this script.")} <button className="btn xs ghost" type="button" disabled={busy} onClick={undoDiscard}>{t("Restore draft")}</button></p>}
+                <label className="fld"><span>{t("Title")}</span><input className="input" value={script.name} disabled={busy} onChange={(event) => editDetails("name", event.target.value)} /></label>
+                <label className="fld"><span>{t("Description")}</span><input className="input" value={script.description} disabled={busy} onChange={(event) => editDetails("description", event.target.value)} /></label>
                 <div className="script-actions">
-                  <button className="btn primary" type="button" disabled={busy} onClick={() => void saveDetails()}>{busy ? t("Saving…") : t("Save details")}</button>
-                  <button className="btn" type="button" disabled={busy} onClick={() => replaceRef.current?.click()}>{t("Replace file")}</button>
-                  <button className="btn danger" type="button" disabled={busy} onClick={() => void remove()}>{t("Delete")}</button>
+                  <button className="btn primary" type="button" disabled={busy || !dirty || staleDraft || needsReload || !script.name.trim()} onClick={() => void saveDetails()}>{mutation === "save" ? t("Saving…") : t("Save details")}</button>
+                  <button className="btn" type="button" disabled={busy || needsReload} onClick={() => replaceRef.current?.click()}>{t("Replace file")}</button>
+                  <button className="btn danger" type="button" disabled={busy || needsReload} onClick={() => void remove()}>{t("Delete")}</button>
                 </div>
                 <label className="fld"><span>{t("Source")}</span><pre className="script-source">{script.source}</pre></label>
               </div>
@@ -230,6 +494,7 @@ export function ScriptsPage({ onViewRun }: { onViewRun: () => void }) {
         </div>
       <input ref={importRef} type="file" accept=".js,.mjs,.py,text/javascript,text/x-python" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void importFile(file); event.target.value = ""; }} />
       <input ref={replaceRef} type="file" accept=".js,.mjs,.py,text/javascript,text/x-python" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void replaceFile(file); event.target.value = ""; }} />
+      {confirmDialogNode}
     </div>
   );
 }
@@ -245,23 +510,55 @@ export function ScriptRunPanel({ open, selectedProfiles, onClose }: {
   const [inputs, setInputs] = useState("{}");
   const [useCredentials, setUseCredentials] = useState(false);
   const [concurrency, setConcurrency] = useState("10");
-  const [run, setRun] = useState<ScriptRun | null>(null);
+  const runSnapshot = useBackgroundScriptRun(), run = runSnapshot.run;
   const [log, setLog] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [monitorLoading, setMonitorLoading] = useState(false), [monitorError, setMonitorError] = useState<string | null>(null), [loadAttempt, setLoadAttempt] = useState(0);
+  const dialog = useRef<HTMLDivElement>(null), closeButton = useRef<HTMLButtonElement>(null), close = useRef(onClose);
+  close.current = onClose;
+  const mounted = useRef(true), commandInFlight = useRef(false);
   const offset = useRef(0);
   const desktop = scriptsDesktopAvailable();
   const runActive = run?.status === "running" || run?.status === "stopping";
   const [python, downloadPython] = usePythonRuntime(open && desktop && scripts.find((script) => script.id === scriptId)?.language === "python");
 
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useLayoutEffect(() => {
+    if (!open || !dialog.current) return;
+    const container = dialog.current, document = container.ownerDocument;
+    const previous = document.activeElement as HTMLElement | null;
+    closeButton.current?.focus({ preventScroll: true });
+    const focusable = () => [...container.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])')].filter(node => !node.closest('[inert], [hidden], [aria-hidden="true"]'));
+    const key = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close.current(); return; }
+      if (event.key !== "Tab") return;
+      const targets = focusable(), first = targets[0], last = targets.at(-1), active = document.activeElement;
+      if (!first) { event.preventDefault(); container.focus(); return; }
+      if (event.shiftKey && (active === first || active === container || !container.contains(active))) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && (active === last || active === container || !container.contains(active))) { event.preventDefault(); first.focus(); }
+    };
+    const focus = (event: FocusEvent) => { if (!container.contains(event.target as Node)) closeButton.current?.focus({ preventScroll: true }); };
+    document.addEventListener("keydown", key, true); document.addEventListener("focusin", focus);
+    return () => {
+      document.removeEventListener("keydown", key, true); document.removeEventListener("focusin", focus);
+      if (!hasActiveWorkbenchModal(document, container) && previous?.isConnected && !previous.closest('[inert], [hidden], [aria-hidden="true"]')
+        && (document.activeElement === document.body || container.contains(document.activeElement))) previous.focus({ preventScroll: true });
+    };
+  }, [open]);
+
   useEffect(() => {
-    if (!open || !desktop) return;
-    setError(null);
-    void Promise.all([fetchScripts(), fetchScriptRun()]).then(([nextScripts, nextRun]) => {
+    if (!open || !desktop) { setMonitorLoading(false); return; }
+    let active = true;
+    setMonitorLoading(true); setMonitorError(null);
+    void Promise.all([fetchScripts(), backgroundScriptRuns.refresh()]).then(([nextScripts]) => {
+      if (!active) return;
       setScripts(nextScripts);
-      if (nextRun) setRun(nextRun);
-    }).catch((nextError) => setError(errorText(nextError)));
-  }, [open, desktop]);
+    }).catch((nextError) => { if (active) setMonitorError(errorText(nextError)); })
+      .finally(() => { if (active) setMonitorLoading(false); });
+    return () => { active = false; };
+  }, [open, desktop, loadAttempt]);
 
   useEffect(() => {
     if (!open || !run) return;
@@ -271,19 +568,18 @@ export function ScriptRunPanel({ open, selectedProfiles, onClose }: {
     setLog("");
     const poll = async () => {
       try {
-        const nextRun = await fetchScriptRun();
         const before = offset.current;
         const nextLog = await fetchScriptLog(run.id, before);
         if (!active) return;
-        if (nextRun) setRun(nextRun);
-        else setRun((current) => current?.id === run.id ? { ...current, status: "finished" } : current);
+        setMonitorError(null);
         if (nextLog.text) setLog((current) => current + nextLog.text);
         offset.current = nextLog.nextOffset;
-        const stillRunning = nextRun?.id === run.id && nextRun.status !== "finished";
+        const latest = backgroundScriptRuns.getSnapshot().run;
+        const stillRunning = latest?.id === run.id && latest.status !== "finished";
         if (stillRunning || nextLog.nextOffset !== before) timer = window.setTimeout(() => { void poll(); }, 1000);
       } catch (nextError) {
         if (!active) return;
-        setError(errorText(nextError));
+        setMonitorError(errorText(nextError));
         timer = window.setTimeout(() => { void poll(); }, 1000);
       }
     };
@@ -292,6 +588,7 @@ export function ScriptRunPanel({ open, selectedProfiles, onClose }: {
   }, [open, run?.id]);
 
   const start = async () => {
+    if (!open || commandInFlight.current || runActive || monitorLoading || runSnapshot.error) return;
     let parsed: unknown;
     try { parsed = JSON.parse(inputs); }
     catch { setError(t("Inputs must be valid JSON.")); return; }
@@ -299,45 +596,59 @@ export function ScriptRunPanel({ open, selectedProfiles, onClose }: {
     if (!scriptId || selectedProfiles.length === 0) return;
     const parallel = Number(concurrency);
     if (!Number.isSafeInteger(parallel) || parallel < 1) { setError(t("Parallel browsers must be a positive whole number.")); return; }
-    setBusy(true);
+    commandInFlight.current = true; setBusy(true);
     setError(null);
     try {
       offset.current = 0;
       setLog("");
-      setRun(await startScriptRun({ scriptId, profileIds: selectedProfiles.map((profile) => profile.id), inputs: parsed, useCredentials, concurrency: parallel }));
-    } catch (nextError) { setError(errorText(nextError)); }
-    finally { setBusy(false); }
+      const nextRun = await startScriptRun({ scriptId, profileIds: selectedProfiles.map((profile) => profile.id), inputs: parsed, useCredentials, concurrency: parallel });
+      backgroundScriptRuns.observe(nextRun);
+    } catch (nextError) { if (mounted.current) setError(errorText(nextError)); }
+    finally { commandInFlight.current = false; if (mounted.current) setBusy(false); }
   };
 
   const stop = async () => {
-    setBusy(true);
+    if (commandInFlight.current || !runActive || run?.status === "stopping") return;
+    commandInFlight.current = true; setBusy(true);
     setError(null);
-    try { setRun(await stopScriptRun()); }
-    catch (nextError) { setError(errorText(nextError)); }
-    finally { setBusy(false); }
+    try { backgroundScriptRuns.observe(await stopScriptRun()); }
+    catch (nextError) { if (mounted.current) setError(errorText(nextError)); }
+    finally { commandInFlight.current = false; if (mounted.current) setBusy(false); }
   };
 
-  if (!open) return null;
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal script-run-modal" role="dialog" aria-modal="true" aria-labelledby="script-run-title" onClick={(event) => event.stopPropagation()}>
-        <div className="modal-head" id="script-run-title">{t("Run script")}<button type="button" className="modal-close" aria-label={t("Close")} onClick={onClose}>×</button></div>
-        <div className="modal-body">
+  return <MotionPresence present={open}>{() => (
+    <div className="modal-backdrop script-run-backdrop">
+      <div
+        ref={dialog}
+        tabIndex={-1}
+        className="modal script-run-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="script-run-title"
+        aria-describedby={desktop ? "script-run-close-note" : undefined}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="modal-head" id="script-run-title">{t("Run script")}<button ref={closeButton} type="button" className="modal-close" aria-label={t("Close run monitor")} onClick={onClose}>×</button></div>
+        <div className="modal-body" aria-busy={busy || monitorLoading}>
           {!desktop ? <div className="modal-err">{t("Scripts require the desktop app.")}</div> : <>
             <p className="formnote">{t("Scripts run locally with your computer permissions.")}</p>
+            {monitorLoading && <p className="script-monitor-loading" role="status">{t("Loading the latest run status…")}</p>}
+            {monitorError && <div className="modal-err" role="alert">{monitorError} <button className="btn xs" type="button" disabled={monitorLoading} onClick={() => setLoadAttempt(value => value + 1)}>{t("Reload monitor")}</button></div>}
+            {!monitorError && runSnapshot.error && <div className="modal-err" role="alert">{t(runSnapshot.error)} <button className="btn xs" type="button" disabled={monitorLoading} onClick={() => setLoadAttempt(value => value + 1)}>{t("Reload monitor")}</button></div>}
             {error && <div className="modal-err" role="alert">{error}</div>}
             <PythonRuntimeNote status={python} onDownload={downloadPython} />
-            <label className="fld"><span>{t("Script")}</span><select className="select" value={scriptId} onChange={(event) => setScriptId(event.target.value)} disabled={busy || runActive}><option value="">{t("Choose a script…")}</option>{scripts.map((script) => <option key={script.id} value={script.id}>{script.name}</option>)}</select></label>
-            <label className="fld"><span>{t("JSON inputs")}</span><textarea className="input script-inputs" value={inputs} onChange={(event) => setInputs(event.target.value)} disabled={busy || runActive} /></label>
-            <label className="script-credentials"><input type="checkbox" checked={useCredentials} onChange={(event) => setUseCredentials(event.target.checked)} disabled={busy || runActive} />{t("Use saved profile login details")}</label>
-            <label className="fld"><span>{t("Parallel browsers")}</span><input className="input" type="number" min={1} step={1} value={concurrency} onChange={(event) => setConcurrency(event.target.value)} disabled={busy || runActive} /></label>
+            <label className="fld"><span>{t("Script")}</span><select className="select" value={scriptId} onChange={(event) => setScriptId(event.target.value)} disabled={busy || runActive || monitorLoading}><option value="">{t("Choose a script…")}</option>{scripts.map((script) => <option key={script.id} value={script.id}>{script.name}</option>)}</select></label>
+            <label className="fld"><span>{t("JSON inputs")}</span><textarea className="input script-inputs" value={inputs} onChange={(event) => setInputs(event.target.value)} disabled={busy || runActive || monitorLoading} /></label>
+            <label className="script-credentials"><input type="checkbox" checked={useCredentials} onChange={(event) => setUseCredentials(event.target.checked)} disabled={busy || runActive || monitorLoading} />{t("Use saved profile login details")}</label>
+            <label className="fld"><span>{t("Parallel browsers")}</span><input className="input" type="number" min={1} step={1} value={concurrency} onChange={(event) => setConcurrency(event.target.value)} disabled={busy || runActive || monitorLoading} /></label>
             <p className="formnote">{t("{n} selected profiles. Run up to this many at a time; the rest wait for a free slot. Browser startup may be staggered. Parallel runs share the log below.", { n: String(selectedProfiles.length) })}</p>
-            {run && <div className="script-progress" role="status" aria-live="polite"><b>{run.scriptName} · {scriptStatusLabel(run.status, t)}</b>{run.profiles.map((profile) => <div key={profile.id} className={`script-profile ${profile.status}`}><span>{profile.name}</span><span>{scriptStatusLabel(profile.status, t)}</span>{profile.error && <small>{profile.error}</small>}{profile.warning && <small className="warning">{profile.warning}</small>}</div>)}</div>}
+            {run && <div className="script-progress" role="status" aria-live="polite"><b>{run.scriptName} · {runSnapshot.state === "unavailable" ? t("Status unavailable") : scriptStatusLabel(run.status, t)}</b>{run.profiles.map((profile) => <div key={profile.id} className={`script-profile ${profile.status}`}><span>{profile.name}</span><span>{scriptStatusLabel(profile.status, t)}</span>{profile.error && <small>{profile.error}</small>}{profile.warning && <small className="warning">{profile.warning}</small>}</div>)}</div>}
             {run && <pre className="script-log" aria-label={t("Script log")}>{log || t("Waiting for log output…")}</pre>}
           </>}
+          {desktop && <p className="script-monitor-close-note" id="script-run-close-note">{t("Closing this monitor keeps your inputs and does not stop a run. Use Stop run to request a stop.")}</p>}
         </div>
-        <div className="modal-foot"><button className="btn ghost" type="button" onClick={onClose}>{t("Close")}</button>{desktop && !runActive && <button className="btn primary" type="button" disabled={busy || !scriptId || selectedProfiles.length === 0} onClick={() => void start()}>{busy ? t("Starting…") : t("Run script")}</button>}{desktop && runActive && <button className="btn solid-danger" type="button" disabled={busy || run?.status === "stopping"} onClick={() => void stop()}>{run?.status === "stopping" ? t("Stopping…") : busy ? t("Stopping…") : t("Stop")}</button>}</div>
+        <div className="modal-foot"><button className="btn ghost" type="button" onClick={onClose}>{t(desktop ? "Close monitor" : "Close")}</button>{desktop && !runActive && <button className="btn primary" type="button" disabled={busy || monitorLoading || !!monitorError || !!runSnapshot.error || !scriptId || selectedProfiles.length === 0} onClick={() => void start()}>{busy ? t("Starting…") : t("Run script")}</button>}{desktop && runActive && <button className="btn solid-danger" type="button" disabled={busy || run?.status === "stopping"} onClick={() => void stop()}>{run?.status === "stopping" ? t("Stopping…") : busy ? t("Stopping…") : t("Stop run")}</button>}</div>
       </div>
     </div>
-  );
+  )}</MotionPresence>;
 }

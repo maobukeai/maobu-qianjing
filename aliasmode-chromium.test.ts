@@ -428,7 +428,7 @@ function brokenDownload(breaks: number, step: number) {
   return { deps, outputs, offsets, sleeps };
 }
 
-test("a broken download continues from the saved part, and attempts that add bytes do not use up the retries", async () => {
+test("a broken download can resume after seven failures that made progress", async () => {
   const root = mkdtempSync(join(tmpdir(), "aliasmode-cloakbrowser-"));
   const release = brokenDownload(7, 4);
   await ensureCloakBrowser(root, "win32", "x64", release.deps);
@@ -437,6 +437,34 @@ test("a broken download continues from the saved part, and attempts that add byt
   expect(new Set(release.outputs)).toEqual(new Set([join(root, ".cloakbrowser-146.0.7680.177.5.b213795cb32c3169.part")]));
   expect(release.sleeps).toHaveLength(7);
   expect(readdirSync(root)).toEqual(["cloakbrowser-146.0.7680.177.5"]);
+});
+
+test("repeated progress cannot bypass the cumulative download attempt budget", async () => {
+  const root = mkdtempSync(join(tmpdir(), "aliasmode-cloakbrowser-"));
+  const release = brokenDownload(Infinity, 1);
+  await expect(ensureCloakBrowser(root, "win32", "x64", release.deps)).rejects.toThrow("connection reset");
+  expect(release.offsets).toEqual(Array.from({ length: 20 }, (_, index) => index));
+  expect(release.sleeps).toHaveLength(19);
+  expect(readFileSync(release.outputs[0]!, "utf8")).toBe(WINDOWS_CLOAKBROWSER_ARCHIVE.slice(0, 20));
+  expect(existsSync(join(root, "cloakbrowser-146.0.7680.177.5"))).toBe(false);
+  expect(runtimeDownloads()).toEqual([]);
+});
+
+test("the total deadline stops retries and backoff even after forward progress", async () => {
+  const root = mkdtempSync(join(tmpdir(), "aliasmode-cloakbrowser-"));
+  const release = brokenDownload(Infinity, 1);
+  const attempt = release.deps.download!;
+  let now = 0;
+  release.deps.now = () => now;
+  release.deps.download = async (url, path) => {
+    try { await attempt(url, path); }
+    finally { now += 30 * 60_000; }
+  };
+  await expect(ensureCloakBrowser(root, "win32", "x64", release.deps)).rejects.toThrow("CloakBrowser download timed out");
+  expect(release.offsets).toEqual([0]);
+  expect(release.sleeps).toEqual([]);
+  expect(readFileSync(release.outputs[0]!, "utf8")).toBe(WINDOWS_CLOAKBROWSER_ARCHIVE.slice(0, 1));
+  expect(runtimeDownloads()).toEqual([]);
 });
 
 test("a download that adds nothing stops after five attempts and keeps its part for the next try", async () => {

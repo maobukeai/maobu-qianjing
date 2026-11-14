@@ -1,4 +1,7 @@
 import type { ProxyCheckResult } from "./proxy-check.ts";
+import type { SingleProxyPreviewInput } from "./proxy-single-preview.ts";
+
+export type { SingleProxyPreviewInput } from "./proxy-single-preview.ts";
 
 export interface ProxyScope {
   all?: boolean;
@@ -8,12 +11,14 @@ export interface ProxyScope {
 
 export type ProxyReplacementMode = "profileId" | "oldProxy" | "list";
 
-export interface ProxyPreviewInput {
+export interface ProxyTextPreviewInput {
   scope: ProxyScope;
   mode: ProxyReplacementMode;
   input: string;
   profilesPerProxy?: number;
 }
+
+export type ProxyPreviewInput = ProxyTextPreviewInput | SingleProxyPreviewInput;
 
 export interface ProxyReplacementView {
   index: number;
@@ -29,6 +34,8 @@ export interface ProxyReplacementView {
 export interface ProxyPreview {
   ok: true;
   previewId: string;
+  /** Present on operation-aware servers; legacy preview consumers may ignore it. */
+  operationScope?: string;
   rows: ProxyReplacementView[];
   unusedProxies: number;
 }
@@ -41,6 +48,7 @@ export interface ProxyCheckView {
   reason?: string;
   ip?: string;
   country?: string;
+  exitComparison?: ProxyCheckResult["exitComparison"];
   checkedAt: number;
 }
 

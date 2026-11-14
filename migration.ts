@@ -18,6 +18,7 @@ import { dpapiKeysReadable, localStateDpapiKey } from "./dpapi.ts";
 import { readHostProcessSnapshot, type HostProcessSnapshot } from "./launcher.ts";
 import { isSafeProfileId } from "./profile-id.ts";
 import { legacyStatePaths, statePaths, type StatePaths } from "./paths.ts";
+import { renameWithWindowsRetry } from "./windows-rename.ts";
 
 export interface LegacyMigrationResult {
   status: "not_found" | "migrated";
@@ -29,6 +30,7 @@ export interface MigrationOptions {
   userProfile?: string;
   scanProcesses?: () => Promise<HostProcessSnapshot | null>;
   rename?: (from: string, to: string) => void;
+  renameSleep?: (milliseconds: number) => Promise<void>;
   validateDpapi?: (localStatePaths: string[]) => Promise<void>;
 }
 
@@ -305,7 +307,7 @@ export async function migrateLegacyState(
   const source = resolve(sourceRoot);
   const sourceDatabase = join(source, "profiles.sqlite");
   if (!existsSync(sourceDatabase)) return { status: "not_found", profileCount: 0 };
-  const rename = options.rename ?? renameSync;
+  const rename = (from: string, to: string) => renameWithWindowsRetry(from, to, { rename: options.rename ?? renameSync, sleep: options.renameSleep });
   const backup = `${destination.root}.pre-cloakpit-import`;
   const scan = options.scanProcesses ?? readHostProcessSnapshot;
   const initialRoots = candidateRoots(source, options);
@@ -316,7 +318,7 @@ export async function migrateLegacyState(
     if (existsSync(destination.root)) {
       throw new Error(`猫步·千境 destination and recovery backup both exist; resolve ${backup} before importing`);
     }
-    rename(backup, destination.root);
+    await rename(backup, destination.root);
   }
   if (existsSync(destination.migration)) {
     throw new Error("猫步·千境 destination already contains imported local profile data");
@@ -399,13 +401,13 @@ export async function migrateLegacyState(
     validateDestination(destination);
     await assertStopped(source, selected.roots, scan);
     const hadDestination = existsSync(destination.root);
-    if (hadDestination) rename(destination.root, backup);
+    if (hadDestination) await rename(destination.root, backup);
     try {
-      rename(stagingRoot, destination.root);
+      await rename(stagingRoot, destination.root);
     } catch (commitError) {
       if (hadDestination) {
         try {
-          rename(backup, destination.root);
+          await rename(backup, destination.root);
         } catch (rollbackError) {
           throw new Error(`Import commit failed and rollback failed. Recovery backup retained at ${backup}. Commit: ${String(commitError)}. Rollback: ${String(rollbackError)}`);
         }

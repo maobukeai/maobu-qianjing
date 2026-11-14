@@ -11,7 +11,7 @@ import { basename, join } from "node:path";
 import { renameWhenUnlocked } from "./browser-install.ts";
 import { sha256File } from "./browser-install.ts";
 import { downloadResumable, type ResumableDownloadDeps } from "./runtime-download.ts";
-import { extractZipTo } from "./unzip.ts";
+import { TRUSTED_RUNTIME_ZIP_LIMITS, extractZipTo } from "./unzip.ts";
 
 export const PYTHON_VERSION = "3.13.7";
 export const PYTHON_PLAYWRIGHT_VERSION = "1.58.0";
@@ -147,7 +147,7 @@ async function run(command: string[]): Promise<void> {
 async function unpackPython(archive: string, directory: string, platform: NodeJS.Platform): Promise<string> {
   const python = join(directory, "python");
   if (platform === "win32") {
-    await extractZipTo(readFileSync(archive), python);
+    await extractZipTo(readFileSync(archive), python, TRUSTED_RUNTIME_ZIP_LIMITS);
     // The embeddable build reads its import paths from this file only.
     const pth = join(python, "python313._pth");
     writeFileSync(pth, `${readFileSync(pth, "utf8").trimEnd()}\nLib/site-packages\n`, "utf8");
@@ -295,7 +295,7 @@ export class PythonRuntime {
         ? join(python, "Lib", "site-packages")
         : join(python, "lib", "python3.13", "site-packages");
       mkdirSync(sitePackages, { recursive: true });
-      for (const wheel of files.slice(1)) await extractZipTo(readFileSync(wheel), sitePackages);
+      for (const wheel of files.slice(1)) await extractZipTo(readFileSync(wheel), sitePackages, TRUSTED_RUNTIME_ZIP_LIMITS);
       const executable = join(python, ...interpreter(this.platform));
       const driver = join(sitePackages, "playwright", "driver", this.platform === "win32" ? "node.exe" : "node");
       for (const required of [executable, driver]) {

@@ -2,7 +2,7 @@ import { test, expect, spyOn } from "bun:test";
 import { lookupExitLocation, lookupExitTimezone, attachTimezones, lookupProxyExitLocation } from "./geoip.ts";
 
 const GEOJS = "https://get.geojs.io/v1/ip/geo.json";
-const IP_API = "http://ip-api.com/json/?fields=status,timezone,countryCode,query";
+const IP_API = "https://ipinfo.io/json";
 const IPINFO = "https://v6.ipinfo.io/json";
 
 /** Answers per service: GeoJS (MaxMind data), ip-api.com and v6.ipinfo.io. A service without a row fails. */
@@ -20,9 +20,11 @@ test("location lookup carries country through the MaxMind, IPv4 and IPv6 respons
   for (const rows of [
     { geojs: { timezone: "America/Mexico_City", country_code: "MX" } },
     { ipApi: { status: "success", timezone: "America/Mexico_City", countryCode: "MX" } },
+    { ipApi: { timezone: "America/Mexico_City", country: "MX", ip: "198.51.100.7" } },
     { ipinfo: { timezone: "America/Mexico_City", country: "MX" } },
   ]) {
-    expect(await lookupExitLocation(null, services(rows))).toEqual({ timezone: "America/Mexico_City", country: "MX" });
+    const result = await lookupExitLocation(null, services(rows));
+    expect(result).toMatchObject({ timezone: "America/Mexico_City", country: "MX" });
   }
 });
 
@@ -205,4 +207,20 @@ test("a slow proxy exit lookup stops waiting and its late answer serves the next
   answer();
   expect((await lookupProxyExitLocation(gateway, { fetchFn, waitMs: 1_000 }))?.ip).toBe("203.0.113.10");
   expect(calls).toBe(1);
+});
+
+test("unsupported TLS-to-proxy input is refused without downgrading or calling a checker", async () => {
+  let calls = 0;
+  expect(await lookupExitLocation({ ...proxy("gate.example.net"), type: "https" }, async () => {
+    calls++; return { json: async () => ({ timezone: "Europe/Paris" }) };
+  })).toBeNull();
+  expect(calls).toBe(0);
+});
+
+test("fetch injection receives only the local relay locator rather than proxy credentials", async () => {
+  const calls: string[] = [];
+  await lookupExitLocation({ ...proxy("gate.example.net"), user: "private-user", pass: "private-password" }, services({
+    geojs: { timezone: "Europe/Paris" },
+  }, calls));
+  expect(calls.every((call) => !/private-user|private-password/.test(call))).toBe(true);
 });

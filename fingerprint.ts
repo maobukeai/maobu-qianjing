@@ -246,6 +246,55 @@ export function deriveFingerprintFlags(profile: Profile, hostCores = availablePa
   return flags;
 }
 
+export interface FingerprintCoverageAssessment {
+  engine: "cloakbrowser" | "chromium155" | "camoufox";
+  seed: number;
+  surfaces: {
+    identity: boolean;
+    screen: boolean;
+    platform: boolean;
+    timezone: boolean;
+    locale: boolean;
+    storageQuota: boolean;
+    hardwareConcurrency: boolean;
+    canvasWebglNoise: boolean;
+    webrtcMasking: boolean;
+  };
+  appliedFlags: string[];
+  gaps: string[];
+}
+
+/**
+ * Assess which fingerprint & leak-mitigation surfaces are covered by a profile's
+ * configured engine and identity flags so diagnostics can report clear gaps.
+ */
+export function assessFingerprintCoverage(profile: Profile, hostCores = availableParallelism()): FingerprintCoverageAssessment {
+  const engine = profile.engine === "firefox" ? "camoufox" : profile.chromiumRuntime ? "chromium155" : "cloakbrowser";
+  const appliedFlags = engine === "camoufox" ? [] : deriveFingerprintFlags(profile, hostCores);
+  const hasPlatform = Boolean(profile.platformOs || platformFromUA(profile.ua));
+  const hasTimezone = Boolean(profile.timezone);
+  const hasLocale = Boolean(profile.locale);
+  const hasHardware = Boolean(profile.hardware?.cores);
+  const surfaces = {
+    identity: Number.isFinite(profile.fingerprintSeed) && profile.fingerprintSeed > 0,
+    screen: profile.screenWidth > 0 && profile.screenHeight > 0,
+    platform: engine === "camoufox" || hasPlatform,
+    timezone: hasTimezone,
+    locale: hasLocale,
+    storageQuota: engine !== "cloakbrowser" || appliedFlags.some((f) => f.startsWith("--fingerprint-storage-quota=")),
+    hardwareConcurrency: engine === "camoufox" || hasHardware,
+    canvasWebglNoise: engine !== "chromium155" || appliedFlags.includes("--fingerprint-noise"),
+    webrtcMasking: Boolean(profile.proxy) || engine === "camoufox",
+  };
+  const gaps: string[] = [];
+  if (!surfaces.platform) gaps.push("platform-unspecified");
+  if (!surfaces.timezone) gaps.push("timezone-unspecified");
+  if (!surfaces.locale) gaps.push("locale-unspecified");
+  if (!surfaces.hardwareConcurrency) gaps.push("hardware-concurrency-default");
+  if (!surfaces.webrtcMasking) gaps.push("no-proxy-webrtc-host-ip-risk");
+  return { engine, seed: profile.fingerprintSeed, surfaces, appliedFlags, gaps };
+}
+
 /** Render a ProxySpec as a CloakBrowser `--proxy-server` value with inline creds. */
 export function proxyServerFlag(profile: Profile): string | null {
   const p = profile.proxy;

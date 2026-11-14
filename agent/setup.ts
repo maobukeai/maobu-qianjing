@@ -11,23 +11,19 @@ export type CommandRunner = (command: string, args: string[], input?: string) =>
 
 const CLIENTS: Record<SetupClient, {
   command: string;
-  remove: string[];
   add: (command: string, args: string[]) => string[];
   input?: string;
 }> = {
   claude: {
     command: "claude",
-    remove: ["mcp", "remove", "aliasmode", "--scope", "user"],
     add: (command, args) => ["mcp", "add", "--scope", "user", "aliasmode", "--", command, ...args],
   },
   codex: {
     command: "codex",
-    remove: ["mcp", "remove", "aliasmode"],
     add: (command, args) => ["mcp", "add", "aliasmode", "--", command, ...args],
   },
   openclaw: {
     command: "openclaw",
-    remove: ["mcp", "unset", "aliasmode"],
     add: (command, args) => [
       "mcp", "add", "aliasmode", "--command", command,
       ...args.flatMap((arg) => ["--arg", arg]),
@@ -35,7 +31,6 @@ const CLIENTS: Record<SetupClient, {
   },
   hermes: {
     command: "hermes",
-    remove: ["mcp", "remove", "aliasmode"],
     add: (command, args) => ["mcp", "add", "aliasmode", "--command", command, "--args", ...args],
     input: "y\n",
   },
@@ -68,7 +63,7 @@ export async function configureClients(options: {
   const run = options.run ?? defaultCommandRunner;
   const command = options.command ?? options.helper;
   const commandArgs = options.args ?? ["serve"];
-  const clients = options.clients ?? (Object.keys(CLIENTS) as SetupClient[]);
+  const clients = [...new Set(options.clients ?? (Object.keys(CLIENTS) as SetupClient[]))];
   const statuses: Array<{
     client: SetupClient;
     status: "configured" | "not_installed" | "failed";
@@ -88,7 +83,11 @@ export async function configureClients(options: {
       });
       continue;
     }
-    await run(config.command, config.remove, config.input);
+    // Let the client's own add/upsert operation handle an existing entry. Never
+    // pre-delete it: registration can fail (or an older CLI can reject these
+    // flags), and a rejected add must not discard the user's working server.
+    // A CLI that refuses an existing name reports failure and leaves the
+    // copyable generic configuration available for manual reconciliation.
     const added = await run(config.command, config.add(command, commandArgs), config.input);
     statuses.push({
       client,

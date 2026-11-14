@@ -23,7 +23,7 @@ export async function prepareLocalDesktop() {
   const entries = [
     "aliasmode.exe", "aliasmode-sidecar.exe", "aliasmode-mcp.exe", "playwright/node/node.exe",
     "playwright/package.json", "playwright/worker.mjs", "playwright/playwright-worker.mjs", "playwright/firefox-worker.mjs",
-    ...["mcp-host.mjs", "playwright-proxy.mjs", "playwright-runner.mjs", "runtime-client.mjs", "script-runner.mjs", "script-runner.py"].map((file) => `playwright/agent/${file}`),
+    ...["mcp-host.mjs", "mcp-scope.mjs", "playwright-proxy.mjs", "playwright-runner.mjs", "runtime-client.mjs", "script-runner.mjs", "script-runner.py"].map((file) => `playwright/agent/${file}`),
   ];
   if (browserMetadata.firefox) {
     const executable = browserMetadata.firefox.executable;

@@ -1,0 +1,33 @@
+.profile-templates { border: 1px solid var(--line); border-radius: var(--r-md, 9px); background: var(--surface); min-width: 0; }
+.profile-templates > summary { display: flex; align-items: center; gap: 10px; list-style: none; padding: 11px 13px; cursor: pointer; color: var(--ink-soft); font-size: 12px; font-weight: 550; }
+.profile-templates > summary::-webkit-details-marker { display: none; }
+.profile-templates > summary::before { content: ""; width: 5px; height: 5px; border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(-45deg); margin-right: 2px; }
+.profile-templates[open] > summary::before { transform: rotate(45deg); }
+.profile-templates[open] > summary { border-bottom: 1px solid var(--line); }
+.profile-template-count { margin-left: auto; color: var(--faint); font-size: 10px; font-weight: 400; }
+.profile-template-body { display: flex; flex-direction: column; gap: 11px; padding: 12px 13px; }
+.profile-template-body p { margin: 0; font-size: 11px; line-height: 1.65; overflow-wrap: anywhere; }
+.profile-template-note { color: var(--muted); }
+.profile-template-error { color: var(--danger-ink); }
+.profile-template-notice { color: var(--accent-ink); }
+.profile-template-picker { display: flex; align-items: flex-end; gap: 8px; min-width: 0; }
+.profile-template-picker .fld { flex: 1; min-width: 0; }
+.profile-template-picker select { width: 100%; height: 32px; }
+.profile-template-picker > button { flex-shrink: 0; margin-bottom: 4px; }
+.profile-template-preview { border: 1px solid var(--line); border-radius: 7px; overflow: hidden; padding: 10px; background: var(--surface-sunken); }
+.profile-template-preview table { width: 100%; border-collapse: collapse; table-layout: fixed; color: var(--ink-soft); font-size: 11px; }
+.profile-template-preview caption { text-align: left; font-size: 11px; font-weight: 550; padding-bottom: 8px; color: var(--muted); }
+.profile-template-preview th, .profile-template-preview td { text-align: left; vertical-align: top; line-height: 1.6; padding: 5px 6px; overflow-wrap: anywhere; }
+.profile-template-preview thead th { font-weight: 500; color: var(--muted); border-bottom: 1px solid var(--line); }
+.profile-template-preview tbody th { font-weight: 450; color: var(--muted); }
+.profile-template-preview tbody td:last-child { color: var(--accent-ink); }
+.profile-template-preview .profile-template-actions { margin-top: 10px; }
+.profile-template-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.profile-template-save { align-self: flex-start; }
+.profile-template-delete { border: 1px solid var(--warn-line); border-radius: 7px; padding: 10px; color: var(--warn-ink); background: var(--warn-soft); }
+.profile-template-delete .profile-template-actions { margin-top: 8px; }
+.profile-template-editor { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: flex-end; border-top: 1px solid var(--line); padding-top: 11px; }
+.profile-template-editor .fld { flex: 1 1 160px; min-width: 0; }
+.profile-template-editor input { height: 32px; }
+.profile-template-editor .profile-template-actions { padding-bottom: 4px; }
+@media (max-width: 520px) { .profile-template-picker { flex-wrap: wrap; } .profile-template-picker .fld { flex-basis: 100%; } .profile-template-picker > button { margin: 0; } .profile-template-preview th, .profile-template-preview td { padding: 5px 3px; font-size: 10px; } }

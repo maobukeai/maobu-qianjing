@@ -362,3 +362,17 @@ test("user/list reports an empty verdict for a profile with no expectation", asy
     expect(row.fp_verdict).toBe("");
     expect(row.fp_captured_at).toBe("");
 });
+test("user routes reject unsafe profile ids with 400 while preserving legacy row cleanup", async () => {
+    const { store, launcher } = setup();
+    const listBad = await handleUserApi(get("/api/v1/user/list?user_id=../etc"), launcher, store);
+    expect(listBad!.status).toBe(400);
+    expect((await listBad!.json()).code).toBe(-1);
+
+    const updateBad = await handleUserApi(post("/api/v1/user/update", { user_id: "../etc", name: "x" }), launcher, store);
+    expect(updateBad!.status).toBe(400);
+    expect((await updateBad!.json()).code).toBe(-1);
+
+    const deleteBad = await handleUserApi(post("/api/v1/user/delete", { user_ids: ["../nonexistent"] }), launcher, store);
+    expect(deleteBad!.status).toBe(400);
+    expect((await deleteBad!.json()).code).toBe(-1);
+});

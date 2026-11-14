@@ -11,27 +11,23 @@
  */
 
 import { basename, dirname, join, resolve, sep } from "node:path";
+import { fingerprintLaunchDigest } from "./fingerprint-source.ts";
+import { LocalProxyPreflightError, loopbackProxyTarget, type LocalProxyEndpoint } from "./local-proxy-preflight.ts";
+import { applyChromiumPreloadingPreference, type ChromiumPreloadingMode } from "./chromium-preloading-preferences.ts";
 import {
-  closeSync,
-  copyFileSync,
-  createReadStream,
-  fsyncSync,
   mkdirSync,
-  openSync,
   rmSync,
   existsSync,
   readFileSync,
   writeFileSync,
   readdirSync,
-  readlinkSync,
   realpathSync,
   renameSync,
   statSync,
   statfsSync,
 } from "node:fs";
 import { lstat, readdir, rm } from "node:fs/promises";
-import { createHash, randomUUID } from "node:crypto";
-import { dlopen, ptr } from "bun:ffi";
+import { createHash } from "node:crypto";
 import type { CookieRecord, LaunchInfo, LaunchPersona, Profile, ProxySpec } from "./types.ts";
 import { cookiesForEngine } from "./parse.ts";
 import type { ProfileStore } from "./store.ts";
@@ -52,21 +48,21 @@ import { captureFingerprint, recordCapture } from "./fingerprint-capture.ts";
 import type { FingerprintSample } from "./diagnose.ts";
 import { claimedScreenArea, watchWindowFit } from "./window-fit.ts";
 import { applySessionToEndpoint, bundleTabUrls, canonicalUserPageUrl, parseCapturedSessionBundle, readSessionInSubprocess, sessionCaptureSeed, SessionRestoreError, telegramHomeClient } from "./session.ts";
-import { resolvePlaywrightRuntime, runPlaywrightWorker } from "./playwright-runtime.ts";
+import { resolvePlaywrightRuntime } from "./playwright-runtime.ts";
 import { callFirefoxOwner, closeFirefoxOwner, firefoxEndpoint, FirefoxOwnerError, forgetFirefoxOwner, reserveFirefoxOwner, startFirefoxOwner, type FirefoxOwner } from "./firefox-runtime.ts";
 import { matchFirefoxProcesses } from "./firefox-lifecycle.ts";
 import { isDeepStrictEqual } from "node:util";
 import {
-  completeProfileFingerprint, FIREFOX_RUNTIME_VERSION, firefoxLaunchConfig, firefoxPersonaOs, firefoxStartupPrefs, intelMacGraphicsVendor,
+  completeProfileFingerprint, FIREFOX_RUNTIME_VERSION, firefoxLaunchConfig, firefoxPersonaOs, firefoxStartupPrefs,
   type MacGraphicsVendor, syncFirefoxTimezone, SITE_CACHE_CAP_BYTES,
 } from "./firefox-config.ts";
 import {
   chromiumFontconfigFile, ensureFirefoxFontPack, FIREFOX_FONT_PACKS, firefoxFontPackFor, firefoxFontPackPrefs, pruneFirefoxFontPacks,
   type FirefoxFontPack,
 } from "./firefox-fonts.ts";
-import { renameWhenUnlocked, windowsSystemTool } from "./browser-install.ts";
 import { FIREFOX_RUNTIME_BUILDS } from "./firefox-install.ts";
 import { ensureManagedFirefox } from "./firefox-managed.ts";
+import type { RuntimeInventoryDeployment } from "./runtime-inventory.ts";
 import {
   ALIASMODE_CHROMIUM_EXECUTABLE_SHA256,
   ALIASMODE_CHROMIUM_HOST_SCALE,
@@ -75,6 +71,7 @@ import {
   chromiumComponentsDir,
   chromiumDeviceScale,
   cloakBrowserExecutableSha256,
+  defaultChromiumRuntime,
   ensureAliasmodeChromium,
   ensureCloakBrowser,
   hostDisplayAvail,
@@ -83,159 +80,155 @@ import {
   shareChromiumComponents,
   supportsChromium155Host,
 } from "./aliasmode-chromium.ts";
+import {
+  buildWindowLabel,
+  cookieIsCurrent,
+  describeWindowLabelCapability,
+  firefoxHelperBinaryPaths,
+  isTelegramPlatform,
+  LAUNCH_PERSONA_KEYS,
+  launchedProfile,
+  launchIdentityChanged,
+  launchPersona,
+  needsProxyRelay,
+  platformHomeUrl,
+  profileDisplayNo,
+  proxyRelayUpstream,
+  splitLaunchUrls,
+  supportsFirefoxHost,
+  validateForwardedLaunchArgs,
+  webRtcPolicy,
+  type WindowLabelCapability,
+} from "./src/launcher/launch-args.ts";
+import {
+  decodeMozLz4,
+  firefoxSessionCookies,
+  firefoxSessionRestoresPage,
+  writeFirefoxStartupPage,
+} from "./src/launcher/mozlz4.ts";
+import {
+  createFailureBackoffReader,
+  createInFlightSnapshotReader,
+  IS_WINDOWS,
+  normalizedExecutablePath,
+  readSnapshotChildBounded,
+  sleep,
+  type HostProcessRecord,
+  type HostProcessSnapshot,
+} from "./src/launcher/snapshot-utils.ts";
+import {
+  parseDarwinFirefoxPsSnapshot,
+  parseDarwinKernelArgv,
+  parseDarwinKernelExecutablePath,
+  parseDarwinPsSnapshot,
+  readDarwinFirefoxProcessSnapshot,
+  readMacGraphicsVendor,
+} from "./src/launcher/macos-ffi.ts";
+import {
+  decodeWindowsCommandLine,
+  parseTasklistImageNames,
+  parseWindowsProcessEntry,
+  quoteWindowsCommandArg,
+  readWindowsProcessSnapshotNative,
+  readWindowsProcessSnapshotWmi,
+  SESSION_LAUNCH,
+  sessionLaunchSpawn,
+  shouldLaunchViaWindowsSession,
+  type SpawnedProcess,
+  type SpawnFn,
+} from "./src/launcher/windows-tasks.ts";
+import {
+  collectLinuxProcessTree,
+  defaultBrowserClose,
+  defaultSpawn,
+  findOwnedBrowserPids,
+  findProfileDirHolderPids,
+  isPidAlive,
+  killByPid,
+  killProcessGroup,
+  matchOwnedBrowserPids,
+  matchProfileDirHolderPids,
+  parseLinuxProcStat,
+  raiseWindow,
+  readHostProcessSnapshot,
+  type BrowserProcessIdentity,
+  type OwnedBrowserProcessFinder,
+} from "./src/launcher/os-process.ts";
+import {
+  backupUnreadableCookies,
+  CACHE_DIRS,
+  defaultBinaryPath,
+  defaultEnsureCookies,
+  defaultLabelWindow,
+  defaultNavigate,
+  defaultSetCookies,
+  directoryBytes,
+  FIREFOX_CACHE_DIRS,
+  FIREFOX_POST_STOP_CACHE_DIRS,
+  FIREFOX_SITE_CACHE_DIRS,
+  NATIVE_SESSION_ARTIFACTS,
+  openProfileCardTab,
+  POST_STOP_CACHE_DIRS,
+  profileCardUrl,
+  SEARCH_PROVIDER_BOOTSTRAP_MARKER,
+  SEARCH_PROVIDER_BOOTSTRAP_REVISION,
+  sha256File,
+  SITE_CACHE_DIRS,
+  UNGOOGLED_FIRST_RUN_URL,
+  writeFileAtomic,
+  writeIdentityBookmark,
+  type CookieEnsurer,
+  type CookieSetter,
+  type LaunchNavigator,
+  type WindowLabeler,
+} from "./src/launcher/profile-bootstrap.ts";
 
-// Chromium ignores inline user:pass@ on --proxy-server. Rather than an MV3 extension answering
-// onAuthRequired (whose service worker can't answer reliably during a page-load burst), the browser
-// uses a loopback HTTP relay for authenticated HTTP and every SOCKS5 proxy. The relay injects HTTP
-// auth or performs SOCKS5 itself, so behavior does not depend on the packaged kernel's native SOCKS
-// patch level and proxy credentials never appear in the browser command line.
-/** Proxied profiles keep WebRTC on the proxy; direct ones stay on the default route (a system VPN). */
-function webRtcPolicy(profile: Profile): string {
-  return profile.proxy ? "disable_non_proxied_udp" : "default_public_interface_only";
-}
-
-function needsProxyRelay(profile: Profile): boolean {
-  return !!profile.proxy && (
-    profile.proxy.type === "socks5"
-    || (profile.proxy.type === "http" && !!profile.proxy.user)
-  );
-}
-
-const SEARCH_PROVIDER_BOOTSTRAP_REVISION = 2;
-const SEARCH_PROVIDER_BOOTSTRAP_MARKER = `.aliasmode-search-bootstrap-v${SEARCH_PROVIDER_BOOTSTRAP_REVISION}`;
-const UNGOOGLED_FIRST_RUN_URL = "chrome://ungoogled-first-run/";
-const NATIVE_SESSION_ARTIFACTS = [
-  "Default/Sessions",
-  "Default/Current Session",
-  "Default/Current Tabs",
-  "Default/Last Session",
-  "Default/Last Tabs",
-];
-
-function writeFirefoxStartupPage(userDataDir: string, restoreLastSession: boolean): void {
-  const path = join(userDataDir, "user.js");
-  const existing = existsSync(path) ? readFileSync(path, "utf8") : "";
-  const preserved = existing
-    .replace(/^user_pref\("browser\.(?:startup\.page|sessionstore\.privacy_level)",\s*\d+\);\s*$/gm, "")
-    .trimEnd();
-  // The engine default (2) never saves session cookies, so a restored session came back
-  // without them. Stock Firefox (0) keeps them, as Chromium does with --restore-last-session.
-  writeFileSync(
-    path,
-    `${preserved}${preserved ? "\n" : ""}user_pref("browser.sessionstore.privacy_level", 0);\n` +
-      `user_pref("browser.startup.page", ${restoreLastSession ? 3 : 0});\n`,
-  );
-}
-
-/** Firefox's mozLz4 file: "mozLz40\0", the decoded size, then one LZ4 block. */
-export function decodeMozLz4(file: Buffer): Buffer {
-  if (file.length < 12 || file.toString("latin1", 0, 8) !== "mozLz40\0") throw new Error("not a mozLz4 file");
-  const out = Buffer.alloc(file.readUInt32LE(8));
-  let input = 12;
-  let output = 0;
-  const length = (value: number) => {
-    if (value < 15) return value;
-    let byte: number;
-    do { byte = file[input++]!; value += byte; } while (byte === 255);
-    return value;
-  };
-  while (input < file.length) {
-    const token = file[input++]!;
-    const literals = length(token >> 4);
-    if (input + literals > file.length || output + literals > out.length) throw new Error("corrupt mozLz4 block");
-    file.copy(out, output, input, input + literals);
-    input += literals;
-    output += literals;
-    if (input >= file.length) break;
-    const offset = file.readUInt16LE(input);
-    input += 2;
-    const match = length(token & 15) + 4;
-    if (offset === 0 || offset > output || output + match > out.length) throw new Error("corrupt mozLz4 block");
-    for (const end = output + match; output < end; output++) out[output] = out[output - offset]!;
-  }
-  return out.subarray(0, output);
-}
-
-const FIREFOX_SESSION_FILES = [
-  "sessionstore.jsonlz4",
-  "sessionstore-backups/recovery.jsonlz4",
-  "sessionstore-backups/recovery.baklz4",
-  "sessionstore-backups/previous.jsonlz4",
-];
-
-/**
- * Whether Firefox's native restore would reopen a web page, read from the first session file in
- * Firefox's own order; null when none is readable. A window that ended because its last tab closed
- * (a script closing every page does this) comes back only as an empty new-tab page. The Playwright
- * launch never sees that page, so every later open waited for the owner until it timed out.
- */
-function firefoxSessionRestoresPage(userDataDir: string): boolean | null {
-  for (const file of FIREFOX_SESSION_FILES) {
-    let session: any;
-    try { session = JSON.parse(decodeMozLz4(readFileSync(join(userDataDir, file))).toString("utf8")); } catch { continue; }
-    const windows: any[] = Array.isArray(session?.windows) ? session.windows : [];
-    return windows.some((window) => !window?._maybeDontRestoreTabs && Array.isArray(window.tabs) && window.tabs.some((tab: any) => {
-      const entries: any[] = Array.isArray(tab?.entries) ? tab.entries : [];
-      return !!canonicalUserPageUrl(entries[(Number(tab.index) || entries.length) - 1]?.url);
-    }));
-  }
-  return null;
-}
-
-/**
- * Session cookies (no expiry) from the newest session file. Firefox keeps them only there and
- * restores them only with startup page 3, so a launch with page 0 opened logged out of every
- * site that uses them. Container, private and partitioned cookies are left out.
- */
-function firefoxSessionCookies(userDataDir: string): CookieRecord[] {
-  const files = FIREFOX_SESSION_FILES
-    .flatMap((file) => { try { return [{ path: join(userDataDir, file), mtime: statSync(join(userDataDir, file)).mtimeMs }]; } catch { return []; } })
-    .sort((a, b) => b.mtime - a.mtime);
-  for (const { path } of files) {
-    let session: any;
-    try { session = JSON.parse(decodeMozLz4(readFileSync(path)).toString("utf8")); } catch { continue; }
-    const cookies: any[] = Array.isArray(session?.cookies) ? session.cookies : [];
-    return cookies.flatMap((cookie): CookieRecord[] => {
-      const origin = cookie?.originAttributes ?? {};
-      if (typeof cookie?.name !== "string" || !cookie.name || typeof cookie.value !== "string" || typeof cookie.host !== "string"
-        || origin.userContextId || origin.privateBrowsingId || origin.partitionKey || origin.firstPartyDomain) return [];
-      return [{
-        name: cookie.name, value: cookie.value, domain: cookie.host,
-        path: typeof cookie.path === "string" && cookie.path ? cookie.path : "/",
-        ...(cookie.secure ? { secure: true } : {}),
-        ...(cookie.httponly ? { httpOnly: true } : {}),
-        ...(cookie.sameSite === 1 ? { sameSite: "Lax" as const } : cookie.sameSite === 2 ? { sameSite: "Strict" as const } : {}),
-      }];
-    });
-  }
-  return [];
-}
-
-function supportsFirefoxHost(platform: NodeJS.Platform, arch: string): boolean {
-  return (platform === "darwin" && (arch === "arm64" || arch === "x64"))
-    || (platform === "linux" && arch === "x64")
-    || (platform === "win32" && arch === "x64");
-}
-
-async function readMacGraphicsVendor(): Promise<MacGraphicsVendor | undefined> {
-  try {
-    const child = Bun.spawn(["/usr/sbin/system_profiler", "SPDisplaysDataType", "-json"], { stdout: "pipe", stderr: "ignore", timeout: 15_000 });
-    return intelMacGraphicsVendor(await new Response(child.stdout).text());
-  } catch {
-    return undefined;
-  }
-}
-
-function firefoxHelperBinaryPaths(binaryPath: string): string[] {
-  if (process.platform !== "darwin") return [];
-  const helper = (app: string, executable: string) => join(dirname(binaryPath), app, "Contents", "MacOS", executable);
-  return [
-    helper("plugin-container.app", "plugin-container"),
-    // Headed windows start a GPU process; media playback starts the media plugin helper.
-    helper("gpu-helper.app", "AliasMode GPU Helper"),
-    helper("media-plugin-helper.app", "AliasMode Media Plugin Helper"),
-  ];
-}
+export {
+  buildWindowLabel,
+  collectLinuxProcessTree,
+  createFailureBackoffReader,
+  createInFlightSnapshotReader,
+  decodeMozLz4,
+  decodeWindowsCommandLine,
+  defaultSetCookies,
+  defaultSpawn,
+  describeWindowLabelCapability,
+  isTelegramPlatform,
+  LAUNCH_PERSONA_KEYS,
+  launchedProfile,
+  launchIdentityChanged,
+  launchPersona,
+  matchOwnedBrowserPids,
+  matchProfileDirHolderPids,
+  parseDarwinFirefoxPsSnapshot,
+  parseDarwinKernelArgv,
+  parseDarwinKernelExecutablePath,
+  parseDarwinPsSnapshot,
+  parseLinuxProcStat,
+  parseTasklistImageNames,
+  parseWindowsProcessEntry,
+  platformHomeUrl,
+  profileDisplayNo,
+  quoteWindowsCommandArg,
+  readHostProcessSnapshot,
+  readSnapshotChildBounded,
+  readWindowsProcessSnapshotNative,
+  readWindowsProcessSnapshotWmi,
+  shouldLaunchViaWindowsSession,
+  splitLaunchUrls,
+  validateForwardedLaunchArgs,
+  type BrowserProcessIdentity,
+  type CookieEnsurer,
+  type CookieSetter,
+  type HostProcessRecord,
+  type HostProcessSnapshot,
+  type LaunchNavigator,
+  type OwnedBrowserProcessFinder,
+  type SpawnedProcess,
+  type SpawnFn,
+  type WindowLabelCapability,
+  type WindowLabeler,
+};
 
 /** Which pinned executable a profile launches. */
 type BinaryKind = "chromium" | "firefox" | "aliasmode";
@@ -257,7 +250,13 @@ const PREFLIGHT_GUIDANCE = {
   chromium_setup: "Chrome runtime approval is missing or invalid. Run bun cli.ts setup, then restart 猫步·千境.",
   firefox_setup: "Firefox runtime approval is missing or invalid. Run bun cli.ts setup, then restart 猫步·千境.",
   proxy_invalid: "Saved proxy settings are invalid. Edit or clear this profile's proxy.",
-  proxy_https_auth: "Authenticated HTTPS proxies are unsupported. Use HTTP or SOCKS5.",
+  local_proxy_unavailable: "The configured local proxy is not listening or did not respond in time. Open your desktop proxy client, enable its local port, then retry.",
+  local_proxy_protocol: "The configured local SOCKS5 port rejected method negotiation. Check the proxy protocol and local port, then retry.",
+  local_proxy_settings: "Local proxy startup settings could not be read. Review the Network & proxies settings before opening this profile.",
+  chromium_preloading_settings: "Page preloading settings could not be read. Review the Network & proxies settings before opening this profile.",
+  chromium_preloading_preferences: "The page preloading preference could not be applied or restored safely. Close the profile and review its browser preferences before trying again.",
+  chromium_preloading_changed: "The browser's page preloading preference was changed outside this setting. Choose Keep browser default to preserve it before trying again.",
+  proxy_https_auth: "Authenticated HTTPS proxy relay could not be prepared. Check the proxy host, port, and credentials.",
   persona_mobile: "This profile has a mobile user agent. Use a desktop browser profile.",
   persona_unsupported: "This profile's user agent has no recognized desktop platform. Check its saved browser identity.",
   firefox_configuration: "The saved Firefox configuration is missing or incompatible with this runtime. Use a matching 猫步·千境 runtime and profile export.",
@@ -305,28 +304,6 @@ export class BrowserLaunchError extends Error {
   }
 }
 
-export interface SpawnedProcess {
-  pid: number;
-  kill(): void;
-  /** Linux-only dedicated process-group ownership captured at spawn. */
-  processGroupId?: number;
-  rootStartTime?: string;
-  /**
-   * Resolves with a human-readable reason once the spawner can PROVE the browser
-   * never started (e.g. the Windows session helper exited nonzero because nobody is
-   * logged in), or null when the spawn looks healthy / cannot be judged.
-   *
-   * Load-bearing for diagnosis: without it every spawn-side outage — no interactive
-   * session, an unregistrable scheduled task, a missing helper — surfaces only as an
-   * indistinguishable "CDP endpoint not ready within 60000ms" a full minute later,
-   * which is how a fleet-wide launch failure can look identical to a slow browser.
-   * Never rejects.
-   */
-  spawnFailed?: Promise<string | null>;
-}
-
-export type SpawnFn = (binary: string, args: string[], env?: Record<string, string>) => SpawnedProcess;
-
 /**
  * AliasMode Chromium is built without Google API keys, so its first tab showed a "Google API keys
  * are missing" bar that stock Chrome never shows (the page 56 px shorter). With these values, as
@@ -336,186 +313,10 @@ export const ALIASMODE_CHROMIUM_ENV: Readonly<Record<string, string>> = {
   GOOGLE_API_KEY: "no", GOOGLE_DEFAULT_CLIENT_ID: "no", GOOGLE_DEFAULT_CLIENT_SECRET: "no",
 };
 export type FetchFn = (url: string) => Promise<{ ok: boolean; json(): Promise<any> }>;
-export type LaunchNavigator = (ws: string, urls: string[], replacePages?: boolean) => Promise<void>;
-export interface BrowserProcessIdentity {
-  profileId: string;
-  debugPort: number;
-  userDataDir: string;
-  binaryPath: string;
-}
-/** Exact process scan: null means the OS scan itself was inconclusive. */
-export type OwnedBrowserProcessFinder = (identity: BrowserProcessIdentity) => Promise<number[] | null>;
-/**
- * Label the launched window so an operator can tell which account a browser
- * belongs to among many open profiles — the visible cue AdsPower's panel used
- * to give. Prefixes the window/tab title with `<name> · #<serial>`. Best-effort:
- * a failure here must never fail (or slow) the launch. Injectable for tests.
- */
-export type WindowLabeler = (ws: string, label: string) => Promise<void>;
 /** Best-effort omnibox-provider setup in the running managed browser. */
 export type SearchProviderEnsurer = (
   options: SearchProviderBootstrapOptions,
 ) => Promise<SearchProviderSetupResult>;
-/** Add missing imported cookies without replacing values already in the browser. */
-export type CookieEnsurer = (ws: string, cookies: CookieRecord[]) => Promise<{ injected: boolean }>;
-
-/** Set cookies, replacing any with the same name, domain and path. */
-export type CookieSetter = (ws: string, cookies: CookieRecord[]) => Promise<void>;
-
-/**
- * Profile fields a browser takes at launch. Edits to them while it runs are saved and apply at
- * the next start; the running browser and its identity checks keep the launched values.
- */
-export const LAUNCH_PERSONA_KEYS = [
-  "engine", "chromiumRuntime", "firefox", "hardware", "ua", "platformOs", "platform", "proxy", "proxyError",
-  "timezone", "locale", "screenWidth", "screenHeight", "displayScale", "fingerprintSeed", "extensions",
-] as const satisfies readonly (keyof LaunchPersona)[];
-
-export function launchPersona(profile: Profile): LaunchPersona {
-  const persona: Record<string, unknown> = {};
-  for (const key of LAUNCH_PERSONA_KEYS) {
-    if (profile[key] !== undefined) persona[key] = structuredClone(profile[key]);
-  }
-  return persona as LaunchPersona;
-}
-
-/** The profile as its running browser was launched: stored values with the launch-time identity. */
-export function launchedProfile(profile: Profile, launch: Pick<LaunchInfo, "persona"> | null | undefined): Profile {
-  if (!launch?.persona) return profile;
-  const launched: Record<string, unknown> = { ...profile };
-  for (const key of LAUNCH_PERSONA_KEYS) {
-    if (launch.persona[key] === undefined) delete launched[key];
-    else launched[key] = structuredClone(launch.persona[key]);
-  }
-  return launched as unknown as Profile;
-}
-
-/**
- * Saved edits the running browser does not have yet. The account platform only picks the first
- * page at launch, so it never needs a restart.
- */
-export function launchIdentityChanged(profile: Profile, launch: Pick<LaunchInfo, "persona"> | null | undefined): boolean {
-  if (!launch?.persona) return false;
-  const value = (v: unknown) => JSON.stringify(v === undefined || v === "" || (Array.isArray(v) && !v.length) ? null : v);
-  return LAUNCH_PERSONA_KEYS.some((key) => key !== "platform" && value(profile[key]) !== value(launch.persona![key]));
-}
-
-function cookieIsCurrent(c: CookieRecord): boolean {
-  const nowSec = Date.now() / 1000;
-  const expires = Number(c.expires);
-  return c.expires === undefined || expires < 0 || expires > nowSec;
-}
-
-export function splitLaunchUrls(launchArgs: string[]): { chromeArgs: string[]; startupUrls: string[] } {
-  const chromeArgs: string[] = [];
-  const startupUrls: string[] = [];
-  for (const arg of launchArgs) {
-    if (isHttpUrl(arg)) startupUrls.push(arg);
-    else chromeArgs.push(arg);
-  }
-  return { chromeArgs, startupUrls };
-}
-
-const AUTOMATION_RUNTIME_LAUNCH_ARGS = new Set([
-  "--disable-background-networking",
-  "--disable-default-apps",
-  "--disable-sync",
-  "--disable-translate",
-  "--metrics-recording-only",
-  "--no-first-run",
-  "--disable-features=BackForwardCache",
-  "--disk-cache-size=1",
-  "--media-cache-size=1",
-  "--v8-cache-options=none",
-  "--disable-gpu-shader-disk-cache",
-  "--js-flags=--max-old-space-size=512",
-  "--memory-pressure-off",
-  // The automation CDP client connects to the debug port over a WebSocket;
-  // Chromium >=111 rejects that connection unless the origin is permitted, so the
-  // caller passes --remote-allow-origins=* (also a zendriver built-in default). It
-  // only governs the DevTools endpoint's Origin check — not identity/proxy/storage.
-  "--remote-allow-origins=*",
-  // Suppresses the WebAuthn/passkey prompt that otherwise interrupts the automated
-  // X login. JS-visible but a deliberate, long-standing Automation trade-off.
-  "--disable-webauthn",
-]);
-
-/**
- * Only non-identity arguments required by the AdsPower-compatible caller may
- * cross the API. Chromium has too many aliases for a safe denylist: arbitrary
- * switches can replace proxy, profile dir, fingerprint, extensions, locale,
- * WebRTC policy, headless mode, or security settings.
- */
-export function validateForwardedLaunchArgs(args: string[]): string[] {
-  const accepted: string[] = [];
-  const rejected: string[] = [];
-  for (const arg of args) {
-    // Any `--<client>-launcher-pid=<pid>` is an inert ownership marker the
-    // calling automation reads back from the chrome command line.
-    if (AUTOMATION_RUNTIME_LAUNCH_ARGS.has(arg) || /^--[a-z0-9-]+-launcher-pid=[1-9]\d*$/.test(arg)) accepted.push(arg);
-    else rejected.push(arg);
-  }
-  if (rejected.length) {
-    throw new Error(
-      `unsafe launch_args rejected: ${rejected.join(", ")}. ` +
-      "Only http(s) startup URLs, approved Automation runtime flags, and --<client>-launcher-pid=<pid> are accepted.",
-    );
-  }
-  return accepted;
-}
-
-function isHttpUrl(raw: string): boolean {
-  try {
-    const u = new URL(raw);
-    return u.protocol === "http:" || u.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-function sha256File(path: string): Promise<string> {
-  return new Promise((resolveHash, reject) => {
-    const hash = createHash("sha256");
-    const stream = createReadStream(path);
-    stream.on("data", (chunk) => hash.update(chunk));
-    stream.on("error", reject);
-    stream.on("end", () => resolveHash(hash.digest("hex")));
-  });
-}
-
-const TELEGRAM_PLATFORM_ALIASES = new Set(["telegram.org", "telegram", "web.telegram.org"]);
-
-/** Shared platform classification for routing and Telegram's no-concurrent-use safety guard. */
-export function isTelegramPlatform(platform: string | undefined): boolean {
-  return TELEGRAM_PLATFORM_ALIASES.has((platform || "").trim().toLowerCase());
-}
-
-/**
- * Home page to open as the browser's first tab for an account's platform, so a
- * launched profile lands straight on its app. Returns null for unknown/blank
- * platforms — those keep the browser's default new-tab page.
- */
-export function platformHomeUrl(platform: string | undefined, telegramClient: "a" | "k" = "k"): string | null {
-  const p = (platform || "").trim().toLowerCase();
-  if (p === "x.com" || p === "x" || p === "twitter" || p === "twitter.com") return "https://x.com/home";
-  if (p === "instagram" || p === "instagram.com" || p === "www.instagram.com") return "https://www.instagram.com/";
-  if (p === "facebook" || p === "facebook.com" || p === "www.facebook.com") return "https://www.facebook.com/";
-  if (p === "tiktok" || p === "tiktok.com" || p === "www.tiktok.com") return "https://www.tiktok.com/";
-  if (p === "reddit" || p === "reddit.com" || p === "www.reddit.com") return "https://www.reddit.com/";
-  if (isTelegramPlatform(p)) return `https://web.telegram.org/${telegramClient}/`;
-  if (p === "linkedin.com" || p === "linkedin") return "https://www.linkedin.com/feed/";
-  if (p === "youtube.com" || p === "youtube") return "https://www.youtube.com/";
-  if (p === "threads.com" || p === "threads.net" || p === "threads") return "https://www.threads.com/";
-  if (p === "pinterest.com" || p === "pinterest") return "https://www.pinterest.com/";
-  if (p === "snapchat.com" || p === "snapchat") return "https://www.snapchat.com/web";
-  if (p === "discord.com" || p === "discord") return "https://discord.com/app";
-  if (p === "twitch.tv" || p === "twitch") return "https://www.twitch.tv/";
-  if (p === "gmail.com" || p === "gmail") return "https://mail.google.com/";
-  if (p === "amazon.com" || p === "amazon") return "https://www.amazon.com/";
-  if (p === "ebay.com" || p === "ebay") return "https://www.ebay.com/";
-  if (p === "etsy.com" || p === "etsy") return "https://www.etsy.com/";
-  return null;
-}
 
 export interface LauncherOptions {
   store: ProfileStore;
@@ -652,6 +453,10 @@ export interface LauncherOptions {
    * timezone and WebRTC as they were. Defaults to a short lookup through the proxy; tests inject it.
    */
   lookupExitLocation?: (proxy: ProxySpec) => Promise<ExitLocation | null>;
+  /** Optional loopback-only readiness gate, before any fresh-start lookup or runtime download. */
+  checkLocalProxyBeforeLaunch?: (endpoint: LocalProxyEndpoint) => Promise<void>;
+  /** Workspace preference, read only on a fresh verified managed Chromium155 launch. */
+  chromiumPreloading?: () => ChromiumPreloadingMode;
   readSession?: typeof readSessionInSubprocess;
   applySession?: typeof applySessionToEndpoint;
   /** Budget for the graceful close above before falling through to the force-kill. */
@@ -691,11 +496,6 @@ export type LaunchGeneration = Pick<LaunchInfo, "debugPort" | "startedAt">;
 const DEFAULT_DATA_ROOT = "profiles";
 const DEFAULT_CDP_READY_TIMEOUT_MS = 180_000;
 const DEFAULT_PID_RECOVERY_GRACE_MS = 30_000;
-const SESSION_PID_RECOVERY_TIMEOUT_MS = 30_000;
-const WINDOWS_PROCESS_SCAN_TIMEOUT_MS = 60_000;
-const WINDOWS_TASKLIST_TIMEOUT_MS = 10_000;
-const DARWIN_PROCESS_SCAN_TIMEOUT_MS = 10_000;
-const FAILED_PROCESS_SCAN_BACKOFF_MS = 60_000;
 const EXTERNAL_OWNERSHIP_PROOF_TTL_MS = 5 * 60_000;
 /** Extra liveness probes of a browser whose process is still running; see probeLiveLaunchCdp. */
 const ACTIVE_PROBE_RETRIES = 3;
@@ -718,159 +518,12 @@ interface VerifiedExternalLaunch {
   verifiedAt: number;
 }
 
-export interface HostProcessRecord {
-  pid: number;
-  processName?: string;
-  executablePath: string | null;
-  /** Linux and Darwin-Firefox process ownership fields. */
-  parentPid?: number;
-  processGroupId?: number;
-  startTime?: string;
-  /** False only when executablePath was heuristically split from flattened argv. */
-  executablePathExact?: boolean;
-  commandLine?: string;
-  argv?: string[];
-}
-
-export interface HostProcessSnapshot {
-  records: HostProcessRecord[];
-  incomplete: boolean;
-}
-
 type LinuxTerminationProof =
   | { kind: "group"; rootPid: number; rootStartTime: string }
   | { kind: "tree"; rootPid: number; rootStartTime: string; members: Array<{ pid: number; startTime: string; depth: number }> };
 
-/** Parse image names from tasklist /FO CSV /NH output. Localized status text
- * has no quoted CSV first field and is ignored. */
-export function parseTasklistImageNames(raw: string): Set<string> {
-  const names = new Set<string>();
-  for (const line of raw.split(/\r?\n/)) {
-    const name = line.trim().match(/^"([^"]+)"/)?.[1];
-    if (name) names.add(name.toLowerCase());
-  }
-  return names;
-}
-
-/** Share only a currently-running snapshot read; settled results are never cached. */
-export function createInFlightSnapshotReader<T>(read: () => Promise<T>): () => Promise<T> {
-  let inFlight: Promise<T> | null = null;
-  return () => {
-    if (inFlight) return inFlight;
-    const current = Promise.resolve().then(read);
-    inFlight = current;
-    const clear = () => { if (inFlight === current) inFlight = null; };
-    current.then(clear, clear);
-    return current;
-  };
-}
-
-/** Share live reads and briefly reuse only failed results so a sick process
- * service cannot be hammered by every dashboard poll. Successful snapshots
- * are never cached because a browser may start immediately afterward. */
-export function createFailureBackoffReader<T>(
-  read: () => Promise<T>,
-  failed: (value: T) => boolean,
-  backoffMs: number,
-  nowMs: () => number = Date.now,
-): () => Promise<T> {
-  let lastFailure: { value: T; retryAt: number } | null = null;
-  const sharedRead = createInFlightSnapshotReader(async () => {
-    const value = await read();
-    lastFailure = failed(value)
-      ? { value, retryAt: nowMs() + Math.max(1, backoffMs) }
-      : null;
-    return value;
-  });
-  return () => {
-    if (lastFailure && nowMs() < lastFailure.retryAt) {
-      return Promise.resolve(lastFailure.value);
-    }
-    return sharedRead();
-  };
-}
-
-/** Read a spawned snapshot helper with a hard timeout that kills the helper. */
-export function readSnapshotChildBounded(
-  child: { stdout: ReadableStream<Uint8Array>; exited: Promise<number>; kill(): unknown },
-  timeoutMs: number,
-): Promise<{ raw: string; exitCode: number } | null> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (result: { raw: string; exitCode: number } | null) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(result);
-    };
-    const timer = setTimeout(() => {
-      try { child.kill(); } catch {}
-      finish(null);
-    }, Math.max(1, timeoutMs));
-    void Promise.all([
-      new Response(child.stdout).text(),
-      child.exited,
-    ]).then(
-      ([raw, exitCode]) => finish({ raw, exitCode }),
-      () => finish(null),
-    );
-  });
-}
-
-/**
- * Rebuildable caches safe to remove automatically after a browser has fully
- * stopped. The whole Service Worker tree goes: CacheStorage has no Chromium
- * size cap and X.com's SW asset cache reached ~75 MB per profile (166 GB across
- * thousands of profiles on one machine). Registrations, ScriptCache and
- * CacheStorage are removed together so the SW database never points at cache
- * names that no longer exist. Sites re-register on the next page load; cookies,
- * Local Storage and IndexedDB carry the login and are untouched.
- */
-const POST_STOP_CACHE_DIRS = [
-  "Default/GPUCache",
-  "Default/Service Worker",
-  "Default/DawnCache",
-  "Default/DawnGraphiteCache",
-  "Default/DawnWebGPUCache",
-  "GrShaderCache",
-  "ShaderCache",
-  "GraphiteDawnCache",
-  // Chromium 155's copies of downloaded component packages. Without them, nothing downloads again.
-  "component_crx_cache",
-];
-
-/**
- * Cache subdirectories safe to delete on the explicit delete-cache endpoint.
- * Deliberately excludes everything that holds session/login state (Cookies,
- * Local Storage, Network, Preferences) — deleting those would log the account
- * out and defeat the persistent-session design the whole migration relies on.
- */
-// Site caches stay across closes up to SITE_CACHE_CAP_BYTES per profile; over it, they go after
-// the stop, the compiled-script cache first.
-
-/** Bytes of the files under a directory; 0 when it is missing. */
-async function directoryBytes(dir: string): Promise<number> {
-  let entries;
-  try {
-    entries = await readdir(dir, { recursive: true, withFileTypes: true });
-  } catch {
-    return 0;
-  }
-  let total = 0;
-  for (const entry of entries) {
-    if (!entry.isFile()) continue;
-    try { total += (await lstat(join(entry.parentPath, entry.name))).size; } catch {}
-  }
-  return total;
-}
-const SITE_CACHE_DIRS = ["Default/Code Cache", "Default/Cache"];
-const CACHE_DIRS = [...SITE_CACHE_DIRS, ...POST_STOP_CACHE_DIRS];
-const FIREFOX_CACHE_DIRS = ["cache2", "startupCache", "shader-cache"];
-const FIREFOX_SITE_CACHE_DIRS = ["cache2"];
-/** Firefox rebuilds its own startupCache (browser code, never site data) at every start without it. */
-const FIREFOX_POST_STOP_CACHE_DIRS = ["shader-cache"];
-
 export class Launcher {
+  readonly browserRuntimeDeployment: RuntimeInventoryDeployment;
   private store: ProfileStore;
   private autofill?: AutofillBridge;
   private dpapiKeysReadable: (keys: string[]) => Promise<boolean[] | null>;
@@ -916,6 +569,8 @@ export class Launcher {
   private ensureSearchProviderFn?: SearchProviderEnsurer;
   private captureFingerprintFn: (ws: string) => Promise<FingerprintSample | null>;
   private lookupExitLocationFn?: (proxy: ProxySpec) => Promise<ExitLocation | null>;
+  private checkLocalProxyBeforeLaunchFn?: (endpoint: LocalProxyEndpoint) => Promise<void>;
+  private chromiumPreloadingFn?: () => ChromiumPreloadingMode;
   private readSessionFn: typeof readSessionInSubprocess;
   private applySessionFn: typeof applySessionToEndpoint;
   private navigateFn: LaunchNavigator;
@@ -1043,6 +698,8 @@ export class Launcher {
     this.ensureSearchProviderFn = opts.ensureSearchProvider;
     this.captureFingerprintFn = opts.captureFingerprint ?? ((ws) => captureFingerprint(ws));
     this.lookupExitLocationFn = opts.lookupExitLocation ?? (this.unsafeDisableIdentityGates ? undefined : (proxy) => lookupProxyExitLocation(proxy));
+    this.checkLocalProxyBeforeLaunchFn = opts.checkLocalProxyBeforeLaunch;
+    this.chromiumPreloadingFn = opts.chromiumPreloading;
     this.readSessionFn = opts.readSession ?? readSessionInSubprocess;
     this.applySessionFn = opts.applySession ?? applySessionToEndpoint;
     this.navigateFn = opts.navigate ?? defaultNavigate;
@@ -1051,6 +708,15 @@ export class Launcher {
     this.enforceHostCompatibility = opts.enforceHostCompatibility ?? !this.unsafeDisableIdentityGates;
     this.hostPlatform = opts.hostPlatform ?? process.platform;
     this.hostArch = opts.hostArch ?? process.arch;
+    const configuredCloak = opts.binaryPath ?? process.env.CLOAKBROWSER_BINARY_PATH;
+    this.browserRuntimeDeployment = Object.freeze({
+      runtimeRoot: this.chromiumRuntimeRoot,
+      platform: this.hostPlatform,
+      arch: this.hostArch,
+      chromiumDefault: defaultChromiumRuntime(this.hostPlatform, this.hostArch) === "aliasmode" ? "aliasmode-chromium" : "cloakbrowser",
+      cloakSource: !this.binaryPath ? "managed" : configuredCloak ? "configured" : "bundled",
+      firefoxSource: this.firefoxBinaryPath ? "configured" : this.manageFirefox ? "managed" : "unconfigured",
+    });
     this.hostScale = opts.hostScale ?? hostDisplayScale();
     this.hostAvail = opts.hostAvail ?? hostDisplayAvail();
     this.labelWindowFn = opts.labelWindow ?? defaultLabelWindow;
@@ -1859,9 +1525,6 @@ export class Launcher {
     try {
       // A running browser is checked with the identity it was launched with; saved edits wait for its next start.
       const checked = launchedProfile(profile, this.store.getLaunch(profileId));
-      if (checked.proxy?.type === "https" && checked.proxy.user) {
-        throw new BrowserLaunchError("preflight", "proxy_https_auth");
-      }
       this.assertHostCompatibility(checked);
       if (profile.engine === "firefox" && chromeArgs.length) throw new BrowserLaunchError("preflight", "firefox_arguments");
       approvedBinarySha256 = this.approvedBinarySha256(binaryKind(profile));
@@ -2042,10 +1705,20 @@ export class Launcher {
       profile = current!;
       profileSnapshot = JSON.stringify(profile);
       // The checks above saw the identity of the browser that ran; this launch uses the saved one.
-      if (profile.proxy?.type === "https" && profile.proxy.user) {
-        throw new BrowserLaunchError("preflight", "proxy_https_auth");
-      }
       this.assertHostCompatibility(profile);
+    }
+    // Healthy existing browsers have already returned above. A failed local readiness check
+    // must not close one, and must happen before exit lookups, font/kernel downloads or spawn.
+    if (profile.proxy && this.checkLocalProxyBeforeLaunchFn) {
+      const endpoint = Object.freeze({ type: profile.proxy.type, host: profile.proxy.host, port: profile.proxy.port });
+      if (loopbackProxyTarget(endpoint)) {
+        try { await this.checkLocalProxyBeforeLaunchFn(endpoint); }
+        catch (error) {
+          this.requireUnchangedProfile(profileId, profileSnapshot, "local proxy startup check");
+          throw new BrowserLaunchError("preflight", error instanceof LocalProxyPreflightError ? error.code : "local_proxy_unavailable");
+        }
+        profile = this.requireUnchangedProfile(profileId, profileSnapshot, "local proxy startup check");
+      }
     }
     // The proxy exit is looked up once per launch. A missing or stale saved timezone (an import
     // whose lookup failed, a rotating proxy that moved) becomes the exit's before any engine reads
@@ -2118,6 +1791,24 @@ export class Launcher {
     // regenerate defaults; the login session is untouched (cookies live in
     // Default/Network/Cookies, the cookie-encryption key in the root Local State).
     await this.cacheClears.get(profileId);
+    // Existing/reattached browsers returned above; the executable is already verified and
+    // foreign directory holders have been reaped. Do this before legacy corrupt-prefs repair:
+    // an explicit override or pending restoration must never reset a damaged Preferences file.
+    if (!this.unsafeDisableIdentityGates) {
+      // Another verified Chromium runtime can reuse this directory. Restore our own
+      // prior override before that switch; never carry the managed155 policy into it.
+      const managed155 = binaryKind(profile) === "aliasmode" && verifiedBinary.sha256 === ALIASMODE_CHROMIUM_EXECUTABLE_SHA256;
+      let preloading: ChromiumPreloadingMode;
+      try { preloading = managed155 ? this.chromiumPreloadingFn?.() ?? "browser-default" : "browser-default"; }
+      catch { throw new BrowserLaunchError("preflight", "chromium_preloading_settings"); }
+      if (preloading !== "browser-default" && preloading !== "disabled") throw new BrowserLaunchError("preflight", "chromium_preloading_settings");
+      const applied = applyChromiumPreloadingPreference({ profilesRoot: this.dataRoot, userDataDir, mode: preloading });
+      if (applied.status === "blocked") {
+        this.log(`page preloading ${profileId}: ${applied.reason}`);
+        throw new BrowserLaunchError("preflight", "chromium_preloading_preferences");
+      }
+      if (applied.status === "user-change-preserved" && preloading === "disabled") throw new BrowserLaunchError("preflight", "chromium_preloading_changed");
+    }
     await this.repairCorruptPrefs(profileId);
 
     // …and clear the OTHER leftovers an unclean exit leaves behind, which repairCorruptPrefs
@@ -2164,16 +1855,7 @@ export class Launcher {
         const p = profile.proxy!;
         let relay: ProxyRelay;
         try {
-          relay = await startProxyRelay(
-            {
-              type: p.type === "socks5" ? "socks5" : "http",
-              host: p.host,
-              port: Number(p.port),
-              user: p.user,
-              pass: p.pass,
-            },
-            {},
-          );
+          relay = await startProxyRelay(proxyRelayUpstream(p), {});
         } catch {
           throw new BrowserLaunchError("relay_setup");
         }
@@ -2263,15 +1945,21 @@ export class Launcher {
       // than an account one: reading canvas and WebGL inside a live x.com tab
       // is exactly the behaviour a detection script watches for.
       let sample: FingerprintSample | null = null;
+      const captureIncarnation = this.store.getProfileIncarnation(profileId);
+      const captureLaunch = this.store.getLaunch(profileId);
       const capturedFingerprint = await recordCapture({
         profile,
+        launch: captureLaunch,
         capture: async () => (sample = await this.captureFingerprintFn(ws)),
-        save: (id, observed, verdict) => this.store.saveObservedFingerprint(id, observed, verdict),
+        save: (id, observed, verdict, source) => captureIncarnation ? this.store.saveObservedFingerprint(id, observed, verdict, captureIncarnation, source) : false,
         log: (msg) => this.log(msg),
         // Mirrors buildArgs exactly: aliasmode forces the policy whenever the
         // profile has a proxy, so the recorded value must use the same test.
         webrtc: webRtcPolicy(profile),
       });
+      const afterCaptureLaunch = this.store.getLaunch(profileId);
+      if (!captureIncarnation || this.store.getProfileIncarnation(profileId) !== captureIncarnation || !captureLaunch || !afterCaptureLaunch
+        || fingerprintLaunchDigest(afterCaptureLaunch) !== fingerprintLaunchDigest(captureLaunch)) throw new Error("Profile or browser was replaced during fingerprint capture");
       if (capturedFingerprint) {
         // Our own bookkeeping write makes the identity snapshot stale, and the
         // next requireUnchangedProfile would read it as a concurrent edit and
@@ -2338,14 +2026,16 @@ export class Launcher {
       // loads. Strictly best-effort — never fail or stall a launch on it. Chromium 155
       // got the label as a launch switch, so its pages get no title script. On Mac CloakBrowser has
       // no such switch, and a title script is visible to pages, so its windows there go unlabeled.
-      const pageLabelHidden = this.hostPlatform === "darwin";
-      if (!this.skipDefaultWindowLabel && !this.nativeWindowLabel(profile) && !pageLabelHidden) {
+      const capability = describeWindowLabelCapability(this.hostPlatform, profile);
+      if (!this.skipDefaultWindowLabel && capability.mode === "script") {
         try {
           const displayNo = profileDisplayNo(profile.customNo, this.store.getSerial(profileId));
           await this.labelWindowFn(ws, buildWindowLabel(profile.name, displayNo));
         } catch (err) {
           this.log(`window label failed for ${profileId} (continuing): ${err instanceof Error ? err.message : err}`);
         }
+      } else if (!this.skipDefaultWindowLabel && capability.mode === "unavailable") {
+        this.log(`window label skipped for ${profileId}: ${capability.reason}`);
       }
 
       // Identity card (#3): open the AdsPower-style landing page in its OWN tab (leaves the
@@ -2643,10 +2333,7 @@ export class Launcher {
     try {
       if (needsProxyRelay(profile)) {
         const proxy = profile.proxy!;
-        const relay = await startProxyRelay({
-          type: proxy.type === "socks5" ? "socks5" : "http",
-          host: proxy.host, port: Number(proxy.port), user: proxy.user, pass: proxy.pass,
-        }, {});
+        const relay = await startProxyRelay(proxyRelayUpstream(proxy), {});
         this.closeRelay(profileId);
         this.relays.set(profileId, relay);
         launch.relayPort = relay.port;
@@ -2706,11 +2393,17 @@ export class Launcher {
       let nativeSessionRestored = restoreLastSession && startupStatus.pageTargets.some((target) => canonicalUserPageUrl(target.url));
       // The capture comes before the tabs: it can then use the empty first window, and no extra
       // window opens and closes in front of the user.
+      const captureIncarnation = this.store.getProfileIncarnation(profileId);
+      const captureLaunch = this.store.getLaunch(profileId);
       const captured = await recordCapture({
         profile, capture: () => this.captureFingerprintFn(launch.ws),
-        save: (id, observed, verdict) => this.store.saveObservedFingerprint(id, observed, verdict),
+        launch,
+        save: (id, observed, verdict, source) => captureIncarnation ? this.store.saveObservedFingerprint(id, observed, verdict, captureIncarnation, source) : false,
         log: (msg) => this.log(msg), webrtc: webRtcPolicy(profile),
       });
+      const afterCaptureLaunch = this.store.getLaunch(profileId);
+      if (!captureIncarnation || this.store.getProfileIncarnation(profileId) !== captureIncarnation || !captureLaunch || !afterCaptureLaunch
+        || fingerprintLaunchDigest(afterCaptureLaunch) !== fingerprintLaunchDigest(captureLaunch)) throw new Error("Profile or browser was replaced during fingerprint capture");
       if (captured) {
         profile = this.store.getProfile(profileId)!;
         snapshot = JSON.stringify(profile);
@@ -3384,13 +3077,7 @@ export class Launcher {
     let relay: ProxyRelay;
     try {
       relay = await startProxyRelay(
-        {
-          type: profile.proxy!.type === "socks5" ? "socks5" : "http",
-          host: profile.proxy!.host,
-          port: Number(profile.proxy!.port),
-          user: profile.proxy!.user,
-          pass: profile.proxy!.pass,
-        },
+        proxyRelayUpstream(profile.proxy!),
         { port: launch.relayPort },
       );
     } catch {
@@ -4469,1103 +4156,3 @@ export class Launcher {
     throw new BrowserLaunchError("cdp_readiness");
   }
 }
-
-/**
- * Raise a browser window via raw CDP over its browser-level websocket. We talk
- * JSON-RPC directly (rather than Playwright) because the raise uses Browser-domain
- * commands: find a page target, get its window, then minimize→normal it.
- */
-function raiseWindow(browserWsUrl: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(browserWsUrl);
-    let nextId = 1;
-    const pending = new Map<number, { res: (v: any) => void; rej: (e: Error) => void }>();
-    const send = (method: string, params?: unknown) =>
-      new Promise<any>((res, rej) => {
-        const id = nextId++;
-        pending.set(id, { res, rej });
-        ws.send(JSON.stringify({ id, method, params: params ?? {} }));
-      });
-    const done = (err?: Error) => {
-      clearTimeout(timer);
-      try { ws.close(); } catch {}
-      if (err) reject(err); else resolve();
-    };
-    const timer = setTimeout(() => done(new Error("bringToFront: CDP timed out")), 5000);
-    ws.onerror = () => done(new Error("bringToFront: websocket error"));
-    ws.onmessage = (ev) => {
-      let msg: any;
-      try { msg = JSON.parse(typeof ev.data === "string" ? ev.data : ""); } catch { return; }
-      if (msg && msg.id && pending.has(msg.id)) {
-        const { res, rej } = pending.get(msg.id)!;
-        pending.delete(msg.id);
-        if (msg.error) rej(new Error(msg.error.message || "CDP error")); else res(msg.result);
-      }
-    };
-    ws.onopen = async () => {
-      try {
-        const { targetInfos } = await send("Target.getTargets");
-        const page = (targetInfos as any[]).find((t) => t.type === "page") ?? (targetInfos as any[])[0];
-        if (!page) throw new Error("no window to raise");
-        const win = await send("Browser.getWindowForTarget", { targetId: page.targetId });
-        const windowId = win?.windowId;
-        if (windowId == null) throw new Error("no window to raise");
-        // Restore first if it was minimized.
-        if (win?.bounds?.windowState && win.bounds.windowState !== "normal") {
-          await send("Browser.setWindowBounds", { windowId, bounds: { windowState: "normal" } });
-        }
-        if (process.platform === "linux") {
-          // WSLg/Linux: windowState (minimize/restore) is a no-op, so it can't raise. But GEOMETRY
-          // changes ARE honored — a brief height wiggle forces the compositor to re-present and
-          // foreground the window. Touch ONLY width/height (never left/top) so it doesn't drift.
-          const b = (await send("Browser.getWindowForTarget", { targetId: page.targetId }))?.bounds;
-          if (b && typeof b.width === "number" && typeof b.height === "number") {
-            const shrink = Math.max(240, b.height - 90);
-            await send("Browser.setWindowBounds", { windowId, bounds: { width: b.width, height: shrink } });
-            await sleep(200);
-            await send("Browser.setWindowBounds", { windowId, bounds: { width: b.width, height: b.height } });
-          }
-        } else {
-          // Windows/macOS: a background app can't call SetForegroundWindow at will, but RESTORING a
-          // window FROM minimized is the OS-sanctioned exception that brings it to the front + focuses
-          // it. A quick minimize→normal cycle is the reliable raise on the operator's Windows desktop.
-          await send("Browser.setWindowBounds", { windowId, bounds: { windowState: "minimized" } });
-          await sleep(120);
-          await send("Browser.setWindowBounds", { windowId, bounds: { windowState: "normal" } });
-        }
-        // Also issue the platform activate, in case the WM honors it alongside.
-        await send("Target.activateTarget", { targetId: page.targetId });
-        done();
-      } catch (e) {
-        done(e instanceof Error ? e : new Error(String(e)));
-      }
-    };
-  });
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-const IS_WINDOWS = process.platform === "win32";
-
-/** Signal-0 process liveness without sending a terminating signal. */
-function isPidAlive(pid: number): boolean {
-  if (!Number.isFinite(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    // EPERM still proves the process exists; we merely lack permission to
-    // signal it. Every other failure (notably ESRCH) means it is gone.
-    return (err as { code?: string })?.code === "EPERM";
-  }
-}
-
-function normalizedExecutablePath(path: string, windows = IS_WINDOWS): string {
-  let normalized = path.trim().replace(/^"|"$/g, "");
-  // Linux marks the /proc/<pid>/exe symlink this way when the on-disk binary
-  // was atomically replaced. The running process still belongs to the exact
-  // launch path and must remain manageable instead of looking foreign/dead.
-  if (!windows) normalized = normalized.replace(/ \(deleted\)$/, "");
-  try { normalized = realpathSync(normalized); } catch { normalized = resolve(normalized); }
-  return windows ? normalized.replace(/\//g, "\\").toLowerCase() : normalized;
-}
-
-function regexpEscape(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/** Match one complete argv item in a Windows command-line string. */
-function windowsCommandHasExactArg(commandLine: string, arg: string): boolean {
-  return new RegExp(`(?:^|[\\s"])${regexpEscape(arg)}(?=$|[\\s"])`, "i").test(commandLine);
-}
-
-/** Parse PPID, process group and start time from Linux /proc/<pid>/stat. */
-export function parseLinuxProcStat(raw: string): Pick<HostProcessRecord, "parentPid" | "processGroupId" | "startTime"> | null {
-  const close = raw.lastIndexOf(")");
-  if (close < 0) return null;
-  const fields = raw.slice(close + 1).trim().split(/\s+/);
-  const parentPid = Number(fields[1]);
-  const processGroupId = Number(fields[2]);
-  const startTime = fields[19];
-  if (!Number.isInteger(parentPid) || !Number.isInteger(processGroupId) || !/^\d+$/.test(startTime ?? "")) return null;
-  return { parentPid, processGroupId, startTime };
-}
-
-/** Exact root-anchored Linux ancestry, deepest children first and root last. */
-export function collectLinuxProcessTree(
-  rootPid: number,
-  snapshot: HostProcessSnapshot,
-): Array<{ pid: number; startTime: string; depth: number }> | null {
-  if (snapshot.incomplete) return null;
-  const byPid = new Map<number, HostProcessRecord>();
-  for (const record of snapshot.records) {
-    if (byPid.has(record.pid)) return null;
-    byPid.set(record.pid, record);
-  }
-  const root = byPid.get(rootPid);
-  if (!root?.startTime || root.parentPid === undefined) return null;
-  const members = new Map<number, { pid: number; startTime: string; depth: number }>();
-  members.set(rootPid, { pid: rootPid, startTime: root.startTime, depth: 0 });
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const record of snapshot.records) {
-      if (members.has(record.pid) || !record.startTime || record.parentPid === undefined) continue;
-      const parent = members.get(record.parentPid);
-      if (!parent) continue;
-      members.set(record.pid, { pid: record.pid, startTime: record.startTime, depth: parent.depth + 1 });
-      changed = true;
-    }
-  }
-  return [...members.values()].sort((a, b) => b.depth - a.depth || b.pid - a.pid);
-}
-
-function readLinuxProcOwnership(pid: number): Pick<HostProcessRecord, "parentPid" | "processGroupId" | "startTime"> {
-  const ownership = parseLinuxProcStat(readFileSync(`/proc/${pid}/stat`, "utf8"));
-  if (!ownership) throw new Error(`invalid /proc/${pid}/stat`);
-  return ownership;
-}
-
-function readLinuxProcessRecord(pid: number): HostProcessRecord | null {
-  if (!Number.isInteger(pid) || pid <= 0) return null;
-  try {
-    return { pid, executablePath: null, ...readLinuxProcOwnership(pid) };
-  } catch {
-    return null;
-  }
-}
-
-// 64-bit PROCESSENTRY32W: th32ProcessID at 8, th32ParentProcessID at 32, szExeFile[260] at 44.
-const WINDOWS_PROCESS_ENTRY_SIZE = 568;
-const WINDOWS_INVALID_HANDLE = 0xFFFF_FFFF_FFFF_FFFFn;
-const WINDOWS_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
-const WINDOWS_PROCESS_COMMAND_LINE_INFORMATION = 60;
-// UNICODE_STRING header plus the longest possible command line (65534 bytes).
-const windowsCommandLineBuffer = new Uint8Array(16 + 65_536);
-const windowsImagePathBuffer = new Uint16Array(32_768);
-const windowsImagePathLength = new Uint32Array(1);
-const windowsProcessApi = process.platform === "win32" ? (() => {
-  try {
-    return {
-      kernel32: dlopen("kernel32.dll", {
-        CreateToolhelp32Snapshot: { args: ["u32", "u32"], returns: "u64" },
-        Process32FirstW: { args: ["u64", "ptr"], returns: "i32" },
-        Process32NextW: { args: ["u64", "ptr"], returns: "i32" },
-        OpenProcess: { args: ["u32", "i32", "u32"], returns: "u64" },
-        QueryFullProcessImageNameW: { args: ["u64", "u32", "ptr", "ptr"], returns: "i32" },
-        CloseHandle: { args: ["u64"], returns: "i32" },
-      }).symbols,
-      ntdll: dlopen("ntdll.dll", {
-        NtQueryInformationProcess: { args: ["u64", "u32", "ptr", "u32", "ptr"], returns: "i32" },
-      }).symbols,
-    };
-  } catch {
-    return null;
-  }
-})() : null;
-
-/** Read pid, parent pid and image name from one 64-bit PROCESSENTRY32W. */
-export function parseWindowsProcessEntry(entry: Uint8Array): { pid: number; parentPid: number; processName: string } {
-  const view = new DataView(entry.buffer, entry.byteOffset, entry.byteLength);
-  const name = Buffer.from(entry.buffer, entry.byteOffset + 44, 520).toString("utf16le");
-  const end = name.indexOf("\0");
-  return {
-    pid: view.getUint32(8, true),
-    parentPid: view.getUint32(32, true),
-    processName: end < 0 ? name : name.slice(0, end),
-  };
-}
-
-/**
- * Decode the UNICODE_STRING that ProcessCommandLineInformation writes at the
- * start of `buffer`. Like WMI, stop at the first NUL that some processes write.
- */
-export function decodeWindowsCommandLine(buffer: Uint8Array, bufferAddress: number): string | null {
-  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-  const length = view.getUint16(0, true);
-  if (length === 0) return "";
-  const offset = Number(view.getBigUint64(8, true)) - bufferAddress;
-  if (!Number.isSafeInteger(offset) || offset < 16 || offset + length > buffer.byteLength) return null;
-  const text = Buffer.from(buffer.buffer, buffer.byteOffset + offset, length).toString("utf16le");
-  const end = text.indexOf("\0");
-  return end < 0 ? text : text.slice(0, end);
-}
-
-/**
- * Native Windows process snapshot with the WMI scan's fields. A process that
- * cannot be opened keeps a null path and an empty command line, as in WMI.
- * Throws only when the snapshot itself fails. No IPC, so it cannot hang like WMI.
- */
-export function readWindowsProcessSnapshotNative(): HostProcessSnapshot {
-  if (!windowsProcessApi) throw new Error("Windows process API is unavailable");
-  const { kernel32, ntdll } = windowsProcessApi;
-  const snapshot = kernel32.CreateToolhelp32Snapshot(0x2, 0) as bigint; // TH32CS_SNAPPROCESS
-  if (snapshot === 0n || snapshot === WINDOWS_INVALID_HANDLE) throw new Error("CreateToolhelp32Snapshot failed");
-  const entry = new Uint8Array(WINDOWS_PROCESS_ENTRY_SIZE);
-  new DataView(entry.buffer).setUint32(0, WINDOWS_PROCESS_ENTRY_SIZE, true);
-  const records: HostProcessRecord[] = [];
-  try {
-    for (let more = kernel32.Process32FirstW(snapshot, entry); more; more = kernel32.Process32NextW(snapshot, entry)) {
-      const { pid, parentPid, processName } = parseWindowsProcessEntry(entry);
-      if (pid <= 0) continue;
-      let executablePath: string | null = null;
-      let commandLine = "";
-      const handle = kernel32.OpenProcess(WINDOWS_PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) as bigint;
-      if (handle !== 0n) {
-        try {
-          windowsImagePathLength[0] = windowsImagePathBuffer.length;
-          if (kernel32.QueryFullProcessImageNameW(handle, 0, windowsImagePathBuffer, windowsImagePathLength)) {
-            executablePath = Buffer.from(windowsImagePathBuffer.buffer, 0, windowsImagePathLength[0]! * 2).toString("utf16le") || null;
-          }
-          const status = ntdll.NtQueryInformationProcess(
-            handle, WINDOWS_PROCESS_COMMAND_LINE_INFORMATION,
-            windowsCommandLineBuffer, windowsCommandLineBuffer.byteLength, null,
-          );
-          if (status === 0) commandLine = decodeWindowsCommandLine(windowsCommandLineBuffer, ptr(windowsCommandLineBuffer)) ?? "";
-        } finally {
-          kernel32.CloseHandle(handle);
-        }
-      }
-      records.push({ pid, parentPid, processName: processName || undefined, executablePath, commandLine });
-    }
-  } finally {
-    kernel32.CloseHandle(snapshot);
-  }
-  if (records.length === 0) throw new Error("Windows process snapshot was empty");
-  return { records, incomplete: false };
-}
-
-/** WMI fallback for the native scan, bounded by WINDOWS_PROCESS_SCAN_TIMEOUT_MS. */
-export async function readWindowsProcessSnapshotWmi(): Promise<HostProcessSnapshot | null> {
-  try {
-    const script = [
-      "Get-CimInstance -Query 'SELECT ProcessId, Name, ExecutablePath, CommandLine FROM Win32_Process' -OperationTimeoutSec 50 -ErrorAction Stop",
-      "ConvertTo-Json -Compress",
-    ].join(" | ");
-    // The full path also works when PATH has no PowerShell folder.
-    const powershell = join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-    const child = Bun.spawn(
-      [powershell, "-NoProfile", "-NonInteractive", "-Command", script],
-      { stdout: "pipe", stderr: "ignore" },
-    );
-    const result = await readSnapshotChildBounded(
-      child as unknown as { stdout: ReadableStream<Uint8Array>; exited: Promise<number>; kill(): unknown },
-      WINDOWS_PROCESS_SCAN_TIMEOUT_MS,
-    );
-    if (!result || result.exitCode !== 0) {
-      // A failed scan stops every saved profile with browser_launch/profile_directory. The log shows why.
-      console.log(`[aliasmode] Windows process scan failed: ${result ? `exit code ${result.exitCode}` : "timed out"}`);
-      return null;
-    }
-    const parsed = result.raw.trim() ? JSON.parse(result.raw) : [];
-    const rows = Array.isArray(parsed) ? parsed : parsed ? [parsed] : [];
-    const records: HostProcessRecord[] = [];
-    for (const row of rows) {
-      const pid = Number(row.ProcessId);
-      if (!Number.isFinite(pid) || pid <= 0) continue;
-      records.push({
-        pid,
-        processName: typeof row?.Name === "string" && row.Name ? row.Name : undefined,
-        executablePath: typeof row?.ExecutablePath === "string" && row.ExecutablePath ? row.ExecutablePath : null,
-        commandLine: typeof row?.CommandLine === "string" ? row.CommandLine : "",
-      });
-    }
-    return { records, incomplete: false };
-  } catch (error) {
-    console.log(`[aliasmode] Windows process scan failed: ${(error as { code?: string })?.code ?? String(error)}`);
-    return null;
-  }
-}
-
-export async function readHostProcessSnapshot(): Promise<HostProcessSnapshot | null> {
-  if (IS_WINDOWS) {
-    try {
-      return readWindowsProcessSnapshotNative();
-    } catch (error) {
-      console.log(`[aliasmode] Windows native process scan failed (${String(error)}); using WMI`);
-    }
-    return await readWindowsProcessSnapshotWmi();
-  }
-
-  if (process.platform === "linux") {
-    try {
-      const records: HostProcessRecord[] = [];
-      let scanIncomplete = false;
-      for (const entry of readdirSync("/proc")) {
-        if (!/^\d+$/.test(entry)) continue;
-        const pid = Number(entry);
-        let before: Pick<HostProcessRecord, "parentPid" | "processGroupId" | "startTime">;
-        try {
-          before = readLinuxProcOwnership(pid);
-        } catch (err) {
-          if ((err as { code?: string })?.code !== "ENOENT") scanIncomplete = true;
-          continue;
-        }
-        let argv: string[];
-        try {
-          argv = readFileSync(`/proc/${entry}/cmdline`)
-            .toString("utf8")
-            .split("\0")
-            .filter(Boolean);
-        } catch (err) {
-          if ((err as { code?: string })?.code !== "ENOENT") scanIncomplete = true;
-          continue;
-        }
-        let executablePath: string | null = null;
-        try {
-          executablePath = readlinkSync(`/proc/${entry}/exe`);
-        } catch {
-          // Keep the record with a null executable. It is ambiguous only if its
-          // exact launch args match the identity being filtered; an unrelated
-          // protected process must not poison every Linux empty result.
-        }
-        let after: Pick<HostProcessRecord, "parentPid" | "processGroupId" | "startTime">;
-        try {
-          after = readLinuxProcOwnership(pid);
-        } catch (err) {
-          if ((err as { code?: string })?.code !== "ENOENT") scanIncomplete = true;
-          continue;
-        }
-        if (before.startTime !== after.startTime) {
-          scanIncomplete = true;
-          continue;
-        }
-        const flattenedCommandLine = argv.length === 1 && /\s--/.test(argv[0]!);
-        records.push({
-          pid,
-          executablePath,
-          ...(flattenedCommandLine ? { commandLine: argv[0] } : { argv }),
-          ...after,
-        });
-      }
-      return { records, incomplete: scanIncomplete };
-    } catch {
-      return null;
-    }
-  }
-
-  if (process.platform === "darwin") {
-    // macOS has no /proc and no dependency-free way to read a tokenized argv, so
-    // read the flattened command line from `ps` and match args as exact
-    // whitespace-delimited tokens (windowsCommandHasExactArg tolerates spaces in
-    // a value and rejects prefix collisions like port 9333 vs 93330). The
-    // executable is argv[0]; if that path itself contains spaces it degrades to
-    // "ambiguous" (preserve the lock) rather than a false confirmed-absence.
-    try {
-      const child = Bun.spawn(["ps", "-axww", "-o", "pid=", "-o", "args="], { stdout: "pipe", stderr: "ignore" });
-      const result = await readSnapshotChildBounded(
-        child as unknown as { stdout: ReadableStream<Uint8Array>; exited: Promise<number>; kill(): unknown },
-        DARWIN_PROCESS_SCAN_TIMEOUT_MS,
-      );
-      if (!result || result.exitCode !== 0) return null;
-      return parseDarwinPsSnapshot(result.raw);
-    } catch {
-      return null;
-    }
-  }
-
-  // No equally exact, dependency-free command-line scanner is available here.
-  return null;
-}
-
-async function readWindowsProcessImageNames(): Promise<Set<string> | null> {
-  if (!IS_WINDOWS) return null;
-  try {
-    const child = Bun.spawn(
-      [windowsSystemTool("tasklist.exe"), "/FO", "CSV", "/NH"],
-      { stdout: "pipe", stderr: "ignore" },
-    );
-    const result = await readSnapshotChildBounded(
-      child as unknown as { stdout: ReadableStream<Uint8Array>; exited: Promise<number>; kill(): unknown },
-      WINDOWS_TASKLIST_TIMEOUT_MS,
-    );
-    if (!result || result.exitCode !== 0) return null;
-    return parseTasklistImageNames(result.raw);
-  } catch {
-    return null;
-  }
-}
-
-interface DarwinFirefoxKernelRecord {
-  executablePath: string;
-  argv: string[];
-}
-
-type DarwinFirefoxKernelQuery = (pid: number) => DarwinFirefoxKernelRecord | null;
-
-const DARWIN_PROC_PIDPATH_SIZE = 4096;
-const DARWIN_PROCARGS2_NAME = new TextEncoder().encode("kern.procargs2\0");
-const DARWIN_TEXT_DECODER = new TextDecoder();
-const darwinLibproc = process.platform === "darwin" ? (() => {
-  try {
-    return dlopen("/usr/lib/libproc.dylib", {
-      proc_pidpath: { args: ["i32", "ptr", "u32"], returns: "i32" },
-    });
-  } catch {
-    return null;
-  }
-})() : null;
-const darwinLibSystem = process.platform === "darwin" ? (() => {
-  try {
-    return dlopen("/usr/lib/libSystem.B.dylib", {
-      sysctlnametomib: { args: ["ptr", "ptr", "ptr"], returns: "i32" },
-      sysctl: { args: ["ptr", "u32", "ptr", "ptr", "ptr", "u64"], returns: "i32" },
-    });
-  } catch {
-    return null;
-  }
-})() : null;
-
-/** Read only argc argv entries; KERN_PROCARGS2 appends environment data after them. */
-export function parseDarwinKernelArgv(bytes: Uint8Array): string[] | null {
-  if (bytes.byteLength < 5) return null;
-  const argc = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getInt32(0, true);
-  if (!Number.isSafeInteger(argc) || argc < 1 || argc > bytes.byteLength - 4) return null;
-  let cursor = 4;
-  while (cursor < bytes.byteLength && bytes[cursor] !== 0) cursor++;
-  if (cursor >= bytes.byteLength) return null;
-  while (cursor < bytes.byteLength && bytes[cursor] === 0) cursor++;
-  const argv: string[] = [];
-  for (let index = 0; index < argc; index++) {
-    const start = cursor;
-    while (cursor < bytes.byteLength && bytes[cursor] !== 0) cursor++;
-    if (start === cursor || cursor >= bytes.byteLength) return null;
-    argv.push(DARWIN_TEXT_DECODER.decode(bytes.subarray(start, cursor)));
-    cursor++;
-  }
-  return argv;
-}
-
-function readDarwinKernelArgv(pid: number): string[] | null {
-  if (!darwinLibSystem || !Number.isSafeInteger(pid) || pid <= 0) return null;
-  try {
-    const mib = new Int32Array(3);
-    const mibLength = new BigUint64Array([BigInt(mib.length - 1)]);
-    if (darwinLibSystem.symbols.sysctlnametomib(DARWIN_PROCARGS2_NAME, mib, mibLength) !== 0
-      || mibLength[0] !== 2n) return null;
-    mib[2] = pid;
-    const requiredLength = new BigUint64Array(1);
-    if (darwinLibSystem.symbols.sysctl(mib, 3, null, requiredLength, null, 0n) !== 0) return null;
-    const required = requiredLength[0] ?? 0n;
-    if (required < 5n || required > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-    const bytes = new Uint8Array(Number(required));
-    const receivedLength = new BigUint64Array([required]);
-    if (darwinLibSystem.symbols.sysctl(mib, 3, bytes, receivedLength, null, 0n) !== 0) return null;
-    const received = receivedLength[0] ?? 0n;
-    if (received < 5n || received > BigInt(bytes.byteLength)) return null;
-    return parseDarwinKernelArgv(bytes.subarray(0, Number(received)));
-  } catch {
-    return null;
-  }
-}
-
-export function parseDarwinKernelExecutablePath(path: Uint8Array, length: number): string | null {
-  if (!Number.isSafeInteger(length) || length <= 0 || length >= path.byteLength || path[length] !== 0) return null;
-  return DARWIN_TEXT_DECODER.decode(path.subarray(0, length));
-}
-
-function readDarwinFirefoxKernelRecord(pid: number): DarwinFirefoxKernelRecord | null {
-  if (!darwinLibproc || !darwinLibSystem || !Number.isSafeInteger(pid) || pid <= 0) return null;
-  try {
-    const path = new Uint8Array(DARWIN_PROC_PIDPATH_SIZE);
-    const length = darwinLibproc.symbols.proc_pidpath(pid, path, path.byteLength);
-    if (!Number.isSafeInteger(length) || length <= 1 || length >= path.byteLength) return null;
-    const executablePath = parseDarwinKernelExecutablePath(path, length);
-    if (!executablePath) return null;
-    const argv = readDarwinKernelArgv(pid);
-    if (!argv) return null;
-    return { executablePath, argv };
-  } catch {
-    return null;
-  }
-}
-
-function isDarwinFirefoxCandidate(commandLine: string): boolean {
-  return commandLine.includes("-profile") || commandLine.includes("--aliasmode-firefox-owner=");
-}
-
-/** Keep ps as a PID candidate list only; executable and argv come from kernel APIs. */
-export function parseDarwinFirefoxPsSnapshot(
-  raw: string,
-  query: DarwinFirefoxKernelQuery,
-): HostProcessSnapshot {
-  const records: HostProcessRecord[] = [];
-  let incomplete = false;
-  for (const line of raw.split("\n")) {
-    const match = line.trimStart().match(/^(\d+)\s+(\d+)\s+(.*)$/);
-    if (!match) continue;
-    const pid = Number(match[1]);
-    const parentPid = Number(match[2]);
-    const commandLine = match[3] ?? "";
-    if (!Number.isSafeInteger(pid) || pid <= 0 || !isDarwinFirefoxCandidate(commandLine)) continue;
-    let record: DarwinFirefoxKernelRecord | null = null;
-    try { record = query(pid); } catch {}
-    if (!record) {
-      incomplete = true;
-      continue;
-    }
-    records.push({
-      pid,
-      ...(Number.isSafeInteger(parentPid) && parentPid >= 0 ? { parentPid } : {}),
-      executablePath: record.executablePath,
-      argv: record.argv,
-    });
-  }
-  return { records, incomplete };
-}
-
-async function readDarwinFirefoxProcessSnapshot(): Promise<HostProcessSnapshot | null> {
-  try {
-    const child = Bun.spawn(["ps", "-axww", "-o", "pid=", "-o", "ppid=", "-o", "args="], { stdout: "pipe", stderr: "ignore" });
-    const result = await readSnapshotChildBounded(
-      child as unknown as { stdout: ReadableStream<Uint8Array>; exited: Promise<number>; kill(): unknown },
-      DARWIN_PROCESS_SCAN_TIMEOUT_MS,
-    );
-    if (!result || result.exitCode !== 0) return null;
-    return parseDarwinFirefoxPsSnapshot(result.raw, readDarwinFirefoxKernelRecord);
-  } catch {
-    return null;
-  }
-}
-
-/** Parse the stable `pid= args=` shape emitted by macOS ps. */
-export function parseDarwinPsSnapshot(raw: string): HostProcessSnapshot {
-  const records: HostProcessRecord[] = [];
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trimStart();
-    const match = trimmed.match(/^(\d+)\s+(.*)$/);
-    if (!match) continue;
-    const pid = Number(match[1]);
-    if (!Number.isFinite(pid) || pid <= 0) continue;
-    const commandLine = match[2] ?? "";
-    // This is exact for the common no-space case. matchOwnedBrowserPids also
-    // validates commandLine against the full expected executable path, which
-    // safely recovers app bundle paths such as `/Applications/Cloak Browser…`.
-    const executablePath = commandLine.split(/\s+/, 1)[0] || null;
-    records.push({ pid, executablePath, executablePathExact: false, commandLine });
-  }
-  return { records, incomplete: false };
-}
-
-function commandLineStartsWithExecutable(commandLine: string, executablePath: string): boolean {
-  const line = commandLine.trimStart();
-  return line === executablePath
-    || line.startsWith(`${executablePath} `)
-    || line === `"${executablePath}"`
-    || line.startsWith(`"${executablePath}" `);
-}
-
-// One raw CIM or /proc snapshot serves all ownership checks that overlap in
-// time (for example a 25-browser teardown wave). The coalescer clears as soon
-// as the read settles: an empty result is never reused after a process starts.
-const readSharedHostProcessSnapshot = createFailureBackoffReader(
-  readHostProcessSnapshot,
-  (snapshot) => snapshot === null,
-  FAILED_PROCESS_SCAN_BACKOFF_MS,
-);
-const readSharedWindowsProcessImageNames = createInFlightSnapshotReader(readWindowsProcessImageNames);
-
-/**
- * Find only Chromium processes that carry this launch's full stable identity.
- * A stored PID alone is never sufficient after restart because the OS may have
- * recycled it. null is deliberately distinct from []: scan failure/ambiguity
- * must preserve ownership, while a successful exact scan with no matches can
- * prove a PID-less/dead row stale.
- */
-async function findOwnedBrowserPids(identity: BrowserProcessIdentity): Promise<number[] | null> {
-  const snapshot = await readSharedHostProcessSnapshot();
-  if (!snapshot) {
-    if (IS_WINDOWS) {
-      const names = await readSharedWindowsProcessImageNames();
-      if (names) {
-        const candidates = new Set([
-          "chrome.exe",
-          "sunbrowser.exe",
-          basename(identity.binaryPath).toLowerCase(),
-        ]);
-        if (![...candidates].some((name) => names.has(name))) return [];
-      }
-    }
-    return null;
-  }
-
-  return matchOwnedBrowserPids(identity, snapshot);
-}
-
-/** Pure exact-identity classifier, exported for deterministic lifecycle tests. */
-export function matchOwnedBrowserPids(
-  identity: BrowserProcessIdentity,
-  snapshot: HostProcessSnapshot,
-): number[] | null {
-
-  const portArg = `--remote-debugging-port=${identity.debugPort}`;
-  const dataArg = `--user-data-dir=${identity.userDataDir}`;
-  const expectedBinary = normalizedExecutablePath(identity.binaryPath);
-  const matches: number[] = [];
-  let ambiguousIdentity = snapshot.incomplete;
-
-  for (const record of snapshot.records) {
-    const hasIdentityArgs = record.argv
-      ? record.argv.includes(portArg) && record.argv.includes(dataArg)
-      : windowsCommandHasExactArg(record.commandLine ?? "", portArg)
-        && windowsCommandHasExactArg(record.commandLine ?? "", dataArg);
-    if (!hasIdentityArgs) continue;
-    const flattenedExecutableMatches = record.executablePathExact === false
-      && !record.argv
-      && !!record.commandLine
-      && commandLineStartsWithExecutable(record.commandLine, identity.binaryPath);
-    if (!record.executablePath && !flattenedExecutableMatches) {
-      ambiguousIdentity = true;
-      continue;
-    }
-    if (flattenedExecutableMatches
-      || (record.executablePath && normalizedExecutablePath(record.executablePath) === expectedBinary)) {
-      matches.push(record.pid);
-    }
-    else {
-      // Exact port+UDD args owned by a different/unreadable executable still
-      // occupy this browser generation's resources. Treat that as quarantine,
-      // never authoritative absence that permits a duplicate launch.
-      ambiguousIdentity = true;
-    }
-  }
-
-  return ambiguousIdentity && matches.length === 0 ? null : matches;
-}
-
-/**
- * Every process holding this exact persistent user-data dir, on ANY debug port —
- * the leaked-browser question findOwnedBrowserPids structurally cannot answer,
- * because it matches the recorded debug port too. See reapForeignProfileDirHolders.
- */
-async function findProfileDirHolderPids(userDataDir: string): Promise<number[] | null> {
-  const snapshot = await readSharedHostProcessSnapshot();
-  if (!snapshot) return null;
-  return matchProfileDirHolderPids(userDataDir, snapshot);
-}
-
-/** Pure dir-holder classifier, exported for deterministic lifecycle tests. */
-export function matchProfileDirHolderPids(
-  userDataDir: string,
-  snapshot: HostProcessSnapshot,
-): number[] | null {
-  const dataArg = `--user-data-dir=${userDataDir}`;
-  const holders: number[] = [];
-  for (const record of snapshot.records) {
-    // Exact-arg matching, never substring: `--user-data-dir=<dir>2` and
-    // `<dir>\..\other` are DIFFERENT profiles and must never be reaped here.
-    const holdsDir = record.argv
-      ? record.argv.includes(dataArg)
-      : windowsCommandHasExactArg(record.commandLine ?? "", dataArg);
-    if (holdsDir) holders.push(record.pid);
-  }
-  // An incomplete scan that found nothing is inconclusive, not an authoritative "none".
-  return snapshot.incomplete && holders.length === 0 ? null : holders;
-}
-
-/** Cross-platform best-effort kill by pid. Used for cross-process orphans. */
-async function killByPid(pid: number): Promise<void> {
-  if (!Number.isFinite(pid) || pid <= 0) return;
-  if (IS_WINDOWS) {
-    try {
-      const proc = Bun.spawn(["taskkill", "/F", "/T", "/PID", String(pid)], { stdout: "ignore", stderr: "ignore" });
-      // Await completion: if stop() resolves before the browser is actually
-      // gone, a fast re-start() on the same user-data dir hits SingletonLock.
-      await proc.exited;
-    } catch {}
-    return;
-  }
-  await signalUnixTarget(pid);
-}
-
-async function signalUnixTarget(target: number): Promise<void> {
-  try {
-    process.kill(target, "SIGKILL");
-  } catch (err) {
-    if ((err as { code?: string })?.code !== "ESRCH") throw err;
-  }
-}
-
-/**
- * Graceful browser shutdown over CDP: connect to the browser-level ws endpoint,
- * send Browser.close (which makes Chromium flush its cookie/session store to disk
- * and tear down its own process tree), then poll the debug port until it stops
- * answering. That proves only that CDP dropped its listener; stop() follows it
- * with an exact OS process scan because a wedged Chromium can survive without
- * the port. Returns false if the listener did not close within `timeoutMs`.
- * Waiting first avoids force-killing while Chromium is flushing. Uses the CDP
- * command (not an OS signal or window close) because a page beforeunload handler
- * can block a window close, but Browser.close cannot.
- */
-async function defaultBrowserClose(ws: string, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  const port = Number(ws.match(/^wss?:\/\/[^/]*:(\d+)\//)?.[1]);
-  if (!Number.isFinite(port)) return false;
-
-  // Send Browser.close (best-effort; the port poll below is the source of truth).
-  await new Promise<void>((resolve) => {
-    let sock: WebSocket | undefined;
-    let settled = false;
-    const done = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(t);
-      try { sock?.close(); } catch {}
-      resolve();
-    };
-    const t = setTimeout(done, Math.min(2000, timeoutMs));
-    try { sock = new WebSocket(ws); } catch { return done(); }
-    sock.addEventListener("open", () => {
-      try { sock!.send(JSON.stringify({ id: 1, method: "Browser.close" })); } catch {}
-    });
-    sock.addEventListener("message", done); // command acknowledged
-    sock.addEventListener("close", done);
-    sock.addEventListener("error", done);
-  });
-
-  // Poll the debug endpoint until it's dead = process exited, cookies committed.
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(800) });
-      await res.text().catch(() => {});
-    } catch (err) {
-      // An AbortSignal timeout means only that an overloaded debug endpoint did
-      // not answer within 800ms. Keep polling until the graceful-close budget is
-      // exhausted, then return false so stop() performs its authoritative tree
-      // kill. Connection-refused/reset failures do prove the listener is gone.
-      const name = (err as { name?: string })?.name;
-      if (name === "TimeoutError" || name === "AbortError") {
-        await sleep(150);
-        continue;
-      }
-      return true;
-    }
-    await sleep(150);
-  }
-  return false;
-}
-
-function defaultBinaryPath(): string {
-  const configured = process.env.CLOAKBROWSER_BINARY_PATH ?? "";
-  if (configured) return configured;
-  const bundled = join(process.cwd(), "cloakbrowser", "chrome.exe");
-  return IS_WINDOWS && existsSync(bundled) ? bundled : "";
-}
-
-export function shouldLaunchViaWindowsSession(
-  env: Record<string, string | undefined> = process.env,
-  platform = process.platform,
-): boolean {
-  if (platform !== "win32") return false;
-  const modern = (env.ALIASMODE_SESSION_LAUNCH ?? "").trim().toLowerCase();
-  const legacy = (env.ALIASMODE_LAUNCH_IN_SESSION ?? "").trim().toLowerCase();
-  if ([modern, legacy].some((v) => ["0", "false", "no", "off"].includes(v))) return false;
-  if ([modern, legacy].some((v) => ["1", "true", "yes", "on"].includes(v))) return true;
-  return (env.SESSIONNAME ?? "").trim().toLowerCase() === "services";
-}
-
-/**
- * Quote a single argument for a Windows command line the way CreateProcess's
- * argv parser expects (the same rules CommandLineToArgvW uses): backslashes
- * are literal UNLESS they immediately precede a quote, in which case each one
- * must be doubled (plus one more to escape the quote itself). A naive
- * `s.replace(/"/g, '\\"')` gets this wrong for any argument that ends in a
- * backslash or mixes backslashes with quotes — the stray backslash escapes
- * the closing quote instead of ending the argument, corrupting the next
- * argument's boundary.
- */
-export function quoteWindowsCommandArg(arg: string): string {
-  if (arg === "") return '""';
-  if (!/[ \t\n\v"]/.test(arg)) return arg;
-  let out = '"';
-  let slashes = 0;
-  for (const ch of arg) {
-    if (ch === "\\") {
-      slashes++;
-    } else if (ch === '"') {
-      out += "\\".repeat(slashes * 2 + 1) + ch;
-      slashes = 0;
-    } else {
-      out += "\\".repeat(slashes) + ch;
-      slashes = 0;
-    }
-  }
-  out += "\\".repeat(slashes * 2) + '"';
-  return out;
-}
-
-async function killProcessGroup(processGroupId: number): Promise<void> {
-  if (!Number.isInteger(processGroupId) || processGroupId <= 0) return;
-  await signalUnixTarget(-processGroupId);
-}
-
-export const defaultSpawn: SpawnFn = (binary, args, env) => {
-  const detached = process.platform === "linux";
-  const proc = Bun.spawn([binary, ...args], { stdout: "ignore", stderr: "ignore", detached, ...(env ? { env: { ...process.env, ...env } } : {}) });
-  const root = detached ? readLinuxProcessRecord(proc.pid) : null;
-  const ownsGroup = root?.processGroupId === proc.pid;
-  return {
-    pid: proc.pid,
-    kill: () => proc.kill(),
-    ...(ownsGroup ? { processGroupId: proc.pid, rootStartTime: root.startTime } : {}),
-  };
-};
-
-// Path to the PowerShell session-launch helper (repo-relative to this module).
-const SESSION_HELPER = join(import.meta.dir, "packaging", "launch-in-session.ps1");
-
-/**
- * Windows-only spawn that launches the browser ON THE INTERACTIVE USER'S DESKTOP,
- * so windows are VISIBLE even when aliasmode runs as a service (Session 0). A service
- * can't show windows itself, so it delegates to a per-launch interactive scheduled
- * task via launch-in-session.ps1, which returns the browser's real PID (found by its
- * --remote-debugging-port) for clean teardown. Enabled automatically for NSSM/service
- * sessions, or explicitly with ALIASMODE_SESSION_LAUNCH=1.
- */
-function sessionLaunchSpawn(
-  binary: string,
-  args: string[],
-  log: (msg: string) => void = () => {},
-): SpawnedProcess {
-  const cmdline = [binary, ...args].map(quoteWindowsCommandArg).join(" ");
-  const portArg = args.find((a) => a.startsWith("--remote-debugging-port="));
-  const port = portArg ? portArg.slice("--remote-debugging-port=".length) : "0";
-  let reportSpawnResult: (reason: string | null) => void = () => {};
-  const spawnFailed = new Promise<string | null>((resolve) => { reportSpawnResult = resolve; });
-  // NON-BLOCKING: fire the helper async and fill in the PID later. Using Bun.spawnSync here
-  // blocked aliasmode's event loop for the whole launch (~seconds each), so dozens of concurrent
-  // /browser/start calls serialized and timed out at 120s. proc.pid is read later at stop() time.
-  const proc: SpawnedProcess = {
-    pid: 0,
-    kill: () => { if (proc.pid > 0) { try { Bun.spawnSync(["taskkill", "/F", "/T", "/PID", String(proc.pid)]); } catch {} } },
-    spawnFailed,
-  };
-  try {
-    const child = Bun.spawn(
-      ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", SESSION_HELPER, "-CommandLine", cmdline, "-Port", port],
-      { stdout: "pipe", stderr: "pipe" },
-    );
-    // Read the recovered browser PID off the helper's stdout without blocking
-    // the loop, but do not retain a hung PowerShell/stdout promise forever.
-    // After the bound, exact process scanning in Launcher recovers the PID (or
-    // reports unknown) without treating PID 0 as proof of life.
-    //
-    // stderr and the EXIT CODE are load-bearing, not noise: the helper reports the
-    // resolved interactive user, the scheduled task's state/lastResult, and exits 2 when
-    // nobody is logged in at all ("No interactive user found"). Discarding them (stderr
-    // was "ignore", the exit code was never read) made every spawn-side outage
-    // indistinguishable from a slow browser — a silent 60s CDP timeout per launch, on
-    // every profile, with nothing in the log to say why.
-    (async () => {
-      try {
-        const result = await Promise.race([
-          Promise.all([
-            new Response(child.stdout).text(),
-            new Response(child.stderr).text(),
-            child.exited,
-          ]).then(([out, err, exitCode]) => ({ out, err, exitCode })),
-          sleep(SESSION_PID_RECOVERY_TIMEOUT_MS).then(() => null),
-        ]);
-        if (!result) {
-          try { child.kill(); } catch {}
-          // A hung helper is not proof the browser failed; the CDP poll decides.
-          reportSpawnResult(null);
-          return;
-        }
-        const { out, err, exitCode } = result;
-        for (const line of err.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)) {
-          log(`session-launch: ${line}`);
-        }
-        const found = parseInt(out.trim().split(/\s+/).filter(Boolean).pop() || "0", 10);
-        if (found > 0) proc.pid = found;
-        if (exitCode !== 0) {
-          const detail = err.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop() ?? "";
-          reportSpawnResult(
-            `interactive session launch helper exited ${exitCode}${detail ? `: ${detail}` : ""}`,
-          );
-          return;
-        }
-        // Exit 0 with no PID is not proof of failure — the helper's own scan can lag
-        // behind a browser that is still coming up. Let the CDP poll be the judge.
-        reportSpawnResult(null);
-      } catch { /* pid stays 0; graceful CDP close still tears the browser down */
-        reportSpawnResult(null);
-      }
-    })();
-  } catch (err) {
-    // Could not even run PowerShell/the helper: the browser provably never started.
-    const detail = err instanceof Error ? err.message : String(err);
-    log(`session-launch: could not run ${SESSION_HELPER}: ${detail}`);
-    reportSpawnResult(`could not run the interactive session launch helper: ${detail}`);
-  }
-  return proc;
-}
-
-/** True when browsers should be launched onto the interactive desktop (service + opt-in). */
-const SESSION_LAUNCH = shouldLaunchViaWindowsSession();
-
-/** aliasmode's own HTTP port, so the profile card can be served/opened over loopback. */
-const ALIASMODE_PORT = process.env.ALIASMODE_PORT ? Number(process.env.ALIASMODE_PORT) : 50400;
-function profileCardUrl(profileId: string): string {
-  return `http://127.0.0.1:${ALIASMODE_PORT}/card?id=${encodeURIComponent(profileId)}`;
-}
-
-/**
- * Open the profile identity card (AdsPower-style landing page) in a NEW tab, so the
- * automation's own tab (tab 0) is never disturbed. Best-effort — never fails a launch.
- */
-async function openProfileCardTab(ws: string, url: string): Promise<void> {
-  await runPlaywrightWorker("profile-card", {
-    endpoint: ws,
-    url,
-    connectTimeoutMs: 10_000,
-  });
-}
-
-/**
- * Put an identity bookmark (`<name> · #<serial>` → the card) on the bookmark bar and make
- * the bar visible. Best-effort and self-contained: writes a fresh Bookmarks file (automation
- * profiles carry no user bookmarks) and safely merges the show-bar pref into a VALID
- * Preferences (a corrupt one is left for repairCorruptPrefs). Never throws into a launch.
- */
-async function writeIdentityBookmark(userDataDir: string, name: string, url: string): Promise<void> {
-  try {
-    const dir = join(userDataDir, "Default");
-    mkdirSync(dir, { recursive: true });
-    const bookmarks = {
-      roots: {
-        bookmark_bar: { children: [{ name, type: "url", url }], name: "Bookmarks bar", type: "folder" },
-        other: { children: [], name: "Other bookmarks", type: "folder" },
-        synced: { children: [], name: "Mobile bookmarks", type: "folder" },
-      },
-      version: 1,
-    };
-    writeFileSync(join(dir, "Bookmarks"), JSON.stringify(bookmarks));
-    const prefsPath = join(dir, "Preferences");
-    let prefs: any = {};
-    if (existsSync(prefsPath)) {
-      try { prefs = JSON.parse(readFileSync(prefsPath, "utf8")); } catch { return; } // corrupt → leave for repair
-    }
-    if (typeof prefs !== "object" || prefs === null) return;
-    prefs.bookmark_bar = { ...(prefs.bookmark_bar ?? {}), show_on_all_tabs: true };
-    await writeFileAtomic(prefsPath, JSON.stringify(prefs));
-  } catch { /* best-effort: identity extras must never fail a launch */ }
-}
-
-/** Copy the cookie key (Local State) and Default/Network/Cookies* into a dated folder in the profile. */
-function backupUnreadableCookies(userDataDir: string, now = new Date()): string {
-  const root = join(userDataDir, "cookie-backups");
-  const key = localStateDpapiKey(join(userDataDir, "Local State"));
-  // One copy per cookie key, so repeated opens do not fill the disk with the same cookies.
-  const existing = (existsSync(root) ? readdirSync(root) : [])
-    .find((name) => localStateDpapiKey(join(root, name, "Local State")) === key);
-  if (existing) return join(root, existing);
-  const backup = join(root, now.toISOString().replace(/[:.]/g, "-"));
-  const network = join(userDataDir, "Default", "Network");
-  mkdirSync(join(backup, "Default", "Network"), { recursive: true });
-  copyFileSync(join(userDataDir, "Local State"), join(backup, "Local State"));
-  for (const name of existsSync(network) ? readdirSync(network) : []) {
-    if (name.startsWith("Cookies")) copyFileSync(join(network, name), join(backup, "Default", "Network", name));
-  }
-  return backup;
-}
-
-/**
- * Replace a file through a temp file in the same folder. Chromium rereads Default/Preferences on
- * every launch; a crash or power loss mid-write then leaves the old or the new file, never half of one.
- */
-async function writeFileAtomic(path: string, data: string): Promise<void> {
-  const temp = join(dirname(path), `.${basename(path)}.aliasmode-${randomUUID()}.tmp`);
-  try {
-    const fd = openSync(temp, "w");
-    try { writeFileSync(fd, data); fsyncSync(fd); } finally { closeSync(fd); }
-    await renameWhenUnlocked(temp, path);
-  } catch (error) {
-    rmSync(temp, { force: true });
-    throw error;
-  }
-}
-
-const defaultNavigate: LaunchNavigator = async (ws, urls, replacePages = false) => {
-  await runPlaywrightWorker("navigate", {
-    endpoint: ws,
-    urls,
-    replacePages,
-    connectTimeoutMs: 30_000,
-  });
-};
-
-/**
- * The number an operator sees for a profile: the custom NO. they set, falling
- * back to the store serial (SQLite rowid). Null only when neither is known.
- */
-export function profileDisplayNo(customNo: string | undefined, serial: number | null): string | null {
-  const custom = (customNo ?? "").trim();
-  if (custom) return custom;
-  return serial != null ? String(serial) : null;
-}
-
-/** The window-title prefix that identifies a profile: `<name> · #<no> — `. */
-export function buildWindowLabel(name: string, serial: number | string | null): string {
-  const n = (name || "").trim() || "profile";
-  return serial != null && serial !== "" ? `${n} · #${serial} — ` : `${n} — `;
-}
-
-/**
- * In-page script that keeps `label` prefixed on the window/tab title. The
- * platform (X is an SPA) rewrites document.title constantly, so a one-shot set
- * won't stick: re-apply on every title mutation, plus a slow interval as a
- * belt-and-suspenders. The `startsWith(label)` guard makes our own write a
- * no-op so the MutationObserver can't loop. Self-contained (serialized to the
- * page) and fully defensive — it must never throw into the host page.
- */
-function buildLabelScript(label: string): string {
-  const L = JSON.stringify(label);
-  return `(() => { try {
-    var L = ${L};
-    var apply = function(){ try { if (document.title.indexOf(L) !== 0) document.title = L + document.title; } catch(e){} };
-    var start = function(){
-      apply();
-      try {
-        var el = document.querySelector('title') || document.head || document.documentElement;
-        if (el) new MutationObserver(apply).observe(el, { subtree: true, childList: true, characterData: true });
-      } catch(e){}
-      try { setInterval(apply, 3000); } catch(e){}
-    };
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
-    else start();
-  } catch(e){} })();`;
-}
-
-/**
- * Default window labeler: connect Playwright over CDP, register the title script
- * for future navigations, and apply it to the already-open page(s) now. Like the
- * other CDP helpers, close() only detaches the client (the browser keeps running).
- * Short connect timeout so a launch is never held up on labeling.
- */
-const defaultLabelWindow: WindowLabeler = async (ws, label) => {
-  await runPlaywrightWorker("label-window", {
-    endpoint: ws,
-    script: buildLabelScript(label),
-    connectTimeoutMs: 10_000,
-  });
-};
-
-/**
- * Default cookie injector: connect Playwright over CDP, add cookies to the
- * default context, then disconnect. connectOverCDP's close() detaches the
- * client without terminating the browser, leaving the persistent dir seeded.
- */
-export const defaultSetCookies: CookieSetter = async (ws, cookies) => {
-  await runPlaywrightWorker("cookie-add", { endpoint: ws, cookies, connectTimeoutMs: 30_000 });
-};
-
-const defaultEnsureCookies: CookieEnsurer = async (ws, cookies) => {
-  return runPlaywrightWorker<{ injected: boolean }>("ensure-cookies", {
-    endpoint: ws,
-    cookies,
-    connectTimeoutMs: 30_000,
-  });
-};

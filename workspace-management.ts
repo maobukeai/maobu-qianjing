@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Launcher } from "./launcher.ts";
 import type { ProfileStore } from "./store.ts";
@@ -8,9 +8,11 @@ import type { StatePaths } from "./paths.ts";
 import type { ScriptSupervisor } from "./scripts.ts";
 import { validAgentAuthorization } from "./agent-control.ts";
 import { WorkspaceCatalog, writeWorkspaceJson } from "./workspaces.ts";
-import { WorkspaceBackupService } from "./workspace-backups.ts";
+import { validateBackupPassword, WorkspaceBackupService } from "./workspace-backups.ts";
 import { WorkspaceBusyError, WorkspaceMaintenance, workspaceRequestMutates } from "./workspace-maintenance.ts";
 import { GROUP_DISCLOSURE_KEY, isGroupDisclosureValue } from "./profile-group-state.ts";
+import { FAVORITE_PROFILES_KEY, SAVED_PROFILE_VIEWS_KEY, parseFavoriteProfiles, parseSavedProfileViews } from "./profile-view-state.ts";
+import { ROSTER_DENSITY_KEY, isRosterDensity } from "./roster-density-state.ts";
 
 const PREFIX = "/ui/api/workspace";
 const MAX_JSON_BYTES = 16 * 1024;
@@ -25,6 +27,8 @@ export interface WorkspaceManagementOptions {
   store: ProfileStore;
   launcher: Launcher;
   agentNonce?: string;
+  /** Optional session gate for `GET /ui/api/workspace/capability` (e.g. desktop/standalone browser session). */
+  authorizeSession?: (request: Request) => boolean;
 }
 
 /** Management has one authoritative context for both HTTP servers and agent sockets. */
@@ -36,6 +40,7 @@ export class WorkspaceManagement {
   private scripts?: ScriptSupervisor;
   private upload: Promise<Response> | null = null;
   private cleanups = new Set<Promise<unknown>>();
+  private pendingMutations = new Set<Promise<void>>();
   private activationRelease: (() => void) | null = null;
   private overviewScan?: { time: number; promise: Promise<number> };
   private preferenceWrite: Promise<unknown> = Promise.resolve();
@@ -54,10 +59,25 @@ export class WorkspaceManagement {
   async settled(): Promise<void> {
     await this.upload?.catch(() => {});
     await Promise.all(this.backups.jobs().filter((job) => job.status === "queued" || job.status === "running").map((job) => this.backups.wait(job.id)));
-    await Promise.allSettled([...this.cleanups]);
+    await Promise.allSettled([...this.cleanups, ...this.pendingMutations]);
   }
   currentId(): string { return this.catalog.currentId(); }
   mutation<T>(work: () => Promise<T>): Promise<T> { return this.maintenance.mutation(work); }
+  /** Keep streamed server work owned after its HTTP Response has been returned. */
+  acquireMutationLease(): () => void {
+    const release = this.maintenance.acquireMutationLease();
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
+    this.pendingMutations.add(pending);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      release();
+      this.pendingMutations.delete(pending);
+      finish();
+    };
+  }
   async cleanup<T>(work: () => Promise<T>): Promise<T> {
     const pending = this.maintenance.cleanup(work); this.cleanups.add(pending);
     try { return await pending; } finally { this.cleanups.delete(pending); }
@@ -135,6 +155,9 @@ export class WorkspaceManagement {
     if (key === "aliasmode.roster.pageSize" && ["20", "25", "50", "100", "200"].includes(value)) return;
     if (key === "aliasmode.shell.sidebarCollapsed" && ["0", "1"].includes(value)) return;
     if (key === GROUP_DISCLOSURE_KEY && isGroupDisclosureValue(value)) return;
+    if (key === FAVORITE_PROFILES_KEY && parseFavoriteProfiles(value) !== null) return;
+    if (key === SAVED_PROFILE_VIEWS_KEY && parseSavedProfileViews(value) !== null) return;
+    if (key === ROSTER_DENSITY_KEY && isRosterDensity(value)) return;
     if (key === "aliasmode.roster.hiddenColumns") {
       const parsed: unknown = JSON.parse(value);
       const known = ["no", "name", "group", "platform", "tags", "proxy", "status", "action"];
@@ -226,7 +249,7 @@ export class WorkspaceManagement {
       this.maintenance.assertWritable();
       if (this.upload || this.backups.busy()) throw new WorkspaceBusyError("A workspace backup or restore is already running.");
       if (typeof body.backupId !== "string") throw new Error("Choose a backup to restore");
-      return json({ ok: true, job: this.jobView(this.backups.startRestore({ backupId: body.backupId, ...(typeof body.name === "string" ? { name: body.name } : {}) })) }, 202);
+      return json({ ok: true, job: this.jobView(this.backups.startRestore({ backupId: body.backupId, password: body.password, ...(typeof body.name === "string" ? { name: body.name } : {}) })) }, 202);
     }
     const pending = this.maintenance.mutation(() => this.receiveArchive(request, type));
     this.upload = pending;
@@ -239,6 +262,17 @@ export class WorkspaceManagement {
     }
     const length = Number(request.headers.get("content-length") || 0);
     if (length > MAX_UPLOAD_BYTES) return json({ ok: false, error: "Backup files must be smaller than 20 GB" }, 413);
+    const encodedPassword = request.headers.get("x-maobu-backup-password");
+    let password: string | undefined;
+    if (encodedPassword !== null) {
+      // Streaming uploads keep the file as the body. Percent encoding allows Unicode in the bounded header.
+      let decoded: string;
+      try {
+        if (encodedPassword.length > 3 * 1024) throw new Error();
+        decoded = decodeURIComponent(encodedPassword);
+      } catch { throw new Error("Backup password must contain at least 10 characters and at most 1024 UTF-8 bytes."); }
+      password = validateBackupPassword(decoded);
+    }
     const directory = join(this.options.paths.root, "backups", ".uploads");
     const backupDirectory = await lstat(this.backups.directory);
     if (!backupDirectory.isDirectory() || backupDirectory.isSymbolicLink()) throw new Error("The backup directory is unsafe");
@@ -253,21 +287,24 @@ export class WorkspaceManagement {
       const reader = stream.getReader();
       let size = 0;
       try {
-        await writeFile(path, "", { flag: "wx", mode: 0o600 });
-        const sink = Bun.file(path).writer();
+        const sink = await open(path, "wx", 0o600);
         try {
           while (true) {
             const chunk = await reader.read();
             if (chunk.done) break;
             size += chunk.value.byteLength;
             if (size > MAX_UPLOAD_BYTES) throw new Error("Backup files must be smaller than 20 GB");
-            sink.write(chunk.value);
-            await sink.flush();
+            let offset = 0;
+            while (offset < chunk.value.byteLength) {
+              const written = (await sink.write(chunk.value, offset)).bytesWritten;
+              if (!written) throw new Error("Backup upload write could not make progress");
+              offset += written;
+            }
           }
-        } finally { await sink.end(); }
+        } finally { await sink.close(); }
       } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
       if (!size) throw new Error("The backup file is empty");
-      const job = this.backups.startRestore({ archivePath: path });
+      const job = this.backups.startRestore({ archivePath: path, password });
       void this.backups.wait(job.id).finally(() => rm(path, { force: true })).catch(() => {});
       return json({ ok: true, job: this.jobView(job) }, 202);
     } catch (error) { await rm(path, { force: true }); throw error; }
@@ -281,7 +318,13 @@ export class WorkspaceManagement {
     const origin = request.headers.get("origin");
     if ((origin && origin !== url.origin) || request.headers.get("sec-fetch-site") === "cross-site")
       return json({ ok: false, error: "Cross-origin workspace requests are forbidden" }, 403);
-    if (url.pathname === PREFIX + "/capability" && request.method === "GET") return json({ ok: true, token: this.token });
+    if (url.pathname === PREFIX + "/capability" && request.method === "GET") {
+      const allowed = this.options.authorizeSession
+        ? this.options.authorizeSession(request)
+        : this.authorized(request);
+      if (!allowed) return json({ ok: false, error: "Workspace authorization failed" }, 401);
+      return json({ ok: true, token: this.token });
+    }
     if (!this.authorized(request)) return json({ ok: false, error: "Workspace authorization failed" }, 401);
     try {
       if (url.pathname === PREFIX + "s" && request.method === "GET")
@@ -321,10 +364,11 @@ export class WorkspaceManagement {
       if (url.pathname === PREFIX + "/preferences" && request.method === "POST") { await this.savePreference(await this.body(request)); return json({ ok: true }); }
       if (url.pathname === PREFIX + "/backups" && request.method === "GET") return json({ ok: true, backups: this.backups.listBackups().map(({ path: _path, ...record }: any) => record), jobs: this.backups.jobs().map((job) => this.jobView(job)) });
       if (url.pathname === PREFIX + "/backups" && request.method === "POST") {
-        await this.body(request);
+        const body = await this.body(request);
         this.maintenance.assertWritable();
         if (this.upload) throw new WorkspaceBusyError("Wait for the backup upload to finish before creating a backup.");
-        return json({ ok: true, job: this.jobView(this.backups.startCreate()) }, 202);
+        const allowUnencrypted = body.allowUnencrypted === true;
+        return json({ ok: true, job: this.jobView(this.backups.startCreate(body.password, { allowUnencrypted })) }, 202);
       }
       if (url.pathname === PREFIX + "/restore" && request.method === "POST") return await this.restore(request);
       const job = /^\/ui\/api\/workspace\/jobs\/(job_[a-f0-9]{32})$/.exec(url.pathname);

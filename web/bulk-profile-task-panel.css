@@ -1,0 +1,63 @@
+.bulk-profile-task-panel { flex: 0 0 auto; min-width: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink-soft); margin: 0 0 14px; overflow: hidden; }
+.bulk-task-topbar { min-width: 0; white-space: nowrap; gap: 6px; }
+.bulk-task-topbar strong { font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.bulk-task-topbar.has-failures { color: var(--danger-ink); }
+@media (max-width: 760px) { .bulk-task-topbar > span { display: none; } }
+.bulk-task-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 14px; padding: 12px 15px 8px; }
+.bulk-task-title, .bulk-task-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.bulk-task-title h2 { margin: 0; color: var(--ink); font-size: 13px; font-weight: 550; }
+.bulk-task-total { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.bulk-task-indicator { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); flex: 0 0 auto; }
+.bulk-task-indicator.running { background: var(--accent); }
+.bulk-task-indicator.stopping { background: var(--warn-ink); }
+.bulk-task-indicator.complete { background: var(--success-ink); }
+.bulk-task-indicator.complete.has-failures { background: var(--danger-ink); }
+.bulk-task-indicator.complete.has-skipped { background: var(--muted); }
+.bulk-task-expand svg, .bulk-task-dismiss svg { width: 14px; height: 14px; flex: 0 0 auto; }
+.bulk-task-expand svg { transition: transform 160ms var(--ease); }
+.bulk-task-expand[aria-expanded="true"] svg { transform: rotate(180deg); }
+.bulk-task-dismiss { width: 26px; height: 26px; padding: 4px; }
+.bulk-task-progress { padding: 0 15px 11px; }
+.bulk-profile-task-panel { --bulk-progress: var(--accent); }
+.bulk-profile-task-panel[data-outcome="failed"] { --bulk-progress: var(--danger-ink); }
+.bulk-profile-task-panel[data-outcome="partial"] { --bulk-progress: var(--muted); }
+.bulk-profile-task-panel[data-outcome="succeeded"] { --bulk-progress: var(--success-ink); }
+.bulk-task-progress progress { appearance: none; display: block; width: 100%; height: 4px; overflow: hidden; border: 0; border-radius: 4px; background: var(--line-soft); accent-color: var(--bulk-progress); }
+.bulk-task-progress progress::-webkit-progress-bar { background: var(--line-soft); border-radius: 4px; }
+.bulk-task-progress progress::-webkit-progress-value { background: var(--bulk-progress); border-radius: 4px; }
+.bulk-task-progress progress::-moz-progress-bar { background: var(--bulk-progress); border-radius: 4px; }
+.bulk-task-progress p { margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.bulk-task-details[hidden] { display: none; }
+.bulk-task-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 7px 15px; border-top: 1px solid var(--line-soft); padding: 10px 15px 0; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.bulk-task-summary .has-failures { color: var(--danger-ink); }
+.bulk-task-note { padding: 0 15px; margin: 8px 0 0; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.bulk-task-result-tools { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; padding: 10px 15px; }
+.bulk-task-filters { display: flex; flex-wrap: wrap; gap: 3px; }
+.bulk-task-filters .btn[aria-pressed="true"] { color: var(--accent-ink); background: var(--accent-soft); }
+.bulk-task-search { width: min(280px, 100%); }
+.bulk-task-search .input { min-width: 0; width: 100%; min-height: 28px; font-size: 11px; }
+.bulk-task-rows { max-height: min(230px, 28dvh); overflow-y: auto; overscroll-behavior: contain; padding: 0 15px; border-top: 1px solid var(--line-soft); outline-offset: -3px; }
+.bulk-task-rows ul { margin: 0; padding: 0; list-style: none; }
+.bulk-task-row { padding: 10px 0; border-bottom: 1px solid var(--line-soft); }
+.bulk-task-row:last-child { border-bottom: 0; }
+.bulk-task-row-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.bulk-task-row-heading > div { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 9px; min-width: 0; }
+.bulk-task-row strong { font-size: 12px; font-weight: 500; color: var(--ink-soft); overflow-wrap: anywhere; }
+.bulk-task-row code { font: 10px/1.7 var(--mono); color: var(--faint); overflow-wrap: anywhere; }
+.bulk-task-status { display: inline-block; flex: 0 0 auto; border-radius: 4px; padding: 2px 6px; font-size: 10.5px; line-height: 1.6; background: var(--surface-sunken); color: var(--muted); }
+.bulk-task-status.running { color: var(--accent-ink); background: var(--accent-soft); }
+.bulk-task-status.succeeded { color: var(--success-ink); background: var(--success-soft); }
+.bulk-task-status.failed { color: var(--danger-ink); background: var(--danger-soft); }
+.bulk-task-row-detail { display: flex; flex-direction: column; gap: 3px; font-size: 11px; line-height: 1.7; color: var(--muted); overflow-wrap: anywhere; }
+.bulk-task-row-detail:empty { display: none; }
+.bulk-task-row-detail small { margin-top: 3px; color: var(--faint); font-size: 10px; }
+.bulk-task-row-detail p { margin: 0; white-space: pre-wrap; }
+.bulk-task-row-detail .bulk-task-error { color: var(--danger-ink); }
+.bulk-task-row-detail .bulk-task-warning { color: var(--warn-ink); }
+.bulk-task-empty { padding: 13px 0; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.bulk-task-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding: 8px 15px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 10.5px; }
+.bulk-task-pager > span:first-child { margin-right: auto; }
+@media (max-width: 760px) { .bulk-task-heading { padding-inline: 12px; } .bulk-task-controls { gap: 4px; } .bulk-task-result-tools { align-items: stretch; } .bulk-task-search { width: 100%; } .bulk-task-rows { max-height: min(190px, 25dvh); } }
+@media (max-height: 620px) { .bulk-task-rows { max-height: 135px; } .bulk-task-note { display: none; } }
+@media (pointer: coarse) { .bulk-profile-task-panel .btn, .bulk-task-dismiss { min-height: 40px; } .bulk-task-search .input { min-height: 40px; font-size: 16px; } }
+@media (prefers-reduced-motion: reduce) { .bulk-task-expand svg { transition: none; } }

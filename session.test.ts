@@ -11,6 +11,8 @@ import {
   isSessionCookie,
   normalizeBundle,
   normalizeOriginStorage,
+  normalizeTargetDomains,
+  normalizeTargetUrls,
   parseCapturedSessionBundle,
   playwrightTransportAttribution,
   readSessionFromBrowser,
@@ -1513,4 +1515,38 @@ test("the login signature changes on a login, logout or account switch but not o
     { name: "guest_id", value: "1", domain: ".x.com" },
     { name: "auth_token", value: "account-a", domain: ".x.com", expires: 1 },
   ]))).toBe(loggedOut);
+});
+
+test("arbitrary target domains and custom auth rules work without 7-site lock-in", () => {
+  expect(normalizeTargetDomains(["https://Shop.Example.com/cart", ".github.com", "invalid host"])).toEqual([
+    "shop.example.com",
+    "github.com",
+  ]);
+  expect(normalizeTargetUrls(["github.com", "https://app.example.com/login"])).toEqual([
+    "https://github.com",
+    "https://app.example.com/login",
+  ]);
+  expect(isSessionCookie({ domain: ".github.com" }, { targetDomains: ["github.com"] })).toBe(true);
+  expect(isSessionCookie({ domain: ".x.com" }, { targetDomains: ["github.com"] })).toBe(false);
+  expect(isSessionCookie({ domain: ".amazon.co.jp" }, { includeAnyDomain: true })).toBe(true);
+
+  const customBundle = JSON.stringify({
+    cookies: [{ name: "user_session", value: "gh-secret-1", domain: ".github.com", path: "/" }],
+    origins: [{ origin: "https://shop.example.com", localStorage: [{ name: "token", value: "abc" }] }],
+  });
+  expect([...bundleLoggedInPlatforms(customBundle, { targetDomains: ["github.com", "shop.example.com", "unused.test"] })].sort()).toEqual([
+    "github.com",
+    "shop.example.com",
+  ]);
+  const sigA = sessionLoginSignature(customBundle, { targetDomains: ["github.com"] });
+  const sigB = sessionLoginSignature(
+    JSON.stringify({
+      cookies: [{ name: "user_session", value: "gh-secret-2", domain: ".github.com", path: "/" }],
+      origins: [],
+    }),
+    { targetDomains: ["github.com"] },
+  );
+  expect(sigA).not.toBe(sigB);
+  const seed = sessionCaptureSeed(customBundle, ["https://erp.company.local/dashboard", "github.com"]);
+  expect(seed.origins).toEqual(["https://shop.example.com", "https://erp.company.local", "https://github.com"]);
 });

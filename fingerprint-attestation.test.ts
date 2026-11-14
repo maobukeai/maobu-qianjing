@@ -4,9 +4,18 @@ import {
   attestationFields,
   expectationFromRecord,
   compareAttestation,
+  captureAttestationVerdict,
   FP_BLOCK_KEYS,
 } from "./fingerprint-attestation.ts";
 import type { ObservedFingerprint } from "./types.ts";
+
+test("legacy non-scalars cannot stringify into exported fields or a capture verdict", () => {
+  const legacy = { canvas: { toString: 0, valueOf: 0, private: "PRIVATE_LEGACY_FIELD" }, screen: ["1920*1080"], audio: true } as unknown as ObservedFingerprint;
+  expect(attestationFields(legacy)).toMatchObject({ fp_canvas: "", fp_screen: "", fp_audio: "" });
+  expect(captureAttestationVerdict(legacy, { screen: "1920*1080", canvas: "live" })).toBeNull();
+  expect(captureAttestationVerdict({ ...legacy, hardwareConcurrency: 8 }, { hardwareConcurrency: "8" } as unknown as ObservedFingerprint)).toEqual({ verdict: "match", differences: [] });
+  expect(compareAttestation({ canvas: "expected" }, legacy)).toEqual({ verdict: "mismatch", differences: [{ field: "canvas", expected: "expected", observed: "" }] });
+});
 
 const SAMPLE = {
   userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",

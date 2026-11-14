@@ -268,6 +268,9 @@ export const executeScript: ScriptExecution = async ({ scriptPath, language, inp
         child.stdin!.destroy();
     }
 };
+const DEFAULT_MAX_CONCURRENT_RUNS = 4;
+const DEFAULT_MAX_RUN_HISTORY = 20;
+
 interface ActiveRun {
     view: ScriptRun;
     directory: string;
@@ -276,7 +279,11 @@ interface ActiveRun {
     done: Promise<void>;
 }
 export class ScriptSupervisor {
-    private active?: ActiveRun;
+    private readonly runs = new Map<string, ActiveRun>();
+    private readonly lockedProfiles = new Map<string, string>();
+    private latestRunId?: string;
+    private readonly maxConcurrentRuns: number;
+    private readonly maxRunHistory: number;
     private closing = false;
     constructor(private readonly options: AgentControlDeps & {
         root: string;
@@ -284,17 +291,51 @@ export class ScriptSupervisor {
         execute?: ScriptExecution;
         /** The downloaded Python runtime of the desktop app; a source checkout runs python3. */
         python?: PythonRuntime;
-    }) { }
-    status(): ScriptRun | null {
-        if (!this.active)
-            return null;
-        return structuredClone(this.active.view);
+        /** Maximum concurrent script runs across disjoint profiles (default 4). */
+        maxConcurrentRuns?: number;
+        /** Maximum number of completed/active runs whose metadata & logs are retained (default 20). */
+        maxRunHistory?: number;
+    }) {
+        const concurrent = options.maxConcurrentRuns ?? DEFAULT_MAX_CONCURRENT_RUNS;
+        const history = options.maxRunHistory ?? DEFAULT_MAX_RUN_HISTORY;
+        if (!Number.isSafeInteger(concurrent) || concurrent < 1)
+            throw new ScriptError("maxConcurrentRuns must be a positive whole number");
+        if (!Number.isSafeInteger(history) || history < 1)
+            throw new ScriptError("maxRunHistory must be a positive whole number");
+        this.maxConcurrentRuns = concurrent;
+        this.maxRunHistory = history;
+    }
+    status(id?: string): ScriptRun | null {
+        if (id !== undefined) {
+            const found = this.runs.get(id);
+            return found ? structuredClone(found.view) : null;
+        }
+        const entries = [...this.runs.values()];
+        for (let i = entries.length - 1; i >= 0; i--) {
+            if (entries[i]!.view.status !== "finished")
+                return structuredClone(entries[i]!.view);
+        }
+        const latest = this.latestRunId ? this.runs.get(this.latestRunId) : entries.at(-1);
+        return latest ? structuredClone(latest.view) : null;
+    }
+    listRuns(): ScriptRun[] {
+        return [...this.runs.values()].reverse().map((entry) => structuredClone(entry.view));
+    }
+    private pruneHistory(): void {
+        if (this.runs.size < this.maxRunHistory)
+            return;
+        for (const [runId, entry] of this.runs) {
+            if (this.runs.size < this.maxRunHistory)
+                break;
+            if (entry.view.status !== "finished")
+                continue;
+            this.runs.delete(runId);
+            rmSync(entry.directory, { recursive: true, force: true });
+        }
     }
     start(request: RunRequest): ScriptRun {
         if (this.closing)
             throw new ScriptError("Script execution is unavailable while the app shuts down", 409);
-        if (this.active && this.active.view.status !== "finished")
-            throw new ScriptError("A script is already running", 409);
         if (!request || typeof request.scriptId !== "string" || !request.scriptId
             || !Array.isArray(request.profileIds) || !request.profileIds.length || !request.profileIds.every((id) => typeof id === "string" && id)
             || !request.inputs || typeof request.inputs !== "object" || Array.isArray(request.inputs) || typeof request.useCredentials !== "boolean") {
@@ -303,44 +344,73 @@ export class ScriptSupervisor {
         const concurrency = request.concurrency === undefined ? 10 : request.concurrency;
         if (!Number.isSafeInteger(concurrency) || concurrency < 1)
             throw new ScriptError("Parallel browsers must be a positive whole number");
-        if (this.active)
-            rmSync(this.active.directory, { recursive: true, force: true });
+        const activeCount = [...this.runs.values()].filter((entry) => entry.view.status !== "finished").length;
+        if (activeCount >= this.maxConcurrentRuns)
+            throw new ScriptError("A script is already running", 409);
+        const uniqueProfileIds = [...new Set(request.profileIds)];
+        for (const profileId of uniqueProfileIds) {
+            if (this.lockedProfiles.has(profileId))
+                throw new ScriptError(`A script is already running for profile ${profileId}`, 409);
+        }
+        this.pruneHistory();
         mkdirSync(this.options.library.directory, { recursive: true });
         const directory = mkdtempSync(join(this.options.library.directory, "run-"));
+        const runId = randomUUID();
         const run: ActiveRun = {
-            view: { id: randomUUID(), scriptName: "Script", status: "running", profiles: [...new Set(request.profileIds)].map((id) => ({ id, name: id, status: "queued" })) },
+            view: { id: runId, scriptName: "Script", status: "running", profiles: uniqueProfileIds.map((id) => ({ id, name: id, status: "queued" })) },
             directory, logPath: join(directory, "output.log"), abort: new AbortController(), done: Promise.resolve(),
         };
         writeFileSync(run.logPath, "", { mode: 0o600 });
-        this.active = run;
+        for (const profileId of uniqueProfileIds)
+            this.lockedProfiles.set(profileId, runId);
+        this.runs.set(runId, run);
+        this.latestRunId = runId;
         run.done = this.run(run, { ...request, concurrency });
         return structuredClone(run.view);
     }
-    async stop(): Promise<ScriptRun | null> {
-        const run = this.active;
-        if (run && run.view.status !== "finished") {
+    async stop(id?: string): Promise<ScriptRun | null> {
+        if (id !== undefined) {
+            const run = this.runs.get(id);
+            if (!run)
+                return null;
+            if (run.view.status !== "finished") {
+                run.view.status = "stopping";
+                run.abort.abort();
+                await run.done;
+            }
+            return structuredClone(run.view);
+        }
+        const active = [...this.runs.values()].filter((run) => run.view.status !== "finished");
+        await Promise.all(active.map(async (run) => {
             run.view.status = "stopping";
             run.abort.abort();
             await run.done;
-        }
+        }));
         return this.status();
     }
-    settled(): Promise<void> { return this.active?.done ?? Promise.resolve(); }
+    async settled(id?: string): Promise<void> {
+        if (id !== undefined) {
+            await (this.runs.get(id)?.done ?? Promise.resolve());
+            return;
+        }
+        await Promise.all([...this.runs.values()].map((run) => run.done));
+    }
     async shutdown(): Promise<void> {
         this.closing = true;
-        const run = this.active;
-        if (run) {
+        const entries = [...this.runs.values()];
+        for (const run of entries)
             run.abort.abort();
-            await run.done;
+        await Promise.all(entries.map((run) => run.done));
+        for (const run of entries)
             rmSync(run.directory, { recursive: true, force: true });
-        }
+        this.lockedProfiles.clear();
     }
     log(id: string, offset: number): {
         text: string;
         nextOffset: number;
     } {
-        const run = this.active;
-        if (!run || run.view.id !== id)
+        const run = this.runs.get(id);
+        if (!run)
             throw new ScriptError("Run not found", 404);
         if (!Number.isSafeInteger(offset) || offset < 0)
             throw new ScriptError("Invalid log offset");
@@ -517,6 +587,10 @@ export class ScriptSupervisor {
         finally {
             closeSync(fd);
             run.view.status = "finished";
+            for (const item of run.view.profiles) {
+                if (this.lockedProfiles.get(item.id) === run.view.id)
+                    this.lockedProfiles.delete(item.id);
+            }
         }
     }
 }

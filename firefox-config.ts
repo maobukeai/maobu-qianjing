@@ -287,6 +287,15 @@ const DROPPED_LAUNCH_KEYS = [
   "canvas:seed", "fonts:spacing_seed", "window.screenX", "window.screenY", "navigator.globalPrivacyControl", "audio:seed",
 ];
 
+/** Read the effective launch count after graphics fitting, without changing the saved identity. */
+export function firefoxLaunchHardwareConcurrency(
+  config: Readonly<Record<string, JsonValue>>, hardware: Profile["hardware"], hostCores = availableParallelism(),
+): JsonValue | undefined {
+  // Explicit hardware overrides the graphics-matched count; the real host remains the ceiling.
+  const cores = hardware ? hardware.cores : config["navigator.hardwareConcurrency"];
+  return Number(cores) > hostCores ? hostCores : cores;
+}
+
 /**
  * The config one launch sends to the engine. Seeds, voices, media devices, the window label and
  * the window fit are derived here and never stored, so saved profiles keep their
@@ -316,10 +325,9 @@ export function firefoxLaunchConfig(
     Object.assign(config, graphics);
   }
   fitThreads(config, os, !!intelMac, (key) => seedFraction(seed(key)));
-  // A count the user set wins, even one no real desktop of this card shows.
-  if (profile.hardware) config["navigator.hardwareConcurrency"] = profile.hardware.cores;
-  // Pages that run workers in parallel measure this computer's count, so more is a tell. Chromium 155 caps it the same way.
-  if (Number(config["navigator.hardwareConcurrency"]) > hostCores) config["navigator.hardwareConcurrency"] = hostCores;
+  // Pages running workers can measure the host count; use the same read-only policy as diagnostics.
+  const cores = firefoxLaunchHardwareConcurrency(config, profile.hardware, hostCores);
+  if (cores !== undefined) config["navigator.hardwareConcurrency"] = cores;
   // With the stock list every profile of one OS shows the same fonts.
   if (isStrings(config.fonts)) config.fonts = firefoxProfileFonts(os, config.fonts, (group) => seedFraction(seed(`fonts:${group}`)), !fontsDir);
   // Of the Hiragino faces the macOS font pack holds only Hiragino Sans GB, so on another computer

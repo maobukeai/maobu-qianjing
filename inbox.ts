@@ -303,13 +303,14 @@ export async function importInbox(
   store: ProfileStore,
   dir = DEFAULT_INBOX,
   log: (msg: string) => void = console.log,
+  timezoneFetch?: FetchLike,
 ): Promise<InboxResult> {
   mkdirSync(dir, { recursive: true });
   const txts = readdirSync(dir).filter((f) => f.toLowerCase().endsWith(".txt"));
   const files = await Promise.all(
     txts.map(async (f) => ({ name: f, bytes: new Uint8Array(await Bun.file(join(dir, f)).arrayBuffer()) })),
   );
-  return importBuffers(store, files, log);
+  return importBuffers(store, files, log, {}, timezoneFetch);
 }
 
 /**

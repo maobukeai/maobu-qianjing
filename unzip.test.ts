@@ -1,9 +1,10 @@
 import { test, expect } from "bun:test";
+import { deflateRawSync } from "node:zlib";
 import { createHash, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
-import { mkdtempSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { extractZipTo, parseArchive } from "./unzip.ts";
+import { DEFAULT_MAX_ZIP_ENTRY_BYTES, TRUSTED_RUNTIME_ZIP_LIMITS, extractZipTo, parseArchive } from "./unzip.ts";
 
 /** Build a minimal STORED (uncompressed) ZIP — enough to exercise the central-
  *  directory parser and path-safety without needing a deflate fixture. */
@@ -216,4 +217,93 @@ test("refuses path-traversal entries", async () => {
 test("rejects non-zip input", async () => {
   const dir = mkdtempSync(join(tmpdir(), "cp-unzip-"));
   await expect(extractZipTo(new TextEncoder().encode("not a zip at all"), dir)).rejects.toThrow();
+});
+
+function deflatedZip(entriesInput: Array<{ name: string; data: Uint8Array; spoofUncompSize?: number }>): Uint8Array {
+  const enc = new TextEncoder();
+  const chunks: Uint8Array[] = [];
+  const meta: { name: Uint8Array; compLen: number; uncompLen: number; off: number }[] = [];
+  let offset = 0;
+  for (const item of entriesInput) {
+    const n = enc.encode(item.name);
+    const comp = new Uint8Array(deflateRawSync(item.data));
+    const lh = new Uint8Array(30 + n.length);
+    const dv = new DataView(lh.buffer);
+    dv.setUint32(0, 0x04034b50, true);
+    dv.setUint16(8, 8, true); // method: deflate
+    dv.setUint32(18, comp.length, true);
+    dv.setUint32(22, item.spoofUncompSize ?? item.data.length, true);
+    dv.setUint16(26, n.length, true);
+    lh.set(n, 30);
+    meta.push({ name: n, compLen: comp.length, uncompLen: item.spoofUncompSize ?? item.data.length, off: offset });
+    chunks.push(lh, comp);
+    offset += lh.length + comp.length;
+  }
+  const cdStart = offset;
+  for (const e of meta) {
+    const ch = new Uint8Array(46 + e.name.length);
+    const dv = new DataView(ch.buffer);
+    dv.setUint32(0, 0x02014b50, true);
+    dv.setUint16(10, 8, true);
+    dv.setUint32(20, e.compLen, true);
+    dv.setUint32(24, e.uncompLen, true);
+    dv.setUint16(28, e.name.length, true);
+    dv.setUint32(42, e.off, true);
+    ch.set(e.name, 46);
+    chunks.push(ch);
+    offset += ch.length;
+  }
+  const eocd = new Uint8Array(22);
+  const dv = new DataView(eocd.buffer);
+  dv.setUint32(0, 0x06054b50, true);
+  dv.setUint16(8, meta.length, true);
+  dv.setUint16(10, meta.length, true);
+  dv.setUint32(12, offset - cdStart, true);
+  dv.setUint32(16, cdStart, true);
+  chunks.push(eocd);
+  return concat(...chunks);
+}
+
+test("rejects zip-bomb entries exceeding maxEntryBytes or maxTotalBytes even when header size is spoofed", async () => {
+  const payload = new Uint8Array(4096).fill(0x41);
+  const spoofed = deflatedZip([{ name: "bomb.txt", data: payload, spoofUncompSize: 4 }]);
+  const dir1 = mkdtempSync(join(tmpdir(), "cp-unzip-bomb1-"));
+  await expect(extractZipTo(spoofed, dir1, { maxEntryBytes: 1024 })).rejects.toThrow("size limit");
+
+  const multi = deflatedZip([
+    { name: "a.txt", data: new Uint8Array(600).fill(0x41) },
+    { name: "b.txt", data: new Uint8Array(600).fill(0x42) },
+  ]);
+  const dir2 = mkdtempSync(join(tmpdir(), "cp-unzip-bomb2-"));
+  await expect(extractZipTo(multi, dir2, { maxEntryBytes: 1024, maxTotalBytes: 1000 })).rejects.toThrow("size limit");
+});
+
+test("rejects null-byte entry names, backslash traversal, and corrupted header offsets", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cp-unzip-sec-"));
+  await expect(extractZipTo(storedZip({ "bad\0name.txt": "x" }), dir)).rejects.toThrow("null byte");
+
+  await extractZipTo(storedZip({ "sub\\..\\..\\evil.txt": "x", "folder\\": "", "good.txt": "ok" }), dir);
+  expect(existsSync(join(dir, "good.txt"))).toBe(true);
+  expect(existsSync(join(dir, "..", "evil.txt"))).toBe(false);
+
+  const corrupt = storedZip({ "a.txt": "hello" });
+  const view = new DataView(corrupt.buffer);
+  // Corrupt central directory offset in EOCD to point out of bounds.
+  view.setUint32(corrupt.length - 6, corrupt.length + 50, true);
+  await expect(extractZipTo(corrupt, dir)).rejects.toThrow("truncated central directory");
+});
+
+test("default limits still reject >64 MiB entries while TRUSTED_RUNTIME_ZIP_LIMITS allows verified runtime binaries", async () => {
+  expect(DEFAULT_MAX_ZIP_ENTRY_BYTES).toBe(64 * 1024 * 1024);
+  expect(TRUSTED_RUNTIME_ZIP_LIMITS.maxEntryBytes).toBe(512 * 1024 * 1024);
+  const seventyMiB = new Uint8Array(70 * 1024 * 1024);
+  const runtimeZip = deflatedZip([{ name: "node-v22/node.exe", data: seventyMiB }]);
+  const dir = mkdtempSync(join(tmpdir(), "cp-unzip-runtime-"));
+  try {
+    await expect(extractZipTo(runtimeZip, dir)).rejects.toThrow("size limit");
+    expect(await extractZipTo(runtimeZip, dir, TRUSTED_RUNTIME_ZIP_LIMITS)).toBe(1);
+    expect(existsSync(join(dir, "node-v22", "node.exe"))).toBe(true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

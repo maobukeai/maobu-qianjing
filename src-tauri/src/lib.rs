@@ -1,8 +1,12 @@
+mod acceptance;
 mod browser;
 mod credentials;
+mod desktop_close;
+mod external_resources;
 mod runtime_descriptor;
 mod shutdown;
 mod sidecar;
+mod signed_updates;
 mod workspaces;
 
 use credentials::CredentialOrigin;
@@ -24,13 +28,24 @@ use tauri::{
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
+pub(crate) const DESKTOP_SESSION_HEADER: &str = "X-Maobu-Desktop-Session";
+pub(crate) struct DesktopDashboardSession(zeroize::Zeroizing<String>);
+
 const IMPORT_RESTRICTION: &str = "Windows DPAPI protects persisted browser secrets, so this import works only for the same Windows machine and account. Persisted persona fields are preserved, but runtime or browser differences can change the account-visible fingerprint.";
 
 const WINDOWS_ACCEPTANCE_BROWSER_ARGS: &str =
     "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
 
 fn windows_acceptance_browser_args(enabled: bool, debug_port: Option<&str>) -> Option<String> {
-    if !enabled {
+    windows_acceptance_browser_args_for_build(cfg!(debug_assertions), enabled, debug_port)
+}
+
+fn windows_acceptance_browser_args_for_build(
+    debug_build: bool,
+    enabled: bool,
+    debug_port: Option<&str>,
+) -> Option<String> {
+    if !debug_build || !enabled {
         return None;
     }
     let debug_port = debug_port.unwrap_or("0").parse::<u16>().ok()?;
@@ -47,7 +62,13 @@ fn trusted_loopback_capability(port: u16) -> CapabilityBuilder {
         .permission("allow-credential-bridge")
         .permission("allow-workspace-management")
         .permission("allow-runtime-ready")
-        .permission("allow-script-capability");
+        .permission("allow-script-capability")
+        .permission("allow-signed-updates")
+        .permission("allow-external-resources");
+    let capability = capability
+        .permission("allow-desktop-close")
+        .permission("core:event:allow-listen")
+        .permission("core:event:allow-unlisten");
     #[cfg(windows)]
     let capability = capability
         .permission("core:window:allow-is-maximized")
@@ -55,10 +76,161 @@ fn trusted_loopback_capability(port: u16) -> CapabilityBuilder {
         .permission("core:window:allow-toggle-maximize")
         .permission("core:window:allow-start-dragging")
         .permission("core:window:allow-close")
-        .permission("core:window:allow-is-focused")
-        .permission("core:event:allow-listen")
-        .permission("core:event:allow-unlisten");
+        .permission("core:window:allow-is-focused");
     capability
+}
+
+use std::sync::{Mutex, Once};
+
+static PANIC_HOOK_ONCE: Once = Once::new();
+static PANIC_LOG_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
+const MAX_PANIC_MESSAGE_CHARS: usize = 512;
+const MAX_PANIC_LOG_BYTES: u64 = 1024 * 1024;
+
+fn set_panic_log_dir(dir: PathBuf) {
+    if let Ok(mut guard) = PANIC_LOG_DIR.lock() {
+        *guard = Some(dir);
+    }
+}
+
+fn sanitize_panic_message(raw: &str) -> String {
+    let cleaned: String = raw
+        .chars()
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .collect();
+    let mut words = Vec::new();
+    let mut redact_next = false;
+    for token in cleaned.split_whitespace() {
+        if redact_next {
+            words.push("[REDACTED]".to_owned());
+            redact_next = false;
+            continue;
+        }
+        let lower = token.to_ascii_lowercase();
+        if lower == "bearer" {
+            words.push(token.to_owned());
+            redact_next = true;
+            continue;
+        }
+        if let Some(eq_pos) = token.find('=') {
+            let key = &lower[..eq_pos];
+            if [
+                "password",
+                "passwd",
+                "token",
+                "secret",
+                "nonce",
+                "apikey",
+                "api_key",
+                "authorization",
+                "x-maobu-desktop-session",
+                "session",
+            ]
+            .iter()
+            .any(|sensitive| key.ends_with(sensitive))
+            {
+                let prefix = &token[..=eq_pos];
+                words.push(format!("{prefix}[REDACTED]"));
+                continue;
+            }
+        }
+        let trimmed = token.trim_matches(|ch: char| !ch.is_ascii_alphanumeric());
+        if trimmed.len() >= 32 && trimmed.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            words.push("[REDACTED_HEX]".to_owned());
+            continue;
+        }
+        words.push(token.to_owned());
+    }
+    let joined = words.join(" ");
+    if joined.chars().count() <= MAX_PANIC_MESSAGE_CHARS {
+        joined
+    } else {
+        let mut truncated: String = joined.chars().take(MAX_PANIC_MESSAGE_CHARS).collect();
+        truncated.push_str("...");
+        truncated
+    }
+}
+
+fn format_panic_record(location: Option<(&str, u32, u32)>, raw_message: &str) -> String {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    let loc = match location {
+        Some((file, line, column)) => format!("{file}:{line}:{column}"),
+        None => "<unknown>".to_owned(),
+    };
+    let message = sanitize_panic_message(raw_message);
+    format!("[maobu-desktop panic ts={timestamp}] location={loc} message={message}")
+}
+
+fn is_reparse_or_symlink(path: &Path) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    false
+}
+
+fn write_panic_log_line(dir: &Path, line: &str) {
+    if is_reparse_or_symlink(dir) {
+        return;
+    }
+    if fs::create_dir_all(dir).is_err() || is_reparse_or_symlink(dir) {
+        return;
+    }
+    let log_path = dir.join("desktop-panic.log");
+    if is_reparse_or_symlink(&log_path) {
+        return;
+    }
+    if let Ok(metadata) = fs::symlink_metadata(&log_path) {
+        if !metadata.is_file() || metadata.len() >= MAX_PANIC_LOG_BYTES {
+            return;
+        }
+    }
+    let mut options = fs::OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    if let Ok(mut file) = options.open(&log_path) {
+        let _ = io::Write::write_all(&mut file, format!("{line}\n").as_bytes());
+        let _ = io::Write::flush(&mut file);
+    }
+}
+
+fn install_panic_hook() {
+    PANIC_HOOK_ONCE.call_once(|| {
+        std::panic::set_hook(Box::new(|info| {
+            let location = info
+                .location()
+                .map(|location| (location.file(), location.line(), location.column()));
+            let raw_message = if let Some(text) = info.payload().downcast_ref::<&str>() {
+                *text
+            } else if let Some(text) = info.payload().downcast_ref::<String>() {
+                text.as_str()
+            } else {
+                "non-string panic payload"
+            };
+            let line = format_panic_record(location, raw_message);
+            let _ = io::Write::write_all(&mut io::stderr(), format!("{line}\n").as_bytes());
+            if let Ok(guard) = PANIC_LOG_DIR.try_lock() {
+                if let Some(dir) = guard.as_ref() {
+                    write_panic_log_line(dir, &line);
+                }
+            }
+        }));
+    });
 }
 
 #[derive(Default)]
@@ -66,6 +238,31 @@ struct RevealRequested(AtomicBool);
 
 fn boxed(error: impl Into<String>) -> Box<dyn Error> {
     io::Error::other(error.into()).into()
+}
+
+#[cfg(windows)]
+fn present_startup_failure(error: &tauri::Error) {
+    use windows::{
+        core::{w, PCWSTR},
+        Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK, MB_SETFOREGROUND},
+    };
+    let message = format!(
+        "请先尝试重新启动。如果安装资源缺失，可重新运行可信的安装包。若提示工作区数据异常，请先备份数据目录再处理。\n\n错误详情：{error}"
+    );
+    let text: Vec<u16> = message
+        .replace('\0', " ")
+        .encode_utf16()
+        .chain([0])
+        .collect();
+    // The event loop may not exist yet, so use a native dialog independent of WebView2.
+    unsafe {
+        MessageBoxW(
+            None,
+            PCWSTR(text.as_ptr()),
+            w!("无法启动猫步·千境"),
+            MB_OK | MB_ICONERROR | MB_SETFOREGROUND,
+        );
+    }
 }
 
 struct StartupCleanup<F: FnOnce()> {
@@ -200,8 +397,8 @@ fn present_import_result(app: &tauri::AppHandle, ok: bool, message: &str) {
 mod tests {
     use super::{
         background_requested, cli_compatible_windows_path, parse_cloakpit_import_args,
-        trusted_loopback_capability, windows_acceptance_browser_args, CloakpitImportRequest,
-        StartupCleanup,
+        trusted_loopback_capability, windows_acceptance_browser_args,
+        windows_acceptance_browser_args_for_build, CloakpitImportRequest, StartupCleanup,
     };
     use std::{
         cell::Cell,
@@ -225,9 +422,24 @@ mod tests {
         );
         let permissions = serde_json::to_value(capability.permissions).unwrap();
         let permissions = permissions.as_array().unwrap();
+        assert!(permissions
+            .iter()
+            .any(|permission| permission == "allow-signed-updates"));
+        assert!(permissions
+            .iter()
+            .any(|permission| permission == "allow-external-resources"));
+        assert!(permissions
+            .iter()
+            .any(|permission| permission == "allow-desktop-close"));
+        assert!(!permissions.iter().any(|permission| permission
+            .as_str()
+            .is_some_and(|value| value.starts_with("shell:"))));
+        assert!(!permissions.iter().any(|permission| permission
+            .as_str()
+            .is_some_and(|value| value.starts_with("updater:"))));
         #[cfg(windows)]
         {
-            assert_eq!(permissions.len(), 12);
+            assert_eq!(permissions.len(), 15);
             for permission in [
                 "core:window:allow-is-maximized",
                 "core:window:allow-minimize",
@@ -242,7 +454,7 @@ mod tests {
             }
         }
         #[cfg(not(windows))]
-        assert_eq!(permissions.len(), 4);
+        assert_eq!(permissions.len(), 9);
         assert!(!permissions.iter().any(|permission| {
             permission.as_str().is_some_and(|permission| {
                 permission.ends_with(":default")
@@ -283,13 +495,35 @@ mod tests {
     fn enables_webview_debugging_only_for_acceptance() {
         assert_eq!(windows_acceptance_browser_args(false, Some("50401")), None);
         assert_eq!(
-            windows_acceptance_browser_args(true, None),
+            windows_acceptance_browser_args_for_build(true, true, None),
             Some("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=0".to_owned()),
         );
         assert_eq!(
-            windows_acceptance_browser_args(true, Some("50401")),
+            windows_acceptance_browser_args_for_build(true, true, Some("50401")),
             Some("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=50401".to_owned()),
         );
+        assert_eq!(
+            windows_acceptance_browser_args(true, Some("50401")),
+            windows_acceptance_browser_args_for_build(cfg!(debug_assertions), true, Some("50401")),
+        );
+    }
+
+    #[test]
+    fn webview_debugging_is_rejected_by_release_policy_even_when_requested() {
+        for enabled in [false, true] {
+            for port in [None, Some("0"), Some("50401"), Some("65535")] {
+                assert_eq!(
+                    windows_acceptance_browser_args_for_build(false, enabled, port),
+                    None
+                );
+            }
+        }
+        for port in ["-1", "65536", "50401 --remote-debugging-pipe", "invalid"] {
+            assert_eq!(
+                windows_acceptance_browser_args_for_build(true, true, Some(port)),
+                None
+            );
+        }
     }
 
     #[test]
@@ -336,9 +570,57 @@ mod tests {
             None
         );
     }
+
+    #[test]
+    fn panic_formatter_redacts_secrets_and_bounds_length() {
+        let secret_hex = "a".repeat(64);
+        let raw = format!(
+            "failed request\nBearer secret-jwt-token password=hunter2 token=abc {secret_hex}"
+        );
+        let record = super::format_panic_record(Some(("src/lib.rs", 42, 7)), &raw);
+        assert!(record.contains("location=src/lib.rs:42:7"));
+        assert!(!record.contains("secret-jwt-token"));
+        assert!(!record.contains("hunter2"));
+        assert!(!record.contains("abc"));
+        assert!(!record.contains(&secret_hex));
+        assert!(!record.contains('\n'));
+        assert!(record.contains("Bearer [REDACTED]"));
+        assert!(record.contains("password=[REDACTED]"));
+        assert!(record.contains("token=[REDACTED]"));
+        assert!(record.contains("[REDACTED_HEX]"));
+
+        let long = "x".repeat(1000);
+        let bounded = super::sanitize_panic_message(&long);
+        assert!(bounded.len() <= super::MAX_PANIC_MESSAGE_CHARS + 3);
+        assert!(bounded.ends_with("..."));
+    }
+
+    #[test]
+    fn panic_log_writer_appends_safely_within_size_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let logs = dir.path().join("logs");
+        super::write_panic_log_line(&logs, "line-one");
+        super::write_panic_log_line(&logs, "line-two");
+        let content = std::fs::read_to_string(logs.join("desktop-panic.log")).unwrap();
+        assert_eq!(content, "line-one\nline-two\n");
+    }
 }
 
 pub fn run() {
+    install_panic_hook();
+    // This must precede even plugin creation: the production singleton otherwise
+    // forwards unknown QA arguments to an already running real desktop process.
+    let (acceptance_mode, validation_only) = match acceptance::AcceptanceMode::preflight() {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("Native acceptance preflight failed: {error}");
+            std::process::exit(2);
+        }
+    };
+    if validation_only {
+        return;
+    }
+    let isolated_acceptance = acceptance_mode.active();
     // WebKitGTK's DMA-BUF renderer shows an empty window with several graphics drivers
     // (NVIDIA in particular). The dashboard needs no GPU path.
     #[cfg(target_os = "linux")]
@@ -347,10 +629,20 @@ pub fn run() {
     }
     let background = background_requested(std::env::args_os());
     let import_request = parse_cloakpit_import_args(std::env::args_os().skip(1));
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
+        .manage(acceptance_mode)
         .manage(RevealRequested::default())
         .manage(Arc::new(shutdown::CloseState::default()))
-        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+        .manage(if isolated_acceptance {
+            signed_updates::SignedUpdateState::for_acceptance()
+        } else {
+            signed_updates::SignedUpdateState::default()
+        });
+    // An acceptance root has its own exclusive lock; never contact the real app.
+    let builder = if isolated_acceptance {
+        builder
+    } else {
+        builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             if background_requested(argv) {
                 return;
             }
@@ -363,6 +655,8 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
+    };
+    let app = builder
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -370,11 +664,25 @@ pub fn run() {
             runtime_descriptor::script_capability,
             shutdown::restart_after_mode_change,
             shutdown::restart_workspace,
+            shutdown::desktop_close_register,
+            shutdown::desktop_close_unregister,
+            shutdown::desktop_close_resolve,
             workspaces::open_workspace_location,
             workspaces::export_workspace_backup,
+            signed_updates::signed_update_status,
+            signed_updates::signed_update_check,
+            signed_updates::signed_update_install,
+            external_resources::open_external_resource,
         ])
         .setup(move |app| {
-            let data_dir = app.path().app_data_dir()?;
+            if !isolated_acceptance {
+                signed_updates::register(app.handle())?;
+            }
+            let acceptance_paths = app.state::<acceptance::AcceptanceMode>().paths.clone();
+            let data_dir = match &acceptance_paths {
+                Some(paths) => paths.backend_home.clone(),
+                None => app.path().app_data_dir()?,
+            };
             match import_request {
                 Err(error) => {
                     present_import_result(
@@ -417,6 +725,7 @@ pub fn run() {
             let active_workspace =
                 workspaces::resolve_active_workspace(&workspace_home).map_err(boxed)?;
             let data_dir = active_workspace.root.clone();
+            set_panic_log_dir(data_dir.join("logs"));
             app.manage(workspaces::WorkspaceRuntime {
                 home: workspace_home.clone(),
                 active: active_workspace.clone(),
@@ -458,6 +767,7 @@ pub fn run() {
                 || !firefox_worker_script.is_file()
                 || !playwright_worker_script.is_file()
                 || !agent_root.join("mcp-host.mjs").is_file()
+                || !agent_root.join("mcp-scope.mjs").is_file()
                 || !agent_root.join("playwright-proxy.mjs").is_file()
                 || !agent_root.join("playwright-runner.mjs").is_file()
                 || !agent_root.join("runtime-client.mjs").is_file()
@@ -491,6 +801,7 @@ pub fn run() {
             }
             let nonce = hex::encode(random::<[u8; 32]>());
             let agent_nonce = hex::encode(random::<[u8; 32]>());
+            let dashboard_session = zeroize::Zeroizing::new(hex::encode(random::<[u8; 32]>()));
             let handle = app.handle().clone();
             let (sidecar, port) = tauri::async_runtime::block_on(sidecar::launch_and_verify(
                 &handle,
@@ -501,6 +812,7 @@ pub fn run() {
                 &playwright_runtime,
                 &nonce,
                 &agent_nonce,
+                &dashboard_session,
                 background,
             ))
             .map_err(boxed)?;
@@ -530,11 +842,22 @@ pub fn run() {
             }
 
             let allowed_port = port;
+            let dashboard_script = format!(
+                "({})({port}, \"{}\");",
+                include_str!("dashboard-fetch.js"),
+                dashboard_session.as_str()
+            );
+            app.manage(DesktopDashboardSession(dashboard_session));
             let url = format!("{origin}/")
                 .parse()
                 .map_err(|error| boxed(format!("invalid sidecar URL: {error}")))?;
             let webview_builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
-                .title("猫步·千境")
+                .initialization_script(dashboard_script)
+                .title(if isolated_acceptance {
+                    "猫步·千境 · 隔离验收"
+                } else {
+                    "猫步·千境"
+                })
                 .visible(!background)
                 .inner_size(1280.0, 800.0)
                 .min_inner_size(960.0, 640.0)
@@ -562,6 +885,14 @@ pub fn run() {
                         window.app_handle().exit(1);
                     }
                 });
+            let webview_builder = if let Some(paths) = &acceptance_paths {
+                webview_builder
+                    .data_directory(paths.webview_data.clone())
+                    // Native UI acceptance must not write the user's Downloads folder.
+                    .on_download(|_, _| false)
+            } else {
+                webview_builder
+            };
             #[cfg(windows)]
             let webview_builder = webview_builder
                 .decorations(false)
@@ -570,7 +901,9 @@ pub fn run() {
                 // Appended to Tauri's existing document-start initialization.
                 .initialization_script("window.__MAOBU_FRAMELESS__ = true;");
             #[cfg(windows)]
-            let webview_builder = if let Some(args) = windows_acceptance_browser_args(
+            let webview_builder = if isolated_acceptance {
+                webview_builder
+            } else if let Some(args) = windows_acceptance_browser_args(
                 matches!(
                     std::env::var("ALIASMODE_ACCEPTANCE_WEBVIEW_DEBUG").as_deref(),
                     Ok("1")
@@ -609,8 +942,18 @@ pub fn run() {
             startup_cleanup.disarm();
             Ok(())
         })
-        .build(tauri::generate_context!())
-        .expect("猫步·千境桌面程序运行失败");
+        .build(tauri::generate_context!());
+    let app = match app {
+        Ok(app) => app,
+        Err(error) => {
+            eprintln!("猫步·千境桌面程序启动失败：{error}");
+            #[cfg(windows)]
+            if !isolated_acceptance {
+                present_startup_failure(&error);
+            }
+            std::process::exit(1);
+        }
+    };
 
     let requested_exit_code = Arc::new(AtomicI32::new(0));
     let exit_code = Arc::clone(&requested_exit_code);

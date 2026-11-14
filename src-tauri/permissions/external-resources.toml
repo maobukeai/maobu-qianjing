@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-external-resources"
+description = "Allows the trusted main window to open the product's fixed documentation links and validated GitHub release pages."
+commands.allow = ["open_external_resource"]

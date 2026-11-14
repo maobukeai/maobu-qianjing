@@ -66,9 +66,12 @@ test("capture entrypoint runs the Node worker in its own tab only and persists e
     };
     const p = profile();
     store.upsertProfile(p);
+    const legacyExpected = JSON.stringify({ canvas: { toString: 0, valueOf: 0, private: "PRIVATE_LEGACY_CAPTURE" }, screen: ["1920*1080"] });
+    const database = (store as any).db;
+    database.query("UPDATE profiles SET fp_expected_json = ? WHERE id = ?").run(legacyExpected, p.id);
     const logs: string[] = [];
     const run = (endpoint: string) => recordCapture({
-      profile: p, capture: () => captureFingerprint(endpoint, options),
+      profile: store.getProfile(p.id)!, capture: () => captureFingerprint(endpoint, options),
       save: (id, observed, verdict) => store.saveObservedFingerprint(id, observed, verdict),
       log: message => logs.push(message),
     });
@@ -76,6 +79,8 @@ test("capture entrypoint runs the Node worker in its own tab only and persists e
     const saved = store.getProfile(p.id)!;
     expect(saved.fpObserved?.canvas).toBe("captured");
     expect(saved.fpObserved?.capturedAt).toBeTruthy();
+    expect(saved.fpVerdict).toBeUndefined();
+    expect(database.query("SELECT fp_expected_json FROM profiles WHERE id = ?").get(p.id).fp_expected_json).toBe(legacyExpected);
     const exported = parseExport(serializeAdsTxt([saved])).profiles[0]!;
     expect(exported.ua).toContain("Chrome/146");
     expect(exported.fpExpected?.canvas).toBe("captured");
@@ -241,4 +246,9 @@ test("recordCapture reports whether it actually wrote, so the launcher can re-ba
     log: c.log,
   });
   expect(failed).toBe(false);
+});
+
+test("a rejected capture write is never reported as successful bookkeeping", async () => {
+  const result = await recordCapture({ profile: profile(), capture: async () => ({ canvasHash: "stale-generation" }), save: () => false, log: () => {} });
+  expect(result).toBe(false);
 });

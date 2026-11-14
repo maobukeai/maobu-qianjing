@@ -40,11 +40,11 @@ test("startup connectivity is neutral and never falsely announces an interrupted
   expect(html).not.toContain("Connection interrupted");
   expect(html).not.toContain("Local service connected");
 });
-test("backup introduction identifies the current workspace and makes the unencrypted archive boundary explicit", () => {
+test("backup introduction identifies the current workspace and distinguishes new and legacy backups", () => {
   const html = renderToStaticMarkup(<I18nProvider><WorkspaceProvider initialCatalog={catalog}><WorkspaceBackupIntro /></WorkspaceProvider></I18nProvider>);
   expect(html).toContain("Current backup workspace: Research &amp; review");
   expect(html).not.toContain("Other project");
-  expect(html).toContain("not password-encrypted");
+  expect(html).toContain("New backups are encrypted with a password. Older backups may be unencrypted.");
   expect(html).toContain("System protection may require you to sign in again");
 });
 
@@ -116,6 +116,26 @@ test("the context entry keeps the actual workspace identity and a visible route 
   expect(html).toContain("Manage workspaces");
   expect(elements.filter(element => element.tag === "button" && element.attrs["aria-current"] === "page")).toHaveLength(1);
   expect(elements.some(element => element.attrs.role === "dialog" || "aria-modal" in element.attrs)).toBe(false);
+});
+
+test("the compact workspace trigger names the current workspace and exposes the pending restart", async () => {
+  const pending = { ...catalog, activeId: "two" };
+  const html = renderToStaticMarkup(
+    <I18nProvider><WorkspaceProvider initialCatalog={pending}>
+      <WorkspaceSwitcher variant="rail" compact profileCount={8} runningCount={2} connection onShowRunning={noop} onOpenManagement={noop} />
+    </WorkspaceProvider></I18nProvider>,
+  );
+  const elements = await elementsIn(html);
+  const switcher = elements.find(element => element.tag === "button");
+  expect(elements.find(element => element.attrs.class === "wm-rail-switcher")?.attrs["data-compact"]).toBe("true");
+  expect(switcher?.attrs["aria-label"]).toBe("Switch workspace: Research &amp; review");
+  expect(switcher?.attrs["aria-haspopup"]).toBe("menu");
+  expect(switcher?.attrs["aria-expanded"]).toBe("false");
+  const descriptionId = switcher?.attrs["aria-describedby"];
+  expect(descriptionId).toBeDefined();
+  expect(elements.find(element => element.attrs.id === descriptionId)?.attrs.class).toBe("wm-sr-only");
+  expect(html).toContain("Restart required");
+  expect(html).not.toContain("Other project");
 });
 
 test("header and rail device entries have unique accessible connection descriptions and never impersonate a workspace", async () => {

@@ -11,6 +11,7 @@ import {
   BrowserLaunchError,
   Launcher as ProductionLauncher,
   buildWindowLabel,
+  describeWindowLabelCapability,
   profileDisplayNo,
   collectLinuxProcessTree,
   createInFlightSnapshotReader,
@@ -47,6 +48,8 @@ import { aliasmodeChromiumExecutable } from "./aliasmode-chromium.ts";
 import { SessionRestoreError } from "./session.ts";
 import type { FingerprintSample } from "./diagnose.ts";
 import { handleUiRequest } from "./ui.ts";
+import { fingerprintLaunchDigest } from "./fingerprint-source.ts";
+import { LocalProxyPreflightError } from "./local-proxy-preflight.ts";
 
 const linuxTest = process.platform === "win32" ? test.skip : test;
 
@@ -193,6 +196,56 @@ function makeDirect(store: ProfileStore): void {
   const profile = store.getProfile("k1d0cd11")!;
   store.upsertProfile({ ...profile, proxy: null, timezone: "", cookies: [] });
 }
+
+test("local proxy startup refusal precedes both engines' lookup, downloads, directories and spawn", async () => {
+  for (const engine of ["chromium", "firefox"] as const) {
+    const store = new ProfileStore(":memory:"), f = fleet(), args: string[][] = [];
+    const profile = buildNewProfile({ engine, ...(engine === "chromium" ? { chromiumRuntime: "aliasmode" } : {}), platformOs: "windows", proxy: { type: "http", host: "127.0.0.1", port: "7890", user: "private-user", pass: "private-password" } }, () => false);
+    store.upsertProfile(profile); let lookup = 0, downloads = 0, checked: unknown;
+    const launcher = newLauncher(store, f, args, undefined, undefined, { hostPlatform: "win32", hostArch: "x64",
+      lookupExitLocation: async () => { lookup++; return null; },
+      ensureAliasmodeChromium: async () => { downloads++; return "/unused"; }, ensureDownloadedFirefox: async () => { downloads++; return "/unused"; },
+      ensureFirefoxFontPack: async () => { downloads++; return "/unused"; },
+      checkLocalProxyBeforeLaunch: async endpoint => { checked = endpoint; expect(Object.isFrozen(endpoint)).toBe(true); throw new LocalProxyPreflightError("local_proxy_unavailable"); },
+    });
+    try {
+      await expect(launcher.start(profile.id)).rejects.toEqual(new BrowserLaunchError("preflight", "local_proxy_unavailable"));
+      expect(checked).toEqual({ type: "http", host: "127.0.0.1", port: "7890" }); expect(JSON.stringify(checked)).not.toContain("private-");
+      expect(lookup).toBe(0); expect(downloads).toBe(0); expect(args).toEqual([]); expect(store.getLaunch(profile.id)).toBeNull(); expect(existsSync(launcher.userDataDir(profile.id))).toBe(false);
+    } finally { store.close(); }
+  }
+});
+
+test("remote and direct launches bypass the optional local proxy gate", async () => {
+  for (const proxy of [null, { type: "http" as const, host: "203.0.113.5", port: "8888", user: "", pass: "" }]) {
+    const store = seeded(), f = fleet(), args: string[][] = []; store.upsertProfile({ ...store.getProfile("k1d0cd11")!, proxy }); let checks = 0;
+    const launcher = newLauncher(store, f, args, undefined, undefined, { checkLocalProxyBeforeLaunch: async () => { checks++; throw new Error("must not check remote profiles"); } });
+    try { await launcher.start("k1d0cd11"); expect(checks).toBe(0); expect(args).toHaveLength(1); }
+    finally { await launcher.stop("k1d0cd11"); store.close(); }
+  }
+});
+
+test("an authenticated existing browser returns without rechecking its stopped desktop proxy", async () => {
+  const store = seeded(), f = fleet(), args: string[][] = []; store.upsertProfile({ ...store.getProfile("k1d0cd11")!, proxy: { type: "http", host: "127.0.0.1", port: "7890", user: "", pass: "" } });
+  let checks = 0; const launcher = newLauncher(store, f, args, undefined, undefined, { checkLocalProxyBeforeLaunch: async () => { if (++checks > 1) throw new LocalProxyPreflightError("local_proxy_unavailable"); } });
+  try { const first = await launcher.start("k1d0cd11"), second = await launcher.start("k1d0cd11"); expect(second.port).toBe(first.port); expect(checks).toBe(1); expect(args).toHaveLength(1); expect(f.aliveByPort.get(first.port)).toBe(true); }
+  finally { await launcher.stop("k1d0cd11"); store.close(); }
+});
+
+test("local preflight coalesces same-profile starts and rechecks edited profile state after await", async () => {
+  for (const editWhilePending of [false, true]) {
+    const store = seeded(), f = fleet(), args: string[][] = []; store.upsertProfile({ ...store.getProfile("k1d0cd11")!, proxy: { type: "http", host: "127.0.0.1", port: "7890", user: "", pass: "" } });
+    let entered!: () => void, release!: () => void, checks = 0; const ready = new Promise<void>(resolve => { entered = resolve; }), gate = new Promise<void>(resolve => { release = resolve; });
+    const launcher = newLauncher(store, f, args, undefined, undefined, { checkLocalProxyBeforeLaunch: async () => { checks++; entered(); await gate; } });
+    try {
+      const first = launcher.start("k1d0cd11"), second = launcher.start("k1d0cd11"); const results = Promise.allSettled([first, second]); await ready;
+      if (editWhilePending) store.upsertProfile({ ...store.getProfile("k1d0cd11")!, screenWidth: 1920 });
+      release(); const settled = await results; expect(checks).toBe(1);
+      if (editWhilePending) { for (const result of settled) { expect(result.status).toBe("rejected"); if (result.status === "rejected") expect(result.reason).toEqual(new BrowserLaunchError("preflight", "profile_changed")); } expect(args).toEqual([]); }
+      else { expect(settled.every(item => item.status === "fulfilled")).toBe(true); expect(args).toHaveLength(1); }
+    } finally { release(); await launcher.stop("k1d0cd11"); store.close(); }
+  }
+});
 
 function legacyProxyPersonaDigest(store: ProfileStore, profileId: string, binarySha256: string): string {
   const profile = store.getProfile(profileId)!;
@@ -2558,25 +2611,28 @@ test("missing Firefox kernel pin has an engine-specific preflight reason before 
   rmSync(root, { recursive: true, force: true });
 });
 
-test("authenticated HTTPS is rejected before spawn", async () => {
+test("authenticated HTTPS launches through the local proxy relay without exposing credentials", async () => {
   const store = seeded();
   const base = store.getProfile("k1d0cd11")!;
   store.upsertProfile({
     ...base,
-    proxy: { type: "https", host: "proxy.example", port: "8443", user: "u", pass: "p" },
+    proxy: { type: "https", host: "proxy.example", port: "8443", user: "secret-u", pass: "secret-p" },
   });
-  let spawns = 0;
-  const launcher = new Launcher({
-    store,
-    binaryPath: "/fake/cloak",
-    spawn: () => { spawns++; return { pid: 1, kill() {} }; },
+  const spawnedArgs: string[][] = [];
+  const f = fleet();
+  const launcher = newLauncher(store, f, spawnedArgs, undefined, undefined, {
+    captureFingerprint: async () => null,
+    browserClose: async () => true,
   });
 
-  await expect(launcher.start("k1d0cd11")).rejects.toMatchObject({
-    failure: "preflight",
-    preflightReason: "proxy_https_auth",
-  });
-  expect(spawns).toBe(0);
+  const result = await launcher.start("k1d0cd11");
+  expect(result.port).toBeGreaterThan(0);
+  expect(spawnedArgs).toHaveLength(1);
+  const proxyFlag = spawnedArgs[0]!.find((arg) => arg.startsWith("--proxy-server="));
+  expect(proxyFlag).toMatch(/^--proxy-server=http:\/\/127\.0\.0\.1:\d+$/);
+  expect(spawnedArgs[0]!.join(" ")).not.toContain("secret-u");
+  expect(spawnedArgs[0]!.join(" ")).not.toContain("secret-p");
+  await launcher.stop("k1d0cd11");
   store.close();
 });
 
@@ -5034,7 +5090,25 @@ test("a successful probe persists a sample on the profile", async () => {
   expect(back.fpObserved!.canvas).toBe("a3f19c8e");
   expect(back.fpObserved!.hardwareConcurrency).toBe(8);
   expect(back.fpVerdict).toBeUndefined(); // nothing was imported to check against
+  expect(store.getFingerprintSource(back.id)?.launchDigest).toBe(fingerprintLaunchDigest(store.getLaunch(back.id)!));
   store.close();
+});
+
+test("automatic fingerprint capture cannot attach evidence or an old browser to a recreated profile", async () => {
+  const store = seeded(); const f = fleet();
+  const original = store.getProfile("k1d0cd11")!;
+  const launcher = newLauncher(store, f, [], undefined, undefined, {
+    captureFingerprint: async () => {
+      store.deleteProfile(original.id); store.upsertProfile(original);
+      return { canvasHash: "stale-auto-capture" };
+    },
+  });
+  try {
+    await expect(launcher.start(original.id)).rejects.toBeInstanceOf(BrowserLaunchError);
+    expect(store.getProfile(original.id)?.fpObserved).toBeUndefined();
+    expect(store.getFingerprintSource(original.id)).toBeNull();
+    expect(store.getLaunch(original.id)).toBeNull();
+  } finally { store.close(); }
 });
 
 test("a launch verifies the profile against an imported attestation", async () => {
@@ -5400,6 +5474,11 @@ test("Chromium 155 names its window with a launch switch instead of a page title
   const mac = await launch("darwin", "cloakbrowser");
   expect(mac.switches).toEqual([]);
   expect(mac.scripted).toEqual([]);
+  expect(describeWindowLabelCapability("darwin", {})).toMatchObject({ mode: "unavailable" });
+  expect(describeWindowLabelCapability("darwin", {}).reason).toContain("macOS CloakBrowser");
+  expect(describeWindowLabelCapability("darwin", { chromiumRuntime: "aliasmode" })).toMatchObject({ mode: "native" });
+  expect(describeWindowLabelCapability("win32", {})).toMatchObject({ mode: "script" });
+  expect(describeWindowLabelCapability("darwin", { engine: "firefox" })).toMatchObject({ mode: "native" });
 });
 
 test("a Windows profile of Chromium 155 on Linux gets the Windows font pack through fontconfig; others keep the system fonts", async () => {

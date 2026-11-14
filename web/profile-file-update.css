@@ -1,0 +1,55 @@
+.profile-file-update-panel { margin: 12px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.profile-file-update-panel > header { padding: 14px 16px 9px; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.profile-file-update-panel h2, .profile-file-update-dialog h2 { margin: 0; font-size: 13px; line-height: 1.7; font-weight: 600; color: var(--ink-soft); }
+.profile-file-update-panel header p { margin: 4px 0 0; color: var(--muted); font-size: 10.5px; line-height: 1.7; }
+.profile-file-update-controls, .profile-file-update-pager { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.profile-file-update-note, .profile-file-update-warning, .profile-file-update-progress, .profile-file-update-privacy, .profile-file-update-compact { margin: 8px 16px; font-size: 11px; line-height: 1.8; color: var(--muted); overflow-wrap: anywhere; }
+.profile-file-update-warning { color: var(--danger-ink); }
+.profile-file-update-privacy { color: var(--faint); font-size: 10.5px; }
+.profile-file-update-progress { display: flex; align-items: center; gap: 8px; }
+.profile-file-update-progress i { display: block; flex-shrink: 0; width: 7px; height: 7px; background: var(--accent); border-radius: 50%; }
+:root[data-desktop-motion="full"] .profile-file-update-progress i { animation: profile-file-update-pulse 1.2s ease-in-out infinite; }
+@keyframes profile-file-update-pulse { 50% { opacity: .4; transform: scale(.8); } }
+.profile-file-update-counts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 0 16px; margin: 12px 0; font-size: 11px; }
+.profile-file-update-counts > div { padding: 9px 11px; background: var(--surface-sunken); border-radius: 6px; }
+.profile-file-update-counts dt { color: var(--muted); font-size: 10.5px; line-height: 1.7; }
+.profile-file-update-counts dd { margin: 3px 0 0; color: var(--ink-soft); font-variant-numeric: tabular-nums; font-size: 15px; }
+.profile-file-update-items { margin: 12px 16px; padding: 0 10px; border: 1px solid var(--line-soft); border-radius: 6px; }
+.profile-file-update-items > summary, .profile-file-update-history summary, .profile-file-update-guide > summary { color: var(--accent-ink); cursor: pointer; font-size: 11px; line-height: 1.8; padding: 8px 0; }
+.profile-file-update-items > p { font-size: 10.5px; color: var(--muted); line-height: 1.8; margin: 0 0 8px; }
+.profile-file-update-items ul { max-height: 230px; overflow-y: auto; overscroll-behavior: contain; list-style: none; margin: 0; padding: 0; }
+.profile-file-update-items li { padding: 9px 0; border-top: 1px solid var(--line-soft); font-size: 11px; overflow-wrap: anywhere; }
+.profile-file-update-items li > div { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.profile-file-update-items li code { color: var(--ink-soft); font: 10.5px/1.7 var(--mono); }
+.profile-file-update-items li span { color: var(--faint); font-size: 10px; margin-left: 10px; }
+.profile-file-update-items li p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.8; }
+.profile-file-update-items li strong { font-size: 11px; font-weight: 500; color: var(--ink-soft); }
+.profile-file-update-pager { padding: 8px 0; justify-content: flex-end; color: var(--muted); font-size: 10.5px; }
+.profile-file-update-history { margin: 8px 16px; border-top: 1px solid var(--line-soft); }
+.profile-file-update-history ol { list-style: none; padding: 0; margin: 0; }
+.profile-file-update-history > ol > li { border-top: 1px solid var(--line-soft); }
+.profile-file-update-panel > footer { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 16px; border-top: 1px solid var(--line-soft); }
+.profile-file-update-panel > footer p { flex: 1 1 240px; color: var(--muted); font-size: 10.5px; line-height: 1.8; margin: 0; }
+.profile-file-update-dialog { width: min(700px, calc(100vw - 32px)); }
+.profile-file-update-dialog .modal-head { display: flex; gap: 10px; align-items: center; }
+.profile-file-update-dialog .modal-head h2 { flex: 1; }
+.profile-file-update-dialog .modal-body > .profile-file-update-note, .profile-file-update-dialog .modal-body > .profile-file-update-warning { margin-inline: 0; }
+.profile-file-update-match { padding: 12px 14px; border: 1px solid var(--accent-line); border-radius: 7px; background: var(--accent-soft); }
+.profile-file-update-match strong { color: var(--accent-ink); font-size: 12px; font-weight: 550; }
+.profile-file-update-match p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.8; }
+.profile-file-update-guide { margin: 10px 0; }
+.profile-file-update-guide ol { margin: 2px 0 12px; padding-left: 20px; font-size: 11px; color: var(--muted); line-height: 1.9; }
+.profile-file-update-export { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; font-size: 10.5px; color: var(--muted); margin: 8px 0 12px; }
+.profile-file-update-export > button:last-child { margin-left: auto; }
+.profile-file-update-drop { width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; min-height: 104px; border: 1px dashed var(--line); background: var(--surface-sunken); color: var(--ink-soft); border-radius: 8px; cursor: pointer; padding: 18px 12px; font: inherit; }
+.profile-file-update-drop strong { font-size: 12px; font-weight: 500; }
+.profile-file-update-drop span { font-size: 10.5px; color: var(--muted); }
+.profile-file-update-drop.over { border-color: var(--accent); background: var(--accent-soft); }
+.profile-file-update-drop:disabled { cursor: wait; opacity: .6; }
+.profile-file-update-selection { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--line-soft); border-radius: 7px; padding: 9px 12px; margin-top: 10px; }
+.profile-file-update-selection > div { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.profile-file-update-selection strong { font-size: 11px; color: var(--ink-soft); font-weight: 500; }
+.profile-file-update-selection span { font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+@media (max-width: 600px) { .profile-file-update-panel > header { flex-direction: column; } .profile-file-update-controls { width: 100%; justify-content: space-between; } .profile-file-update-counts { grid-template-columns: minmax(0, 1fr); } .profile-file-update-selection { align-items: flex-start; } }
+@media (pointer: coarse) { .profile-file-update-dialog .btn, .profile-file-update-panel .btn, .profile-file-update-items summary, .profile-file-update-history summary { min-height: 40px; } }
+@media (prefers-reduced-motion: reduce) { .profile-file-update-progress i { animation: none !important; } }

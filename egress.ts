@@ -1,6 +1,7 @@
 /** Shared direct/browser diagnostic egress lookup and validation. */
 
 import { canonicalIp } from "./ip.ts";
+import { EgressResponseError, fetchEgressEndpoint } from "./egress-transport.ts";
 
 export const DEFAULT_EGRESS_ENDPOINTS = [
   "https://ipinfo.io/json",
@@ -37,11 +38,12 @@ export function resolveEgressEndpoints(
     try {
       url = new URL(endpoint);
     } catch {
-      throw new Error(`invalid egress endpoint URL: ${endpoint}`);
+      throw new Error("invalid egress endpoint URL");
     }
     if (url.protocol !== "https:" && url.protocol !== "http:") {
-      throw new Error(`egress endpoint must use http or https: ${endpoint}`);
+      throw new Error("egress endpoint must use http or https");
     }
+    if (url.username || url.password) throw new Error("egress endpoint must not contain credentials");
   }
   return endpoints;
 }
@@ -75,17 +77,19 @@ export type EgressLookupFailure =
   | "service_failed"
   | "proxy_authentication_failed";
 
-/** Fetch this machine's direct egress using the same endpoints/parser. */
+/** Fetch the host's system-route egress, bypassing application proxy environment variables. */
 export async function fetchDirectEgress(
   opts: EgressLookupOptions = {},
-  fetchFn: typeof fetch = fetch,
+  fetchFn?: typeof fetch,
   onFailure?: (failure: EgressLookupFailure) => void,
 ): Promise<EgressInfo | null> {
   const endpoints = opts.endpoints ? [...opts.endpoints] : resolveEgressEndpoints();
   const timeoutMs = opts.timeoutMs ?? 15_000;
   for (const endpoint of endpoints) {
     try {
-      const response = await fetchFn(endpoint, { signal: AbortSignal.timeout(timeoutMs) });
+      const signal = AbortSignal.timeout(timeoutMs);
+      const response = fetchFn ? await fetchFn(endpoint, { signal })
+        : await fetchEgressEndpoint(endpoint, { signal, timeoutMs });
       if (!response.ok) {
         onFailure?.(response.status === 407 ? "proxy_authentication_failed" : "service_failed");
         continue;
@@ -93,8 +97,8 @@ export async function fetchDirectEgress(
       const info = parseEgressResponse(await response.text());
       if (info) return info;
       onFailure?.("service_failed");
-    } catch {
-      onFailure?.("request_failed");
+    } catch (error) {
+      onFailure?.(error instanceof EgressResponseError ? "service_failed" : "request_failed");
       // Try the next independent endpoint.
     }
   }

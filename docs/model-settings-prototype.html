@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>猫步·千境 · AI模型设置方案C深度迭代 (三版全真可交互原型)</title>
+  <style>
+    :root {
+      --bg: #f5f4f7;
+      --surface: #ffffff;
+      --surface-sunken: #f7f7f8;
+      --surface-hover: #f5f4f7;
+      --ink: #29272e;
+      --ink-soft: #4c4854;
+      --muted: #706b78;
+      --faint: #89828f;
+      --line: #e9e7ed;
+      --line-soft: #f0eef3;
+      --line-strong: #d6d1dc;
+      --accent: #7a649f;
+      --accent-hover: #6a558e;
+      --accent-press: #5e497f;
+      --accent-soft: #f0edf6;
+      --accent-soft-hover: #e9e4f0;
+      --accent-line: #ddd5e9;
+      --accent-ink: #6e598e;
+      --success: #10b981;
+      --success-soft: #ecfdf5;
+      --warn: #f59e0b;
+      --warn-soft: #fffbeb;
+      --danger: #ef4444;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", "Microsoft YaHei", sans-serif;
+    }
+
+    [data-theme="dark"] {
+      --bg: #141318;
+      --surface: #1e1d24;
+      --surface-sunken: #18171d;
+      --surface-hover: #26252e;
+      --ink: #f0eef5;
+      --ink-soft: #c8c5d1;
+      --muted: #9590a0;
+      --faint: #6c6778;
+      --line: #2d2b36;
+      --line-soft: #23222a;
+      --line-strong: #3e3b4a;
+      --accent: #9d84c7;
+      --accent-hover: #ab93d4;
+      --accent-soft: #2a2538;
+      --accent-line: #423b57;
+      --accent-ink: #c4b3e3;
+      --success-soft: #064e3b;
+      --warn-soft: #78350f;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--ink);
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .top-bar {
+      width: 100%;
+      max-width: 460px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+      background: var(--surface);
+      padding: 10px 16px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+    }
+    .top-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--ink);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .badge-live {
+      background: var(--accent-soft);
+      color: var(--accent-ink);
+      font-size: 11px;
+      padding: 2px 7px;
+      border-radius: 12px;
+      border: 1px solid var(--accent-line);
+      font-weight: 500;
+    }
+    .theme-toggle-btn {
+      background: none;
+      border: 1px solid var(--line);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      cursor: pointer;
+      color: var(--ink-soft);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .theme-toggle-btn:hover { background: var(--surface-hover); }
+
+    /* 方案切换三 Tab */
+    .version-tabs {
+      display: flex;
+      width: 100%;
+      max-width: 460px;
+      background: var(--surface-sunken);
+      padding: 4px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      margin-bottom: 18px;
+      gap: 4px;
+    }
+    .version-tab {
+      flex: 1;
+      text-align: center;
+      padding: 8px 4px;
+      font-size: 11.5px;
+      font-weight: 500;
+      color: var(--muted);
+      cursor: pointer;
+      border-radius: 6px;
+      transition: all 0.15s ease;
+      border: none;
+      background: transparent;
+    }
+    .version-tab:hover { color: var(--ink); }
+    .version-tab.active {
+      background: var(--surface);
+      color: var(--accent-ink);
+      font-weight: 600;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+
+    /* 抽屉容器 */
+    .drawer-container {
+      width: 100%;
+      max-width: 380px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 22px 20px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.04);
+      position: relative;
+    }
+
+    .drawer-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .title-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--faint);
+      display: inline-block;
+      transition: background 0.3s;
+    }
+    .status-dot.connected { background: var(--success); }
+    .status-dot.testing { background: var(--warn); animation: pulse 0.8s infinite; }
+    @keyframes pulse { 50% { opacity: 0.3; } }
+
+    .drawer-title { font-size: 14px; font-weight: 600; color: var(--ink); }
+    .sub-tag { font-size: 11px; color: var(--faint); }
+
+    /* 通用控件 */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 7px 12px;
+      font-size: 12px;
+      font-weight: 500;
+      border-radius: 6px;
+      cursor: pointer;
+      border: 1px solid var(--line-strong);
+      background: var(--surface);
+      color: var(--ink);
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .btn:hover { background: var(--surface-hover); border-color: var(--faint); }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+    .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+    .btn.full { width: 100%; }
+    .btn.xs { padding: 4px 8px; font-size: 11px; border-radius: 4px; }
+    .btn.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+    .btn.ghost:hover { background: var(--surface-hover); color: var(--ink); }
+
+    .fld {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .fld-label {
+      font-size: 11.5px;
+      font-weight: 500;
+      color: var(--ink-soft);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    input[type="text"], input[type="password"], select {
+      width: 100%;
+      padding: 7px 10px;
+      font-size: 12px;
+      font-family: inherit;
+      color: var(--ink);
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    input:focus, select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-soft);
+    }
+
+    .badge-curr {
+      background: var(--accent-soft);
+      color: var(--accent-ink);
+      font-size: 9.5px;
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+    .ping-tag {
+      font-size: 10px;
+      padding: 1.5px 6px;
+      border-radius: 4px;
+      font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+    }
+    .ping-tag.success { background: var(--success-soft); color: var(--success); }
+    .ping-tag.warn { background: var(--warn-soft); color: var(--warn); }
+    .ping-tag.faint { background: var(--surface-sunken); color: var(--faint); }
+
+    /* ================= C-1 样式 (手风琴原位展开) ================= */
+    .c1-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+    .c1-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      overflow: hidden;
+      transition: all 0.2s;
+    }
+    .c1-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+    .c1-header {
+      padding: 10px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      background: var(--surface);
+    }
+    .c1-header:hover { background: var(--surface-hover); }
+    .c1-card.active .c1-header { background: var(--accent-soft); }
+    .c1-body {
+      padding: 12px;
+      background: var(--surface-sunken);
+      border-top: 1px solid var(--line-soft);
+      display: none;
+    }
+    .c1-card.expanded .c1-body { display: block; }
+
+    /* ================= C-2 样式 (精简常驻 + 独立全功能弹窗) ================= */
+    .c2-current-box {
+      background: var(--surface-sunken);
+      border: 1.5px solid var(--accent);
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 14px;
+    }
+    .c2-meta-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    /* 模态弹窗 (Modal) */
+    .modal-mask {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(2px);
+      display: none;
+      place-items: center;
+      z-index: 1000;
+    }
+    .modal-mask.open { display: grid; }
+    .modal-dialog {
+      background: var(--surface);
+      width: 90%;
+      max-width: 520px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      box-shadow: 0 16px 36px rgba(0, 0, 0, 0.2);
+      overflow: hidden;
+      animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes modalIn { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    .modal-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--line);
+    }
+    .modal-body { padding: 18px; max-height: 70vh; overflow-y: auto; }
+    .modal-foot {
+      padding: 12px 18px;
+      border-top: 1px solid var(--line);
+      background: var(--surface-sunken);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    /* ================= C-3 样式 (状态看板与批量测速流) ================= */
+    .c3-filter-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .c3-pills {
+      display: flex;
+      gap: 4px;
+      background: var(--surface-sunken);
+      padding: 2px;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+    }
+    .c3-pill {
+      font-size: 10.5px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .c3-pill.active { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+
+    .c3-card {
+      background: var(--surface-sunken);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: all 0.15s;
+    }
+    .c3-card.active {
+      background: var(--surface);
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent);
+    }
+    .c3-type-tag {
+      font-size: 9.5px;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-weight: 500;
+    }
+    .c3-type-tag.local { background: #dbeafe; color: #1d4ed8; }
+    [data-theme="dark"] .c3-type-tag.local { background: #1e3a8a; color: #93c5fd; }
+    .c3-type-tag.cloud { background: #fef3c7; color: #b45309; }
+    [data-theme="dark"] .c3-type-tag.cloud { background: #78350f; color: #fde68a; }
+
+    /* 底部原版区块 */
+    .section-divider {
+      border-top: 1px solid var(--line);
+      margin: 18px 0 14px;
+      padding-top: 14px;
+    }
+    .section-title { font-size: 12px; font-weight: 600; color: var(--ink); margin-bottom: 10px; }
+    .check-label {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--ink-soft);
+      cursor: pointer;
+      line-height: 1.5;
+    }
+    .check-label input { width: 14px; height: 14px; margin-top: 2px; accent-color: var(--accent); }
+    .caption-text { font-size: 11px; line-height: 1.6; color: var(--muted); margin-top: 6px; padding-left: 22px; }
+    .tip-box {
+      background: var(--surface-sunken);
+      border: 1px solid var(--line-soft);
+      border-radius: 6px;
+      padding: 9px 12px;
+      margin-top: 12px;
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+    .tip-box a { color: var(--accent); text-decoration: none; }
+    .footer-stamp { text-align: right; font-size: 10px; color: var(--faint); margin-top: 18px; }
+  </style>
+</head>
+<body>
+
+  <!-- 顶部控制与方案切换条 -->
+  <div class="top-bar">
+    <div class="top-title">
+      <span>🐱 猫步·千境</span>
+      <span class="badge-live">方案C深度迭代 · 1:1还原</span>
+    </div>
+    <button class="theme-toggle-btn" onclick="toggleTheme()">
+      <span id="theme-icon">🌙</span> 深/浅色切换
+    </button>
+  </div>
+
+  <div class="version-tabs">
+    <button class="version-tab active" onclick="switchSubVersion('C1')">C-1 原位手风琴流</button>
+    <button class="version-tab" onclick="switchSubVersion('C2')">C-2 极简常驻+管理弹窗</button>
+    <button class="version-tab" onclick="switchSubVersion('C3')">C-3 状态看板+批量测速</button>
+  </div>
+
+  <!-- 主抽屉 -->
+  <div class="drawer-container">
+    <div class="drawer-header">
+      <div class="title-group">
+        <span class="status-dot connected" id="global-dot"></span>
+        <span class="drawer-title">模型预设与连接</span>
+      </div>
+      <span class="sub-tag" id="current-badge">C-1 · 原位展开</span>
+    </div>
+
+    <!-- ========================================================= -->
+    <!-- 方案 C-1：【原位手风琴展开流】(就地展开编辑，操作直观零跳变) -->
+    <!-- ========================================================= -->
+    <div id="view-c1">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <span style="font-size: 11.5px; color: var(--ink-soft); font-weight: 500;">点击预设直接启用，点箭头展开编辑</span>
+        <button class="btn xs" onclick="addNewProfileC1()">+ 新建</button>
+      </div>
+
+      <div class="c1-list" id="c1-profile-container">
+        <!-- 预设卡片 1 (当前激活，且已就地展开) -->
+        <div class="c1-card active expanded" id="c1-card-1">
+          <div class="c1-header" onclick="activateC1(1)">
+            <div style="display: flex; align-items: center; gap: 7px;">
+              <span class="status-dot connected" id="c1-dot-1"></span>
+              <div>
+                <div style="font-size: 12px; font-weight: 600; color: var(--ink);">
+                  硅基流动 · DeepSeek-V3
+                  <span class="badge-curr" id="c1-badge-1">使用中</span>
+                </div>
+                <div style="font-size: 10px; color: var(--muted); margin-top: 1px;">api.siliconflow.cn · deepseek-chat</div>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span class="ping-tag success" id="c1-ping-1">112ms</span>
+              <button class="btn xs ghost" style="padding: 2px 4px;" onclick="event.stopPropagation(); toggleC1Expand(1)">
+                <span id="c1-arrow-1">▾</span>
+              </button>
+            </div>
+          </div>
+          <!-- 展开后的原位编辑表单 -->
+          <div class="c1-body">
+            <div class="fld">
+              <span class="fld-label">接口地址 (Base URL)</span>
+              <input type="text" value="https://api.siliconflow.cn/v1" />
+            </div>
+            <div class="fld">
+              <div class="fld-label">
+                <span>API 密钥</span>
+                <span style="font-size: 10px; color: var(--success);">🔒 本地加密</span>
+              </div>
+              <input type="password" value="sk-siliconflow-998877" />
+            </div>
+            <div class="fld">
+              <span class="fld-label">指定模型 (Model)</span>
+              <div style="display: flex; gap: 6px;">
+                <input type="text" value="deepseek-ai/DeepSeek-V3" style="flex: 1;" />
+                <button class="btn xs" onclick="testPingSingle('c1-ping-1', 'c1-dot-1')">测速</button>
+              </div>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
+              <button class="btn xs ghost" style="color: var(--danger);" onclick="deleteProfileC1(1)">删除预设</button>
+              <button class="btn xs primary" onclick="alert('已就地保存【硅基流动 · DeepSeek-V3】配置！')">保存修改</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 预设卡片 2 (收起状态) -->
+        <div class="c1-card" id="c1-card-2">
+          <div class="c1-header" onclick="activateC1(2)">
+            <div style="display: flex; align-items: center; gap: 7px;">
+              <span class="status-dot connected" id="c1-dot-2"></span>
+              <div>
+                <div style="font-size: 12px; font-weight: 600; color: var(--ink);">
+                  本地离线 · Ollama Qwen2.5
+                  <span class="badge-curr" id="c1-badge-2" style="display: none;">使用中</span>
+                </div>
+                <div style="font-size: 10px; color: var(--muted); margin-top: 1px;">127.0.0.1:11434 · qwen2.5:7b</div>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span class="ping-tag success" id="c1-ping-2">18ms</span>
+              <button class="btn xs ghost" style="padding: 2px 4px;" onclick="event.stopPropagation(); toggleC1Expand(2)">
+                <span id="c1-arrow-2">▸</span>
+              </button>
+            </div>
+          </div>
+          <div class="c1-body">
+            <div class="fld">
+              <span class="fld-label">本地服务地址</span>
+              <input type="text" value="http://127.0.0.1:11434" />
+            </div>
+            <div class="fld">
+              <span class="fld-label">已装模型</span>
+              <select>
+                <option>qwen2.5:7b-instruct</option>
+                <option>deepseek-r1:8b</option>
+              </select>
+            </div>
+            <div style="display: flex; justify-content: flex-end; margin-top: 8px;">
+              <button class="btn xs primary" onclick="alert('已保存 Ollama 本地配置！')">保存</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 预设卡片 3 (收起状态) -->
+        <div class="c1-card" id="c1-card-3">
+          <div class="c1-header" onclick="activateC1(3)">
+            <div style="display: flex; align-items: center; gap: 7px;">
+              <span class="status-dot" id="c1-dot-3"></span>
+              <div>
+                <div style="font-size: 12px; font-weight: 600; color: var(--ink);">
+                  官方 OpenAI · GPT-4o-mini
+                  <span class="badge-curr" id="c1-badge-3" style="display: none;">使用中</span>
+                </div>
+                <div style="font-size: 10px; color: var(--muted); margin-top: 1px;">api.openai.com · gpt-4o-mini</div>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span class="ping-tag faint" id="c1-ping-3">未测速</span>
+              <button class="btn xs ghost" style="padding: 2px 4px;" onclick="event.stopPropagation(); toggleC1Expand(3)">
+                <span id="c1-arrow-3">▸</span>
+              </button>
+            </div>
+          </div>
+          <div class="c1-body">
+            <div class="fld">
+              <span class="fld-label">Base URL</span>
+              <input type="text" value="https://api.openai.com/v1" />
+            </div>
+            <div class="fld">
+              <span class="fld-label">API Key</span>
+              <input type="password" value="sk-proj-abc123456" />
+            </div>
+            <div style="display: flex; justify-content: flex-end; margin-top: 8px;">
+              <button class="btn xs primary" onclick="alert('已保存 OpenAI 配置！')">保存</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========================================================= -->
+    <!-- 方案 C-2：【极简常驻选择器 + 独立专业管理弹窗】(抽屉清爽，弹窗完整) -->
+    <!-- ========================================================= -->
+    <div id="view-c2" style="display: none;">
+      <!-- 常驻选择下拉 -->
+      <div class="fld">
+        <div class="fld-label">
+          <span>当前激活的模型预设</span>
+          <a class="fld-extra" onclick="openModalC2()">⚙️ 预设管理库</a>
+        </div>
+        <select id="c2-select" onchange="onC2SelectChange(this.value)">
+          <option value="1">🐳 硅基流动 · DeepSeek-V3 (112ms)</option>
+          <option value="2">⚡ 本地离线 · Ollama 7B (18ms)</option>
+          <option value="3">🌐 OpenAI 官方 · GPT-4o-mini</option>
+        </select>
+      </div>
+
+      <!-- 选中的 Profile 信息摘要卡 -->
+      <div class="c2-current-box">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <strong id="c2-box-title" style="font-size: 12.5px; color: var(--ink);">硅基流动 · DeepSeek-V3</strong>
+          <span id="c2-box-ping" class="ping-tag success">● 延迟: 112ms</span>
+        </div>
+        <div class="c2-meta-row">
+          <span>端点: <code id="c2-box-url" style="font-size: 10px;">api.siliconflow.cn</code></span>
+          <span>模型: <code id="c2-box-model" style="font-size: 10px;">deepseek-chat</code></span>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+        <button class="btn full" onclick="testPingC2()">⚡ 重新检测当前连通性</button>
+        <button class="btn primary full" onclick="openModalC2()">+ 新增/管理预设</button>
+      </div>
+    </div>
+
+    <!-- ========================================================= -->
+    <!-- 方案 C-3：【状态看板 + 场景分类 + 一键全员批量测速】(极客控制中心) -->
+    <!-- ========================================================= -->
+    <div id="view-c3" style="display: none;">
+      <div class="c3-filter-row">
+        <div class="c3-pills">
+          <button class="c3-pill active" onclick="filterC3('all', this)">全部 (3)</button>
+          <button class="c3-pill" onclick="filterC3('local', this)">离线本地 (1)</button>
+          <button class="c3-pill" onclick="filterC3('cloud', this)">云端 API (2)</button>
+        </div>
+        <button class="btn xs" onclick="batchPingC3()" id="btn-batch-ping" title="对列表所有模型依次握手测速">
+          ⚡ 批量测速
+        </button>
+      </div>
+
+      <div id="c3-list">
+        <!-- 卡片 1 -->
+        <div class="c3-card active" data-type="cloud" onclick="activateC3(1, this)">
+          <div>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span class="status-dot connected" id="c3-dot-1"></span>
+              <strong style="font-size: 12px; color: var(--ink);">硅基流动 · DeepSeek-V3</strong>
+              <span class="c3-type-tag cloud">云端API</span>
+            </div>
+            <div style="font-size: 10px; color: var(--muted); margin-top: 2px;">deepseek-ai/DeepSeek-V3</div>
+          </div>
+          <div style="text-align: right;">
+            <span class="ping-tag success" id="c3-ping-1">112ms</span>
+            <div style="font-size: 10px; color: var(--accent); margin-top: 2px; font-weight: 500;">✓ 正在使用</div>
+          </div>
+        </div>
+
+        <!-- 卡片 2 -->
+        <div class="c3-card" data-type="local" onclick="activateC3(2, this)">
+          <div>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span class="status-dot connected" id="c3-dot-2"></span>
+              <strong style="font-size: 12px; color: var(--ink);">本地 Ollama 7B</strong>
+              <span class="c3-type-tag local">本地离线</span>
+            </div>
+            <div style="font-size: 10px; color: var(--muted); margin-top: 2px;">qwen2.5:7b-instruct</div>
+          </div>
+          <div style="text-align: right;">
+            <span class="ping-tag success" id="c3-ping-2">18ms</span>
+            <button class="btn xs" style="margin-top: 2px;" onclick="event.stopPropagation(); activateC3(2, this.closest('.c3-card'))">设为当前</button>
+          </div>
+        </div>
+
+        <!-- 卡片 3 -->
+        <div class="c3-card" data-type="cloud" onclick="activateC3(3, this)">
+          <div>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span class="status-dot" id="c3-dot-3"></span>
+              <strong style="font-size: 12px; color: var(--ink);">官方 OpenAI</strong>
+              <span class="c3-type-tag cloud">云端API</span>
+            </div>
+            <div style="font-size: 10px; color: var(--muted); margin-top: 2px;">gpt-4o-mini</div>
+          </div>
+          <div style="text-align: right;">
+            <span class="ping-tag faint" id="c3-ping-3">未测速</span>
+            <button class="btn xs" style="margin-top: 2px;" onclick="event.stopPropagation(); activateC3(3, this.closest('.c3-card'))">设为当前</button>
+          </div>
+        </div>
+      </div>
+
+      <div style="font-size: 10.5px; color: var(--muted); margin-top: 6px; display: flex; justify-content: space-between;">
+        <span>支持根据网络可用性自动 Fallback 备用模型</span>
+        <a class="fld-extra" onclick="alert('新增自定义模型 Profile')">+ 添加配置</a>
+      </div>
+    </div>
+
+    <!-- ========================================================= -->
+    <!-- 公共隐私说明与版本标记 (1:1 还原猫步规范) -->
+    <!-- ========================================================= -->
+    <div class="section-divider">
+      <div class="section-title">选择要分享的上下文</div>
+      <label class="check-label">
+        <input type="checkbox" id="check-workspace" />
+        <span>附带匿名工作区概览</span>
+      </label>
+      <div class="caption-text">
+        附带环境、分组、引擎和代理配置的数量统计，不包含账户详情或会话数据。
+      </div>
+
+      <div class="tip-box">
+        此功能连接所选模型服务。如需严格离线推理，请选用 Ollama 的本地回环模式。<br>
+        <a href="javascript:void(0)" onclick="alert('打开本地模型设置帮助指南')">本地模型设置指南 ↗</a>
+      </div>
+    </div>
+
+    <div class="section-divider" style="margin-bottom: 0;">
+      <div class="section-title">会话记忆</div>
+      <div style="font-size: 11px; color: var(--muted); line-height: 1.6;">
+        对话仅保留在本次应用会话中，重启应用后会清空。<br>
+        切换工作区会清除当前对话和草稿。
+      </div>
+    </div>
+
+    <div class="footer-stamp">猫步·千境 · 0.1.0-local.1</div>
+  </div>
+
+  <!-- ==================== C-2 专用的管理弹窗 ==================== -->
+  <div class="modal-mask" id="c2-modal">
+    <div class="modal-dialog">
+      <div class="modal-head">
+        <strong style="font-size: 14px; color: var(--ink);">模型预设管理库 (Model Profiles)</strong>
+        <button class="btn xs ghost" onclick="closeModalC2()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 11px; color: var(--muted); margin-bottom: 14px;">
+          在此集中管理您保存的所有本地与云端模型凭证，可随意添加、测试或删除。
+        </p>
+        <div class="fld">
+          <span class="fld-label">预设名称</span>
+          <input type="text" id="m-name" value="硅基流动 · DeepSeek-V3" />
+        </div>
+        <div class="fld">
+          <span class="fld-label">协议类型</span>
+          <select>
+            <option>OpenAI 兼容协议 (DeepSeek/ChatGPT/硅基流动/中转站)</option>
+            <option>Ollama 本地引擎</option>
+            <option>Anthropic Claude 协议</option>
+          </select>
+        </div>
+        <div class="fld">
+          <span class="fld-label">接口端点 (Base URL)</span>
+          <input type="text" id="m-url" value="https://api.siliconflow.cn/v1" />
+        </div>
+        <div class="fld">
+          <div class="fld-label">
+            <span>API Key (加密存储)</span>
+            <span style="color: var(--success); font-size: 10px;">AES-256 加密</span>
+          </div>
+          <input type="password" value="sk-siliconflow-9988776655" />
+        </div>
+        <div class="fld">
+          <span class="fld-label">模型标识 (Model Name)</span>
+          <input type="text" id="m-model" value="deepseek-ai/DeepSeek-V3" />
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn xs" onclick="testModalPing()">测试连通性</button>
+        <button class="btn xs" onclick="closeModalC2()">取消</button>
+        <button class="btn xs primary" onclick="saveModalC2()">保存预设</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 方案细分子版本切换
+    function switchSubVersion(ver) {
+      document.querySelectorAll('.version-tab').forEach(b => b.classList.remove('active'));
+      event.target.classList.add('active');
+
+      document.getElementById('view-c1').style.display = (ver === 'C1') ? 'block' : 'none';
+      document.getElementById('view-c2').style.display = (ver === 'C2') ? 'block' : 'none';
+      document.getElementById('view-c3').style.display = (ver === 'C3') ? 'block' : 'none';
+
+      const labels = {
+        'C1': 'C-1 · 原位展开',
+        'C2': 'C-2 · 极简+弹窗',
+        'C3': 'C-3 · 看板+批量测速'
+      };
+      document.getElementById('current-badge').innerText = labels[ver];
+    }
+
+    // ====== C-1 手风琴逻辑 ======
+    function toggleC1Expand(id) {
+      const card = document.getElementById(`c1-card-${id}`);
+      const arrow = document.getElementById(`c1-arrow-${id}`);
+      const isExpanded = card.classList.contains('expanded');
+      
+      card.classList.toggle('expanded');
+      arrow.innerText = isExpanded ? '▸' : '▾';
+    }
+
+    function activateC1(id) {
+      // 切换当前激活状态
+      [1, 2, 3].forEach(i => {
+        const c = document.getElementById(`c1-card-${i}`);
+        const b = document.getElementById(`c1-badge-${i}`);
+        if (c) c.classList.remove('active');
+        if (b) b.style.display = 'none';
+      });
+
+      const current = document.getElementById(`c1-card-${id}`);
+      const currBadge = document.getElementById(`c1-badge-${id}`);
+      if (current) current.classList.add('active');
+      if (currBadge) currBadge.style.display = 'inline-block';
+    }
+
+    function addNewProfileC1() {
+      alert('【新建预设】可以在列表顶部就地新增一个未命名的空白模型预设卡片，填写完成后即可立即启用！');
+    }
+
+    function deleteProfileC1(id) {
+      if (confirm('确认删除此模型预设吗？')) {
+        document.getElementById(`c1-card-${id}`).style.display = 'none';
+      }
+    }
+
+    // 单项测速辅助
+    function testPingSingle(badgeId, dotId) {
+      const badge = document.getElementById(badgeId);
+      const dot = document.getElementById(dotId);
+      badge.className = 'ping-tag warn';
+      badge.innerText = '测速中…';
+      if (dot) dot.className = 'status-dot testing';
+
+      setTimeout(() => {
+        const ms = Math.floor(Math.random() * 70 + 40);
+        badge.className = 'ping-tag success';
+        badge.innerText = `${ms}ms`;
+        if (dot) dot.className = 'status-dot connected';
+        alert(`测试成功！与该预设端点往返延迟为: ${ms}ms`);
+      }, 600);
+    }
+
+    // ====== C-2 逻辑 ======
+    function onC2SelectChange(val) {
+      const data = {
+        '1': { title: '硅基流动 · DeepSeek-V3', url: 'api.siliconflow.cn', model: 'deepseek-chat', ping: '112ms' },
+        '2': { title: '本地离线 · Ollama 7B', url: '127.0.0.1:11434', model: 'qwen2.5:7b', ping: '18ms' },
+        '3': { title: 'OpenAI 官方 · GPT-4o-mini', url: 'api.openai.com', model: 'gpt-4o-mini', ping: '145ms' }
+      }[val];
+
+      document.getElementById('c2-box-title').innerText = data.title;
+      document.getElementById('c2-box-url').innerText = data.url;
+      document.getElementById('c2-box-model').innerText = data.model;
+      document.getElementById('c2-box-ping').innerText = `● 延迟: ${data.ping}`;
+    }
+
+    function testPingC2() {
+      const ping = document.getElementById('c2-box-ping');
+      ping.className = 'ping-tag warn';
+      ping.innerText = '● 检测中…';
+      setTimeout(() => {
+        ping.className = 'ping-tag success';
+        ping.innerText = '● 延迟: 98ms';
+        alert('当前选中的模型连接正常！');
+      }, 500);
+    }
+
+    function openModalC2() { document.getElementById('c2-modal').classList.add('open'); }
+    function closeModalC2() { document.getElementById('c2-modal').classList.remove('open'); }
+    function saveModalC2() {
+      alert('预设库修改已保存！');
+      closeModalC2();
+    }
+    function testModalPing() {
+      alert('【握手成功】API Key 有效，接口 HTTP 200 返回正常！');
+    }
+
+    // ====== C-3 逻辑 (过滤与批量测速) ======
+    function filterC3(type, el) {
+      document.querySelectorAll('.c3-pill').forEach(p => p.classList.remove('active'));
+      el.classList.add('active');
+
+      document.querySelectorAll('.c3-card').forEach(card => {
+        if (type === 'all' || card.getAttribute('data-type') === type) {
+          card.style.display = 'flex';
+        } else {
+          card.style.display = 'none';
+        }
+      });
+    }
+
+    function activateC3(id, el) {
+      document.querySelectorAll('.c3-card').forEach(c => c.classList.remove('active'));
+      el.classList.add('active');
+      alert(`已将第 ${id} 个模型设置为全局主力！`);
+    }
+
+    function batchPingC3() {
+      const btn = document.getElementById('btn-batch-ping');
+      btn.innerText = '⏳ 测速中…';
+
+      [1, 2, 3].forEach((i, idx) => {
+        const pingTag = document.getElementById(`c3-ping-${i}`);
+        pingTag.className = 'ping-tag warn';
+        pingTag.innerText = 'Ping…';
+
+        setTimeout(() => {
+          const ms = [112, 18, 145][idx];
+          pingTag.className = 'ping-tag success';
+          pingTag.innerText = `${ms}ms`;
+          if (idx === 2) {
+            btn.innerText = '⚡ 批量测速';
+            alert('全员测速完成！所有配置均在线可用。');
+          }
+        }, (idx + 1) * 350);
+      });
+    }
+
+    // 主题切换
+    function toggleTheme() {
+      const isDark = document.body.getAttribute('data-theme') === 'dark';
+      document.body.setAttribute('data-theme', isDark ? 'light' : 'dark');
+      document.getElementById('theme-icon').innerText = isDark ? '🌙' : '☀️';
+    }
+  </script>
+</body>
+</html>

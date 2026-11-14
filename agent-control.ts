@@ -1,7 +1,7 @@
 import { buildNewProfile, type NewProfileInput } from "./create.ts";
 import { syncFirefoxTimezone } from "./firefox-config.ts";
 import { callFirefoxOwner, type FirefoxOwner } from "./firefox-runtime.ts";
-import { attachTimezones } from "./geoip.ts";
+import { attachTimezones, type FetchLike } from "./geoip.ts";
 import {
   BrowserLaunchError,
   type BrowserOpenOptions,
@@ -11,6 +11,9 @@ import type { LifecycleAdmissionController } from "./lifecycle-admission.ts";
 import { ProxyReplacementInputError } from "./proxy-replacements.ts";
 import type { ProfileStore } from "./store.ts";
 import { editedLocalProfile, replaceLocalProfileProxies } from "./agent/local-profiles.ts";
+import { buildStoredFingerprintReport } from "./fingerprint-report.ts";
+import { discoverLocalProxies, type LocalProxyDiscoveryOptions } from "./network-diagnostics.ts";
+import { isSafeProfileId } from "./profile-id.ts";
 
 export const AGENT_CONTROL_PROTOCOL = "aliasmode-agent-v1";
 export const AGENT_CONTROL_PATH = "/api/agent/v1/connect";
@@ -37,6 +40,8 @@ export interface AgentControlDeps {
   admission: LifecycleAdmissionController;
   firefoxCall?: (owner: FirefoxOwner, operation: string, payload: Record<string, unknown>) => Promise<unknown>;
   log?: (message: string) => void;
+  geoipFetch?: FetchLike;
+  discoverLocalProxies?: typeof discoverLocalProxies;
 }
 
 const FIREFOX_CAPABILITIES = ["firefox-native", "cookies", "navigation", "sessions", "mcp", "scripts"] as const;
@@ -113,7 +118,7 @@ function errorResponse(id: number, error: unknown): AgentControlResponse {
       ok: false,
       error: {
         code: error.failure === "mode_conflict" ? "mode_conflict" : "browser_launch_failed",
-        message: error.message,
+        message: error.guidance ?? error.message,
       },
     };
   }
@@ -208,6 +213,13 @@ export class AgentControlSession {
     switch (method) {
       case "profiles.list":
         return { profiles: await this.listProfiles() };
+      case "profiles.inventory":
+        if (Object.keys(params).length) throw agentError("invalid_request", "Profile inventory takes no parameters");
+        return { profiles: this.profileInventory(false), liveness: "not-checked" };
+      case "fingerprints.review":
+        return this.reviewStoredFingerprint(params);
+      case "network.discover":
+        return await this.discoverNetwork(params);
       case "profiles.replaceProxies":
         return await this.replaceProfileProxies(params);
       case "profiles.create":
@@ -235,6 +247,34 @@ export class AgentControlSession {
       default:
         throw agentError("unknown_method", `unknown agent method: ${method}`);
     }
+  }
+
+  private reviewStoredFingerprint(params: Record<string, unknown>) {
+    if (Object.keys(params).some(key => key !== "profileId") || !isSafeProfileId(params.profileId)) {
+      throw agentError("invalid_request", "fingerprint review requires only a valid profileId (1-128 safe characters)");
+    }
+    const profile = this.deps.store.getProfile(params.profileId);
+    if (!profile) throw agentError("profile_not_found", "profile was not found");
+    return buildStoredFingerprintReport(profile, {
+      launch: this.deps.store.getLaunch(profile.id), captureSource: this.deps.store.getFingerprintSource(profile.id),
+    });
+  }
+
+  private async discoverNetwork(params: Record<string, unknown>) {
+    if (Object.keys(params).some(key => !["host", "ports"].includes(key))
+      || params.host !== undefined && params.host !== "127.0.0.1" && params.host !== "::1") {
+      throw agentError("invalid_request", "network discovery supports only loopback host and bounded local ports");
+    }
+    const ports = params.ports;
+    if (ports !== undefined && (!Array.isArray(ports) || ports.length < 1 || ports.length > 16
+      || ports.some(port => !Number.isInteger(port) || port < 1 || port > 65535) || new Set(ports).size !== ports.length)) {
+      throw agentError("invalid_request", "network discovery requires 1-16 unique integer ports from 1 to 65535");
+    }
+    const options: LocalProxyDiscoveryOptions = {
+      ...(params.host !== undefined ? { host: params.host as "127.0.0.1" | "::1" } : {}),
+      ...(ports !== undefined ? { ports: [...ports as number[]] } : {}),
+    };
+    return { discovery: await (this.deps.discoverLocalProxies ?? discoverLocalProxies)(options) };
   }
 
   private async replaceProfileProxies(params: Record<string, unknown>) {
@@ -271,6 +311,10 @@ export class AgentControlSession {
 
   private async listProfiles(): Promise<SafeProfile[]> {
     await this.deps.launcher.reconcileOrphans();
+    return this.profileInventory(true);
+  }
+
+  private profileInventory(includeRuntimeDetails: boolean): SafeProfile[] {
     return this.deps.store.listProfiles().map((profile) => {
       const launch = this.deps.store.getLaunch(profile.id);
       return {
@@ -280,7 +324,7 @@ export class AgentControlSession {
         platform: profile.platform ?? "",
         tags: profile.tags ?? [],
         running: !!launch,
-        ...(launch ? { ...(isFirefoxEngine(launch) ? firefoxPublicFields() : { debugPort: launch.debugPort }), headless: launch.headless } : {}),
+        ...(launch && includeRuntimeDetails ? { ...(isFirefoxEngine(launch) ? firefoxPublicFields() : { debugPort: launch.debugPort }), headless: launch.headless } : {}),
       };
     });
   }
@@ -290,7 +334,7 @@ export class AgentControlSession {
     const temporary = params.temporary === true;
     const profile = buildNewProfile(input as NewProfileInput, (candidate) => !!this.deps.store.getProfile(candidate));
     if (profile.proxy) {
-      await attachTimezones([profile], undefined, true).catch(() => {});
+      await attachTimezones([profile], this.deps.geoipFetch, true).catch(() => {});
       syncFirefoxTimezone(profile);
     }
     this.deps.store.upsertProfile(profile);

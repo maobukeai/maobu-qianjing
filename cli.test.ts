@@ -131,7 +131,7 @@ test("source start loads a managed runtime from its custom state root before ver
     join(import.meta.dir, "cli.ts"),
     "start",
     "--port", String(port),
-    "--state-root", root,
+    "--state-root", root, "--no-auth",
   ], { cwd, stdout: "pipe", stderr: "ignore", env });
   const output = new Response(child.stdout).text();
   let logs = "";
@@ -184,24 +184,42 @@ for (const mode of ["unconfigured", "local", "cloud"] as const) {
         CLOAKBROWSER_BINARY_SHA256: "0".repeat(64),
       },
     });
-    const output = new Response(child.stdout).text();
+    let token = "";
+    let sawOutput = "";
+    const output = (async () => {
+      const reader = child.stdout.getReader();
+      const decoder = new TextDecoder();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        sawOutput += decoder.decode(value, { stream: true });
+        const m = sawOutput.match(/dashboard access URL: http:\/\/127\.0\.0\.1:\d+\/\?token=([a-f0-9]{64})/);
+        if (m) token = m[1]!;
+      }
+    })();
     try {
       let health: Response | undefined;
+      let unauthStatus = 0;
       for (let attempt = 0; attempt < 50; attempt++) {
         try {
-          health = await fetch(`http://127.0.0.1:${port}/ui/api/health`);
+          if (!token) { await Bun.sleep(100); continue; }
+          const unauth = await fetch(`http://127.0.0.1:${port}/ui/api/health`);
+          unauthStatus = unauth.status;
+          health = await fetch(`http://127.0.0.1:${port}/ui/api/health`, { headers: { Authorization: `Bearer ${token}` } });
           if (health.ok) break;
         } catch { }
         if (await Promise.race([child.exited.then(() => true), Bun.sleep(100).then(() => false)])) break;
       }
+      expect(unauthStatus).toBe(401);
       expect(health?.ok).toBe(true);
       expect(await health?.json()).toMatchObject({ ok: true });
     } finally {
       child.kill();
       await child.exited;
+      await output;
       await removeTemporaryRoot(stateRoot);
     }
-    const logs = await output;
+    const logs = sawOutput;
     expect(logs).toContain("local mode:");
     expect(logs).not.toContain("NOT connected to a hub");
     const phases = ["initializing autofill bridge", "checking 0 saved browser process(es)", "browser recovery checks complete"];
@@ -327,6 +345,7 @@ test("desktop local startup serves saved profiles without downloading engines an
   store.upsertProfile(profile);
   store.close();
   const nonce = "a".repeat(64);
+  const dashboardSession = "c".repeat(64);
   const child = Bun.spawn([
     process.execPath, "--no-env-file", join(import.meta.dir, "cli.ts"), "start",
     "--state-root", root, "--desktop-root", root, "--desktop-stdio", "--port", "0",
@@ -334,7 +353,8 @@ test("desktop local startup serves saved profiles without downloading engines an
     cwd: root, stdin: "pipe", stdout: "pipe", stderr: "pipe",
     env: {
       ...process.env, ALIASMODE_PLAYWRIGHT_RUNTIME: "", ALIASMODE_DESKTOP_NONCE: nonce,
-      ALIASMODE_AGENT_NONCE: "b".repeat(64), ALIASMODE_DESKTOP_VERSION: "local-test"
+      ALIASMODE_AGENT_NONCE: "b".repeat(64), ALIASMODE_DESKTOP_VERSION: "local-test",
+      MAOBU_DESKTOP_SESSION: dashboardSession, MAOBU_DESKTOP_AUTOMATION_TOKEN: "",
     },
   });
   const records: Array<{ event: string; nonce: string; port?: number }> = [];
@@ -369,9 +389,12 @@ test("desktop local startup serves saved profiles without downloading engines an
       timer = setTimeout(() => reject(new Error("local desktop did not become ready")), 8_000);
     })]);
     const origin = `http://127.0.0.1:${record.port}`;
-    expect(await fetch(`${origin}/ui/api/app-mode`).then((response) => response.json())).toMatchObject({ mode: "local", localOnly: true });
-    expect(await fetch(`${origin}/ui/api/profiles`).then((response) => response.json())).toMatchObject({ profiles: [{ id: profile.id, name: "Saved local profile" }] });
-    expect(await fetch(`${origin}/ui/api/runtime-downloads`).then((response) => response.json())).toEqual({ downloads: [] });
+    const read = (path: string) => fetch(`${origin}/ui/api/${path}`, { headers: { "X-Maobu-Desktop-Session": dashboardSession } }).then(response => response.json());
+    expect((await fetch(`${origin}/ui/api/profiles/${profile.id}`)).status).toBe(401);
+    expect((await fetch(`${origin}/api/v1/status`)).status).toBe(404);
+    expect(await read("app-mode")).toMatchObject({ mode: "local", localOnly: true });
+    expect(await read("profiles")).toMatchObject({ profiles: [{ id: profile.id, name: "Saved local profile" }] });
+    expect(await read("runtime-downloads")).toEqual({ downloads: [] });
     child.stdin.write(JSON.stringify({ protocol: "aliasmode-desktop-v1", command: "shutdown", nonce }) + "\n");
     child.stdin.end();
     expect(await child.exited).toBe(0);

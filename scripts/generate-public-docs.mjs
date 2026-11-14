@@ -84,6 +84,7 @@ async function listHostTools(mcpHostPath, playwrightTools) {
     throw new Error("the public docs generator never drives a browser");
   };
   const host = await createAliasModeMcp({
+    scope: "full",
     playwright: {
       async initialize() {},
       listTools: () => playwrightTools,

@@ -7,15 +7,17 @@ import { attachTimezones, lookupExitLocation } from "./geoip.ts";
 import { normalizeProxySpec, proxyIdentityKey } from "./proxy.ts";
 import { syncFirefoxTimezone } from "./firefox-config.ts";
 import { isValidProfileName } from "./profile-validation.ts";
+import { isSafeProfileId, PROFILE_ID_ERROR } from "./profile-id.ts";
+import { API_SECURITY_HEADERS } from "./server.ts";
 /** Best-effort geoip fetch, injectable for tests; defaults to real ip-api.com. */
 type GeoipFetch = (url: string, init: RequestInit) => Promise<{
     json(): Promise<any>;
 }>;
 function ok(data?: unknown) {
-    return Response.json({ code: 0, msg: "success", data: data ?? {} });
+    return Response.json({ code: 0, msg: "success", data: data ?? {} }, { headers: API_SECURITY_HEADERS });
 }
-function fail(msg: string) {
-    return Response.json({ code: -1, msg, data: {} });
+function fail(msg: string, status = 200) {
+    return Response.json({ code: -1, msg, data: {} }, { status, headers: API_SECURITY_HEADERS });
 }
 /**
  * AdsPower's default/un-grouped bucket is id "0"; aliasmode stores ungrouped
@@ -165,8 +167,11 @@ export async function handleUserApi(req: Request, launcher: Launcher, store: Pro
         }
         // AdsPower's user_id filter: clients look a single profile up by id and read list[0].
         const userId = searchParams.get("user_id");
-        if (userId)
+        if (userId !== null && userId !== "") {
+            if (!isSafeProfileId(userId))
+                return fail(PROFILE_ID_ERROR, 400);
             rows = rows.filter((r) => r.id === userId);
+        }
         // Honor AdsPower's user_sort={"created_time"|"last_open_time":"asc"|"desc"}.
         const sortRaw = searchParams.get("user_sort");
         if (sortRaw) {
@@ -233,6 +238,10 @@ export async function handleUserApi(req: Request, launcher: Launcher, store: Pro
             return fail("invalid JSON body");
         }
         const ids = Array.isArray(body?.user_ids) ? body.user_ids.map(String) : [];
+        for (const id of ids) {
+            if (!isSafeProfileId(id) && !store.getProfile(id))
+                return fail(PROFILE_ID_ERROR, 400);
+        }
         // Standalone: stop, remove the persistent user-data dir, drop the row.
         let deleted = 0;
         const locked: string[] = [];
@@ -267,6 +276,8 @@ export async function handleUserApi(req: Request, launcher: Launcher, store: Pro
         const id = typeof body?.user_id === "string" ? body.user_id : "";
         if (!id)
             return fail("missing user_id");
+        if (!isSafeProfileId(id))
+            return fail(PROFILE_ID_ERROR, 400);
         if (body.name !== undefined && !isValidProfileName(body.name))
             return fail("name must be a non-empty string");
         let edits: ProfileEdits;

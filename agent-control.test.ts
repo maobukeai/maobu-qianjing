@@ -8,10 +8,105 @@ import {
   validAgentAuthorization,
 } from "./agent-control.ts";
 import { buildNewProfile } from "./create.ts";
+import type { AgentControlDeps } from "./agent-control.ts";
+import { BrowserLaunchError } from "./launcher.ts";
 
 function wire(method: string, params: Record<string, unknown> = {}, id = 1): string {
   return JSON.stringify({ protocol: AGENT_CONTROL_PROTOCOL, id, method, params });
 }
+
+test("agent launch errors prefer fixed preflight guidance while preserving codes and other launch failures", async () => {
+  for (const [error, code, message] of [
+    [new BrowserLaunchError("preflight", "local_proxy_unavailable"), "browser_launch_failed", "The configured local proxy is not listening or did not respond in time. Open your desktop proxy client, enable its local port, then retry."],
+    [new BrowserLaunchError("mode_conflict"), "mode_conflict", "browser_launch/mode_conflict (failed)"],
+    [new BrowserLaunchError("cdp_readiness"), "browser_launch_failed", "browser_launch/cdp_readiness (failed)"],
+    [new BrowserLaunchError("preflight"), "browser_launch_failed", "browser_launch/preflight (failed)"],
+  ] as const) {
+    Object.assign(error, { cause: new Error("PRIVATE_CAUSE_PASSWORD") });
+    const h = harness();
+    const session = new AgentControlSession({ ...h.deps, launcher: { ...h.deps.launcher, start: async () => { throw error; } } as any });
+    const response = await session.enqueue(wire("browser.open", { profileId: "profile1" }, 7));
+    expect(response).toEqual({ protocol: AGENT_CONTROL_PROTOCOL, id: 7, ok: false, error: { code, message } });
+    expect(JSON.stringify(response)).not.toContain("PRIVATE_CAUSE_PASSWORD");
+    await session.disconnect();
+  }
+});
+
+test("read-only fingerprint RPC rejects invalid identifiers and extras before reading any profile", async () => {
+  const calls: string[] = [];
+  const deny = (name: string) => new Proxy({}, { get: (_target, key) => () => { calls.push(`${name}.${String(key)}`); throw new Error("unexpected IO"); } });
+  const session = new AgentControlSession({ store: deny("store"), launcher: deny("launcher"), admission: deny("admission") } as unknown as AgentControlDeps);
+  for (const params of [
+    {}, { profileId: null }, { profileId: 1 }, { profileId: true }, { profileId: {} }, { profileId: [] },
+    { profileId: "" }, { profileId: " " }, { profileId: " profile1" }, { profileId: "profile1 " },
+    { profileId: "x".repeat(129) }, { profileId: "../profile" }, { profileId: "a/b" }, { profileId: "CON" },
+    { profileId: "COM1" }, { profileId: "profile1", measure: true }, { profileId: "profile1", extra: "PRIVATE_INPUT" },
+  ]) {
+    const result = await session.enqueue(wire("fingerprints.review", params));
+    expect(result).toMatchObject({ ok: false, error: { code: "invalid_request" } });
+    expect(JSON.stringify(result)).not.toContain("PRIVATE_INPUT");
+  }
+  expect(calls).toEqual([]);
+  await session.disconnect();
+  expect(calls).toEqual([]);
+});
+
+test("read-only profile inventory reports stored state without reconciliation or control endpoints", async () => {
+  const profile = { id: "fixture", name: "Synthetic profile", group: "QA", platform: "", tags: [], username: "PRIVATE_FIXTURE_USER", password: "PRIVATE_FIXTURE_PASSWORD" };
+  const session = new AgentControlSession({
+    store: { listProfiles: () => [profile], getLaunch: () => ({ debugPort: 9333, ws: "PRIVATE_FIXTURE_ENDPOINT", headless: true }) },
+    launcher: new Proxy({}, { get: () => { throw new Error("inventory must not use the launcher"); } }),
+  } as unknown as AgentControlDeps);
+  try {
+    const result = await session.enqueue(wire("profiles.inventory"));
+    expect(result).toMatchObject({ ok: true, result: { liveness: "not-checked", profiles: [
+      { id: "fixture", name: "Synthetic profile", group: "QA", platform: "", tags: [], running: true },
+    ] } });
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE_FIXTURE|9333|headless/);
+    expect(await session.enqueue(wire("profiles.inventory", { force: true }))).toMatchObject({ ok: false, error: { code: "invalid_request" } });
+  } finally { await session.disconnect(); }
+});
+
+test("read-only fingerprint RPC accepts the authority's full 128-character ID and reports missing profiles without probing", async () => {
+  const reads: string[] = [];
+  const session = new AgentControlSession({
+    store: { getProfile: (id: string) => { reads.push(id); return null; } },
+    launcher: new Proxy({}, { get: () => { throw new Error("browser must not be accessed"); } }),
+  } as unknown as AgentControlDeps);
+  const id = "A" + "x".repeat(127);
+  expect(await session.enqueue(wire("fingerprints.review", { profileId: id }))).toMatchObject({ ok: false, error: { code: "profile_not_found" } });
+  expect(reads).toEqual([id]);
+  await session.disconnect();
+});
+
+test("network discovery RPC validates the complete bounded request before any IO", async () => {
+  const probes: unknown[] = [];
+  const session = new AgentControlSession({ discoverLocalProxies: async (options: unknown) => { probes.push(options); throw new Error("must not probe"); } } as unknown as AgentControlDeps);
+  for (const params of [
+    { host: "localhost" }, { host: "8.8.8.8" }, { host: "127.1" }, { host: "[::1]" }, { host: null },
+    { ports: [] }, { ports: [0] }, { ports: [65536] }, { ports: [1.5] }, { ports: ["7890"] },
+    { ports: [true] }, { ports: [null] }, { ports: "7890" }, { ports: {} }, { ports: null },
+    { ports: [7890, 7890] }, { ports: Array.from({ length: 17 }, (_, index) => index + 1) },
+    { timeoutMs: 1 }, { host: "127.0.0.1", ports: [7890], target: "PRIVATE_EXTERNAL_TARGET" },
+  ]) {
+    const result = await session.enqueue(wire("network.discover", params));
+    expect(result).toMatchObject({ ok: false, error: { code: "invalid_request" } });
+    expect(JSON.stringify(result)).not.toContain("PRIVATE_EXTERNAL_TARGET");
+  }
+  expect(probes).toEqual([]);
+  await session.disconnect();
+});
+
+test("network discovery RPC forwards only validated loopback options and leaves the fixed probe timeout intact", async () => {
+  const probes: unknown[] = [];
+  const report = { checkedAt: "2026-11-09T00:00:00Z", host: "127.0.0.1" as const, results: [] };
+  const session = new AgentControlSession({ discoverLocalProxies: async (options: unknown) => { probes.push(options); return report; } } as unknown as AgentControlDeps);
+  for (const params of [{}, { host: "::1", ports: [1, 65535] }, { host: "127.0.0.1", ports: Array.from({ length: 16 }, (_, index) => index + 1) }]) {
+    expect(await session.enqueue(wire("network.discover", params))).toMatchObject({ ok: true, result: { discovery: report } });
+  }
+  expect(probes).toEqual([{}, { host: "::1", ports: [1, 65535] }, { host: "127.0.0.1", ports: Array.from({ length: 16 }, (_, index) => index + 1) }]);
+  await session.disconnect();
+});
 
 function harness(options: {
   active?: boolean;
@@ -381,21 +476,15 @@ test("local proxy replacements skip open and duplicate targets and support CSV",
 });
 
 test("Local profiles.create sets the timezone from the proxy", async () => {
-  const realFetch = globalThis.fetch;
-  globalThis.fetch = (async () => Response.json({ status: "success", timezone: "Europe/Paris" })) as unknown as typeof fetch;
-  try {
     const h = harness();
     const saved: any[] = [];
-    const session = new AgentControlSession({ ...h.deps, store: { ...h.deps.store, upsertProfile: (profile: any) => saved.push(profile) } as any });
+    const session = new AgentControlSession({ ...h.deps, geoipFetch: async () => Response.json({ status: "success", timezone: "Europe/Paris" }), store: { ...h.deps.store, upsertProfile: (profile: any) => saved.push(profile) } as any });
     const response = await session.enqueue(wire("profiles.create", {
       input: { name: "agent", proxy: { type: "http", host: "proxy.example", port: "8080" } },
     }));
     expect(response).toMatchObject({ ok: true });
     expect(saved).toHaveLength(1);
     expect(saved[0]).toMatchObject({ timezone: "Europe/Paris", locale: "fr-FR" });
-  } finally {
-    globalThis.fetch = realFetch;
-  }
 });
 
 /** Runs `run` as if on Windows x64, Apple Silicon macOS, or Linux x64. */

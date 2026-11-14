@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { prepareWindowsBundle, WINDOWS_SIDECAR_TARGET } from "./prepare-windows-bundle.ts";
+import { compileSidecar, loadVerifiedNodeArchive, NODE_WINDOWS_X64_CACHE_NAME, prepareWindowsBundle, sidecarCompileEnvironment, WINDOWS_SIDECAR_TARGET } from "./prepare-windows-bundle.ts";
 import { MCP_MODE } from "../sidecar-entry.ts";
 import { ALIASMODE_VERSION } from "../version.ts";
 
@@ -76,11 +76,14 @@ test("one sidecar program also runs the MCP helper behind the aliasmode-mcp laun
 function workspace(): string {
   const cwd = mkdtempSync(join(tmpdir(), "aliasmode-windows-bundle-"));
   mkdirSync(join(cwd, "src-tauri"), { recursive: true });
+  writeFileSync(join(cwd, "package.json"), JSON.stringify({ name: "maobu-browser" }));
+  writeFileSync(join(cwd, "src-tauri", "tauri.conf.json"), JSON.stringify({ identifier: "com.maobu.local" }));
   writeFileSync(join(cwd, "playwright-worker.mjs"), "worker");
   writeFileSync(join(cwd, "firefox-worker.mjs"), "firefox worker");
   mkdirSync(join(cwd, "agent"), { recursive: true });
   for (const file of [
     "mcp-host.mjs",
+    "mcp-scope.mjs",
     "playwright-proxy.mjs",
     "playwright-runner.mjs",
     "script-runner.mjs",
@@ -154,6 +157,7 @@ test("Windows bundle preparation packages owned Firefox with verified hashes and
     expect(JSON.parse(readFileSync(join(cwd, "src-tauri", "resources", "playwright", "node_modules", "playwright", "package.json"), "utf8")).version).toBe("1.58.0-alpha-2026-01-16");
     expect(JSON.parse(readFileSync(join(cwd, "src-tauri", "resources", "playwright", "node_modules", "zod", "package.json"), "utf8")).version).toBe("1.0.0");
     expect(readFileSync(join(cwd, "src-tauri", "resources", "playwright", "agent", "mcp-host.mjs"), "utf8")).toBe("mcp-host.mjs");
+    expect(readFileSync(join(cwd, "src-tauri", "resources", "playwright", "agent", "mcp-scope.mjs"), "utf8")).toBe("mcp-scope.mjs");
     expect(readFileSync(join(cwd, "src-tauri", "binaries", "aliasmode-sidecar-x86_64-pc-windows-msvc.exe"), "utf8")).toBe("sidecar");
     expect(JSON.parse(readFileSync(join(cwd, "src-tauri", "generated", "browser.json"), "utf8"))).toEqual(metadata);
     expect(readFileSync(join(cwd, "src-tauri", "generated", "VERSION.txt"), "utf8")).toBe(`${ALIASMODE_VERSION}\n`);
@@ -212,4 +216,179 @@ test("standard Windows bundles do not install or require any browser engine", as
     expect(readFileSync(join(cwd, "src-tauri", "resources", "firefox", "ON-DEMAND.txt"), "utf8")).toContain("downloaded and verified");
     expect(JSON.parse(readFileSync(join(cwd, "src-tauri", "generated", "browser.json"), "utf8"))).toEqual({ firefox: null });
   } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+function fakePreparation(cwd: string) {
+  return {
+    cwd, platform: "win32" as const, arch: "x64", bundleFirefox: false,
+    compileSidecar: async (output: string) => { writeFileSync(output, "sidecar"); },
+    installNode: async (root: string) => { mkdirSync(join(root, "node"), { recursive: true }); writeFileSync(join(root, "node", "node.exe"), "node"); },
+  };
+}
+function cachePath(cwd: string): string { return join(cwd, "node_modules", ".cache", "maobu-desktop", NODE_WINDOWS_X64_CACHE_NAME); }
+
+test("preparation refuses an unrelated explicit workspace before removing existing output", async () => {
+  const cwd = workspace(), staging = join(cwd, "src-tauri", "target", "desktop-staging");
+  mkdirSync(staging, { recursive: true }); writeFileSync(join(staging, "keep"), "existing output");
+  writeFileSync(join(cwd, "package.json"), JSON.stringify({ name: "another-project" }));
+  try {
+    await expect(prepareWindowsBundle(fakePreparation(cwd))).rejects.toThrow("Maobu project manifests");
+    expect(readFileSync(join(staging, "keep"), "utf8")).toBe("existing output");
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test("the default cwd must be the source root, while explicit fixture workspaces remain supported", () => {
+  const cwd = workspace();
+  try {
+    const module = join(import.meta.dir, "prepare-windows-bundle.ts");
+    const script = `const { prepareWindowsBundle } = await import(${JSON.stringify(module.replaceAll("\\", "/"))});
+      try { await prepareWindowsBundle({ platform: "win32", arch: "x64", compileSidecar: async () => { throw new Error("incorrectly reached compiler"); }, installNode: async () => {} }); process.exit(2); }
+      catch (error) { if (!error.message.includes("source project root")) { console.error(error.message); process.exit(3); } }`;
+    const child = Bun.spawnSync([process.execPath, "--eval", script], { cwd });
+    expect(child.stderr.toString()).toBe("");
+    expect(child.exitCode).toBe(0);
+    expect(existsSync(join(cwd, "src-tauri", "resources"))).toBe(false);
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test("all cleanup roots are checked before deletion when a resource root is a junction", async () => {
+  const cwd = workspace(), outside = workspace();
+  const staging = join(cwd, "src-tauri", "target", "desktop-staging"), linked = join(cwd, "src-tauri", "resources", "playwright");
+  mkdirSync(staging, { recursive: true }); writeFileSync(join(staging, "keep"), "existing staging");
+  mkdirSync(join(cwd, "src-tauri", "resources"), { recursive: true });
+  writeFileSync(join(outside, "keep"), "outside");
+  try {
+    symlinkSync(outside, linked, process.platform === "win32" ? "junction" : "dir");
+    await expect(prepareWindowsBundle(fakePreparation(cwd))).rejects.toThrow("symbolic links or junctions");
+    expect(readFileSync(join(staging, "keep"), "utf8")).toBe("existing staging");
+    expect(readFileSync(join(outside, "keep"), "utf8")).toBe("outside");
+  } finally {
+    if (existsSync(linked)) unlinkSync(linked);
+    rmSync(cwd, { recursive: true, force: true }); rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test("cleanup refuses a linked ancestor or descendant rather than traversing another directory", async () => {
+  for (const placement of ["ancestor", "descendant"] as const) {
+    const cwd = workspace(), outside = workspace();
+    const target = join(cwd, "src-tauri", "target"), staging = join(target, "desktop-staging");
+    const linked = placement === "ancestor" ? target : join(staging, "linked");
+    writeFileSync(join(outside, "keep"), "outside");
+    try {
+      if (placement === "descendant") mkdirSync(staging, { recursive: true });
+      symlinkSync(outside, linked, process.platform === "win32" ? "junction" : "dir");
+      await expect(prepareWindowsBundle(fakePreparation(cwd))).rejects.toThrow("symbolic links or junctions");
+      expect(readFileSync(join(outside, "keep"), "utf8")).toBe("outside");
+    } finally {
+      if (existsSync(linked)) unlinkSync(linked);
+      rmSync(cwd, { recursive: true, force: true }); rmSync(outside, { recursive: true, force: true });
+    }
+  }
+});
+
+test("the Node archive cache rechecks every hit and replaces a corrupt entry only with verified bytes", async () => {
+  const cwd = workspace(), bytes = new TextEncoder().encode("verified fixture archive"), expected = sha256("verified fixture archive");
+  let downloads = 0;
+  const options = { expectedSha256: expected, download: async () => { downloads++; return bytes; } };
+  try {
+    expect(await loadVerifiedNodeArchive(cwd, options)).toEqual(bytes);
+    expect(await loadVerifiedNodeArchive(cwd, options)).toEqual(bytes); expect(downloads).toBe(1);
+    writeFileSync(cachePath(cwd), "corrupt after first hit");
+    expect(await loadVerifiedNodeArchive(cwd, options)).toEqual(bytes); expect(downloads).toBe(2);
+    expect(readFileSync(cachePath(cwd))).toEqual(Buffer.from(bytes));
+    expect(readdirSync(join(cwd, "node_modules", ".cache", "maobu-desktop"))).toEqual([NODE_WINDOWS_X64_CACHE_NAME]);
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test("failed downloads and hash mismatches preserve an existing Node cache", async () => {
+  const cwd = workspace(), cache = cachePath(cwd);
+  mkdirSync(join(cwd, "node_modules", ".cache", "maobu-desktop"), { recursive: true }); writeFileSync(cache, "old corrupted archive");
+  try {
+    const failure = new Error("fixture download unavailable");
+    await expect(loadVerifiedNodeArchive(cwd, { expectedSha256: sha256("verified"), download: async () => { throw failure; } })).rejects.toBe(failure);
+    expect(readFileSync(cache, "utf8")).toBe("old corrupted archive");
+    await expect(loadVerifiedNodeArchive(cwd, { download: async () => new TextEncoder().encode("not the official ZIP") })).rejects.toThrow("SHA-256 mismatch");
+    expect(readFileSync(cache, "utf8")).toBe("old corrupted archive");
+    expect(readdirSync(join(cwd, "node_modules", ".cache", "maobu-desktop"))).toEqual([NODE_WINDOWS_X64_CACHE_NAME]);
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test("the preparation download injection cannot bypass the pinned official Node digest", async () => {
+  const cwd = workspace();
+  const { installNode: _installNode, ...options } = fakePreparation(cwd);
+  try {
+    await expect(prepareWindowsBundle({ ...options, downloadNode: async () => new TextEncoder().encode("unapproved runtime") })).rejects.toThrow("official Node runtime SHA-256 mismatch");
+    expect(existsSync(cachePath(cwd))).toBe(false);
+    expect(existsSync(join(cwd, "src-tauri", "resources", "playwright", "node", "node.exe"))).toBe(false);
+    expect(existsSync(join(cwd, "src-tauri", "generated", "browser.json"))).toBe(false);
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test("cache paths are rechecked after an asynchronous download before publishing", async () => {
+  const cwd = workspace(), outside = workspace(), linked = join(cwd, "node_modules", ".cache");
+  const bytes = new TextEncoder().encode("verified fixture archive");
+  try {
+    await expect(loadVerifiedNodeArchive(cwd, { expectedSha256: sha256("verified fixture archive"), download: async () => {
+      symlinkSync(outside, linked, process.platform === "win32" ? "junction" : "dir"); return bytes;
+    } })).rejects.toThrow("symbolic links or junctions");
+    expect(existsSync(join(outside, "maobu-desktop"))).toBe(false);
+  } finally {
+    if (existsSync(linked)) unlinkSync(linked);
+    rmSync(cwd, { recursive: true, force: true }); rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test("cache publication is an atomic rename and its failure preserves the old cache", async () => {
+  const cwd = workspace(), cache = cachePath(cwd), bytes = new TextEncoder().encode("verified fixture archive");
+  mkdirSync(join(cwd, "node_modules", ".cache", "maobu-desktop"), { recursive: true }); writeFileSync(cache, "old archive");
+  const failure = new Error("fixture persistent rename denial"); let published = false;
+  try {
+    await expect(loadVerifiedNodeArchive(cwd, { expectedSha256: sha256("verified fixture archive"), download: async () => bytes, rename(from, to) {
+      published = true; expect(to).toBe(cache); expect(readFileSync(from)).toEqual(Buffer.from(bytes));
+      expect(readFileSync(to, "utf8")).toBe("old archive"); throw failure;
+    } })).rejects.toBe(failure);
+    expect(published).toBe(true); expect(readFileSync(cache, "utf8")).toBe("old archive");
+    expect(readdirSync(join(cwd, "node_modules", ".cache", "maobu-desktop"))).toEqual([NODE_WINDOWS_X64_CACHE_NAME]);
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test("cache directories and cache files cannot be linked to another location", async () => {
+  for (const placement of ["directory", "file"] as const) {
+    const cwd = workspace(), outside = workspace(), cacheDirectory = join(cwd, "node_modules", ".cache");
+    const linked = placement === "directory" ? cacheDirectory : cachePath(cwd);
+    let downloads = 0;
+    try {
+      if (placement === "file") {
+        mkdirSync(join(cacheDirectory, "maobu-desktop"), { recursive: true }); writeFileSync(join(outside, "archive"), "external archive");
+      }
+      symlinkSync(placement === "directory" ? outside : join(outside, "archive"), linked, placement === "directory" ? (process.platform === "win32" ? "junction" : "dir") : "file");
+      await expect(loadVerifiedNodeArchive(cwd, { download: async () => { downloads++; return new Uint8Array(); } })).rejects.toThrow("symbolic links or junctions");
+      expect(downloads).toBe(0);
+      if (placement === "file") expect(readFileSync(join(outside, "archive"), "utf8")).toBe("external archive");
+    } finally {
+      if (existsSync(linked)) unlinkSync(linked);
+      rmSync(cwd, { recursive: true, force: true }); rmSync(outside, { recursive: true, force: true });
+    }
+  }
+});
+
+test("sidecar environment filters signing names before reading their values and does not change its input", () => {
+  const environment: NodeJS.ProcessEnv = { PATH: "fixture-path", NORMAL_BUILD_VALUE: "enabled" };
+  for (const name of ["TAURI_SIGNING_PRIVATE_KEY", "TAURI_SIGNING_PRIVATE_KEY_PASSWORD", "tauri_signing_private_key"]) {
+    Object.defineProperty(environment, name, { enumerable: true, get() { throw new Error("signing value must never be read"); } });
+  }
+  expect(sidecarCompileEnvironment(environment)).toEqual({ PATH: "fixture-path", NORMAL_BUILD_VALUE: "enabled" });
+  expect(Object.keys(environment)).toContain("TAURI_SIGNING_PRIVATE_KEY");
+  expect(Object.keys(environment)).toContain("TAURI_SIGNING_PRIVATE_KEY_PASSWORD");
+});
+
+test("the compiler child receives an explicit signing-free environment", async () => {
+  const parentNames = Object.keys(process.env); let invoked = false;
+  await compileSidecar("fixture-source", "fixture-sidecar", WINDOWS_SIDECAR_TARGET, (command, options) => {
+    invoked = true; expect(command).toContain(`--target=${WINDOWS_SIDECAR_TARGET}`);
+    expect(options.cwd).toBe("fixture-source"); expect(options.stdout).toBe("inherit");
+    expect(Object.keys(options.env).some(name => /^TAURI_SIGNING_PRIVATE_KEY(?:_PASSWORD)?$/i.test(name))).toBe(false);
+    return { exited: Promise.resolve(0) };
+  });
+  expect(invoked).toBe(true); expect(Object.keys(process.env)).toEqual(parentNames);
 });

@@ -4,7 +4,7 @@
 
 ## 开发与验证
 
-Windows 环境与桌面构建流程见 [README.md](README.md)。本地 CI 使用 Bun 1.2.21；安装依赖与常规验证命令为：
+Windows 环境与桌面构建流程见 [README.md](README.md)。本地 CI 使用 Bun 1.3.13。安装依赖与验证命令如下。
 
 ```powershell
 bun install --frozen-lockfile

@@ -1,0 +1,25 @@
+.profile-move-feedback { margin-bottom: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-sunken); color: var(--ink-soft); }
+.profile-move-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.profile-move-heading h2 { margin: 0; font-size: 13px; font-weight: 550; }
+.profile-move-heading p { margin: 5px 0 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.profile-move-heading > .iconbtn { flex: 0 0 auto; width: 28px; height: 28px; font-size: 18px; }
+.profile-move-progress, .profile-move-note, .profile-move-error { margin: 10px 0 0; font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
+.profile-move-error, .profile-move-note.is-error { color: var(--danger-ink); }
+.profile-move-counts { display: flex; flex-wrap: wrap; gap: 5px 18px; margin-top: 10px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.profile-move-feedback.is-confirmed .profile-move-counts { color: var(--success-ink); }
+.profile-move-feedback.is-confirmed .profile-move-heading > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.profile-move-feedback.is-confirmed .profile-move-heading p { margin: 0; }
+.profile-move-feedback.is-confirmed .profile-move-counts { margin-top: 2px; }
+.profile-move-confirmation { margin-top: 5px; font-size: 12px; }
+.profile-move-confirmation > summary { width: fit-content; color: var(--muted); cursor: pointer; }
+.profile-move-confirmation[open] > summary { color: var(--ink-soft); }
+.profile-move-note { color: var(--muted); }
+.profile-move-details { margin-top: 10px; font-size: 12px; }
+.profile-move-details > summary { cursor: pointer; color: var(--ink-soft); }
+.profile-move-details ul { max-height: 180px; overflow: auto; list-style: none; padding: 0; margin: 8px 0 0; }
+.profile-move-details li { display: flex; justify-content: space-between; gap: 14px; padding: 7px 0; border-top: 1px solid var(--line); }
+.profile-move-details code { overflow-wrap: anywhere; }
+.profile-move-details span { color: var(--muted); }
+.profile-move-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+@media (pointer: coarse) { .profile-move-heading > .iconbtn, .profile-move-actions > button { min-width: 44px; min-height: 44px; } }
+@media (pointer: coarse) { .profile-move-confirmation > summary { min-height: 44px; padding-block: 12px; } }

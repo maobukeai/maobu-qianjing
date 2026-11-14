@@ -14,17 +14,24 @@ test('local desktop and helper keep a compatible version',()=>{
   expect(read('src-tauri/Cargo.lock').match(/name = "aliasmode-desktop"\r?\nversion = "([^"]+)"/)?.[1]).toBe(ALIASMODE_VERSION);
 });
 
-test('local desktop has a separate identity and cannot install an upstream update',()=>{
+test('local desktop keeps a separate identity and only exposes build-pinned signed updates',()=>{
   const config=JSON.parse(read('src-tauri/tauri.conf.json'));
   expect(config.identifier).toBe('com.maobu.local');
   expect(config.bundle.createUpdaterArtifacts).toBe(false);
   expect(config.plugins?.updater).toBeUndefined();
-  expect(read('src-tauri/Cargo.toml')).not.toContain('tauri-plugin-updater');
+  expect(read('src-tauri/Cargo.toml')).toContain('tauri-plugin-updater');
   const native=read('src-tauri/src/lib.rs');
   expect(native).not.toContain('releases::');
   expect(native).not.toContain('credential_get,');
   expect(native).not.toContain('allow-update-bridge');
   expect(existsSync(join(root,'src-tauri/src/releases.rs'))).toBe(false);
+  const updates=read('src-tauri/src/signed_updates.rs');
+  expect(updates).toContain('option_env!("MAOBU_UPDATE_PUBLIC_KEY")');
+  expect(updates).toContain('option_env!("MAOBU_UPDATE_ENDPOINT")');
+  expect(updates).toContain('update.download(');
+  expect(updates).toContain('update.install(bytes)');
+  expect(updates).not.toContain('Command::new');
+  expect(read('src-tauri/permissions/signed-updates.toml')).toContain('signed_update_install');
 });
 
 test('local launcher builds from the workspace instead of installing the upstream distribution',()=>{

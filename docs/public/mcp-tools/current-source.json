@@ -34,6 +34,69 @@
       }
     },
     {
+      "name": "aliasmode_fingerprint_review",
+      "description": "Review one local profile's saved configuration and stored fingerprint evidence. This never starts, measures, or probes a browser. launchRecordPresent is bookkeeping only; liveness is not-checked. No credentials, raw samples, endpoints, or private provenance digests are returned.",
+      "annotations": {
+        "title": "Review stored fingerprint evidence",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "profileId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+          }
+        },
+        "required": [
+          "profileId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "aliasmode_network_discover",
+      "description": "Discover local desktop proxy listeners on literal loopback addresses only. Checks at most 16 local ports and sends a SOCKS method-negotiation greeting without credentials or CONNECT. Does not contact external sites or change settings. A listener or handshake does not prove exit connectivity, IP reputation, DNS isolation, or WebRTC privacy.",
+      "annotations": {
+        "title": "Discover local proxy listeners",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string",
+            "enum": [
+              "127.0.0.1",
+              "::1"
+            ],
+            "default": "127.0.0.1"
+          },
+          "ports": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "description": "Defaults to bounded common desktop HTTP/SOCKS proxy ports."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "aliasmode_profiles_replace_proxies",
       "description": "Preview or apply proxy replacements to closed local 猫步·千境 profiles. The default is a dry run; open and ambiguous profiles are skipped.",
       "annotations": {

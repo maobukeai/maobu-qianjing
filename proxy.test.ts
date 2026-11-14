@@ -39,6 +39,13 @@ test("an explicit proxy URL overrides the default type and decodes credentials",
   });
 });
 
+test("URL parsing preserves explicit default ports without inferring a missing proxy port", () => {
+  expect(parseProxySpec("http", "http://[::1]:80/")).toMatchObject({ host: "::1", port: "80" });
+  expect(parseProxySpec("http", "https://proxy.example:443")).toMatchObject({ type: "https", port: "443" });
+  expect(() => parseProxySpec("http", "http://user:80@proxy.example/")).toThrow("invalid proxy port");
+  expect(() => parseProxySpec("http", "https://[::443]/")).toThrow("invalid proxy port");
+});
+
 test("supports bracketed IPv6 and renders safe CloakBrowser URLs", () => {
   const parsed = parseProxySpec("socks5", "[2001:db8::1]:1080:user:p@ss")!;
   expect(parsed.host).toBe("2001:db8::1");
@@ -71,4 +78,10 @@ test("object normalization validates incomplete and invalid proxies", () => {
   }
   expect(() => normalizeProxySpec({ host: "proxy.example", port: "8080", pass: "secret" }))
     .toThrow("password requires a non-empty username");
+  expect(() => normalizeProxySpec({ host: "proxy.example", port: "8080", user: "u\r\nInjected: 1", pass: "p" }))
+    .toThrow("control characters");
+  expect(() => normalizeProxySpec({ host: "proxy.example", port: "8080", user: "u", pass: "p\nInjected: 1" }))
+    .toThrow("control characters");
+  expect(() => normalizeProxySpec({ host: "proxy.example", port: "8080", user: "u\0", pass: "p" }))
+    .toThrow("control characters");
 });

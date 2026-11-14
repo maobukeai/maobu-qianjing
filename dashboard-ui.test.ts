@@ -5,12 +5,19 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { localeTimezoneMismatch } from "./profile-locale.ts";
 import { ProfileActionMenu } from "./web/profile-action-menu.tsx";
-import { translate } from "./web/i18n.tsx";
+import { I18nProvider, translate } from "./web/i18n.tsx";
+import { inProfileScope, type RosterScope } from "./profile-view-state.ts";
+import { createBulkProfileTask } from "./web/bulk-profile-task.ts";
+import { BulkProfileTaskPanel } from "./web/bulk-profile-task-panel.tsx";
+import { PROFILE_EDIT_FORM_FIELDS } from "./web/profile-edit-patch.ts";
 const app = readFileSync(join(import.meta.dir, "web", "app.tsx"), "utf8").replaceAll("\r\n", "\n");
+const extensionPage = readFileSync(join(import.meta.dir, "web", "extensions-page.tsx"), "utf8");
 const styles = readFileSync(join(import.meta.dir, "web", "styles.css"), "utf8").replaceAll("\r\n", "\n");
 const logo = readFileSync(join(import.meta.dir, "web", "maobu-mark.png"));
 const notice = readFileSync(join(import.meta.dir, "NOTICE"), "utf8");
 const actionMenu = readFileSync(join(import.meta.dir, "web", "profile-action-menu.tsx"), "utf8").replaceAll("\r\n", "\n");
+const cookieImportUi = readFileSync(join(import.meta.dir, "web", "cookie-import-task-panel.tsx"), "utf8");
+const fileUpdateUi = readFileSync(join(import.meta.dir, "web", "profile-file-update-panel.tsx"), "utf8");
 const defaultPageSize = Number(app.match(/const PROFILE_PAGE_SIZE = (\d+);/)?.[1]);
 
 /** Execute production selectors, rather than maintaining a second filter in tests. */
@@ -25,18 +32,20 @@ function rosterColumns(): Array<{ key: string; label: string; width: number; sor
     const source = new Bun.Transpiler({ loader: "ts" }).transformSync(sourceBetween("const COLUMNS =", "/** Width of the always-present"));
     return new Function(`${source}\nreturn COLUMNS;`)();
 }
-type RosterProfile = { id: string; name: string; group: string; running: boolean; proxy?: string | null; tags?: string[]; platform?: string };
+type RosterProfile = { id: string; name: string; group: string; running: boolean; proxy?: string | null; tags?: string[]; platform?: string; lastOpenAt?: number; proxyError?: string };
 function rosterPipeline(profiles: RosterProfile[], options: {
     q?: string; group?: string; scope?: Set<string>; status?: "all" | "running" | "stopped";
     sort?: { key: string; dir: 1 | -1 }; page?: number; pageSize?: number;
     numbering?: Map<string, { value: string }>;
+    quickScope?: RosterScope; favorites?: string[];
 } = {}) {
     const source = new Bun.Transpiler({ loader: "ts" }).transformSync(sourceBetween("const sortField =", "const previousProfileFilters ="));
-    return new Function("profiles", "group", "selectedScope", "q", "numbering", "profileStatus", "sort", "pageSize", "profilePage", "useMemo", "useEffect", "setProfilePage", "useRef", `${source}\nreturn { matchingProfiles, matchingRunningCount, filtered, profilePageCount, visibleProfilePage, visibleProfiles };`)(
+    return new Function("profiles", "group", "selectedScope", "q", "numbering", "profileStatus", "sort", "pageSize", "profilePage", "useMemo", "useEffect", "setProfilePage", "useRef", "rosterScope", "favoriteProfileIds", "inProfileScope", `${source}\nreturn { matchingProfiles, matchingRunningCount, filtered, profilePageCount, visibleProfilePage, visibleProfiles };`)(
         profiles, options.group ?? "all", options.scope ?? new Set([options.group ?? "all"]), options.q ?? "",
         options.numbering ?? new Map(profiles.map((profile, index) => [profile.id, { value: String(index + 1) }])),
         options.status ?? "all", options.sort ?? { key: "no", dir: 1 }, options.pageSize ?? defaultPageSize, options.page ?? 0,
         (factory: () => unknown) => factory(), () => {}, () => {}, (value: unknown) => ({ current: value }),
+        options.quickScope ?? "all", new Set(options.favorites ?? []), inProfileScope,
     ) as { matchingProfiles: RosterProfile[]; matchingRunningCount: number; filtered: RosterProfile[]; profilePageCount: number; visibleProfilePage: number; visibleProfiles: RosterProfile[] };
 }
 test("dashboard renders the local brand image from its bundled asset", () => {
@@ -75,12 +84,20 @@ test("dashboard contains long roster labels inside the window", () => {
     expect(styles).toContain("table-layout: fixed");
     expect(styles).toContain("td.col-no, td.col-name, td.col-group, td.col-tags, td.col-proxy { overflow: hidden; text-overflow: ellipsis; }");
 });
-test("dashboard shows close warnings without an open-only prefix", () => {
-    expect(app).toContain("else if (r && r.warning) setActionErr(actionWarning(r));");
-    expect(app).toContain('const actionWarning = (r: any): string => r.warning ?? ""');
-    expect(app).not.toContain("Opened — ${r.warning}");
-    expect(app).toContain("if (r?.ok === false) issues.push");
-    expect(app).toContain("else if (r?.warning) issues.push");
+test("dashboard shows close warnings without an open-only prefix", async () => {
+    // Batch outcomes now belong to the production task runner and its result panel.
+    expect(app).toContain('const closeSelected = () => bulkRun("close");');
+    expect(app).toContain("const task = createBulkProfileTask({ action, targets, concurrency: 4, run: async id => {");
+    expect(app).toContain('action === "close" ? closeProfile : restartProfile');
+    const snapshot = await createBulkProfileTask({ action: "close", targets: [{ id: "warning", name: "Closing with warning" }, { id: "failure", name: "Unconfirmed close" }], run: async id => id === "warning"
+        ? { ok: true, warning: "Browser teardown completed with a warning" } : { ok: false, error: "Browser teardown remains unconfirmed" } }).start();
+    expect(snapshot.rows[0]).toMatchObject({ status: "succeeded", warning: "Browser teardown completed with a warning" });
+    expect(snapshot.rows[1]).toMatchObject({ status: "failed", error: "Browser teardown remains unconfirmed" });
+    const markup = renderToStaticMarkup(createElement(I18nProvider, { children: createElement(BulkProfileTaskPanel, { snapshot, expanded: true, onExpandedChange() {}, onStopPending() {}, onRetryFailed() {}, onDismiss() {} }) }));
+    expect(markup).toContain("Batch close");
+    expect(markup).toContain("Browser teardown completed with a warning");
+    expect(markup).toContain("Browser teardown remains unconfirmed");
+    expect(markup).not.toContain("Opened —");
 });
 test("dashboard lists the supported profile platforms", () => {
     for (const platform of [
@@ -96,8 +113,8 @@ test("dashboard lists the supported profile platforms", () => {
     }
 });
 test("New and Edit profile dialogs keep proxy validation without provider promotions", () => {
-    const create = app.slice(app.indexOf("{showCreate && ("), app.indexOf("{editId && ("));
-    const edit = app.slice(app.indexOf("{editId && ("), app.indexOf("{showBulk && ("));
+    const create = app.slice(app.indexOf("<MotionPresence present={showCreate}>"), app.indexOf("<MotionPresence present={!!editId}>"));
+    const edit = app.slice(app.indexOf("<MotionPresence present={!!editId}>"), app.indexOf("<MotionPresence present={showBulk}>"));
     for (const modal of [create, edit]) {
         expect(modal).toContain("Check proxy");
         expect(modal).toContain("<ProxyCheckFeedback");
@@ -112,13 +129,14 @@ test("New and Edit profile dialogs keep proxy validation without provider promot
         expect(styles).toContain(`<TONE>`.replace("<TONE>", ".proxy-check-result." + tone));
 });
 test("dashboard selects browser for new profiles", () => {
-    const createModal = app.slice(app.indexOf("{showCreate && ("), app.indexOf("{editId && ("));
-    const editModal = app.slice(app.indexOf("{editId && ("), app.indexOf("{showBulk && ("));
+    const createModal = app.slice(app.indexOf("<MotionPresence present={showCreate}>"), app.indexOf("<MotionPresence present={!!editId}>"));
+    const editModal = app.slice(app.indexOf("<MotionPresence present={!!editId}>"), app.indexOf("<MotionPresence present={showBulk}>"));
     expect(createModal).toContain('className="browser-options"');
     expect(createModal).toContain('engine: "chromium", label: "Chrome"');
     expect(createModal).toContain('engine: "firefox", label: "Firefox"');
     // The help text follows the engine that this computer creates, such as Chromium 155 on a Mac.
-    expect(createModal).toContain('const runtime = browserLabel(engine, appMode?.chromiumRuntime ?? form.chromiumRuntime);');
+    expect(createModal).toContain('profileCreationRuntime("chromium", form.chromiumRuntime, appMode?.chromiumRuntime) ?? appMode?.defaultChromiumRuntime');
+    expect(createModal).toContain('const runtime = browserLabel(engine, selectedRuntime === "cloakbrowser" ? "" : selectedRuntime);');
     expect(createModal).toContain('type="radio" name="browser-engine"');
     expect(createModal).toContain('checked={form.engine === engine}');
     expect(createModal).toContain('setF("engine", engine)');
@@ -128,7 +146,7 @@ test("dashboard selects browser for new profiles", () => {
     // The browser choice comes before the optional Proxy and Fingerprint sections.
     expect(createModal.indexOf('className="browser-options"')).toBeLessThan(createModal.indexOf('open={createProxyOpen}'));
     expect(createModal.indexOf('open={createProxyOpen}')).toBeLessThan(createModal.indexOf('<FingerprintSettings'));
-    expect(createModal.indexOf('className="browser-options"')).toBeLessThan(createModal.indexOf('className="modal-foot"'));
+    expect(createModal.indexOf('className="browser-options"')).toBeLessThan(createModal.indexOf('className="modal-foot profile-editor-status-footer"'));
     expect(styles).toContain('.browser-info:focus-visible::after');
     expect(styles).toContain('.browser-card:has(input:focus-visible)');
     expect(styles).toContain('.browser-card:has(input:checked) { background: var(--browser-selected);');
@@ -141,18 +159,40 @@ test("dashboard selects browser for new profiles", () => {
     // Firefox on macOS and Linux. Chromium 155 is AliasMode Chromium on every computer.
     expect(app).toContain('return chromiumRuntime ? "Chromium" : "CloakBrowser";');
     expect(app).not.toContain("155 beta");
-    expect(app).toContain('setForm({ ...BLANK_FORM, engine: appMode?.defaultEngine ?? "chromium", chromiumRuntime: appMode?.defaultChromiumRuntime ?? "", group:');
+    const beginCreate = sourceBetween("const beginCreate =", "const reuseProfileConfiguration =");
+    expect(beginCreate).toContain('const draft: typeof BLANK_FORM = { ...BLANK_FORM, engine: appMode?.defaultEngine ?? "chromium", chromiumRuntime: appMode?.defaultChromiumRuntime ?? "", group:');
+    expect(beginCreate.indexOf("const draft:")).toBeLessThan(beginCreate.indexOf("if (reuse) Object.assign(draft,"));
+    expect(beginCreate).toContain("setForm(draft);");
+    // Execute the real draft initialization, including the safe reuse overlay.
+    // Mounted success/late/failure/host-override flows also run in web/app-create.test.ts.
+    const draftSource = new Bun.Transpiler({ loader: "ts" }).transformSync(`${sourceBetween("const BLANK_FORM =", "type ProxyCheckUiState =")}\n${beginCreate}`);
+    const prepareDraft = new Function("appMode", "group", "reuse", "t", `
+      const showCreate = false, createInFlight = { current: false }, editSessionRef = { current: null }, createReturnFocus = { current: null }, profiles = [];
+      const createCloseGuard = { reset() {} }, initialCreateForm = { current: null };
+      const cancelReuseRead = () => {}, resetCreateProxyCheck = () => {}, noop = () => {};
+      const setCreateReuseSource = noop, setCreateProxySource = noop, setProxyPaste = noop, setProxyPasteOk = noop, setProxyPasteInvalid = noop, setCreateErr = noop, setCreateProxyOpen = noop, setShowCreate = noop;
+      let form; const setForm = value => { form = value; };
+      ${draftSource}\n beginCreate(undefined, undefined, reuse); return form;
+    `);
+    const t = (source: string, values?: Record<string, string | number>) => translate({ "en-US": {} }, "en-US", source, values);
+    expect(prepareDraft({ defaultEngine: "firefox", defaultChromiumRuntime: "" }, "Work", undefined, t)).toMatchObject({ engine: "firefox", chromiumRuntime: "", group: "Work" });
+    expect(prepareDraft({ defaultEngine: "chromium", defaultChromiumRuntime: "aliasmode" }, "all", undefined, t)).toMatchObject({ engine: "chromium", chromiumRuntime: "aliasmode", group: "" });
+    expect(prepareDraft(null, "all", undefined, t)).toMatchObject({ engine: "chromium", chromiumRuntime: "", group: "" });
+    const reused = prepareDraft({ defaultEngine: "chromium", defaultChromiumRuntime: "aliasmode" }, "Other", { sourceId: "source", name: "Source", group: "QA", engine: "chromium", chromiumRuntime: "cloakbrowser", platformOs: "windows", screen: "1680x1050", platform: "example.com", username: "SECRET", host: "secret.invalid", fingerprintSeed: 123, customNo: "123" }, t);
+    expect(reused).toMatchObject({ name: "Source copy", group: "QA", engine: "chromium", chromiumRuntime: "", platformOs: "windows", screen: "1680x1050", platform: "example.com", username: "", host: "", customNo: "" });
+    expect(reused).not.toHaveProperty("fingerprintSeed");
     // Chrome version: 155 is the default where this computer can run it, and 146 stays the default
     // elsewhere. Choosing 146 uses CloakBrowser.
     expect(createModal).toContain('{form.engine === "chromium" && !appMode?.chromiumRuntime && (');
     expect(createModal).toContain('? <><option value="aliasmode">{t("Chromium 155 (default)")}</option><option value="">{t("CloakBrowser 146")}</option></>');
     expect(createModal).toContain(': <><option value="">{t("CloakBrowser 146 (default)")}</option><option value="aliasmode">{t("Chromium 155")}</option></>}');
-    expect(app).toContain('chromiumRuntime: "" as "" | "aliasmode"');
-    expect(app).toContain('...(form.engine === "chromium" ? { chromiumRuntime: form.chromiumRuntime || "cloakbrowser" } : {}),');
+    expect(app).toContain('chromiumRuntime: "" as FormChromiumRuntime');
+    expect(app).toContain('...(createRuntimeInput ? { chromiumRuntime: createRuntimeInput } : {}),');
+    expect(createModal).toContain('<option value="auto">{t("Device default")}</option>');
     // A CloakBrowser choice or profile shows the linkability note, in every bundled language.
     const note = "CloakBrowser profiles on one computer can be linked to each other. Use Chromium or Firefox for separate identities.";
     expect(app).toContain(`const CLOAKBROWSER_NOTE = "${note}";`);
-    expect(createModal).toMatch(/<small>\{!form\.chromiumRuntime\s+\? t\(CLOAKBROWSER_NOTE\)/);
+    expect(createModal).toMatch(/!form\.chromiumRuntime\s+\? t\(CLOAKBROWSER_NOTE\)/);
     expect(editModal).toContain('{editEngine === "chromium" && !editChromiumRuntime && <small>{t(CLOAKBROWSER_NOTE)}</small>}');
     // The browser stays unknown until the profile loads, so a failed load never claims CloakBrowser.
     expect(app).toContain('useState<"chromium" | "firefox" | null>(null)');
@@ -161,7 +201,7 @@ test("dashboard selects browser for new profiles", () => {
     // The fingerprint hints hold for every engine, so they name none.
     const hints = [
         "The browser keeps the locked values coordinated. Screen and operating system are the only fingerprint settings you can override.",
-        "Leave a field blank to keep it automatic. A timezone you type stays when the proxy changes.",
+        "Leave timezone or CPU blank for automatic settings. Screen size and fingerprint seed need explicit values; a blank language keeps the saved language. A timezone you type stays when the proxy changes.",
         "We recommend keeping every setting automatic. Custom values can make the browser look inconsistent, easier to detect, and can trigger account checks.",
     ];
     for (const hint of hints)
@@ -208,14 +248,12 @@ test("every editable row and the selection bar can add cookies; closed profiles 
     expect(app).toContain("onClick={() => openCookie(profiles.filter((profile) => selected.has(profile.id)))}");
     // Add cookies is a general menu item, before the running-Chromium-only focus action.
     expect(menu.indexOf("openCookie([p])")).toBeLessThan(menu.indexOf('p.running && p.engine === "chromium"'));
-    expect(app).toContain('aria-labelledby="add-cookie-title"');
-    expect(app).toContain('<span>{t("Paste cookies (JSON export or cookies.txt)")}</span>');
-    expect(app).toContain('<span>{t("Name")}</span>');
-    expect(app).toContain('<span>{t("Value")}</span>');
-    expect(app).toContain('<span>{t("Domain")}</span>');
-    expect(app).toContain('<span>{t("Path")}</span>');
-    expect(app).toContain('type="password" autoComplete="off"');
-    expect(app).toContain("await addProfileCookies(cookieTargets.map((profile) => profile.id), cookieText.trim() ? { text: cookieText } : cookieForm);");
+    expect(app).toContain('<CookieImportTaskDialog task={cookieImport.task}');
+    expect(cookieImportUi).toContain('role="dialog" aria-modal="true"');
+    for (const field of ["Name", "Value", "Domain", "Path"]) expect(cookieImportUi).toContain(`<span>{t("${field}")}</span>`);
+    expect(cookieImportUi).toContain('type="password" autoComplete="off"');
+    expect(cookieImportUi).toContain('"Paste cookie JSON" : "Paste cookies.txt content"');
+    expect(cookieImportUi).toContain('task.submit(targets, input)');
     expect(app).toContain('t("The browser sets these cookies the next time it starts, before the first page opens.")');
     expect(app).toContain('{t("{count} cookie(s) at next start", { count: String(p.pendingCookieCount) })}');
     expect(app).not.toContain('className="modal-backdrop" onClick={closeCookie}');
@@ -262,7 +300,8 @@ test("the custom NO. editor is Local-only and digits-only", () => {
     // field is never ambiguous about what the browser window will display.
     expect(app).toContain('placeholder={editSerial != null ? String(editSerial) : "auto"}');
     expect(app).toContain('setEF("customNo", e.target.value.replace(/\\D/g, "").slice(0, MAX_CUSTOM_NO))');
-    expect(app).toContain('...({ customNo: editForm.customNo ?? "" }),');
+    expect(PROFILE_EDIT_FORM_FIELDS).toContain("customNo");
+    expect(app).toContain("updateProfile(session.id, changes.patch)");
     expect(app).toContain('...({ customNo: form.customNo }),');
 });
 test("the roster is sortable, pageable and its columns are selectable", () => {
@@ -333,7 +372,7 @@ function rosterSelection(filtered: {
 }[], selected = new Set<string>(), group = "all", q = "", page = 0, pageSize = defaultPageSize) {
     const pagination = sourceBetween("const profilePageCount =", "const previousProfileFilters =");
     const visible = new Function("filtered", "pageSize", "profilePage", `${pagination}\nreturn visibleProfiles;`)(filtered, pageSize, page);
-    const source = sourceBetween("const allVisibleSelected =", "const moveSelected =");
+    const source = sourceBetween("const allVisibleSelected =", "const completeMove =");
     const controls = new Function("selectableProfiles", "filtered", "selected", "group", "q", "setSelected", "t", `${source}
     return { toggleAll, selectAllFiltered, allFilteredSelected, selectedOutsideFilter, selectionScope };`)(visible, filtered, selected, group, q, (next: Set<string> | ((current: Set<string>) => Set<string>)) => {
         selected = typeof next === "function" ? next(selected) : next;
@@ -458,9 +497,9 @@ test("the 20-row default preserves valid saved page sizes and survives unavailab
 test("selection controls expose scope selection and clearing without changing export permissions", () => {
     expect(app).not.toContain("allVisibleSelected && !allFilteredSelected");
     expect(app).toContain("disabled={deleting || allFilteredSelected}");
-    expect(app).toContain("onClick={selectAllFiltered}");
-    expect(app).toContain('aria-label={t("Clear selection")} onClick={() => setSelected(new Set())}');
-    expect(app).toContain('q ? t("matching profiles") : t("profiles")');
+    expect(app).toContain("rangeSelectionAnchor.current = null; selectAllFiltered();");
+    expect(app).toContain('aria-label={t("Clear selection")} onClick={() => { rangeSelectionAnchor.current = null; setSelected(new Set()); }}');
+    expect(app).toContain('q.trim() ? t("matching profiles") : t("profiles")');
     expect(app).toContain('t("{count} {kind} in “{group}”",');
     expect(app).toContain("const ids = [...selected];");
     expect(app).toContain("await exportProfiles(ids, format, (progress) => setExportProgress(progress));");
@@ -538,26 +577,41 @@ test("the dashboard typeface is bundled, never fetched at runtime", () => {
     expect(notice).toContain("Inter typeface");
 });
 test("New and Edit open accessible centred editors; management sections remain pages", () => {
-    expect(app).toContain('useState<"profiles" | "scripts" | "settings" | "extensions" | "proxies" | "trash" | "workspaces">("profiles")');
+    const views = app.match(/const \[view, setView\] = useState<([^>]+)>\("profiles"\)/)?.[1];
+    expect(views).toBeDefined();
+    expect([...views!.matchAll(/"([^"]+)"/g)].map(match => match[1])).toEqual(expect.arrayContaining([
+        "profiles", "scripts", "settings", "extensions", "proxies", "trash", "workspaces", "assistant",
+    ]));
     expect(app).toContain("const [showCreate, setShowCreate] = useState(false);");
     expect(app).toContain('aria-labelledby="create-profile-title"');
     expect(app).toContain('aria-labelledby="edit-profile-title"');
-    const create = sourceBetween("{showCreate && (", "{editId && (");
-    const edit = sourceBetween("{editId && (", "{showBulk && (");
+    const create = sourceBetween("<MotionPresence present={showCreate}>", "<MotionPresence present={!!editId}>");
+    const edit = sourceBetween("<MotionPresence present={!!editId}>", "<MotionPresence present={showBulk}>");
     for (const editor of [create, edit]) {
         expect(editor).toContain('className="modal-backdrop profile-editor-backdrop"');
         expect(editor).toContain('className="modal profile-editor" role="dialog" aria-modal="true"');
     }
     expect(styles).toMatch(/\.profile-editor-backdrop\s*\{[^}]*justify-content:\s*center[^}]*align-items:\s*center/);
     expect(styles).toMatch(/\.modal\.profile-editor\s*\{[^}]*max-height:\s*calc\(100dvh - 64px\)/);
-    expect(app).toContain('const closeCreate = () => {\n    resetCreateProxyCheck();\n    setShowCreate(false);');
+    const closeCreate = sourceBetween("const finishCloseCreate =", "const closeCreate =");
+    expect(closeCreate.indexOf("if (createInFlight.current) return;")).toBeLessThan(closeCreate.indexOf("cancelReuseRead();"));
+    expect(closeCreate.indexOf("cancelReuseRead();")).toBeLessThan(closeCreate.indexOf("setShowCreate(false);"));
+    expect(closeCreate).toContain("resetCreateProxyCheck();");
+    expect(closeCreate).toContain("setCreateReuseSource(null);");
+    expect(closeCreate).toContain("setForm(BLANK_FORM);");
+    const closeDraft = new Function("busy", `
+      const calls = [], createInFlight = { current: busy }, BLANK_FORM = { name: "" };
+      const cancelReuseRead = () => calls.push(["cancelReuse"]), resetCreateProxyCheck = () => calls.push(["resetProxyCheck"]);
+      const setShowCreate = value => calls.push(["showCreate", value]), setCreateProxySource = value => calls.push(["proxySource", value]), setCreateReuseSource = value => calls.push(["reuseSource", value]);
+      const setForm = value => calls.push(["form", value]), setProxyPaste = value => calls.push(["proxyPaste", value]), setProxyPasteOk = value => calls.push(["proxyPasteOk", value]), setCreateErr = value => calls.push(["error", value]);
+      const setProxyPasteInvalid = value => calls.push(["proxyPasteInvalid", value]);
+      ${closeCreate}\n finishCloseCreate(); return calls;
+    `);
+    expect(closeDraft(true)).toEqual([]);
+    expect(closeDraft(false)).toEqual([["cancelReuse"], ["resetProxyCheck"], ["showCreate", false], ["proxySource", null], ["reuseSource", null], ["form", { name: "" }], ["proxyPaste", ""], ["proxyPasteOk", null], ["proxyPasteInvalid", false], ["error", null]]);
     expect(app).toContain("PAGE_TITLES[view]");
-    // Edit opens on the click — the detail fetch fills the dialog in when it
-    // lands, and a stale response for an abandoned dialog is discarded.
-    expect(app).toContain("editFetchId.current = id;");
-    expect(app).toContain("if (editFetchId.current !== id) return;");
-    expect(app).toContain('<p className="hint" role="status">{t("Loading profile…")}</p>');
-    expect(app).toContain("disabled={editSaving || editLoading || timezoneBusy}");
+    // The real request timing, failed-detail recovery and save guards are
+    // exercised by web/app-edit.test.ts against the mounted App.
 });
 test("a running row with saved proxy or fingerprint changes offers a restart", () => {
     expect(app).toContain("{p.restartPending && (");
@@ -634,7 +688,7 @@ test("the roster keeps only the columns that matter and stays compact", () => {
 });
 test("rows expose start or stop directly and keep secondary actions in an accessible click menu", () => {
     const row = sourceBetween('{columnVisible("action") && (', "</ProfileActionMenu>");
-    expect(row).toContain('aria-label={t("Start {profile}", { profile: p.name })}');
+    expect(row).toMatch(/aria-label=\{t\([^\n]*"Start \{profile\}", \{ profile: p\.name \}\)\}/);
     expect(row).toContain('aria-label={t("Stop {profile}", { profile: p.name })}');
     expect(row).toContain("act(p.id, openProfile)");
     expect(row).toContain("act(p.id, closeProfile)");
@@ -679,7 +733,7 @@ test("small windows keep navigation and dialogs keep typed input", () => {
     expect(styles).toMatch(/\.modal-body\s*\{[^}]*overflow-y:\s*auto/);
     expect(styles).toMatch(/\.modal-foot\s*\{[^}]*flex:\s*0 0 auto/);
     // Escape closes the open dialog; a stray backdrop click never discards a form.
-    expect(app).toContain('if (event.key !== "Escape") return;');
+    expect(app).toContain('if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.key !== "Escape") return;');
     expect(app).not.toContain('className="modal-backdrop" onClick={closeCreate}');
     expect(app).not.toContain('className="modal-backdrop" onClick={closeEdit}');
     expect(app).not.toContain('className="modal-backdrop" onClick={closeBulk}');
@@ -689,8 +743,8 @@ test("import offers one source at a time and counts what was pasted", () => {
     expect(app).toContain('const [bulkSource, setBulkSource] = useState<"file" | "paste">("file");');
     expect(app).toContain('aria-label={t("Import source")}');
     // Switching sources clears the other, so a stale value cannot be submitted.
-    expect(app).toContain('onClick={() => { setBulkSource("file"); setBulkText(""); }}');
-    expect(app).toContain('onClick={() => { setBulkSource("paste"); setBulkFiles([]); }}');
+    expect(app).toContain('onClick={() => { if (importInFlight.current) return; setBulkSource("file"); setBulkText(""); }}');
+    expect(app).toContain('onClick={() => { if (importInFlight.current) return; setBulkSource("paste"); setBulkFiles([]); }}');
     // Every AdsPower record opens with its own id= line, so this count is exact.
     expect(app).toContain("function countPastedRecords(text: string): number {");
     expect(app).toContain('return (text.match(/^id=/gm) ?? []).length;');
@@ -743,27 +797,23 @@ test("sidebar keeps local extension management without original-author support l
     expect(app).toContain('<Icon name="puzzle" /><span className="navlabel">{t("Manage extensions")}</span>');
     expect(app).not.toContain('href="https://aliasmode.com/support/"');
     expect(app).not.toContain("PROJECT_LINKS");
-    expect(app).toContain("fetchExtensions().then(setExtensions)");
+    expect(app).toContain("fetchExtensions()");
 });
-test("file update results retain partial counts and per-profile failures before refreshing", () => {
-    const submit = app.slice(app.indexOf("const submitUpdate ="), app.indexOf("// ---- Group create"));
-    expect(submit).toContain('if (typeof r.updated !== "number") return;');
-    expect(submit).toContain("r.errors.map(");
-    expect(submit).toContain("${item.id}: ${item.error}");
-    expect(submit).toContain("setUpdateResult(m);\n      await load();");
-    const modal = app.slice(app.indexOf("{showUpdate && ("));
-    expect(modal).toContain("{updateErr &&");
-    expect(modal).toContain("{updateResult &&");
-    expect(modal).toMatch(/<li>[^\n]*<code>custom_no<\/code>/);
+test("file editing keeps export and template entry points and explains original-ID matching", () => {
+    expect(app).toContain('<ProfileFileUpdateDialog open={showUpdate} task={fileUpdate.task}');
+    expect(app).toContain('onExport={exportSelected} onDownloadTemplate=');
+    expect(fileUpdateUi).toContain('IDs in the file determine which environments change. The current selection does not limit this update, and unmatched IDs are never created.');
+    expect(fileUpdateUi).toContain('locale and custom_no.');
+    expect(fileUpdateUi).toContain('<ProfileFileUpdatePanel snapshot={snapshot}');
 });
 test("the existing Extensions page installs from a Web Store URL and keeps archive upload", () => {
-    expect(app).toContain("Install from Chrome Web Store");
-    expect(app).toContain('aria-label={t("Chrome Web Store URL or extension ID")}');
+    expect(extensionPage).toContain("Chrome Web Store");
+    expect(extensionPage).toContain('aria-label={t("Chrome Web Store URL or extension ID")}');
     expect(app).toContain("installWebStoreExtension(source)");
-    expect(app).toContain("The in-browser Store button does not work in CloakBrowser");
-    expect(app).toContain('t("Edit > Extensions")');
-    expect(app).toContain("Upload ZIP/CRX");
-    expect(app).toContain('accept=".zip,.crx,application/zip,application/x-chrome-extension"');
+    expect(extensionPage).toContain("How extensions are applied");
+    expect(extensionPage).toContain("Choose group defaults here, or edit a single environment's extensions.");
+    expect(extensionPage).toContain("Choose ZIP/CRX files");
+    expect(extensionPage).toContain('accept=".zip,.crx,application/zip,application/x-chrome-extension"');
     expect(app).not.toContain("Chrome Web Store installs are not supported in AliasMode");
     expect(app.match(/setView\("extensions"\)/g)).toHaveLength(1);
 });
@@ -773,5 +823,19 @@ test("Firefox shows its screen, editable at creation and when editing", () => {
     expect(settings).toContain("onChange={(event) => onScreenChange(event.target.value)}");
     expect(app).not.toContain("screenReadOnly");
     expect(app).toContain("screen: form.screen,");
-    expect(app).toContain('t("Leave a field blank to keep it automatic. A timezone you type stays when the proxy changes.")');
+    expect(app).toContain("allowAutomaticScreen={false}");
+    expect(settings).toContain('t("Required · e.g. 1920x1080")');
+    expect(app).toContain('t("Leave timezone or CPU blank for automatic settings. Screen size and fingerprint seed need explicit values; a blank language keeps the saved language. A timezone you type stays when the proxy changes.")');
+});
+
+
+test("actual roster quick views combine favorites with group/status/search and order recent launches", () => {
+  const now = Date.now();
+  const profiles = [
+    { id: "a", name: "Research A", group: "Work", running: true, lastOpenAt: now - 20_000 },
+    { id: "b", name: "Research B", group: "Work", running: false, lastOpenAt: now - 1_000 },
+    { id: "c", name: "Other", group: "Home", running: true, lastOpenAt: 0 },
+  ];
+  expect(rosterPipeline(profiles, { quickScope: "favorites", favorites: ["a", "b"], group: "Work", q: "Research", status: "running" }).filtered.map(profile => profile.id)).toEqual(["a"]);
+  expect(rosterPipeline(profiles, { quickScope: "recent" }).filtered.map(profile => profile.id)).toEqual(["b", "a"]);
 });

@@ -1,3 +1,5 @@
+import { proxyUrlPort } from "../proxy-url-port.ts";
+
 export interface ParsedProxyInput {
   type: "http" | "socks5";
   host: string;
@@ -60,7 +62,7 @@ export function parsePastedProxy(
     return validate({
       type: proxyType(url.protocol, fallbackType),
       host: url.hostname.replace(/^\[|\]$/g, ""),
-      port: url.port,
+      port: proxyUrlPort(raw, url),
       user: decoded(url.username, "username"),
       pass: decoded(url.password, "password"),
     });

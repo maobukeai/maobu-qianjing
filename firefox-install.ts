@@ -1,7 +1,7 @@
-import { accessSync, constants, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { pipeline } from "node:stream/promises";
-import { trackRuntimeDownload } from "./runtime-download.ts";
+import { beforeAbort, cancelBody, trackRuntimeDownload, writeDownloadChunk } from "./runtime-download.ts";
 import { browserEnvText, sha256File, windowsSystemTool } from "./browser-install.ts";
 
 export interface FirefoxRuntimeBuild {
@@ -13,8 +13,16 @@ export interface FirefoxRuntimeBuild {
 }
 
 export const FIREFOX_RUNTIME_VERSION = "156.0.1-beta.36";
+export function firefoxInstallDirectoryPrefix(platform: NodeJS.Platform, arch: string): string {
+  return `firefox-${platform}-${arch}-`;
+}
 const FIREFOX_RUNTIME_RELEASE = `aliasmode-runtime-${FIREFOX_RUNTIME_VERSION}-r14`;
 const FIREFOX_RELEASE_BASE = `https://github.com/aliasmode/aliasmode-firefox/releases/download/${FIREFOX_RUNTIME_RELEASE}`;
+// The releases have archive hashes, but no pinned byte counts.
+const FIREFOX_ARCHIVE_LIMIT = 1024 ** 3;
+const FIREFOX_DOWNLOAD_TIMEOUT_MS = 180_000;
+const FIREFOX_REDIRECT_LIMIT = 8;
+const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
 
 export const FIREFOX_RUNTIME_BUILDS: readonly FirefoxRuntimeBuild[] = [
   {
@@ -66,22 +74,128 @@ export function firefoxReleaseArchiveUrl(build: FirefoxRuntimeBuild): string {
   return `${FIREFOX_RELEASE_BASE}/${name}`;
 }
 
+interface FirefoxDownloadDependencies {
+  fetch?: (input: string, init: RequestInit) => Promise<Response>;
+  archiveLimitBytes?: number;
+  downloadTimeoutMs?: number;
+}
+
+async function fetchFirefoxRelease(
+  url: string,
+  fetcher: NonNullable<FirefoxDownloadDependencies["fetch"]>,
+  signal: AbortSignal,
+): Promise<Response> {
+  let target = new URL(url);
+  for (let redirects = 0; ; redirects++) {
+    if (target.protocol !== "https:" || target.username || target.password) {
+      throw new Error("approved Firefox release download requires HTTPS without URL credentials");
+    }
+    signal.throwIfAborted();
+    const request = fetcher(target.href, { redirect: "manual", signal }).then(response => {
+      if (signal.aborted) {
+        cancelBody(response.body);
+        throw signal.reason;
+      }
+      return response;
+    });
+    const response = await beforeAbort(request, signal);
+    if (!REDIRECT_STATUS.has(response.status)) return response;
+    cancelBody(response.body);
+    if (redirects >= FIREFOX_REDIRECT_LIMIT) throw new Error("approved Firefox release download exceeded its redirect limit");
+    const location = response.headers.get("location");
+    if (!location) throw new Error("approved Firefox release redirect has no location");
+    try { target = new URL(location, target); }
+    catch { throw new Error("approved Firefox release redirect has an invalid location"); }
+  }
+}
+
+/** Only a plain response's Content-Length describes the bytes fetch exposes. */
+function firefoxContentLength(response: Response, maxBytes: number): number | undefined {
+  const encoding = response.headers.get("content-encoding")?.trim().toLowerCase();
+  const header = response.headers.get("content-length");
+  if (header === null || (encoding && encoding !== "identity")) return undefined;
+  const length = Number(header);
+  if (!/^\d+$/.test(header) || !Number.isSafeInteger(length)) {
+    throw new Error("approved Firefox release returned an invalid Content-Length");
+  }
+  if (length > maxBytes) throw new Error("approved Firefox release exceeded its archive byte limit");
+  if (length === 0) throw new Error("approved Firefox release download returned no archive data");
+  return length;
+}
+
 async function downloadFirefoxArchive(
   build: FirefoxRuntimeBuild,
   cwd: string,
-  fetcher: (input: string) => Promise<Response>,
+  dependencies: FirefoxDownloadDependencies,
 ): Promise<{ archive: string; cleanup: () => void }> {
+  const maxBytes = dependencies.archiveLimitBytes ?? FIREFOX_ARCHIVE_LIMIT;
+  const timeoutMs = dependencies.downloadTimeoutMs ?? FIREFOX_DOWNLOAD_TIMEOUT_MS;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw new RangeError("invalid Firefox archive byte limit");
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2_147_483_647) throw new RangeError("invalid Firefox download timeout");
+  const url = firefoxReleaseArchiveUrl(build);
   const directory = mkdtempSync(join(cwd, ".aliasmode-firefox-download-"));
-  const archive = join(directory, firefoxReleaseArchiveUrl(build).split("/").at(-1)!);
+  const archive = join(directory, url.split("/").at(-1)!);
+  const cleanup = () => rmSync(directory, { recursive: true, force: true });
+  const controller = new AbortController();
+  const deadline = performance.now() + timeoutMs;
+  const expire = () => controller.abort(new Error("approved Firefox release download timed out"));
+  const timer = setTimeout(expire, timeoutMs);
+  const checkDeadline = () => {
+    if (performance.now() >= deadline) expire();
+    controller.signal.throwIfAborted();
+  };
+  let response: Response | undefined;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let file: Awaited<ReturnType<typeof open>> | undefined;
+  let complete = false;
   try {
-    const response = await fetcher(firefoxReleaseArchiveUrl(build));
-    if (!response.ok) throw new Error("approved Firefox release download failed");
-    // Bun 1.2.21 can leave Bun.write(Response) pending for streamed redirects.
-    await trackRuntimeDownload("firefox", archive, Number(response.headers.get("content-length")) || 0,
-      () => pipeline(response.body as unknown as import("node:stream/web").ReadableStream, createWriteStream(archive)));
-    return { archive, cleanup: () => rmSync(directory, { recursive: true, force: true }) };
+    try {
+      response = await fetchFirefoxRelease(url, dependencies.fetch ?? fetch, controller.signal);
+      checkDeadline();
+      if (response.status !== 200) throw new Error(`approved Firefox release download failed (HTTP ${response.status})`);
+      const body = response.body;
+      if (!body) throw new Error("approved Firefox release download returned no archive data");
+      const length = firefoxContentLength(response, maxBytes);
+      await trackRuntimeDownload("firefox", archive, length ?? 0, async () => {
+        const streamReader = reader = body.getReader();
+        const output = file = await open(archive, "wx");
+        let written = 0;
+        while (true) {
+          checkDeadline();
+          const { done, value } = await beforeAbort(streamReader.read(), controller.signal);
+          checkDeadline();
+          if (done) break;
+          if (value.byteLength > maxBytes - written) {
+            throw new Error("approved Firefox release exceeded its archive byte limit");
+          }
+          if (length !== undefined && value.byteLength > length - written) {
+            throw new Error("approved Firefox release exceeded Content-Length");
+          }
+          await writeDownloadChunk(output, value, count => {
+            written += count;
+            checkDeadline();
+          });
+        }
+        if (written === 0) throw new Error("approved Firefox release download returned no archive data");
+        if (length !== undefined && written !== length) throw new Error("approved Firefox release ended before Content-Length");
+      });
+      complete = true;
+    } finally {
+      clearTimeout(timer);
+      if (!complete) {
+        controller.abort();
+        if (reader) {
+          try { void reader.cancel().catch(() => {}); } catch {}
+        } else {
+          cancelBody(response?.body ?? null);
+        }
+      }
+      try { reader?.releaseLock(); }
+      finally { await file?.close(); }
+    }
+    return { archive, cleanup };
   } catch (error) {
-    rmSync(directory, { recursive: true, force: true });
+    cleanup();
     throw error;
   }
 }
@@ -97,10 +211,9 @@ async function extractFirefoxArchive(archive: string, destination: string, platf
 
 export async function installFirefox(
   options: { archive?: string; cwd?: string; platform?: NodeJS.Platform; arch?: string; writeEnv?: boolean },
-  dependencies: {
+  dependencies: FirefoxDownloadDependencies & {
     builds?: readonly FirefoxRuntimeBuild[];
     extract?: (archive: string, destination: string, platform: NodeJS.Platform) => Promise<void>;
-    fetch?: (input: string) => Promise<Response>;
   } = {},
 ): Promise<{ path: string; sha256: string }> {
   const platform = options.platform ?? process.platform;
@@ -108,7 +221,7 @@ export async function installFirefox(
   const cwd = resolve(options.cwd ?? process.cwd());
   const downloaded = options.archive
     ? undefined
-    : await downloadFirefoxArchive(build, cwd, dependencies.fetch ?? ((url) => fetch(url, { signal: AbortSignal.timeout(180_000) })));
+    : await downloadFirefoxArchive(build, cwd, dependencies);
   const archive = options.archive ? resolve(options.archive) : downloaded!.archive;
   try {
     if (await sha256File(archive) !== build.archiveSha256) {
@@ -117,7 +230,7 @@ export async function installFirefox(
     const cache = join(cwd, "browser");
     mkdirSync(cache, { recursive: true });
     // A new directory leaves any previously installed, running browser untouched.
-    const root = mkdtempSync(join(cache, `firefox-${platform}-${build.arch}-`));
+    const root = mkdtempSync(join(cache, firefoxInstallDirectoryPrefix(platform, build.arch)));
     try {
       await (dependencies.extract ?? extractFirefoxArchive)(archive, root, platform);
       const path = join(root, build.executablePath);

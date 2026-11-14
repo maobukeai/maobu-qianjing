@@ -6,12 +6,11 @@
  * passes the folder to the engine in the aliasmode:fontsDir config key. All profiles
  * share one copy. The host's own OS needs no pack: the engine uses the real fonts.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { open } from "node:fs/promises";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { renameWhenUnlocked } from "./browser-install.ts";
 import { sha256File, windowsSystemTool } from "./browser-install.ts";
-import { trackRuntimeDownload } from "./runtime-download.ts";
+import { downloadResumable, trackRuntimeDownload, type ResumableDownloadDeps } from "./runtime-download.ts";
 
 export type FontPackOs = "windows" | "macos" | "linux";
 
@@ -113,79 +112,20 @@ export function chromiumFontconfigFile(fontsDir: string, systemConf = "/etc/font
   return file;
 }
 
-export interface FirefoxFontPackDeps {
-  fetch?: (url: string, init: RequestInit) => Promise<Response>;
+export interface FirefoxFontPackDeps extends ResumableDownloadDeps {
   extract?: (archive: string, directory: string) => Promise<void>;
-  sleep?: (ms: number) => Promise<void>;
-  /** Download attempts in one install; a partial download resumes on the next. */
-  attempts?: number;
-  /** A download that receives nothing for this long is retried. */
-  stallMs?: number;
-}
-
-/** Start byte of a 206 response, from its Content-Range header. */
-function rangeStart(response: Response): number | undefined {
-  const match = /^bytes (\d+)-/.exec(response.headers.get("content-range") ?? "");
-  return match ? Number(match[1]) : undefined;
-}
-
-async function receive(url: string, partial: string, have: number, deps: FirefoxFontPackDeps): Promise<void> {
-  const controller = new AbortController();
-  const stallMs = deps.stallMs ?? 60_000;
-  let timer = setTimeout(() => controller.abort(), stallMs);
-  const alive = () => { clearTimeout(timer); timer = setTimeout(() => controller.abort(), stallMs); };
-  try {
-    const response = await (deps.fetch ?? fetch)(url, {
-      headers: have > 0 ? { range: `bytes=${have}-` } : {},
-      signal: controller.signal,
-    });
-    const resume = have > 0 && response.status === 206 && rangeStart(response) === have;
-    if (!resume && response.status !== 200) {
-      // The saved part no longer lines up with what the server sends: start over.
-      if (response.status === 206 || response.status === 416) rmSync(partial, { force: true });
-      throw new Error(`font pack download answered HTTP ${response.status}`);
-    }
-    if (!response.body) throw new Error("font pack download returned no data");
-    const file = await open(partial, resume ? "a" : "w");
-    try {
-      const reader = response.body.getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        alive();
-        await file.write(value);
-      }
-    } finally {
-      await file.close();
-    }
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 /** Download to `partial`, resuming what an earlier attempt or app run saved. */
 async function download(url: string, partial: string, size: number, deps: FirefoxFontPackDeps): Promise<void> {
-  const attempts = deps.attempts ?? 5;
-  let lastError: unknown = new Error("font pack download did not run");
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    let have = existsSync(partial) ? statSync(partial).size : 0;
-    if (have > size) {
-      rmSync(partial, { force: true });
-      have = 0;
+  try {
+    await downloadResumable(url, partial, size, deps);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("download ")) {
+      error.message = `font pack ${error.message}`;
     }
-    if (have === size) return;
-    try {
-      await receive(url, partial, have, deps);
-      const received = statSync(partial).size;
-      if (received === size) return;
-      if (received > size) rmSync(partial, { force: true });
-      throw new Error("font pack download ended early");
-    } catch (error) {
-      lastError = error;
-      if (attempt < attempts) await (deps.sleep ?? Bun.sleep)(Math.min(30_000, 1000 * 2 ** (attempt - 1)));
-    }
+    throw error;
   }
-  throw lastError;
 }
 
 async function extractZip(archive: string, directory: string): Promise<void> {

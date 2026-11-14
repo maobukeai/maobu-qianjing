@@ -20,13 +20,7 @@ test("setup uses each client's supported MCP registration command", async () => 
     { client: "openclaw", status: "configured", restartRequired: true },
     { client: "hermes", status: "configured", restartRequired: true },
   ]);
-  expect(calls).toContainEqual([
-    "claude",
-    ["mcp", "remove", "aliasmode", "--scope", "user"],
-  ]);
-  expect(calls).toContainEqual(["codex", ["mcp", "remove", "aliasmode"]]);
-  expect(calls).toContainEqual(["openclaw", ["mcp", "unset", "aliasmode"]]);
-  expect(calls).toContainEqual(["hermes", ["mcp", "remove", "aliasmode"]]);
+  expect(calls.some(([, args]) => ["remove", "unset"].includes(args[1] ?? ""))).toBe(false);
   expect(calls).toContainEqual([
     "claude",
     ["mcp", "add", "--scope", "user", "aliasmode", "--", command, host],
@@ -42,11 +36,6 @@ test("setup uses each client's supported MCP registration command", async () => 
   expect(calls).toContainEqual([
     "hermes",
     ["mcp", "add", "aliasmode", "--command", command, "--args", host],
-  ]);
-  expect(inputs).toContainEqual([
-    "hermes",
-    ["mcp", "remove", "aliasmode"],
-    "y\n",
   ]);
   expect(inputs).toContainEqual([
     "hermes",
@@ -103,4 +92,30 @@ test("setup is repeatable and reports clients that are not installed", async () 
     reason: "command_not_found",
   });
   expect(calls.some((call) => call.startsWith("codex mcp add"))).toBe(false);
+});
+
+test("failed registration never deletes the existing client configuration", async () => {
+  for (const client of ["claude", "codex", "openclaw", "hermes"] as const) {
+    const existing = { command: "C:\\Existing\\aliasmode-mcp.exe", args: ["serve"] };
+    let saved: typeof existing | null = structuredClone(existing);
+    const run: CommandRunner = async (_command, args) => {
+      if (["remove", "unset"].includes(args[1] ?? "")) saved = null;
+      return { found: true, code: args[1] === "add" ? 1 : 0 };
+    };
+    const result = await configureClients({ helper: "C:\\New\\aliasmode-mcp.exe", clients: [client], run });
+    expect(saved).toEqual(existing);
+    expect(result.clients[0]?.status).toBe("failed");
+    expect(result.clients[0]?.restartRequired).toBe(false);
+    expect(result.generic.mcpServers.aliasmode.command).toBe("C:\\New\\aliasmode-mcp.exe");
+  }
+});
+
+test("a repeated client selection does not register the same client twice", async () => {
+  const calls: string[][] = [];
+  const result = await configureClients({
+    helper: "C:\\Maobu\\aliasmode-mcp.exe", clients: ["codex", "codex"],
+    run: async (_command, args) => { calls.push(args); return { found: true, code: 0 }; },
+  });
+  expect(result.clients.length).toBe(1);
+  expect(calls.filter(args => args[1] === "add").length).toBe(1);
 });

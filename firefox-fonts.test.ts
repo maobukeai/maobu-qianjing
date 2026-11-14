@@ -236,6 +236,28 @@ test("a download that stalls is retried", async () => {
   expect(firefoxFontPackInstalled(root, pack)).toBe(true);
 });
 
+test("an oversized endless font response is cancelled before extraction", async () => {
+  const root = tempRoot();
+  const pack = syntheticPack(PACK_BYTES);
+  let cancellations = 0;
+  let signal: AbortSignal | undefined;
+  const response = new Response(new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(new Uint8Array(PACK_BYTES.length + 1)); },
+    cancel() { cancellations++; },
+  }));
+  const fixture = deps(async (_url, init) => { signal = init.signal ?? undefined; return response; }, { attempts: 1 });
+
+  await expect(ensureFirefoxFontPack(root, pack, fixture.deps)).rejects.toThrow("font pack download exceeds its pinned size");
+
+  expect(cancellations).toBe(1);
+  expect(signal!.aborted).toBe(true);
+  expect(response.body!.locked).toBe(false);
+  expect(fixture.extracted).toEqual([]);
+  expect(firefoxFontPackInstalled(root, pack)).toBe(false);
+  expect(readdirSync(join(root, "firefox-fonts"))).toEqual([]);
+  expect(runtimeDownloads()).toEqual([]);
+});
+
 test("a pack that does not match its pinned SHA-256 is deleted and never unpacked", async () => {
   const root = tempRoot();
   const pack = syntheticPack(PACK_BYTES);

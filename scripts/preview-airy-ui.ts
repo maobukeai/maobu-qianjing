@@ -7,6 +7,11 @@
  * bun --no-env-file scripts/preview-airy-ui.ts
  * bun --no-env-file scripts/preview-airy-ui.ts --rows 65
  * bun --no-env-file scripts/preview-airy-ui.ts --frameless
+ * bun --no-env-file scripts/preview-airy-ui.ts --frameless --fingerprint-evidence
+ * bun --no-env-file scripts/preview-airy-ui.ts --signed-update
+ * bun --no-env-file scripts/preview-airy-ui.ts --frameless --runtime-download-progress
+ * bun --no-env-file scripts/preview-airy-ui.ts --mcp-connection
+ * bun --no-env-file scripts/preview-airy-ui.ts --sync-snapshots
  * bun --no-env-file scripts/preview-airy-ui.ts --smoke
  */
 import assert from "node:assert/strict";
@@ -16,7 +21,10 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import { AppConfigStore } from "../app-config.ts";
+import { AppSettingsStore } from "../app-settings.ts";
+import { getIntegrationInfo } from "../agent/integration-info.ts";
 import { buildNewProfile } from "../create.ts";
+import { createSyncSnapshot, writeSyncSnapshot } from "../encrypted-sync.ts";
 import type { Launcher } from "../launcher.ts";
 import { ensureStateDirectories, statePaths } from "../paths.ts";
 import { ProfileStore } from "../store.ts";
@@ -25,6 +33,7 @@ import type { Profile, ProxySpec } from "../types.ts";
 import { handleUiRequest, type UiRuntimeOptions } from "../ui.ts";
 import { serveDashboard } from "../web.ts";
 import { WorkspaceManagement } from "../workspace-management.ts";
+import { LocalAssistantService } from "../local-assistant.ts";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // This fixture-only bridge follows the installed Tauri SDK's core/window/event
@@ -36,7 +45,17 @@ const FRAMELESS_QA_SCRIPT = String.raw`<script data-qa-frameless-bridge>
   const callbacks = new Map(), listeners = new Map();
   let nextCallback = 1, nextEvent = 1, actionCount = 0;
   let maximized = false, focused = true;
+  let closeSession = null, closeIntent = null, nextCloseRequest = 1;
   const scriptCapability = __UI_QA_SCRIPT_CAPABILITY__;
+  const signedFixture = __UI_QA_SIGNED_UPDATE__;
+  let updateChecks = 0;
+  function signedStatus() {
+    if (!signedFixture) return { configured: false, status: "disabled", currentVersion: "", endpoint: null, update: null, message: "Signed updates are disabled in the isolated UI fixture." };
+    const currentVersion = "0.1.0-local.1", version = "0.2.0-ui-qa";
+    return { configured: true, status: updateChecks ? "available" : "idle", currentVersion, endpoint: "https://updates.example.invalid/latest.json",
+      message: updateChecks ? "【模拟更新】发现可用版本。" : "【模拟更新】可信通道已就绪。",
+      update: updateChecks ? { version, currentVersion, notes: "【模拟更新】仅用于验收启动提醒和更新设置；未联网、下载或安装。", publishedAt: null } : null };
+  }
   window.__MAOBU_FRAMELESS__ = true;
   window.isTauri = true;
   root.setAttribute("data-qa-window-controls", "simulated");
@@ -78,7 +97,33 @@ const FRAMELESS_QA_SCRIPT = String.raw`<script data-qa-frameless-bridge>
     unregisterCallback(listener.handler);
   }
   async function invoke(command, args = {}) {
+    if (command === "open_external_resource") { root.setAttribute("data-qa-external-resource", String(args.url)); return; }
+    if (command === "agent_runtime_ready") return;
+    if (command === "signed_update_status") return signedStatus();
+    if (command === "signed_update_check" && signedFixture) {
+      root.setAttribute("data-qa-signed-check-count", String(++updateChecks));
+      root.setAttribute("data-qa-signed-check-mode", args.startup === true ? "startup" : "manual");
+      return signedStatus();
+    }
     if (command === "script_capability") return scriptCapability;
+    if (command === "desktop_close_register") {
+      closeSession = "f".repeat(64);
+      return { sessionId: closeSession };
+    }
+    if (command === "desktop_close_unregister") {
+      if (args.sessionId === closeSession) { closeSession = null; closeIntent = null; }
+      return;
+    }
+    if (command === "desktop_close_resolve") {
+      if (!closeIntent || args.sessionId !== closeIntent.sessionId || args.requestId !== closeIntent.requestId || args.deliveryId !== closeIntent.deliveryId) return "stale";
+      if (args.decision === "hold") return "holding";
+      if (args.decision !== "proceed" && args.decision !== "cancel") return "stale";
+      const resolved = { sessionId: closeIntent.sessionId, requestId: closeIntent.requestId, outcome: "cancelled" };
+      closeIntent = null;
+      root.setAttribute("data-qa-window-close-decision", args.decision);
+      if (args.decision === "proceed") queueMicrotask(() => emit("maobu-desktop-close-resolved", resolved));
+      return args.decision === "proceed" ? "continuing" : "cancelled";
+    }
     if (command === "plugin:event|listen") {
       if (typeof args.event !== "string" || !/^[A-Za-z0-9_:/-]+$/.test(args.event) || !callbacks.has(args.handler)) reject("invalid event listener", command);
       const target = args.target || { kind: "Any" };
@@ -100,7 +145,12 @@ const FRAMELESS_QA_SCRIPT = String.raw`<script data-qa-frameless-bridge>
     } else if (operation === "minimize") {
       focused = false; action(operation); emit("tauri://blur", null);
     } else if (operation === "close") {
-      action(operation); emit("tauri://close-requested", null);
+      action(operation);
+      if (closeSession) {
+        closeIntent = closeIntent ? { ...closeIntent, deliveryId: closeIntent.deliveryId + 1 }
+          : { sessionId: closeSession, requestId: (nextCloseRequest++).toString(16).padStart(64, "0"), deliveryId: 1 };
+        emit("maobu-desktop-close-intent", closeIntent);
+      }
     } else action(operation);
   }
   window.__TAURI_INTERNALS__ = {
@@ -115,10 +165,10 @@ const FRAMELESS_QA_SCRIPT = String.raw`<script data-qa-frameless-bridge>
 })();
 </script>`;
 
-function framelessQaHtml(html: string, scriptCapability: string): string {
+function framelessQaHtml(html: string, scriptCapability: string, signedUpdate = false): string {
   if (!/<head(?:\s[^>]*)?>/i.test(html)) throw new Error("Production HTML has no head for the isolated frameless QA bridge");
   if (!/^[a-f0-9]{64}$/.test(scriptCapability)) throw new Error("Invalid isolated script capability");
-  const bridge = FRAMELESS_QA_SCRIPT.replace("__UI_QA_SCRIPT_CAPABILITY__", JSON.stringify(scriptCapability));
+  const bridge = FRAMELESS_QA_SCRIPT.replace("__UI_QA_SCRIPT_CAPABILITY__", JSON.stringify(scriptCapability)).replace("__UI_QA_SIGNED_UPDATE__", JSON.stringify(signedUpdate));
   return html.replace(/<head(?:\s[^>]*)?>/i, (head) => head + bridge);
 }
 
@@ -132,12 +182,12 @@ function scriptLibraryRequest(request: Request): boolean {
 const executionDisabled = () => Response.json({ ok: false, error: "Script execution and runtime changes are disabled in the isolated UI fixture" }, { status: 503, headers: { "Cache-Control": "no-store" } });
 
 /** Check the actual installed SDK against an in-memory DOM, without opening UI. */
-async function smokeFramelessBridge(html: string, scriptCapability: string) {
+async function smokeFramelessBridge(html: string, scriptCapability: string, signedUpdate: boolean) {
   const attributes = new Map<string, string>(), browserEvents = new Map<string, () => void>();
   const qaWindow: any = { innerWidth: 1280, innerHeight: 800, addEventListener: (name: string, handler: () => void) => browserEvents.set(name, handler) };
   const script = html.match(/<script data-qa-frameless-bridge>([\s\S]*?)<\/script>/)?.[1];
   assert(script, "Frameless QA bridge must precede the application bundle");
-  runInNewContext(script, { window: qaWindow, document: { documentElement: { setAttribute: (name: string, value: string) => attributes.set(name, value) } } });
+  runInNewContext(script, { window: qaWindow, queueMicrotask, document: { documentElement: { setAttribute: (name: string, value: string) => attributes.set(name, value) } } });
   assert.equal(qaWindow.__MAOBU_FRAMELESS__, true);
   assert.equal(attributes.get("data-qa-window-controls"), "simulated");
   const original = Object.getOwnPropertyDescriptor(globalThis, "window");
@@ -163,20 +213,38 @@ async function smokeFramelessBridge(html: string, scriptCapability: string) {
     assert.deepEqual(focus, [false, true]);
     await current.startDragging();
     assert.equal(attributes.get("data-qa-window-action"), "start_dragging");
+    const bridge = qaWindow.__TAURI_INTERNALS__;
+    let intent: { sessionId: string; requestId: string; deliveryId: number } | null = null;
+    const unintent = await current.listen<typeof intent>("maobu-desktop-close-intent", ({ payload }) => { intent = payload; });
+    const { sessionId } = await bridge.invoke("desktop_close_register");
     await current.close();
     assert.equal(attributes.get("data-qa-window-action"), "close");
-    await unresize(); await unfocus();
+    assert(intent);
+    const closeRequest: { sessionId: string; requestId: string; deliveryId: number } = intent;
+    assert.equal(closeRequest.sessionId, sessionId);
+    assert.equal(await bridge.invoke("desktop_close_resolve", { ...closeRequest, decision: "hold" }), "holding");
+    assert.equal(await bridge.invoke("desktop_close_resolve", { ...closeRequest, decision: "cancel" }), "cancelled");
+    assert.equal(attributes.get("data-qa-window-close-decision"), "cancel");
+    assert.equal(await bridge.invoke("desktop_close_resolve", { ...closeRequest, decision: "proceed" }), "stale");
+    await bridge.invoke("desktop_close_unregister", { sessionId });
+    await unresize(); await unfocus(); await unintent();
     browserEvents.get("resize")!();
     browserEvents.get("blur")!();
     assert.deepEqual(sizes, [1280]);
     assert.deepEqual(focus, [false, true]);
-    const bridge = qaWindow.__TAURI_INTERNALS__;
     let called = 0;
     const callback = bridge.transformCallback(() => called++, true);
     bridge.runCallback(callback, null); bridge.runCallback(callback, null);
     assert.equal(called, 1);
     assert.equal(bridge.callbacks.size, 0, "SDK unlisten must release registered callbacks");
     assert.equal(await bridge.invoke("script_capability"), scriptCapability);
+    assert.equal((await bridge.invoke("signed_update_status")).configured, signedUpdate);
+    if (signedUpdate) {
+      assert.equal((await bridge.invoke("signed_update_check", { startup: true })).update.version, "0.2.0-ui-qa");
+      assert.equal(attributes.get("data-qa-signed-check-count"), "1");
+      assert.equal(attributes.get("data-qa-signed-check-mode"), "startup");
+    }
+    await assert.rejects(bridge.invoke("signed_update_install"), /unsupported command/);
     await assert.rejects(bridge.invoke("open_workspace_location"), /unsupported command/);
     await assert.rejects(bridge.invoke("plugin:window|close", { label: "other-window" }), /unknown window label/);
   } finally {
@@ -271,13 +339,24 @@ const examples = [
   { id: "08", name: "新环境 · B", group: "临时测试", host: "203.0.113.89", port: "1080", timezone: "Europe/Berlin", platform: "", country: "DE" },
 ] as const;
 
-export async function createUiQaFixture(rows = 8, preview: { frameless?: boolean } = {}) {
+const syntheticRuntimeDownloads = [
+  { runtime: "aliasmode", receivedBytes: 78_000_000, totalBytes: 200_000_000 },
+  { runtime: "firefox", receivedBytes: 14_000_000, totalBytes: 0 },
+] as const;
+const QA_SNAPSHOT_PASSWORD = "synthetic-snapshot-passphrase";
+
+export async function createUiQaFixture(rows = 8, preview: { frameless?: boolean; fingerprintEvidence?: boolean; signedUpdate?: boolean; runtimeDownloadProgress?: boolean; mcpConnection?: boolean; syncSnapshots?: boolean } = {}) {
   if (!Number.isInteger(rows) || rows < 8 || rows > 2000) throw new Error("--rows must be an integer between 8 and 2000");
   const base = join(projectRoot, "reports", "ui-qa");
   mkdirSync(base, { recursive: true });
   const root = mkdtempSync(join(base, "airy-"));
   const paths = statePaths(root);
+  const mockIntegration = preview.mcpConnection ? getIntegrationInfo({
+    runtimeAvailable: true, helperPath: join(root, "mock-helper", "aliasmode-mcp"), runtimeRoot: join(root, "mock-runtime"),
+  }, { isFile: () => true }) : null;
   ensureStateDirectories(paths);
+  const frameless = !!(preview.frameless || preview.signedUpdate);
+  if (preview.signedUpdate) new AppSettingsStore(join(root, "app-settings.json")).patch({ signedUpdates: { checkOnStartup: true } });
   const store = new ProfileStore(paths.database);
   const appConfig = new AppConfigStore(paths.config);
   appConfig.setMode("local");
@@ -299,6 +378,28 @@ export async function createUiQaFixture(rows = 8, preview: { frameless?: boolean
     return profile;
   }
   const initial = Array.from({ length: rows }, (_, index) => seed(examples[index % examples.length]!, index));
+  if (preview.syncSnapshots) {
+    const folder = join(root, "isolated-snapshots");
+    for (const profile of initial.slice(0, 2)) await writeSyncSnapshot(folder, createSyncSnapshot([profile]), QA_SNAPSHOT_PASSWORD);
+    const newProfile = { ...initial[0]!, id: "uiqa-sync-receipt", name: "【模拟】快照恢复验收", proxy: null };
+    await writeSyncSnapshot(folder, createSyncSnapshot([initial[0]!, newProfile]), QA_SNAPSHOT_PASSWORD);
+    new AppSettingsStore(join(root, "app-settings.json")).patch({ sync: { enabled: true, folder } });
+  }
+  if (preview.fingerprintEvidence) {
+    // Explicitly synthetic observations for UI layout and translation QA. They
+    // receive no local capture provenance and never count as a verified identity.
+    const sample = initial.at(-1)!;
+    sample.name = "【模拟采样】指纹差异展示";
+    sample.platformOs = "windows"; sample.locale = "zh-CN"; sample.timezone = "Asia/Shanghai";
+    sample.hardware = { ...sample.hardware, cores: 8 };
+    sample.fpObserved = {
+      ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+      platform: "Win32", uaChPlatform: "Windows", language: "en-US", languages: "en-US,en", hardwareConcurrency: 2,
+      timezone: "America/New_York", screen: "1280x720", availableScreen: "1280x680", webglVendor: "UI QA fixture", webglRenderer: "Synthetic layout evidence",
+      canvas: "0".repeat(64), audio: "1".repeat(64), capturedAt: new Date().toISOString(), errors: "{}",
+    };
+    store.upsertProfile(sample);
+  }
   for (const group of new Set(examples.map(example => example.group))) store.createGroup(group);
   const scriptCapability = randomBytes(32).toString("hex");
   const library = new ScriptLibrary(root);
@@ -357,6 +458,40 @@ export async function createUiQaFixture(rows = 8, preview: { frameless?: boolean
   const management = new WorkspaceManagement({ home: root, paths, store, launcher });
   const options: UiRuntimeOptions = {
     paths, appConfig, health, workspaceManagement: management,
+    // The test UI never scans real listeners. Only these synthetic endpoints reply.
+    discoverLocalProxies: async ({ host = "127.0.0.1", ports = [] } = {}) => ({
+      host, checkedAt: new Date().toISOString(), results: ports.map(port => host === "::1" && port === 18080
+        ? { host, port, status: "listening", latencyMs: 1, socks5: "available", suggestions: [{ type: "socks5", evidence: "handshake" }] }
+        : { host, port, status: "closed", latencyMs: null, socks5: "unknown", suggestions: [] }),
+    }),
+    runtimeInventory: { runtimeRoot: join(root, "runtimes"), platform: process.platform, arch: process.arch,
+      chromiumDefault: process.platform === "darwin" && process.arch !== "arm64" ? "cloakbrowser" : "aliasmode-chromium", cloakSource: "managed", firefoxSource: "managed" },
+    assistant: new LocalAssistantService({ transport: async (_endpoint, request) => {
+      if (request.path === "/api/tags") return { models: [
+        { name: "ui-qa-local:latest", size: 0, details: { parameter_size: "QA", quantization_level: "SIMULATED" } },
+        { name: "ui-qa-remote:cloud", remote_host: "https://never-contacted.invalid", remote_model: "fixture" },
+      ] };
+      const input = request.body as { model?: string; messages?: Array<{ role: string; content: string }> };
+      const prompt = input.messages?.filter(message => message.role === "user").at(-1)?.content ?? "";
+      await new Promise<void>((resolve, reject) => {
+        const cancelled = () => { clearTimeout(timer); reject(new Error("UI fixture request cancelled")); };
+        const timer = setTimeout(() => { request.signal?.removeEventListener("abort", cancelled); resolve(); }, /cancel|取消/i.test(prompt) ? 6000 : 350);
+        if (request.signal?.aborted) cancelled(); else request.signal?.addEventListener("abort", cancelled, { once: true });
+      });
+      const content = prompt.includes("长回复验收")
+        ? ["【长回复验收：起点】", ...Array.from({ length: 36 }, (_, index) => `第 ${index + 1} 项：在独立工作区核对环境名称、分组、代理和设置，记录观察结果。`), "【长回复验收：终点】"].join("\n\n")
+        : "【UI 验收模拟回复】\n\n这条回复由隔离测试夹具提供，没有连接真实模型。\n\n可将浏览器工作拆为：\n1. 明确目标环境和自有测试网站。\n2. 检查代理、时区和语言。\n3. 使用 MCP 客户端执行检查，并保存结果。\n\n真实应用会将你提交的消息发送给所选本机 Ollama 模型服务。";
+      return { model: input.model, done: true, message: { role: "assistant", content }, prompt_eval_count: 12, eval_count: 48 };
+    }, remote: {
+      async listModels(connection) {
+        if (connection.endpoint !== "https://ui-qa-model.example.com/v1" || connection.provider !== "openai-compatible" || connection.apiKey !== "synthetic-model-key") throw new Error("Unknown synthetic API connection");
+        return ["ui-qa-api-chat", "ui-qa-api-small"];
+      },
+      async chat(connection, input) {
+        if (connection.endpoint !== "https://ui-qa-model.example.com/v1" || connection.provider !== "openai-compatible" || connection.apiKey !== "synthetic-model-key" || input.model !== "ui-qa-api-chat") throw new Error("Unknown synthetic API connection");
+        return { content: "【API 模型验收回复】已通过设置中保存的 API 服务收到本条消息。", promptTokens: 12, completionTokens: 24 };
+      },
+    } }),
     proxyCheck: async (proxy: ProxySpec) => ({
       status: "working", attempts: 3, successes: 3, ip: proxy.host,
       country: examples.find((row) => row.host === proxy.host)?.country ?? "US", rotating: false,
@@ -410,6 +545,20 @@ export async function createUiQaFixture(rows = 8, preview: { frameless?: boolean
         const origin = request.headers.get("origin");
         if (origin && origin !== url.origin) return Response.json({ error: "Cross-origin fixture access is forbidden" }, { status: 403 });
         if (url.pathname === "/__qa/capture") return captureScreenshot(request, root);
+        if (preview.runtimeDownloadProgress && url.pathname === "/ui/api/runtime-downloads" && request.method === "GET") {
+          return Response.json({ downloads: syntheticRuntimeDownloads }, { headers: { "Cache-Control": "no-store", "X-Maobu-UI-QA": "simulated-runtime-downloads" } });
+        }
+        if (mockIntegration && (url.pathname === "/ui/api/settings/integrations" || url.pathname === "/ui/api/settings/integrations/probe") && request.headers.get("X-Maobu-Settings") !== "1") {
+          return Response.json({ ok: false, error: "Local settings request header is required" }, { status: 403 });
+        }
+        if (mockIntegration && request.method === "GET" && url.pathname === "/ui/api/settings/integrations") {
+          return Response.json({ ok: true, integration: mockIntegration }, { headers: { "Cache-Control": "no-store", "X-Maobu-UI-QA": "simulated-mcp-setup" } });
+        }
+        if (mockIntegration && request.method === "POST" && url.pathname === "/ui/api/settings/integrations/probe") {
+          const tools = mockIntegration.tools.map(tool => tool.name);
+          return Response.json({ ok: true, probe: { checkedAt: Date.now(), status: "connected", connectionVerified: true, message: "Isolated MCP handshake fixture; no process was started", toolCount: tools.length, tools, server: { name: "aliasmode", version: mockIntegration.version } } }, { headers: { "Cache-Control": "no-store", "X-Maobu-UI-QA": "simulated-mcp-probe" } });
+        }
+        if (/^\/ui\/api\/settings\/fingerprints\/[^/]+\/measure$/.test(url.pathname)) return Response.json({ ok: false, error: "Live fingerprint capture is disabled in the isolated UI fixture" }, { status: 503, headers: { "Cache-Control": "no-store" } });
         if (request.method !== "GET" && /^\/ui\/api\/[^/]*runtime[^/]*(?:\/|$)/.test(url.pathname)) {
           return Response.json({ ok: false, error: "Runtime installation is disabled in the isolated UI fixture" }, { status: 503, headers: { "Cache-Control": "no-store" } });
         }
@@ -420,6 +569,14 @@ export async function createUiQaFixture(rows = 8, preview: { frameless?: boolean
           const headers = new Headers(request.headers);
           for (const name of ["host", "connection", "content-length", "transfer-encoding"]) headers.delete(name);
           if (origin) headers.set("origin", sourceOrigin);
+          // Browser GETs usually carry Referer without Origin. Validate the
+          // outside fixture context before mapping its port to the real server.
+          const referer = request.headers.get("referer");
+          if (referer !== null) {
+            try { if (new URL(referer).origin !== url.origin) return Response.json({ error: "Cross-origin fixture access is forbidden" }, { status: 403 }); }
+            catch { return Response.json({ error: "Invalid fixture request context" }, { status: 403 }); }
+            headers.set("referer", `${sourceOrigin}/`);
+          }
           const response = await fetch(`${sourceOrigin}${url.pathname}${url.search}`, { method: request.method, headers, body: request.method === "GET" ? undefined : await request.arrayBuffer(), signal: request.signal, redirect: "error" });
           response.headers.set("X-Maobu-UI-QA", "isolated-script-library; execution-disabled");
           return response;
@@ -438,17 +595,17 @@ export async function createUiQaFixture(rows = 8, preview: { frameless?: boolean
         // Only local production assets are forwarded; external URLs and the
         // compatibility API cannot cause an unexpected real browser operation.
         const response = await fetch(`${sourceOrigin}${url.pathname}${url.search}`, { signal: request.signal, redirect: "error" });
-        if (preview.frameless && url.pathname === "/" && response.ok) {
+        if (frameless && url.pathname === "/" && response.ok) {
           const headers = new Headers(response.headers);
           for (const name of ["Content-Length", "Content-Encoding", "ETag", "Last-Modified"]) headers.delete(name);
           headers.set("Cache-Control", "no-store");
           headers.set("X-Maobu-Frameless-QA", "simulated-window-controls");
-          return new Response(framelessQaHtml(await response.text(), scriptCapability), { status: response.status, headers });
+          return new Response(framelessQaHtml(await response.text(), scriptCapability, preview.signedUpdate), { status: response.status, headers });
         }
         return response;
       },
     });
-    return { root, url: `http://127.0.0.1:${server.port}`, productionOrigin: sourceOrigin, store, management, close, rows, scriptCapability, fixtureScriptId: fixtureScript.id, frameless: !!preview.frameless, windowControls: preview.frameless ? "simulated" as const : "unavailable" as const };
+    return { root, url: `http://127.0.0.1:${server.port}`, productionOrigin: sourceOrigin, store, management, close, rows, scriptCapability, fixtureScriptId: fixtureScript.id, frameless, signedUpdate: !!preview.signedUpdate, runtimeDownloadProgress: !!preview.runtimeDownloadProgress, mcpConnection: !!mockIntegration, syncSnapshots: !!preview.syncSnapshots, windowControls: frameless ? "simulated" as const : "unavailable" as const };
   } catch (error) {
     await close();
     throw error;
@@ -460,6 +617,7 @@ async function smoke(fixture: Awaited<ReturnType<typeof createUiQaFixture>>) {
   const request = (path: string, options?: RequestInit) => {
     const headers = new Headers(options?.headers);
     if (capability) headers.set("X-Maobu-Workspace-Capability", capability);
+    if (/^\/ui\/api\/settings(?:\/|$)/.test(path)) headers.set("X-Maobu-Settings", "1");
     return fetch(fixture.url + path, { ...options, headers, signal: AbortSignal.timeout(10_000) });
   };
   const read = async (path: string) => {
@@ -518,7 +676,7 @@ async function smoke(fixture: Awaited<ReturnType<typeof createUiQaFixture>>) {
   if (fixture.frameless) {
     assert.equal(html.headers.get("X-Maobu-Frameless-QA"), "simulated-window-controls");
     assert(sourceHtml.indexOf("<script data-qa-frameless-bridge>") < sourceHtml.indexOf("<title>"));
-    await smokeFramelessBridge(sourceHtml, fixture.scriptCapability);
+    await smokeFramelessBridge(sourceHtml, fixture.scriptCapability, fixture.signedUpdate);
   }
   await post("/ui/api/profiles/uiqa0003/open");
   await post("/ui/api/profiles/uiqa0001/close");
@@ -536,7 +694,27 @@ async function smoke(fixture: Awaited<ReturnType<typeof createUiQaFixture>>) {
   assert.equal((await read("/ui/api/extensions")).extensions.length, 2);
   const groupDefaults = await read("/ui/api/groups/extensions");
   assert.deepEqual(groupDefaults.groups.map((group: { name: string }) => group.name).sort(), [...new Set(examples.map(example => example.group))].sort(), "All three fixture groups must be editable in extension defaults");
-  assert.deepEqual((await read("/ui/api/runtime-downloads")).downloads, []);
+  assert.deepEqual((await read("/ui/api/runtime-downloads")).downloads, fixture.runtimeDownloadProgress ? syntheticRuntimeDownloads : []);
+  if (fixture.mcpConnection) {
+    const setup = await read("/ui/api/settings/integrations");
+    assert.equal(setup.integration.status, "ready");
+    const probe = await request("/ui/api/settings/integrations/probe", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    assert.equal(probe.headers.get("X-Maobu-UI-QA"), "simulated-mcp-probe");
+    assert.equal((await probe.json()).probe.toolCount, setup.integration.tools.length);
+  }
+  if (fixture.syncSnapshots) {
+    const { files } = await read("/ui/api/settings/sync/files");
+    assert.equal(files.length, 3);
+    const reviewCounts = [];
+    for (const file of files) {
+      const review = await request("/ui/api/settings/sync/preview", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ fileName: file.fileName, password: QA_SNAPSHOT_PASSWORD }) });
+      assert.equal(review.status, 200);
+      const { preview } = await review.json();
+      assert.equal(preview.conflictCount, 1);
+      reviewCounts.push(preview.newCount);
+    }
+    assert.deepEqual(reviewCounts.sort((a, b) => a - b), [0, 0, 1]);
+  }
   const script = await request("/ui/api/scripts/run", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
   assert.equal(script.status, 503, "The browser fixture must not execute scripts");
   assert.match(fixture.scriptCapability, /^[a-f0-9]{64}$/);
@@ -552,6 +730,10 @@ async function smoke(fixture: Awaited<ReturnType<typeof createUiQaFixture>>) {
   assert.equal((await request("/ui/api/scripts")).status, 401, "Script source requires its own fixture capability");
   assert.equal((await scriptRequest("/ui/api/scripts", {}, "invalid-fixture-token")).status, 401);
   assert.equal((await request("/ui/api/scripts", { headers: { origin: "https://outside.invalid", authorization: `Bearer ${fixture.scriptCapability}` } })).status, 403);
+  assert.equal((await request("/ui/api/scripts", { headers: { referer: `${fixture.url}/`, authorization: `Bearer ${fixture.scriptCapability}`, "sec-fetch-site": "same-origin" } })).status, 200, "Browser GET context maps only after same-origin validation");
+  for (const referer of ["https://outside.invalid/", "not a valid URL"]) {
+    assert.equal((await request("/ui/api/scripts", { headers: { referer, authorization: `Bearer ${fixture.scriptCapability}` } })).status, 403, "Foreign or malformed Referer is never rewritten into a trusted origin");
+  }
   const scriptList = await scriptRequest("/ui/api/scripts");
   assert.equal(scriptList.status, 200);
   const library = await scriptList.json();
@@ -659,11 +841,11 @@ async function smoke(fixture: Awaited<ReturnType<typeof createUiQaFixture>>) {
 
 if (import.meta.main) {
   const rowIndex = process.argv.indexOf("--rows");
-  const fixture = await createUiQaFixture(rowIndex < 0 ? 8 : Number(process.argv[rowIndex + 1]), { frameless: process.argv.includes("--frameless") });
+  const fixture = await createUiQaFixture(rowIndex < 0 ? 8 : Number(process.argv[rowIndex + 1]), { frameless: process.argv.includes("--frameless"), fingerprintEvidence: process.argv.includes("--fingerprint-evidence"), signedUpdate: process.argv.includes("--signed-update"), runtimeDownloadProgress: process.argv.includes("--runtime-download-progress"), mcpConnection: process.argv.includes("--mcp-connection"), syncSnapshots: process.argv.includes("--sync-snapshots") });
   const stop = () => { void fixture.close().then(() => process.exit(0)); };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
-  console.log(JSON.stringify({ fixture: "isolated-ui-qa", url: fixture.url, root: fixture.root, rows: fixture.rows, running: 2, browserLifecycle: "simulated", proxyChecks: "simulated", scripts: "isolated library CRUD enabled; execution and runtime installation disabled", frameless: fixture.frameless, windowControls: fixture.windowControls }));
+  console.log(JSON.stringify({ fixture: "isolated-ui-qa", url: fixture.url, root: fixture.root, rows: fixture.rows, running: 2, browserLifecycle: "simulated", proxyChecks: "simulated", proxyDiscovery: "simulated; [::1]:18080 is the only fixture listener", signedUpdates: fixture.signedUpdate ? "simulated check; install disabled" : "disabled", scripts: "isolated library CRUD enabled; execution and runtime installation disabled", runtimeDownloads: fixture.runtimeDownloadProgress ? "simulated transfer progress; no downloads" : "idle", mcpConnection: fixture.mcpConnection ? "simulated setup and handshake; no helper process" : "setup info only", syncSnapshots: fixture.syncSnapshots ? "three encrypted files with synthetic profiles" : "disabled", frameless: fixture.frameless, windowControls: fixture.windowControls, externalResources: "simulated", fingerprintMeasurements: process.argv.includes("--fingerprint-evidence") ? "synthetic layout observations without local provenance" : "not sampled" }));
   if (process.argv.includes("--smoke")) {
     try {
       await smoke(fixture);

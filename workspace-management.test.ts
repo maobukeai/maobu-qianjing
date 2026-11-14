@@ -8,6 +8,7 @@ import { buildNewProfile } from "./create.ts";
 import { ensureStateDirectories, statePaths } from "./paths.ts";
 import { WorkspaceManagement } from "./workspace-management.ts";
 import type { Launcher } from "./launcher.ts";
+import { ROSTER_DENSITY_KEY } from "./roster-density-state.ts";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => { for (const clean of cleanups.splice(0).reverse()) clean(); });
@@ -42,16 +43,17 @@ function fixture() {
     if (!response) throw new Error("Workspace route fell through");
     return response;
   };
-  return { home, paths, store, profile, manager, nonce, stopped, transitions, request, guard: () => guard(), authorize: async () => { token = (await (await request("/workspace/capability")).json()).token; return token; } };
+  return { home, paths, store, profile, manager, nonce, stopped, transitions, request, guard: () => guard(), authorize: async () => { token = (await (await request("/workspace/capability", "GET", undefined, { Authorization: `Bearer ${nonce}` })).json()).token; return token; } };
 }
 
 test("workspace metadata and backup attachments require a same-origin capability", async () => {
   const f = fixture();
+  expect((await f.request("/workspace/capability")).status).toBe(401);
   expect((await f.request("/workspaces")).status).toBe(401);
   await f.authorize();
   expect((await f.request("/workspaces")).status).toBe(200);
   expect((await f.request("/workspaces", "GET", undefined, { Origin: "https://untrusted.example" })).status).toBe(403);
-  expect((await f.request("/workspace/capability", "GET", undefined, { "Sec-Fetch-Site": "cross-site" })).status).toBe(403);
+  expect((await f.request("/workspace/capability", "GET", undefined, { "Sec-Fetch-Site": "cross-site", Authorization: `Bearer ${f.nonce}` })).status).toBe(403);
   expect((await f.manager.handle(new Request("http://attacker.example:12345/ui/api/workspace/capability", { headers: { Origin: "http://attacker.example:12345" } })))!.status).toBe(403);
   expect((await f.manager.handle(new Request("http://127.0.0.1:12345/ui/api/workspaces", { headers: { "X-Maobu-Workspace-Capability": "z".repeat(64) } })))!.status).toBe(401);
   expect((await f.request("/workspaces", "GET", undefined, { Authorization: `Bearer ${f.nonce}` })).status).toBe(200);
@@ -106,7 +108,8 @@ test("switching refuses running data and can explicitly close sessions before re
 
 test("real backup jobs download verified bytes and restore a new independent workspace", async () => {
   const f = fixture(); await f.authorize();
-  const started = await f.request("/workspace/backups", "POST", {});
+  expect((await f.request("/workspace/backups", "POST", {})).status).toBe(400);
+  const started = await f.request("/workspace/backups", "POST", { allowUnencrypted: true });
   expect(started.status).toBe(202);
   const initial = (await started.json()).job;
   expect(initial.kind).toBe("backup");
@@ -137,7 +140,7 @@ test("real backup jobs download verified bytes and restore a new independent wor
 
 test("a raw streamed upload restores a new workspace and a damaged file never publishes one", async () => {
   const f = fixture(); await f.authorize();
-  const backup = f.manager.backups.startCreate(); await f.manager.backups.wait(backup.id);
+  const backup = f.manager.backups.startCreate(undefined, { allowUnencrypted: true }); await f.manager.backups.wait(backup.id);
   const file = f.manager.backups.getBackupFile(f.manager.backups.listBackups()[0]!.id);
   const uploaded = await (await f.request("/workspace/restore", "POST", Bun.file(file.path), { "Content-Type": "application/octet-stream" })).json();
   expect((await f.manager.backups.wait(uploaded.job.id)).status).toBe("succeeded");
@@ -147,6 +150,33 @@ test("a raw streamed upload restores a new workspace and a damaged file never pu
   expect(f.manager.catalog.list()).toHaveLength(before);
   expect(f.store.count()).toBe(1);
   expect((await f.request("/workspace/overview")).status).toBe(200);
+});
+
+test("password-encrypted exports restore through both authorized routes without echoing the password", async () => {
+  const f = fixture(); await f.authorize();
+  const password = "示例备份口令🔒1234567";
+  const create = await f.request("/workspace/backups", "POST", { password });
+  expect(create.status).toBe(202);
+  const created = await f.manager.backups.wait((await create.json()).job.id);
+  expect(created.status).toBe("succeeded");
+  const backupId = created.backupId!;
+  const history = await (await f.request("/workspace/backups")).text();
+  expect(history).not.toContain(password);
+  expect(JSON.parse(history).backups[0]).toMatchObject({ id: backupId, encrypted: true });
+  const restored = await f.request("/workspace/restore", "POST", { backupId, password });
+  expect(restored.status).toBe(202);
+  expect((await f.manager.backups.wait((await restored.json()).job.id)).status).toBe("succeeded");
+  const downloaded = await f.request(`/workspace/backups/${backupId}/download`);
+  expect(downloaded.status).toBe(200);
+  const blob = await downloaded.blob();
+  const uploaded = await f.request("/workspace/restore", "POST", blob, { "Content-Type": "application/octet-stream", "X-Maobu-Backup-Password": encodeURIComponent(password) });
+  expect(uploaded.status).toBe(202);
+  expect((await f.manager.backups.wait((await uploaded.json()).job.id)).status).toBe("succeeded");
+  expect(f.manager.catalog.list()).toHaveLength(3);
+  expect(f.manager.currentId()).toBe("default");
+  const invalid = await f.request("/workspace/restore", "POST", blob, { "Content-Type": "application/octet-stream", "X-Maobu-Backup-Password": "%invalid" });
+  expect(invalid.status).toBe(400);
+  expect(await invalid.text()).not.toContain("%invalid");
 });
 
 test("display preferences persist atomically and remain isolated per workspace", async () => {
@@ -164,11 +194,66 @@ test("display preferences persist atomically and remain isolated per workspace",
   const next = f.manager.catalog.create({ name: "Separate preferences" });
   const paths = statePaths(f.manager.catalog.pathFor(next.id)); ensureStateDirectories(paths);
   const store = new ProfileStore(paths.database); cleanups.push(() => store.close());
-  const other = new WorkspaceManagement({ home: f.home, paths, store, launcher: f.manager.options.launcher });
-  const cap = (await (await other.handle(new Request("http://127.0.0.1/ui/api/workspace/capability")))!.json()).token;
+  const other = new WorkspaceManagement({ home: f.home, paths, store, launcher: f.manager.options.launcher, agentNonce: f.nonce });
+  const cap = (await (await other.handle(new Request("http://127.0.0.1/ui/api/workspace/capability", { headers: { Authorization: `Bearer ${f.nonce}` } })))!.json()).token;
   const response = await other.handle(new Request("http://127.0.0.1/ui/api/workspace/preferences", { headers: { "X-Maobu-Workspace-Capability": cap } }));
   expect((await response!.json()).preferences).toEqual({});
   expect(JSON.parse(readFileSync(join(f.home, "workspace-settings.json"), "utf8")).values).toEqual(preferences);
+});
+
+test("workspace favorites and saved views persist validated metadata without crossing workspaces", async () => {
+  const f = fixture(); await f.authorize();
+  const favorites = '["profile_one","profile_two"]';
+  const views = JSON.stringify([{ id: "view_" + "c".repeat(32), name: "Running favorites", filters: { scope: "favorites", query: "", group: "all", status: "running", sort: { key: "name", dir: 1 }, hiddenColumns: ["tags"], pageSize: 25 } }]);
+  expect((await f.request("/workspace/preferences", "POST", { key: "aliasmode.roster.favorites", value: favorites })).status).toBe(200);
+  expect((await f.request("/workspace/preferences", "POST", { key: "aliasmode.roster.savedViews", value: views })).status).toBe(200);
+  const restored = (await (await f.request("/workspace/preferences")).json()).preferences;
+  expect(restored["aliasmode.roster.favorites"]).toBe(favorites);
+  expect(JSON.parse(restored["aliasmode.roster.savedViews"])).toEqual(JSON.parse(views));
+  for (const [key, value] of [["aliasmode.roster.favorites", '["same","same"]'], ["aliasmode.roster.savedViews", '[{"id":"broken","name":"Malformed","filters":{}}]']]) {
+    expect((await f.request("/workspace/preferences", "POST", { key, value })).status).toBe(400);
+  }
+  expect((await (await f.request("/workspace/preferences")).json()).preferences).toEqual(restored);
+});
+
+test("density survives a new management instance and invalid values never replace its last saved value", async () => {
+  const f = fixture(); await f.authorize();
+  expect((await (await f.request("/workspace/preferences")).json()).preferences[ROSTER_DENSITY_KEY]).toBeUndefined();
+  expect((await f.request("/workspace/preferences", "POST", { key: ROSTER_DENSITY_KEY, value: "compact" })).status).toBe(200);
+  expect((await f.request("/workspace/preferences", "POST", { key: "aliasmode.roster.pageSize", value: "50" })).status).toBe(200);
+  const before = (await (await f.request("/workspace/preferences")).json()).preferences;
+  expect(before[ROSTER_DENSITY_KEY]).toBe("compact");
+  for (const value of [undefined, null, true, 1, {}, ["compact"], "", "dense", "COMPACT", " compact", "compact ", '"compact"', "compact".repeat(1000)]) {
+    const response = await f.request("/workspace/preferences", "POST", { key: ROSTER_DENSITY_KEY, value });
+    expect(response.status).toBe(400); expect((await response.json()).ok).toBe(false);
+  }
+  expect((await (await f.request("/workspace/preferences")).json()).preferences).toEqual(before);
+  expect(JSON.parse(readFileSync(join(f.paths.root, "workspace-settings.json"), "utf8")).values).toEqual(before);
+  const reopened = new WorkspaceManagement({ home: f.home, paths: f.paths, store: f.store, launcher: f.manager.options.launcher, agentNonce: f.nonce });
+  const cap = (await (await reopened.handle(new Request("http://127.0.0.1/ui/api/workspace/capability", { headers: { Authorization: `Bearer ${f.nonce}` } })))!.json()).token;
+  const reloaded = await reopened.handle(new Request("http://127.0.0.1/ui/api/workspace/preferences", { headers: { "X-Maobu-Workspace-Capability": cap } }));
+  expect((await reloaded!.json()).preferences).toEqual(before);
+  expect((await f.request("/workspace/preferences", "POST", { key: ROSTER_DENSITY_KEY, value: "comfortable" })).status).toBe(200);
+  expect((await (await f.request("/workspace/preferences")).json()).preferences[ROSTER_DENSITY_KEY]).toBe("comfortable");
+  expect(f.store.count()).toBe(1); expect(readFileSync(join(f.paths.profiles, f.profile.id, "saved-session.bin"), "utf8")).toBe("fixture login storage");
+});
+
+test("different workspaces independently keep compact and comfortable density preferences", async () => {
+  const f = fixture(); await f.authorize();
+  expect((await f.request("/workspace/preferences", "POST", { key: ROSTER_DENSITY_KEY, value: "compact" })).status).toBe(200);
+  const next = f.manager.catalog.create({ name: "Independent density" });
+  const paths = statePaths(f.manager.catalog.pathFor(next.id)); ensureStateDirectories(paths); f.manager.catalog.setActive(next.id);
+  const store = new ProfileStore(paths.database); cleanups.push(() => store.close());
+  const other = new WorkspaceManagement({ home: f.home, paths, store, launcher: f.manager.options.launcher, agentNonce: f.nonce });
+  const cap = (await (await other.handle(new Request("http://127.0.0.1/ui/api/workspace/capability", { headers: { Authorization: `Bearer ${f.nonce}` } })))!.json()).token;
+  const request = async (method = "GET", body?: unknown) => other.handle(new Request("http://127.0.0.1/ui/api/workspace/preferences", { method, headers: { "X-Maobu-Workspace-Capability": cap, ...(body === undefined ? {} : { "Content-Type": "application/json" }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }));
+  expect((await (await request())!.json()).preferences[ROSTER_DENSITY_KEY]).toBeUndefined();
+  expect((await request("POST", { key: ROSTER_DENSITY_KEY, value: "comfortable" }))!.status).toBe(200);
+  expect((await (await request())!.json()).preferences[ROSTER_DENSITY_KEY]).toBe("comfortable");
+  expect((await (await f.request("/workspace/preferences")).json()).preferences[ROSTER_DENSITY_KEY]).toBe("compact");
+  expect(JSON.parse(readFileSync(join(paths.root, "workspace-settings.json"), "utf8")).values[ROSTER_DENSITY_KEY]).toBe("comfortable");
+  expect(JSON.parse(readFileSync(join(f.paths.root, "workspace-settings.json"), "utf8")).values[ROSTER_DENSITY_KEY]).toBe("compact");
+  expect(f.store.count()).toBe(1); expect(store.count()).toBe(0);
 });
 
 test("an in-progress upload blocks switching and is awaited on shutdown", async () => {

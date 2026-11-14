@@ -177,7 +177,12 @@ fn verify_health_record(record: &HealthRecord, nonce: &str, root: &Path) -> Resu
     Ok(())
 }
 
-async fn wait_for_health(port: u16, nonce: &str, root: &Path) -> Result<(), String> {
+async fn wait_for_health(
+    port: u16,
+    nonce: &str,
+    dashboard_session: &str,
+    root: &Path,
+) -> Result<(), String> {
     let client = Client::builder()
         .no_proxy()
         .redirect(Policy::none())
@@ -188,7 +193,12 @@ async fn wait_for_health(port: u16, nonce: &str, root: &Path) -> Result<(), Stri
     let url = format!("http://127.0.0.1:{port}/ui/api/health");
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
-        if let Ok(response) = client.get(&url).send().await {
+        if let Ok(response) = client
+            .get(&url)
+            .header(crate::DESKTOP_SESSION_HEADER, dashboard_session)
+            .send()
+            .await
+        {
             if response.status().is_success() && response.content_length().unwrap_or(0) <= 16 * 1024
             {
                 if let Ok(bytes) = response.bytes().await {
@@ -210,7 +220,7 @@ async fn wait_for_health(port: u16, nonce: &str, root: &Path) -> Result<(), Stri
 }
 
 fn scrubbed_sidecar_command(app: &AppHandle) -> Result<Command, String> {
-    Ok(app
+    let command = app
         .shell()
         .sidecar("aliasmode-sidecar")
         .map_err(|error| error.to_string())?
@@ -220,7 +230,23 @@ fn scrubbed_sidecar_command(app: &AppHandle) -> Result<Command, String> {
         .env("ALIASMODE_DEVICE_CREDENTIAL", "")
         .env("ALIASMODE_QUEUE_ENCRYPTION_KEY", "")
         .env("HUB_URL", "")
-        .env("HUB_PASSWORD", ""))
+        .env("HUB_PASSWORD", "");
+    let command = if let Some(paths) = app
+        .try_state::<crate::acceptance::AcceptanceMode>()
+        .and_then(|mode| mode.paths.clone())
+    {
+        command
+            .env("ALIASMODE_RUNTIME_DESCRIPTOR", paths.runtime_descriptor())
+            .env("ALIASMODE_DESKTOP_EXE", paths.disabled_desktop_executable())
+            .env("MAOBU_DESKTOP_AUTOMATION_TOKEN", "")
+            .env("APPDATA", paths.roaming)
+            .env("LOCALAPPDATA", paths.local)
+            .env("TEMP", paths.temp.clone())
+            .env("TMP", paths.temp)
+    } else {
+        command
+    };
+    Ok(command)
 }
 
 fn import_command_args(
@@ -337,6 +363,7 @@ pub async fn launch_and_verify(
     playwright_runtime: &Path,
     nonce: &str,
     agent_nonce: &str,
+    dashboard_session: &str,
     background: bool,
 ) -> Result<(SidecarSupervisor, u16), String> {
     let mut command = scrubbed_sidecar_command(app)?
@@ -344,6 +371,7 @@ pub async fn launch_and_verify(
         .current_dir(data_dir)
         .env("ALIASMODE_DESKTOP_NONCE", nonce)
         .env("ALIASMODE_AGENT_NONCE", agent_nonce)
+        .env("MAOBU_DESKTOP_SESSION", dashboard_session)
         .env("ALIASMODE_BACKGROUND", if background { "1" } else { "0" })
         .env("ALIASMODE_DESKTOP_VERSION", VERSION)
         .env("ALIASMODE_APP_VERSION", VERSION)
@@ -420,7 +448,7 @@ pub async fn launch_and_verify(
             return Err(error);
         }
     };
-    if let Err(error) = wait_for_health(port, nonce, data_dir).await {
+    if let Err(error) = wait_for_health(port, nonce, dashboard_session, data_dir).await {
         let _ = child.kill();
         return Err(error);
     }

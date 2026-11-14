@@ -9,6 +9,7 @@
 
 import type { ProxySpec, ProxyType } from "./types.ts";
 import { isIP } from "node:net";
+import { proxyUrlPort } from "./proxy-url-port.ts";
 
 export type ProxyInput = {
   type?: unknown;
@@ -82,6 +83,9 @@ export function normalizeProxySpec(input: ProxyInput | ProxySpec | null | undefi
   if (!portRaw) throw new Error("invalid proxy port: (empty)");
   const user = String(input.user ?? "").trim();
   const pass = String(input.pass ?? "");
+  if (/[\r\n\0]/.test(user) || /[\r\n\0]/.test(pass)) {
+    throw new Error("proxy credentials must not contain control characters");
+  }
   if (!user && pass) throw new Error("proxy password requires a non-empty username");
   return {
     type: normalizeProxyType(input.type),
@@ -113,7 +117,7 @@ function parseProxyUrl(raw: string): ProxySpec {
   return normalizeProxySpec({
     type: url.protocol.replace(/:$/, ""),
     host: url.hostname,
-    port: url.port,
+    port: proxyUrlPort(raw, url),
     user: decodeCredential(url.username, "username"),
     pass: decodeCredential(url.password, "password"),
   })!;

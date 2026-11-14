@@ -21,6 +21,12 @@ test("an explicit proxy URL selects its type and decodes credentials", () => {
   });
 });
 
+test("a copied HTTP proxy at explicit port 80 can be pasted into the editor", () => {
+  expect(parsePastedProxy("http://127.0.0.1:80")).toMatchObject({ host: "127.0.0.1", port: "80" });
+  expect(parsePastedProxy("http://[::1]:00080/")).toMatchObject({ host: "::1", port: "80" });
+  expect(() => parsePastedProxy("http://127.0.0.1/")).toThrow("invalid proxy port");
+});
+
 test("proxy paste supports bracketed IPv6 and rejects malformed input", () => {
   expect(parsePastedProxy("[2001:db8::1]:1080:user:pass", "socks5")).toMatchObject({
     host: "2001:db8::1",

@@ -9,6 +9,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { discoverRuntime, RUNTIME_VERSION } from "./runtime-client.mjs";
 import { PlaywrightToolProxy } from "./playwright-proxy.mjs";
+import { DEFAULT_MCP_SCOPE, localMcpToolScope, parseMcpScopeArgs } from "./mcp-scope.mjs";
 
 const VERSION = RUNTIME_VERSION;
 const EMPTY_SCHEMA = { type: "object", properties: {}, additionalProperties: false };
@@ -41,6 +42,9 @@ function safeBrowserResult(value) {
   };
 }
 const PROFILE_ID = { type: "string", minLength: 1 };
+// The sidecar's profile-id.ts remains authoritative; these tool bounds reject
+// malformed arguments before an RPC, including Windows device-name aliases.
+const REVIEW_PROFILE_ID = { ...PROFILE_ID, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9_-]*$" };
 const PROXY_REPLACEMENT_ROW = {
   type: "object",
   properties: {
@@ -88,6 +92,27 @@ const ALIAS_TOOLS = [
     description: "List local 猫步·千境 profiles and their current browser state.",
     annotations: toolAnnotations("List 猫步·千境 profiles"),
     inputSchema: EMPTY_SCHEMA,
+  },
+  {
+    name: "aliasmode_fingerprint_review",
+    description: "Review one local profile's saved configuration and stored fingerprint evidence. This never starts, measures, or probes a browser. launchRecordPresent is bookkeeping only; liveness is not-checked. No credentials, raw samples, endpoints, or private provenance digests are returned.",
+    annotations: { ...toolAnnotations("Review stored fingerprint evidence", { readOnly: true }), idempotentHint: true },
+    inputSchema: {
+      type: "object", properties: { profileId: REVIEW_PROFILE_ID }, required: ["profileId"], additionalProperties: false,
+    },
+  },
+  {
+    name: "aliasmode_network_discover",
+    description: "Discover local desktop proxy listeners on literal loopback addresses only. Checks at most 16 local ports and sends a SOCKS method-negotiation greeting without credentials or CONNECT. Does not contact external sites or change settings. A listener or handshake does not prove exit connectivity, IP reputation, DNS isolation, or WebRTC privacy.",
+    annotations: { ...toolAnnotations("Discover local proxy listeners", { readOnly: true }), idempotentHint: true },
+    inputSchema: {
+      type: "object",
+      properties: {
+        host: { type: "string", enum: ["127.0.0.1", "::1"], default: "127.0.0.1" },
+        ports: { type: "array", minItems: 1, maxItems: 16, uniqueItems: true, items: { type: "integer", minimum: 1, maximum: 65535 }, description: "Defaults to bounded common desktop HTTP/SOCKS proxy ports." },
+      },
+      additionalProperties: false,
+    },
   },
   {
     name: "aliasmode_profiles_replace_proxies",
@@ -275,9 +300,33 @@ function profileInput(args) {
   return { input, temporary };
 }
 
+function readOnlyArguments(name, args) {
+  if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error("tool arguments must be an object");
+  if (name === "aliasmode_fingerprint_review") {
+    const id = args.profileId;
+    if (Object.keys(args).some(key => key !== "profileId") || typeof id !== "string" || id.length > 128
+      || !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(id) || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(id)) {
+      throw new Error("fingerprint review requires only a valid profileId (1-128 safe characters)");
+    }
+    return { profileId: id };
+  }
+  if (Object.keys(args).some(key => !["host", "ports"].includes(key))
+    || args.host !== undefined && args.host !== "127.0.0.1" && args.host !== "::1") {
+    throw new Error("network discovery supports only loopback host and bounded local ports");
+  }
+  const ports = args.ports;
+  if (ports !== undefined && (!Array.isArray(ports) || ports.length < 1 || ports.length > 16
+    || ports.some(port => !Number.isInteger(port) || port < 1 || port > 65535) || new Set(ports).size !== ports.length)) {
+    throw new Error("network discovery requires 1-16 unique integer ports from 1 to 65535");
+  }
+  return { ...(args.host !== undefined ? { host: args.host } : {}), ...(ports !== undefined ? { ports: [...ports] } : {}) };
+}
+
 export async function createAliasModeMcp(options = {}) {
-  const playwright = options.playwright ?? new PlaywrightToolProxy(VERSION);
-  await playwright.initialize();
+  const scope = parseMcpScopeArgs(options.scope === undefined ? [] : ["--scope", options.scope]);
+  const browserEnabled = scope === "browser" || scope === "full";
+  const playwright = browserEnabled ? options.playwright ?? new PlaywrightToolProxy(VERSION) : undefined;
+  await playwright?.initialize();
   const discovered = options.discovered ?? await discoverRuntime(options.runtime);
   const runtime = discovered.client;
   const server = new Server(
@@ -290,7 +339,17 @@ export async function createAliasModeMcp(options = {}) {
   const ownedProfileIds = new Set();
   let closing;
 
-  const selectedTools = () => selectedEngine === "firefox" ? selectedFirefoxTools : playwright.listTools();
+  const selectedTools = () => (selectedEngine === "firefox" ? selectedFirefoxTools : playwright?.listTools() ?? [])
+    .filter(tool => !localMcpToolScope(tool.name));
+  const localTools = ALIAS_TOOLS.filter(tool => {
+    const required = localMcpToolScope(tool.name);
+    return required && (required === DEFAULT_MCP_SCOPE || required === scope || scope === "full");
+  }).map(tool => scope === "full" || tool.name !== "aliasmode_profiles_list" ? tool : {
+    ...tool,
+    description: "List local 猫步·千境 profiles and their recorded browser state. Process liveness is not checked. Browser control endpoints are excluded.",
+    annotations: { ...toolAnnotations("List 猫步·千境 profiles", { readOnly: true }), idempotentHint: true },
+  });
+  const localToolNames = new Set(localTools.map(tool => tool.name));
 
   const selectBrowser = async (profileId, knownStatus) => {
     const status = knownStatus ?? await runtime.call("browser.status", { profileId });
@@ -348,15 +407,24 @@ export async function createAliasModeMcp(options = {}) {
   };
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [...ALIAS_TOOLS, ...selectedTools()],
+    tools: [...localTools, ...selectedTools()],
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const name = request.params.name;
     const args = request.params.arguments ?? {};
     try {
+      if (!localToolNames.has(name) && !selectedTools().some(tool => tool.name === name)) {
+        throw new Error("This tool is unavailable in the configured MCP scope.");
+      }
       if (name === "aliasmode_profiles_list") {
-        return toolResult(await runtime.call("profiles.list"));
+        return toolResult(await runtime.call(scope === "full" ? "profiles.list" : "profiles.inventory"));
+      }
+      if (name === "aliasmode_fingerprint_review") {
+        return toolResult(await runtime.call("fingerprints.review", readOnlyArguments(name, args)));
+      }
+      if (name === "aliasmode_network_discover") {
+        return toolResult(await runtime.call("network.discover", readOnlyArguments(name, args)));
       }
       if (name === "aliasmode_profiles_replace_proxies") {
         return toolResult(await runtime.call("profiles.replaceProxies", args));
@@ -418,9 +486,6 @@ export async function createAliasModeMcp(options = {}) {
         return toolResult(await closeBrowser(args.profileId));
       }
       if (!selectedProfileId) throw new Error("select an open 猫步·千境 browser first");
-      if (!selectedTools().some((tool) => tool.name === name)) {
-        throw new Error(`unknown 猫步·千境 tool: ${name}`);
-      }
       if (selectedEngine === "firefox") {
         return await runtime.call("firefox.tools.call", {
           profileId: selectedProfileId,
@@ -438,7 +503,7 @@ export async function createAliasModeMcp(options = {}) {
     if (closing) return closing;
     closing = (async () => {
       diagnose("close started");
-      await playwright.detach();
+      await playwright?.detach();
       diagnose("playwright detached");
       for (const profileId of [...ownedProfileIds]) {
         diagnose("owned browser close started");
@@ -472,6 +537,7 @@ export function sanitizeEnvironment(env = process.env) {
 
 async function main() {
   sanitizeEnvironment();
+  const scope = parseMcpScopeArgs(process.argv.slice(2));
   const desktopExecutable = join(
     dirname(fileURLToPath(import.meta.url)),
     "..",
@@ -480,7 +546,7 @@ async function main() {
     ...(process.platform === "darwin" ? ["..", "MacOS", "aliasmode"]
       : process.platform === "linux" ? ["..", "..", "bin", "aliasmode"] : ["AliasMode.exe"]),
   );
-  const host = await createAliasModeMcp({ runtime: { desktopExecutable } });
+  const host = await createAliasModeMcp({ scope, runtime: { desktopExecutable } });
   let shuttingDown = false;
   const shutdown = (event = "signal") => {
     if (shuttingDown) return;

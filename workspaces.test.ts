@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
-import { WorkspaceCatalog, WORKSPACE_REGISTRY_FILE } from "./workspaces.ts";
+import { WorkspaceCatalog, WORKSPACE_REGISTRY_FILE, writeWorkspaceJson } from "./workspaces.ts";
 const roots: string[] = [];
 function home() { const root = mkdtempSync(join(tmpdir(), "maobu-catalog-test-")); roots.push(root); return root; }
 afterEach(() => { for (const root of roots.splice(0)) { if (!resolve(root).startsWith(resolve(tmpdir()) + sep) || !basename(root).startsWith("maobu-catalog-test-")) throw new Error("Unsafe test cleanup"); rmSync(root, { recursive: true, force: true }); } });
@@ -54,4 +54,16 @@ test("linked home and workspace containers are rejected without following them",
   const catalog = new WorkspaceCatalog(root, root); symlinkSync(outside, join(root, "workspaces"), process.platform === "win32" ? "junction" : "dir");
   expect(() => catalog.create({ name: "No links" })).toThrow();
   expect(existsSync(join(outside, WORKSPACE_REGISTRY_FILE))).toBe(false); expect(readFileSync(join(outside, "keep"), "utf8")).toBe("safe");
+});
+
+test("atomic metadata replacement retains old bytes on serialization failure and removes private temporaries", () => {
+  const root = home(), path = join(root, "metadata.json");
+  for (let revision = 0; revision < 100; revision++) {
+    writeWorkspaceJson(path, { revision, name: "正常原子更新" });
+    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ revision, name: "正常原子更新" });
+  }
+  const before = readFileSync(path, "utf8"), cyclic: Record<string, unknown> = {}; cyclic.self = cyclic;
+  expect(() => writeWorkspaceJson(path, cyclic)).toThrow();
+  expect(readFileSync(path, "utf8")).toBe(before);
+  expect(readdirSync(root).filter(name => name.endsWith(".tmp"))).toEqual([]);
 });

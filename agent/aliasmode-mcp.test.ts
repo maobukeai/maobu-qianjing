@@ -26,3 +26,16 @@ test("unsupported helper commands fail before discovering or starting a desktop 
     });
   }
 });
+
+test("MCP scope help and invalid selections exit before starting the host", async () => {
+  const helper = join(import.meta.dir, "aliasmode-mcp.ts");
+  const help = Bun.spawnSync([process.execPath, helper, "serve", "--help"]);
+  expect(help.exitCode).toBe(0);
+  expect(help.stdout.toString()).toContain("The default scope allows read-only inventory and local diagnostics.");
+  for (const args of [["--scope"], ["--scope", "bad"], ["--scope", "browser", "--scope", "full"], ["--full"]]) {
+    const child = Bun.spawnSync([process.execPath, helper, "serve", ...args]);
+    expect(child.exitCode).toBe(1);
+    expect(JSON.parse(child.stdout.toString())).toEqual({ ok: false, error: "Expected serve [--scope read-only|profiles|browser|full]." });
+    expect(child.stderr.toString()).toBe("");
+  }
+});

@@ -1,0 +1,31 @@
+.workbench-activity-trigger { position: relative; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; gap: 6px; min-height: 30px; max-width: 152px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink-soft); font: inherit; font-size: 11px; cursor: pointer; white-space: nowrap; }
+.workbench-activity-trigger:hover, .workbench-activity-trigger[aria-expanded="true"] { color: var(--accent-ink); background: var(--accent-soft); border-color: var(--accent-line); }
+.workbench-activity-trigger > svg { flex: 0 0 auto; width: 17px; height: 17px; }
+.workbench-activity-count { min-width: 16px; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: center; }
+.workbench-activity-running { flex: 0 0 auto; width: 5px; height: 5px; border-radius: 50%; background: var(--success, #4e9a70); }
+.workbench-activity-popover { position: fixed; z-index: calc(var(--z-modal, 75) + 7); width: min(360px, calc(100vw - 24px)); max-width: calc(100vw - 24px); overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); box-shadow: 0 16px 50px rgba(var(--shadow-rgb), .17); outline: none; }
+.workbench-activity-popover > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 16px 16px 12px; }
+.workbench-activity-popover h2 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: -.02em; }
+.workbench-activity-popover header p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.workbench-activity-popover header .iconbtn { flex-shrink: 0; width: 28px; height: 28px; margin: -4px -5px 0 0; }
+.workbench-activity-popover header .iconbtn svg { width: 16px; height: 16px; }
+.workbench-activity-summary { display: flex; flex-wrap: wrap; gap: 5px 12px; padding: 0 16px 11px; color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--line-soft); }
+.workbench-activity-list { margin: 0; padding: 0; list-style: none; }
+.workbench-activity-item { display: flex; align-items: center; gap: 12px; padding: 13px 16px; }
+.workbench-activity-item + .workbench-activity-item { border-top: 1px solid var(--line-soft); }
+.workbench-activity-item-main { flex: 1; min-width: 0; }
+.workbench-activity-state { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; }
+.workbench-activity-state i { width: 5px; height: 5px; border-radius: 50%; background: var(--faint); }
+.workbench-activity-item.is-running .workbench-activity-state { color: var(--accent-ink); }
+.workbench-activity-item.is-running .workbench-activity-state i { background: var(--accent-ink); }
+.workbench-activity-item.is-attention .workbench-activity-state { color: var(--warning-ink, #a36c25); }
+.workbench-activity-item.is-attention .workbench-activity-state i { background: currentColor; }
+.workbench-activity-item h3 { margin: 4px 0 0; color: var(--ink); font-size: 12px; font-weight: 550; line-height: 1.5; overflow-wrap: anywhere; }
+.workbench-activity-item p { margin: 4px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.workbench-activity-view { flex: 0 0 auto; min-width: 42px; min-height: 29px; }
+.workbench-activity-progress { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.workbench-activity-progress progress { display: block; flex: 1; min-width: 0; width: 0; height: 4px; accent-color: var(--accent-ink); border: 0; border-radius: 4px; overflow: hidden; }
+.workbench-activity-progress small { flex-shrink: 0; color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.workbench-activity-trigger:focus-visible, .workbench-activity-popover button:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 3px; }
+@media (max-width: 1280px) { .workbench-activity-copy { display: none; } .workbench-activity-trigger { max-width: 78px; padding-inline: 7px; gap: 4px; } }
+@media (max-width: 700px) { .workbench-activity-trigger { min-height: 36px; min-width: 44px; } .workbench-activity-popover { width: min(360px, calc(100vw - 16px)); max-width: calc(100vw - 16px); border-radius: 12px; } .workbench-activity-popover > header, .workbench-activity-item { padding-inline: 13px; } .workbench-activity-summary { padding-inline: 13px; } .workbench-activity-view, .workbench-activity-popover header .iconbtn { min-height: 36px; } }
