@@ -7,6 +7,10 @@ mod runtime_descriptor;
 mod shutdown;
 mod sidecar;
 mod signed_updates;
+mod win32_layout;
+mod win32_resources;
+mod win32_sync;
+mod win32_window_registry;
 mod window_backdrop;
 mod workspaces;
 
@@ -69,6 +73,7 @@ fn trusted_loopback_capability(port: u16) -> CapabilityBuilder {
     let capability = capability
         .permission("allow-desktop-close")
         .permission("allow-window-backdrop")
+        .permission("allow-window-control")
         .permission("core:event:allow-listen")
         .permission("core:event:allow-unlisten");
     #[cfg(windows)]
@@ -436,6 +441,9 @@ mod tests {
         assert!(permissions
             .iter()
             .any(|permission| permission == "allow-window-backdrop"));
+        assert!(permissions
+            .iter()
+            .any(|permission| permission == "allow-window-control"));
         assert!(!permissions.iter().any(|permission| permission
             .as_str()
             .is_some_and(|value| value.starts_with("shell:"))));
@@ -444,7 +452,7 @@ mod tests {
             .is_some_and(|value| value.starts_with("updater:"))));
         #[cfg(windows)]
         {
-            assert_eq!(permissions.len(), 16);
+            assert_eq!(permissions.len(), 17);
             for permission in [
                 "core:window:allow-is-maximized",
                 "core:window:allow-minimize",
@@ -459,7 +467,7 @@ mod tests {
             }
         }
         #[cfg(not(windows))]
-        assert_eq!(permissions.len(), 10);
+        assert_eq!(permissions.len(), 11);
         assert!(!permissions.iter().any(|permission| {
             permission.as_str().is_some_and(|permission| {
                 permission.ends_with(":default")
@@ -638,6 +646,7 @@ pub fn run() {
         .manage(acceptance_mode)
         .manage(RevealRequested::default())
         .manage(Arc::new(shutdown::CloseState::default()))
+        .manage(Arc::new(win32_sync::SyncController::new()))
         .manage(if isolated_acceptance {
             signed_updates::SignedUpdateState::for_acceptance()
         } else {
@@ -679,6 +688,17 @@ pub fn run() {
             signed_updates::signed_update_install,
             external_resources::open_external_resource,
             window_backdrop::set_window_theme,
+            win32_layout::window_list_monitors,
+            win32_window_registry::window_list_managed,
+            win32_layout::window_arrange,
+            win32_layout::window_action,
+            win32_sync::sync_start,
+            win32_sync::sync_stop,
+            win32_sync::sync_pause,
+            win32_sync::sync_update_slaves,
+            win32_sync::sync_inject_texts,
+            win32_sync::sync_status,
+            win32_resources::system_trim_process_memory,
         ])
         .setup(move |app| {
             if !isolated_acceptance {
@@ -982,6 +1002,9 @@ pub fn run() {
             code: Some(code), ..
         } => exit_code.store(code, Ordering::Release),
         tauri::RunEvent::Exit => {
+            if let Some(sync) = app.try_state::<Arc<win32_sync::SyncController>>() {
+                let _ = sync.emergency_stop("app_exit");
+            }
             if let Some(runtime) = app.try_state::<runtime_descriptor::RuntimeDescriptorState>() {
                 let _ = runtime.remove_owned();
             }

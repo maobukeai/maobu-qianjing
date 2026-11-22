@@ -1,0 +1,16 @@
+[[permission]]
+identifier = "allow-window-control"
+description = "Allows the trusted main window to inspect monitors and managed browser windows, arrange windows, operate the verified browser window synchronizer, and trim browser process working sets."
+commands.allow = [
+  "window_list_monitors",
+  "window_list_managed",
+  "window_arrange",
+  "window_action",
+  "sync_start",
+  "sync_stop",
+  "sync_pause",
+  "sync_update_slaves",
+  "sync_inject_texts",
+  "sync_status",
+  "system_trim_process_memory",
+]
