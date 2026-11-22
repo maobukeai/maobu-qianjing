@@ -14,7 +14,11 @@ import {
 import {
   formatCpuPercent,
   formatMemoryBytes,
+  hibernateProfile,
+  hibernateProfilesBatch,
   normalizeMetricsSnapshot,
+  trimAllProfilesMemory,
+  trimProfileMemory,
   useResourceMonitor,
   watermarkConcurrency,
   type MetricsSnapshot,
@@ -360,5 +364,84 @@ describe("Resource monitoring, dashboard drawer, chips & DataSaverSettings", () 
         batchLaunchMemoryGuard: { enabled: true, softWatermarkPercent: 75, hardWatermarkPercent: 88, minAvailableMb: 1536 },
       },
     });
+  });
+
+  test("trim and hibernate API clients parse canonical w3-backend-resources responses", async () => {
+    const fakeFetch = (async (input: RequestInfo | URL) => {
+      const path = new URL(String(input), "http://127.0.0.1").pathname;
+      if (path === "/ui/api/profiles/p1/trim-memory") {
+        return Response.json({
+          ok: true,
+          result: {
+            profileId: "p1",
+            engine: "chromium",
+            running: true,
+            cdpPurged: true,
+            workingSetTrimmed: true,
+            trimmedProcesses: 5,
+            beforeRssBytes: 600 * 1024 ** 2,
+            afterRssBytes: 420 * 1024 ** 2,
+            reclaimedBytes: 180 * 1024 ** 2,
+          },
+        });
+      }
+      if (path === "/ui/api/metrics/trim-all") {
+        return Response.json({
+          ok: true,
+          trimmedProfiles: 2,
+          totalBeforeRssBytes: 1100 * 1024 ** 2,
+          totalAfterRssBytes: 750 * 1024 ** 2,
+          totalReclaimedBytes: 350 * 1024 ** 2,
+          results: [
+            { profileId: "p1", beforeRssBytes: 600 * 1024 ** 2, afterRssBytes: 420 * 1024 ** 2, reclaimedBytes: 180 * 1024 ** 2 },
+            { profileId: "p2", beforeRssBytes: 500 * 1024 ** 2, afterRssBytes: 330 * 1024 ** 2, reclaimedBytes: 170 * 1024 ** 2 },
+          ],
+        });
+      }
+      if (path === "/ui/api/profiles/p2/hibernate") {
+        return Response.json({
+          ok: true,
+          profileId: "p2",
+          status: "not_running",
+          sessionCaptured: false,
+          stopped: false,
+          hibernated: false,
+        });
+      }
+      if (path === "/ui/api/profiles/hibernate-batch") {
+        return Response.json({
+          ok: true,
+          hibernatedCount: 1,
+          skippedCount: 1,
+          failedCount: 1,
+          results: [
+            { profileId: "p1", status: "hibernated", sessionCaptured: true, stopped: true, hibernated: true },
+            { profileId: "p2", status: "not_running", sessionCaptured: false, stopped: false, hibernated: false },
+            { profileId: "p3", status: "stop_failed", sessionCaptured: true, stopped: false, hibernated: false },
+          ],
+        });
+      }
+      return Response.json({ ok: false }, { status: 404 });
+    }) as typeof fetch;
+
+    const h = await createHarness(fakeFetch);
+    dispose = h.cleanup;
+
+    const singleTrim = await trimProfileMemory("p1");
+    expect(singleTrim.totalFreedBytes).toBe(180 * 1024 ** 2);
+    expect(singleTrim.results).toHaveLength(1);
+    expect(singleTrim.results[0]?.freedBytes).toBe(180 * 1024 ** 2);
+
+    const allTrim = await trimAllProfilesMemory();
+    expect(allTrim.totalFreedBytes).toBe(350 * 1024 ** 2);
+    expect(allTrim.results).toHaveLength(2);
+    expect(allTrim.results[1]?.freedBytes).toBe(170 * 1024 ** 2);
+
+    const idleHibernate = await hibernateProfile("p2");
+    expect(idleHibernate.hibernated).toEqual([]);
+
+    const batchHibernate = await hibernateProfilesBatch({ all: true });
+    expect(batchHibernate.hibernated).toEqual(["p1"]);
+    expect(batchHibernate.failed).toEqual([{ profileId: "p3", error: "Hibernate failed" }]);
   });
 });

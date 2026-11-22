@@ -131,11 +131,25 @@ test("network resource settings validate firefoxMemorySaver, dataSaver, and batc
   response({ ok: true, settings: { ...base, network: extendedNetwork } });
   expect((await api.fetchSettings()).network).toEqual(extendedNetwork);
 
+  // Align strictly with backend app-settings.ts bounds: soft 30..95, hard 40..99, soft < hard, minAvailableMb 128..65536
+  for (const edgeValidGuard of [
+    { enabled: true, softWatermarkPercent: 30, hardWatermarkPercent: 40, minAvailableMb: 128 },
+    { enabled: true, softWatermarkPercent: 95, hardWatermarkPercent: 99, minAvailableMb: 65536 },
+  ]) {
+    const edgeNetwork = { ...extendedNetwork, batchLaunchMemoryGuard: edgeValidGuard };
+    response({ ok: true, settings: { ...base, network: edgeNetwork } });
+    expect((await api.fetchSettings()).network).toEqual(edgeNetwork);
+  }
+
   for (const badNetwork of [
     { ...extendedNetwork, firefoxMemorySaver: "yes" },
     { ...extendedNetwork, dataSaver: { enabled: true, blockImages: true, blockMedia: false, blockFonts: false, extra: true } },
+    { ...extendedNetwork, batchLaunchMemoryGuard: { enabled: true, softWatermarkPercent: 29, hardWatermarkPercent: 40, minAvailableMb: 1536 } },
+    { ...extendedNetwork, batchLaunchMemoryGuard: { enabled: true, softWatermarkPercent: 75, hardWatermarkPercent: 75, minAvailableMb: 1536 } },
     { ...extendedNetwork, batchLaunchMemoryGuard: { enabled: true, softWatermarkPercent: 90, hardWatermarkPercent: 80, minAvailableMb: 1536 } },
-    { ...extendedNetwork, batchLaunchMemoryGuard: { enabled: true, softWatermarkPercent: 75, hardWatermarkPercent: 88, minAvailableMb: 64 } },
+    { ...extendedNetwork, batchLaunchMemoryGuard: { enabled: true, softWatermarkPercent: 75, hardWatermarkPercent: 100, minAvailableMb: 1536 } },
+    { ...extendedNetwork, batchLaunchMemoryGuard: { enabled: true, softWatermarkPercent: 75, hardWatermarkPercent: 88, minAvailableMb: 127 } },
+    { ...extendedNetwork, batchLaunchMemoryGuard: { enabled: true, softWatermarkPercent: 75, hardWatermarkPercent: 88, minAvailableMb: 65537 } },
   ]) {
     response({ ok: true, settings: { ...base, network: badNetwork } });
     await expect(api.fetchSettings()).rejects.toThrow("incomplete");

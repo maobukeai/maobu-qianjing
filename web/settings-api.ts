@@ -78,9 +78,10 @@ function memoryGuardConfig(value: unknown): boolean {
   return object(value)
     && Object.keys(value).every(key => ["enabled", "softWatermarkPercent", "hardWatermarkPercent", "minAvailableMb"].includes(key))
     && typeof value.enabled === "boolean"
-    && Number.isInteger(value.softWatermarkPercent) && value.softWatermarkPercent >= 50 && value.softWatermarkPercent <= 95
-    && Number.isInteger(value.hardWatermarkPercent) && value.hardWatermarkPercent >= value.softWatermarkPercent && value.hardWatermarkPercent <= 98
-    && Number.isInteger(value.minAvailableMb) && value.minAvailableMb >= 256 && value.minAvailableMb <= 32768;
+    && Number.isInteger(value.softWatermarkPercent) && value.softWatermarkPercent >= 30 && value.softWatermarkPercent <= 95
+    && Number.isInteger(value.hardWatermarkPercent) && value.hardWatermarkPercent >= 40 && value.hardWatermarkPercent <= 99
+    && value.softWatermarkPercent < value.hardWatermarkPercent
+    && Number.isInteger(value.minAvailableMb) && value.minAvailableMb >= 128 && value.minAvailableMb <= 65536;
 }
 function settings(value: unknown): boolean {
   return object(value) && value.version === 1 && object(value.updates) && object(value.sync)

@@ -97,14 +97,19 @@ export function DataSaverSettings({ initialSettings }: { initialSettings?: Resol
   }, [initialSettings]);
 
   const validateGuard = (guard: BatchLaunchMemoryGuardConfig): string | null => {
-    if (!Number.isInteger(guard.softWatermarkPercent) || guard.softWatermarkPercent < 50 || guard.softWatermarkPercent > 95) {
-      return "Soft memory watermark must be a whole number from 50% to 95%.";
+    if (!Number.isInteger(guard.softWatermarkPercent) || guard.softWatermarkPercent < 30 || guard.softWatermarkPercent > 95) {
+      return "Soft memory watermark must be a whole number from 30% to 95%.";
     }
-    if (!Number.isInteger(guard.hardWatermarkPercent) || guard.hardWatermarkPercent < guard.softWatermarkPercent || guard.hardWatermarkPercent > 98) {
-      return "Hard memory watermark must be between the soft watermark and 98%.";
+    if (
+      !Number.isInteger(guard.hardWatermarkPercent) ||
+      guard.hardWatermarkPercent < 40 ||
+      guard.hardWatermarkPercent > 99 ||
+      guard.hardWatermarkPercent <= guard.softWatermarkPercent
+    ) {
+      return "Hard memory watermark must be higher than the soft watermark and between 40% and 99%.";
     }
-    if (!Number.isInteger(guard.minAvailableMb) || guard.minAvailableMb < 256 || guard.minAvailableMb > 32768) {
-      return "Minimum free memory must be between 256 MB and 32768 MB.";
+    if (!Number.isInteger(guard.minAvailableMb) || guard.minAvailableMb < 128 || guard.minAvailableMb > 65536) {
+      return "Minimum free memory must be between 128 MB and 65536 MB.";
     }
     return null;
   };
@@ -285,7 +290,7 @@ export function DataSaverSettings({ initialSettings }: { initialSettings?: Resol
             <span>{t("Soft watermark (%)")}</span>
             <input
               type="number"
-              min={50}
+              min={30}
               max={95}
               step={1}
               value={draft.batchLaunchMemoryGuard.softWatermarkPercent}
@@ -308,8 +313,8 @@ export function DataSaverSettings({ initialSettings }: { initialSettings?: Resol
             <span>{t("Hard watermark (%)")}</span>
             <input
               type="number"
-              min={55}
-              max={98}
+              min={40}
+              max={99}
               step={1}
               value={draft.batchLaunchMemoryGuard.hardWatermarkPercent}
               disabled={disabled}
@@ -331,8 +336,8 @@ export function DataSaverSettings({ initialSettings }: { initialSettings?: Resol
             <span>{t("Minimum free memory (MB)")}</span>
             <input
               type="number"
-              min={256}
-              max={32768}
+              min={128}
+              max={65536}
               step={128}
               value={draft.batchLaunchMemoryGuard.minAvailableMb}
               disabled={disabled}

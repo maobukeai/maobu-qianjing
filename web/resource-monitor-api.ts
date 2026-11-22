@@ -315,7 +315,10 @@ function normalizeTrimResult(raw: unknown): TrimMemoryEntryResult | null {
   if (!profileId) return null;
   const beforeBytes = asNum(raw.beforeBytes ?? raw.beforeRssBytes);
   const afterBytes = asNum(raw.afterBytes ?? raw.afterRssBytes);
-  const freedBytes = asNum(raw.freedBytes, Math.max(0, beforeBytes - afterBytes));
+  const freedBytes = asNum(
+    raw.freedBytes ?? raw.reclaimedBytes,
+    Math.max(0, beforeBytes - afterBytes),
+  );
   return {
     profileId,
     ok: raw.ok !== false,
@@ -328,11 +331,18 @@ function normalizeTrimResult(raw: unknown): TrimMemoryEntryResult | null {
 
 export async function trimProfileMemory(profileId: string): Promise<TrimMemoryActionResult> {
   const body = await postMetricAction(`/ui/api/profiles/${encodeURIComponent(profileId)}/trim-memory`);
+  const singleSource = isRecord(body.result) ? body.result : body;
   const results = Array.isArray(body.results)
     ? body.results.map(normalizeTrimResult).filter((r): r is TrimMemoryEntryResult => r !== null)
-    : [normalizeTrimResult({ profileId, ...body })].filter((r): r is TrimMemoryEntryResult => r !== null);
+    : [normalizeTrimResult({ profileId, ...singleSource })].filter((r): r is TrimMemoryEntryResult => r !== null);
+  const explicitFreed =
+    body.totalFreedBytes ??
+    body.totalReclaimedBytes ??
+    body.freedBytes ??
+    body.reclaimedBytes ??
+    (isRecord(body.result) ? (body.result.freedBytes ?? body.result.reclaimedBytes) : undefined);
   const totalFreedBytes = asNum(
-    body.totalFreedBytes ?? body.freedBytes,
+    explicitFreed,
     results.reduce((sum, item) => sum + item.freedBytes, 0),
   );
   return { ok: true, results, totalFreedBytes };
@@ -344,7 +354,7 @@ export async function trimAllProfilesMemory(): Promise<TrimMemoryActionResult> {
     ? body.results.map(normalizeTrimResult).filter((r): r is TrimMemoryEntryResult => r !== null)
     : [];
   const totalFreedBytes = asNum(
-    body.totalFreedBytes,
+    body.totalFreedBytes ?? body.totalReclaimedBytes,
     results.reduce((sum, item) => sum + item.freedBytes, 0),
   );
   return { ok: true, results, totalFreedBytes };
@@ -352,11 +362,22 @@ export async function trimAllProfilesMemory(): Promise<TrimMemoryActionResult> {
 
 export async function hibernateProfile(profileId: string): Promise<HibernateActionResult> {
   const body = await postMetricAction(`/ui/api/profiles/${encodeURIComponent(profileId)}/hibernate`);
+  let hibernated: string[];
+  if (Array.isArray(body.hibernated)) {
+    hibernated = body.hibernated.filter((id): id is string => typeof id === "string");
+  } else if (
+    body.hibernated === false ||
+    body.status === "not_found" ||
+    body.status === "stop_failed" ||
+    (body.status === "not_running" && body.hibernated !== true)
+  ) {
+    hibernated = [];
+  } else {
+    hibernated = [profileId];
+  }
   return {
     ok: true,
-    hibernated: Array.isArray(body.hibernated)
-      ? body.hibernated.filter((id): id is string => typeof id === "string")
-      : [profileId],
+    hibernated,
     failed: [],
   };
 }
@@ -365,15 +386,22 @@ export async function hibernateProfilesBatch(
   input: { ids: string[] } | { all: true },
 ): Promise<HibernateActionResult> {
   const body = await postMetricAction("/ui/api/profiles/hibernate-batch", input);
+  const rows = Array.isArray(body.results) ? body.results.filter(isRecord) : [];
   const hibernated = Array.isArray(body.hibernated)
     ? body.hibernated.filter((id): id is string => typeof id === "string")
-    : [];
+    : rows
+        .filter((row) => row.status === "hibernated" || row.hibernated === true)
+        .map((row) => asStr(row.profileId))
+        .filter(Boolean);
   const failed = Array.isArray(body.failed)
     ? body.failed
         .filter(isRecord)
         .map((row) => ({ profileId: asStr(row.profileId), error: asStr(row.error, "Hibernate failed") }))
         .filter((row) => !!row.profileId)
-    : [];
+    : rows
+        .filter((row) => row.status === "stop_failed")
+        .map((row) => ({ profileId: asStr(row.profileId), error: asStr(row.error, "Hibernate failed") }))
+        .filter((row) => !!row.profileId);
   return { ok: true, hibernated, failed };
 }
 

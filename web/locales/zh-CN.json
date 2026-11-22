@@ -2767,7 +2767,6 @@
   "Firefox memory saver": "Firefox 省内存模式",
   "Foreground-gated: events only forward while the master browser is focused. Switching to another app pauses sync automatically. System shortcuts (Alt+Tab, Alt+F4, Win) are never forwarded. Press Ctrl+Shift+F12 or double-tap Esc to stop immediately.": "前台强门控：仅当主控浏览器位于前台焦点时才转发操作，切到其他应用自动静默暂停。绝不转发系统热键（Alt+Tab / Alt+F4 / Win）。随时按 Ctrl+Shift+F12 或双击 Esc 即刻急停。",
   "Gap (px)": "间距 (px)",
-  "Hard memory watermark must be between the soft watermark and 98%.": "高水位阈值须介于软水位与 98% 之间。",
   "Hard watermark (%)": "高水位保护 (%)",
   "Health & RTT": "状态与延迟",
   "Hibernate": "休眠",
@@ -2810,7 +2809,6 @@
   "Memory watermark guard active: batch start concurrency throttled to {limit} ({load}% RAM).": "内存水位保护已介入：批量启动并发自动降至 {limit}（当前本机内存 {load}%）。",
   "Minimize all": "一键最小化",
   "Minimum free memory (MB)": "最低保留可用内存 (MB)",
-  "Minimum free memory must be between 256 MB and 32768 MB.": "最低保留可用内存须介于 256 MB 与 32768 MB 之间。",
   "Mouse clicks": "鼠标点击",
   "Mouse movement": "鼠标移动",
   "Multi-window layout": "多窗口网格排布",
@@ -2920,7 +2918,6 @@
   "Slave windows ({count} selected)": "从控窗口（已选 {count} 个）",
   "Smart grid": "智能网格",
   "Snapshot telemetry": "快照模式",
-  "Soft memory watermark must be a whole number from 50% to 95%.": "软水位阈值须为 50% 到 95% 之间的整数。",
   "Soft watermark (%)": "软水位降速 (%)",
   "Sort by CPU": "按 CPU 排序",
   "Sort by RAM": "按内存排序",
@@ -2990,5 +2987,8 @@
   "{master} → {count} slaves": "{master} → {count} 个从控",
   "{rss} RAM · {cpu} CPU · {procs} processes": "{rss} 内存 · {cpu} CPU · {procs} 个进程",
   "{used} / {total} RAM ({free} free)": "{used} / {total} 内存（可用 {free}）",
-  "“{proxy}” is bound to {count} environments. Sync updated endpoint & credentials to stopped environments now?": "「{proxy}」已绑定到 {count} 个环境。是否立即将更新后的地址与凭据同步到已停止的环境？"
+  "“{proxy}” is bound to {count} environments. Sync updated endpoint & credentials to stopped environments now?": "「{proxy}」已绑定到 {count} 个环境。是否立即将更新后的地址与凭据同步到已停止的环境？",
+  "Soft memory watermark must be a whole number from 30% to 95%.": "软水位阈值须为 30% 到 95% 之间的整数。",
+  "Hard memory watermark must be higher than the soft watermark and between 40% and 99%.": "高水位阈值须高于软水位，且介于 40% 与 99% 之间。",
+  "Minimum free memory must be between 128 MB and 65536 MB.": "最低保留可用内存须介于 128 MB 与 65536 MB 之间。"
 }

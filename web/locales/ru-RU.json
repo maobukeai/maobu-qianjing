@@ -2767,7 +2767,6 @@
   "Firefox memory saver": "Экономия памяти Firefox",
   "Foreground-gated: events only forward while the master browser is focused. Switching to another app pauses sync automatically. System shortcuts (Alt+Tab, Alt+F4, Win) are never forwarded. Press Ctrl+Shift+F12 or double-tap Esc to stop immediately.": "Контроль фокуса: события передаются только пока активно главное окно браузера; переключение на другое приложение автоматически ставит паузу. Системные сочетания (Alt+Tab, Alt+F4, Win) никогда не передаются. Нажмите Ctrl+Shift+F12 или дважды Esc для немедленной остановки.",
   "Gap (px)": "Отступ (px)",
-  "Hard memory watermark must be between the soft watermark and 98%.": "Жёсткий порог памяти должен быть между мягким порогом и 98%.",
   "Hard watermark (%)": "Жёсткий порог (%)",
   "Health & RTT": "Состояние и RTT",
   "Hibernate": "Усыпить",
@@ -2810,7 +2809,6 @@
   "Memory watermark guard active: batch start concurrency throttled to {limit} ({load}% RAM).": "Защита памяти активна: параллелизм запуска снижен до {limit} (ОЗУ: {load}%).",
   "Minimize all": "Свернуть все",
   "Minimum free memory (MB)": "Минимум свободной ОЗУ (МБ)",
-  "Minimum free memory must be between 256 MB and 32768 MB.": "Минимум свободной памяти должен быть от 256 до 32768 МБ.",
   "Mouse clicks": "Клики мыши",
   "Mouse movement": "Движение мыши",
   "Multi-window layout": "Раскладка окон",
@@ -2920,7 +2918,6 @@
   "Slave windows ({count} selected)": "Ведомые окна (выбрано: {count})",
   "Smart grid": "Умная сетка",
   "Snapshot telemetry": "Снимок метрик",
-  "Soft memory watermark must be a whole number from 50% to 95%.": "Мягкий порог памяти должен быть целым числом от 50% до 95%.",
   "Soft watermark (%)": "Мягкий порог (%)",
   "Sort by CPU": "По CPU",
   "Sort by RAM": "По ОЗУ",
@@ -2990,5 +2987,8 @@
   "{master} → {count} slaves": "{master} → {count} ведомых",
   "{rss} RAM · {cpu} CPU · {procs} processes": "{rss} ОЗУ · {cpu} CPU · процессов: {procs}",
   "{used} / {total} RAM ({free} free)": "{used} / {total} ОЗУ (свободно {free})",
-  "“{proxy}” is bound to {count} environments. Sync updated endpoint & credentials to stopped environments now?": "«{proxy}» привязан к {count} профилям. Синхронизировать обновлённый адрес и учётные данные с остановленными профилями сейчас?"
+  "“{proxy}” is bound to {count} environments. Sync updated endpoint & credentials to stopped environments now?": "«{proxy}» привязан к {count} профилям. Синхронизировать обновлённый адрес и учётные данные с остановленными профилями сейчас?",
+  "Soft memory watermark must be a whole number from 30% to 95%.": "Мягкий порог памяти должен быть целым числом от 30% до 95%.",
+  "Hard memory watermark must be higher than the soft watermark and between 40% and 99%.": "Жёсткий порог памяти должен быть выше мягкого и находиться от 40% до 99%.",
+  "Minimum free memory must be between 128 MB and 65536 MB.": "Минимум свободной памяти должен быть от 128 до 65536 МБ."
 }
