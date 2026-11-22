@@ -1,0 +1,246 @@
+/* ============================================================================
+   Local App Master Password Lock (Screen + Settings)
+   ========================================================================== */
+
+.app-lock-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 950;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+.app-lock-card {
+  width: 100%;
+  max-width: 440px;
+  padding: 28px;
+  border-radius: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.app-lock-badge {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  color: var(--accent-ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.app-lock-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.app-lock-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.app-lock-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.app-lock-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+
+.app-lock-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.app-lock-input-row .input {
+  flex: 1;
+}
+
+.app-lock-submit {
+  width: 100%;
+  justify-content: center;
+}
+
+.app-lock-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.app-lock-alert.danger {
+  background: var(--danger-soft);
+  border: 1px solid var(--danger-line);
+  color: var(--danger-ink);
+}
+
+.app-lock-alert.warn {
+  background: var(--warn-soft);
+  border: 1px solid var(--warn-line);
+  color: var(--warn-ink);
+}
+
+.app-lock-alert.success {
+  background: var(--success-soft);
+  border: 1px solid var(--success-line);
+  color: var(--success-ink);
+}
+
+.app-lock-boundary {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.app-lock-boundary p {
+  margin: 0;
+}
+
+.app-lock-recovery {
+  border-top: 1px solid var(--line-soft);
+  padding-top: 8px;
+}
+
+.app-lock-recovery-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: transparent;
+  border: none;
+  padding: 4px 0;
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.app-lock-recovery-body {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.app-lock-recovery-body p {
+  margin: 0;
+}
+
+/* Settings Card */
+.app-lock-settings header .chip {
+  margin-left: auto;
+}
+
+.app-lock-chip-on {
+  background: var(--success-soft);
+  border-color: var(--success-line);
+  color: var(--success-ink);
+}
+
+.app-lock-desc {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.app-lock-info-box {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  margin-bottom: 14px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.app-lock-info-box strong {
+  color: var(--ink-soft);
+  font-size: 12.5px;
+}
+
+.app-lock-info-box p {
+  margin: 0;
+}
+
+.app-lock-reset-note {
+  color: var(--ink-soft);
+}
+
+.app-lock-settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.app-lock-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.app-lock-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink-soft);
+  padding: 8px 0;
+  cursor: pointer;
+}
+
+.app-lock-quickbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.app-lock-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding-top: 4px;
+}
+
+.danger-text {
+  color: var(--danger-ink);
+}

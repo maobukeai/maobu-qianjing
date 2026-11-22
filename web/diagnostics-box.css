@@ -1,0 +1,216 @@
+/* ============================================================================
+   One-Click System Diagnostics Box
+   ========================================================================== */
+
+.diagnostics-box header .chip {
+  margin-left: auto;
+}
+
+.diag-subtitle {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.diag-privacy-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--ink-soft);
+  line-height: 1.45;
+  margin-bottom: 12px;
+}
+
+.diag-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.diag-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.diag-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.diag-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  margin-bottom: 12px;
+}
+
+.diag-alert.fail {
+  background: var(--danger-soft);
+  border: 1px solid var(--danger-line);
+  color: var(--danger-ink);
+}
+
+.diag-alert.pass {
+  background: var(--success-soft);
+  border: 1px solid var(--success-line);
+  color: var(--success-ink);
+}
+
+.diag-summary-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-bottom: 10px;
+}
+
+.diag-version-meta {
+  margin-left: auto;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.diag-check-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.diag-check-item {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 10px 12px;
+}
+
+.diag-check-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.diag-check-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.diag-check-copy strong {
+  display: block;
+  font-size: 13px;
+  color: var(--ink);
+  margin-bottom: 2px;
+}
+
+.diag-check-copy p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.diag-duration {
+  font-size: 11px;
+  color: var(--faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  padding-top: 2px;
+}
+
+.diag-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  flex-shrink: 0;
+}
+
+.diag-status-pass {
+  background: var(--success-soft);
+  border-color: var(--success-line);
+  color: var(--success-ink);
+}
+
+.diag-status-warn {
+  background: var(--warn-soft);
+  border-color: var(--warn-line);
+  color: var(--warn-ink);
+}
+
+.diag-status-fail {
+  background: var(--danger-soft);
+  border-color: var(--danger-line);
+  color: var(--danger-ink);
+}
+
+.diag-status-skipped {
+  background: var(--accent-2-soft);
+  border-color: var(--accent-2-line);
+  color: var(--accent-2-ink);
+}
+
+.diag-recs {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  font-size: 12px;
+  color: var(--warn-ink);
+}
+
+.diag-detail-pre,
+.diag-preview-pre {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+  overflow: auto;
+  max-height: 260px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.diag-preview-box {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.diag-preview-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: transparent;
+  border: none;
+  padding: 4px 0;
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}

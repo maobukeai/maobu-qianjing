@@ -310,27 +310,56 @@ function copyRuntimePackage(
   }
 }
 
+const REQUIRED_AGENT_FILES = [
+  "mcp-host.mjs",
+  "mcp-scope.mjs",
+  "playwright-proxy.mjs",
+  "playwright-runner.mjs",
+  "script-runner.mjs",
+  "script-runner.py",
+  "runtime-client.mjs",
+] as const;
+
+const OPTIONAL_AGENT_FILES = [
+  "script-recorder.mjs",
+] as const;
+
 /** Copies the worker scripts, agent files and their Node packages; every desktop bundle needs them. */
 export function stageAgentRuntime(cwd: string, playwrightRoot: string): void {
   mkdirSync(playwrightRoot, { recursive: true });
-  writeFileSync(join(playwrightRoot, "package.json"), `${JSON.stringify({ name: "maobu-browser-runtime", version: ALIASMODE_VERSION, type: "module", private: true }, null, 2)}\n`);
   cpSync(join(cwd, "playwright-worker.mjs"), join(playwrightRoot, "worker.mjs"));
   cpSync(join(cwd, "playwright-worker.mjs"), join(playwrightRoot, "playwright-worker.mjs"));
   cpSync(join(cwd, "firefox-worker.mjs"), join(playwrightRoot, "firefox-worker.mjs"));
 
   const agentRoot = join(playwrightRoot, "agent");
   mkdirSync(agentRoot, { recursive: true });
-  for (const file of [
-    "mcp-host.mjs",
-    "mcp-scope.mjs",
-    "playwright-proxy.mjs",
-    "playwright-runner.mjs",
-    "script-runner.mjs",
-    "script-runner.py",
-    "runtime-client.mjs",
-  ]) {
+  const stagedAgentFiles: string[] = [];
+  for (const file of REQUIRED_AGENT_FILES) {
     cpSync(join(cwd, "agent", file), join(agentRoot, file));
+    stagedAgentFiles.push(`agent/${file}`);
   }
+  for (const file of OPTIONAL_AGENT_FILES) {
+    const source = join(cwd, "agent", file);
+    const info = lstatSync(source, { throwIfNoEntry: false });
+    if (info && !info.isSymbolicLink() && info.isFile()) {
+      cpSync(source, join(agentRoot, file));
+      stagedAgentFiles.push(`agent/${file}`);
+    }
+  }
+  writeFileSync(
+    join(playwrightRoot, "package.json"),
+    `${JSON.stringify(
+      {
+        name: "maobu-browser-runtime",
+        version: ALIASMODE_VERSION,
+        type: "module",
+        private: true,
+        agentFiles: stagedAgentFiles,
+      },
+      null,
+      2,
+    )}\n`,
+  );
   const copied = new Set<string>();
   for (const dependency of [
     "playwright-core",

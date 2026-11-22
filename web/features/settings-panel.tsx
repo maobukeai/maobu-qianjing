@@ -1,5 +1,13 @@
 import type { RefObject } from "react";
+import { useState } from "react";
 import { fetchLogs, type RuntimeDownload } from "../api";
+import type { AppLockStatus } from "../app-lock-api.ts";
+import { AppLockSettings } from "../app-lock-settings.tsx";
+import { DiagnosticsBox } from "../diagnostics-box.tsx";
+import {
+  persistOnboardingState,
+  type OnboardingChecklistState,
+} from "../onboarding-checklist.tsx";
 import type { FingerprintReport } from "../settings-api";
 import type { DesktopMotionPreference } from "../desktop-motion";
 import { DesktopMotionSettings } from "../desktop-motion.tsx";
@@ -71,6 +79,14 @@ export interface SettingsPanelProps {
   logDir?: string;
   modeErr: string | null;
   onDone: () => void;
+  /** Optional Wave 4 app lock state & change hook (self-managed if omitted). */
+  appLockStatus?: AppLockStatus | null;
+  onAppLockStatusChange?: (status: AppLockStatus) => void;
+  /** Optional Wave 4 onboarding checklist state & reopen handler. */
+  onboardingState?: OnboardingChecklistState;
+  onReopenOnboarding?: () => void;
+  /** Optional callback when diagnostics finishes running. */
+  onDiagnosticsRun?: () => void;
 }
 
 export function SettingsPanel({
@@ -118,8 +134,35 @@ export function SettingsPanel({
   logDir,
   modeErr,
   onDone,
+  appLockStatus,
+  onAppLockStatusChange,
+  onboardingState,
+  onReopenOnboarding,
+  onDiagnosticsRun,
 }: SettingsPanelProps) {
   const { t } = useTranslation();
+  const [onboardingReopenBusy, setOnboardingReopenBusy] = useState(false);
+  const [onboardingReopenNotice, setOnboardingReopenNotice] = useState<string | null>(null);
+
+  const handleReopenOnboarding = async () => {
+    setOnboardingReopenNotice(null);
+    if (onReopenOnboarding) {
+      onReopenOnboarding();
+      setOnboardingReopenNotice(t("Quick-start checklist reopened on the profiles page."));
+      return;
+    }
+    setOnboardingReopenBusy(true);
+    try {
+      await persistOnboardingState("open");
+      setOnboardingReopenNotice(t("Quick-start checklist reopened on the profiles page."));
+    } catch (error) {
+      setOnboardingReopenNotice(
+        error instanceof Error ? error.message : t("Could not reopen quick-start checklist."),
+      );
+    } finally {
+      setOnboardingReopenBusy(false);
+    }
+  };
 
   return (
     <div
@@ -325,14 +368,50 @@ export function SettingsPanel({
           </section>
         )}
         {activeTab === "account" && (
-          <DesktopMotionSettings
-            value={motionPreference}
-            onChange={onMotionPreferenceChange}
-          />
+          <>
+            <DesktopMotionSettings
+              value={motionPreference}
+              onChange={onMotionPreferenceChange}
+            />
+            <AppLockSettings
+              status={appLockStatus}
+              onStatusChange={onAppLockStatusChange}
+            />
+            <section className="settings-card" data-onboarding-settings-card="true">
+              <header>
+                <AppIcon name="star" className="sm" />
+                <h2>{t("Quick-start checklist")}</h2>
+              </header>
+              <div className="card-body">
+                <p>
+                  {t(
+                    "Show the non-blocking 4-step getting started banner above your profile roster.",
+                  )}
+                </p>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={onboardingReopenBusy || onboardingState === "open"}
+                  onClick={() => void handleReopenOnboarding()}
+                >
+                  <AppIcon name="star" className="sm" />
+                  {onboardingState === "open"
+                    ? t("Checklist is currently visible")
+                    : t("Reopen quick-start checklist")}
+                </button>
+                {onboardingReopenNotice && (
+                  <p className="cardnote" role="status">
+                    {onboardingReopenNotice}
+                  </p>
+                )}
+              </div>
+            </section>
+          </>
         )}
         {activeTab === "advanced" && (
           <>
             <h2 className="sect-title">{t("Diagnostics")}</h2>
+            <DiagnosticsBox onDiagnosticsRun={onDiagnosticsRun ? () => onDiagnosticsRun() : undefined} />
             <section className="settings-card">
               <header>
                 <AppIcon name="logs" className="sm" />

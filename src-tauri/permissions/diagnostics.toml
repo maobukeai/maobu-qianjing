@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-system-diagnostics"
+description = "Allows the trusted main window to read local OS and WebView2 runtime version metadata for diagnostics."
+commands.allow = ["system_diagnostic_probe"]

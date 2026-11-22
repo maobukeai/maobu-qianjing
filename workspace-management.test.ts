@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { ProfileStore } from "./store.ts";
 import { buildNewProfile } from "./create.ts";
 import { ensureStateDirectories, statePaths } from "./paths.ts";
-import { WorkspaceManagement } from "./workspace-management.ts";
+import { ONBOARDING_STATE_KEY, WorkspaceManagement } from "./workspace-management.ts";
 import type { Launcher } from "./launcher.ts";
 import { ROSTER_DENSITY_KEY } from "./roster-density-state.ts";
 
@@ -290,4 +290,16 @@ test("a delayed JSON restore cannot take over a raw upload started while its bod
   expect((await request)!.status).toBe(423);
   upload.error(new Error("End test")); await raw;
   expect(f.manager.backups.jobs()).toHaveLength(0);
+});
+
+test("onboarding checklist preference persists valid states and rejects invalid values", async () => {
+  const f = fixture(); await f.authorize();
+  for (const state of ["open", "collapsed", "dismissed"] as const) {
+    expect((await f.request("/workspace/preferences", "POST", { key: ONBOARDING_STATE_KEY, value: state })).status).toBe(200);
+    expect((await (await f.request("/workspace/preferences")).json()).preferences[ONBOARDING_STATE_KEY]).toBe(state);
+  }
+  for (const invalid of ["", "hidden", "OPEN", "dismiss", null, 1, {}, ["open"]]) {
+    expect((await f.request("/workspace/preferences", "POST", { key: ONBOARDING_STATE_KEY, value: invalid })).status).toBe(400);
+  }
+  expect((await (await f.request("/workspace/preferences")).json()).preferences[ONBOARDING_STATE_KEY]).toBe("dismissed");
 });

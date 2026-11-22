@@ -15,6 +15,11 @@ import { FAVORITE_PROFILES_KEY, SAVED_PROFILE_VIEWS_KEY, parseFavoriteProfiles, 
 import { ROSTER_DENSITY_KEY, isRosterDensity } from "./roster-density-state.ts";
 
 const PREFIX = "/ui/api/workspace";
+export const ONBOARDING_STATE_KEY = "aliasmode.onboarding.state";
+export type OnboardingStateValue = "open" | "collapsed" | "dismissed";
+export function isOnboardingStateValue(value: unknown): value is OnboardingStateValue {
+  return value === "open" || value === "collapsed" || value === "dismissed";
+}
 const MAX_JSON_BYTES = 16 * 1024;
 const MAX_UPLOAD_BYTES = 20 * 1024 ** 3;
 const NO_STORE = { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" };
@@ -158,6 +163,7 @@ export class WorkspaceManagement {
     if (key === FAVORITE_PROFILES_KEY && parseFavoriteProfiles(value) !== null) return;
     if (key === SAVED_PROFILE_VIEWS_KEY && parseSavedProfileViews(value) !== null) return;
     if (key === ROSTER_DENSITY_KEY && isRosterDensity(value)) return;
+    if (key === ONBOARDING_STATE_KEY && isOnboardingStateValue(value)) return;
     if (key === "aliasmode.roster.hiddenColumns") {
       const parsed: unknown = JSON.parse(value);
       const known = ["no", "name", "group", "platform", "tags", "proxy", "status", "action"];
