@@ -998,7 +998,7 @@ export function ProxyVaultPanel({ active, profiles = [], onChanged }: ProxyVault
                             ? t("High risk")
                             : entry.riskLevel === "medium"
                               ? t("Medium risk")
-                              : t("Clear")}
+                              : t("No risk")}
                         </span>
                         {(entry.risks.length > 0 || entry.boundProfiles.length > 0) && (
                           <details className="vault-risk-details">

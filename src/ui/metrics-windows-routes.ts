@@ -72,11 +72,15 @@ function readCurrentAppSettings(options: UiRuntimeOptions): AppSettings {
 }
 
 function withResourcePolicyStore<T>(
+  store: ProfileStore,
   options: UiRuntimeOptions,
   fn: (policyStore: ResourcePolicyStore) => T,
 ): { ok: true; value: T } | { ok: false } {
   if (options.resourcePolicies) {
     return { ok: true, value: fn(options.resourcePolicies) };
+  }
+  if (typeof store.rawDatabase === "function") {
+    return { ok: true, value: fn(new ResourcePolicyStore(store.rawDatabase())) };
   }
   if (options.paths?.database) {
     const tempStore = new ResourcePolicyStore(options.paths.database);
@@ -339,7 +343,7 @@ export async function handleMetricsAndWindowsRoutes(
       crossOrigin.headers.set("Cache-Control", "no-store");
       return crossOrigin;
     }
-    const read = withResourcePolicyStore(options, (policyStore) => policyStore.list());
+    const read = withResourcePolicyStore(store, options, (policyStore) => policyStore.list());
     return noStoreJson({ ok: true, policies: read.ok ? read.value : [] });
   }
 
@@ -405,7 +409,7 @@ export async function handleMetricsAndWindowsRoutes(
         return crossOrigin;
       }
       const settings = readCurrentAppSettings(options);
-      const loaded = withResourcePolicyStore(options, (policyStore) => policyStore.get(decoded.id));
+      const loaded = withResourcePolicyStore(store, options, (policyStore) => policyStore.get(decoded.id));
       const policy = loaded.ok
         ? loaded.value
         : { profileId: decoded.id, memorySaverMode: "inherit" as const, dataSaver: { mode: "inherit" as const }, updatedAt: 0 };
@@ -426,7 +430,7 @@ export async function handleMetricsAndWindowsRoutes(
         return noStoreJson({ ok: false, error: "Invalid JSON body" }, 400);
       }
       try {
-        const saved = withResourcePolicyStore(options, (policyStore) => policyStore.set(decoded.id, body));
+        const saved = withResourcePolicyStore(store, options, (policyStore) => policyStore.set(decoded.id, body));
         if (!saved.ok) {
           return noStoreJson({ ok: false, error: "resource policy storage is unavailable" }, 503);
         }

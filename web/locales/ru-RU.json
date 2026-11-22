@@ -2821,6 +2821,7 @@
   "No other running browser windows available as slaves.": "Нет других запущенных окон браузера для ведомых.",
   "No proxies match these filters": "Нет прокси по выбранным фильтрам",
   "No proxies saved in the vault yet.": "В хранилище пока нет сохранённых прокси.",
+  "No risk": "Без риска",
   "No running target windows selected.": "Не выбраны запущенные целевые окна.",
   "Normal": "Норма",
   "Note: inserting addresses uses desensitized endpoints. To apply stored credentials directly, bind from the Proxy vault tab.": "Примечание: вставляются обезличенные адреса. Чтобы применить сохранённые учётные данные, привяжите прокси на вкладке «Хранилище прокси».",

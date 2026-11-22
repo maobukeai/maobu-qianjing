@@ -12,6 +12,7 @@
 import type { ProfileStore } from "../../store.ts";
 import type { ProxyType } from "../../types.ts";
 import { normalizeProxyType } from "../../proxy.ts";
+import { WorkspaceBusyError } from "../../workspace-maintenance.ts";
 import {
   ProxyRefreshCooldown,
   ProxyRefreshError,
@@ -153,6 +154,9 @@ function parseImportPayload(body: Record<string, unknown>): {
 }
 
 function errorResponse(error: unknown): Response {
+  if (error instanceof WorkspaceBusyError) {
+    return noStoreJson({ ok: false, code: "workspace_busy", error: error.message }, 423);
+  }
   if (error instanceof ProxyVaultError) {
     return noStoreJson({ ok: false, code: error.code, error: error.message }, error.status);
   }
@@ -271,6 +275,7 @@ export async function handleProxyVaultRoutes(
       }
 
       const records = vault.selectForCheck({ ids, group, all });
+      const releaseMutation = options.workspaceManagement?.acquireMutationLease();
       const abortController = new AbortController();
       const onRequestAbort = () => abortController.abort(req.signal.reason);
       if (req.signal.aborted) abortController.abort(req.signal.reason);
@@ -279,39 +284,47 @@ export async function handleProxyVaultRoutes(
       const encoder = new TextEncoder();
       let clientGone = false;
 
-      const stream = new ReadableStream<Uint8Array>({
-        async start(controller) {
-          const send = (event: VaultCheckStreamEvent) => {
-            if (clientGone || abortController.signal.aborted) return;
+      let stream: ReadableStream<Uint8Array>;
+      try {
+        stream = new ReadableStream<Uint8Array>({
+          async start(controller) {
+            const send = (event: VaultCheckStreamEvent) => {
+              if (clientGone || abortController.signal.aborted) return;
+              try {
+                controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
+              } catch {
+                clientGone = true;
+                abortController.abort();
+              }
+            };
             try {
-              controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
+              await checkVaultProxiesBatch(records, send, {
+                ...options.proxyVaultCheckOptions,
+                concurrency,
+                vaultStore: vault,
+                signal: abortController.signal,
+              });
             } catch {
-              clientGone = true;
-              abortController.abort();
+              send({ type: "error", error: "Proxy vault check failed." });
+            } finally {
+              req.signal.removeEventListener("abort", onRequestAbort);
+              releaseMutation?.();
+              try {
+                controller.close();
+              } catch {}
             }
-          };
-          try {
-            await checkVaultProxiesBatch(records, send, {
-              ...options.proxyVaultCheckOptions,
-              concurrency,
-              vaultStore: vault,
-              signal: abortController.signal,
-            });
-          } catch {
-            send({ type: "error", error: "Proxy vault check failed." });
-          } finally {
+          },
+          cancel() {
+            clientGone = true;
+            abortController.abort();
             req.signal.removeEventListener("abort", onRequestAbort);
-            try {
-              controller.close();
-            } catch {}
-          }
-        },
-        cancel() {
-          clientGone = true;
-          abortController.abort();
-          req.signal.removeEventListener("abort", onRequestAbort);
-        },
-      });
+          },
+        });
+      } catch (streamError) {
+        req.signal.removeEventListener("abort", onRequestAbort);
+        releaseMutation?.();
+        throw streamError;
+      }
 
       return new Response(stream, {
         status: 200,

@@ -379,7 +379,7 @@ async function startLocalServer(
   const workspaceHome = resolve(flag(rest, "workspace-home") ?? paths.root);
   const settingsPath = join(paths.root, "app-settings.json");
   const preferences = new AppSettingsStore(settingsPath);
-  const resourcePolicies = new ResourcePolicyStore(dbPath);
+  const resourcePolicies = new ResourcePolicyStore(store.rawDatabase());
   const memoryGuard = new MemoryWatermarkGuard({
     getSettings: () => resolveBatchLaunchMemoryGuardSettings(preferences.read().network),
   });

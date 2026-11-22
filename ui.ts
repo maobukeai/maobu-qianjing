@@ -18,6 +18,7 @@ import { handleEventsUiRoutes } from "./src/ui/events-routes.ts";
 import { handleGroupsAndExtensionsUiRoutes } from "./src/ui/groups-extensions-routes.ts";
 import { handleMetricsAndWindowsRoutes } from "./src/ui/metrics-windows-routes.ts";
 import { handleProfilesUiRoutes } from "./src/ui/profiles-routes.ts";
+import { handleProxyVaultRoutes, type ProxyVaultRouteOptions } from "./src/ui/proxy-vault-routes.ts";
 import { handleScriptsUiRoutes } from "./src/ui/scripts-routes.ts";
 import {
   listUiProfiles,
@@ -66,7 +67,7 @@ export async function handleUiRequest(
   req: Request,
   launcher: Launcher,
   store: ProfileStore,
-  options: UiRuntimeOptions = {},
+  options: ProxyVaultRouteOptions = {},
 ): Promise<Response | null> {
   const { pathname } = new URL(req.url);
   if (!pathname.startsWith("/ui/api/")) return null;
@@ -105,6 +106,7 @@ export async function handleUiRequest(
     (await handleScriptsUiRoutes(req, pathname, options)) ??
     (await handleSystemUiRoutes(req, pathname, launcher, store, options)) ??
     (await handleGroupsAndExtensionsUiRoutes(req, pathname, store, options)) ??
+    (await handleProxyVaultRoutes(req, pathname, store, options)) ??
     (await handleMetricsAndWindowsRoutes(req, pathname, launcher, store, options)) ??
     (await handleProfilesUiRoutes(req, pathname, launcher, store, options));
 

@@ -1974,3 +1974,167 @@ test("mutating JSON POST routes reject non-JSON Content-Type (415) and cross-ori
         expect(s.getProfile("k1d0cd11")!.name).toBe(beforeName);
     } finally { s.close(); }
 });
+
+test("handleUiRequest routes Wave 3 proxy-vault, metrics, registered-launches, and resource-policy endpoints with security headers and event-bus integration", async () => {
+    const s = store();
+    const { UiEventBus } = await import("./src/ui/events-bus.ts");
+    const { WorkspaceMaintenance } = await import("./workspace-maintenance.ts");
+    const bus = new UiEventBus({ coalesceWindowMs: 0, store: s });
+    const emitted: Array<{ type: string; payload: unknown }> = [];
+    const origEmit = bus.emit.bind(bus);
+    bus.emit = ((type: any, payload: any) => {
+        emitted.push({ type, payload });
+        return origEmit(type, payload);
+    }) as typeof bus.emit;
+    s.onMutation = (event) => bus.handleStoreMutation(event);
+
+    const assertSecurityHeaders = (res: Response) => {
+        expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+        expect(res.headers.get("x-frame-options")).toBe("DENY");
+        expect(res.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+        expect(res.headers.get("cache-control")).toContain("no-store");
+    };
+
+    try {
+        // 1. Proxy Vault create -> list -> bind -> roster.changed SSE event
+        const createRes = await handleUiRequest(
+            new Request("http://127.0.0.1:50400/ui/api/proxy-vault", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                    name: "Wave3 US Residential",
+                    group: "us-east",
+                    type: "http",
+                    host: "198.51.100.42",
+                    port: 8080,
+                    user: "vault-user",
+                    pass: "VAULT_SECRET_PASS",
+                }),
+            }),
+            {} as Launcher,
+            s,
+        );
+        expect(createRes).not.toBeNull();
+        expect(createRes!.status).toBe(200);
+        assertSecurityHeaders(createRes!);
+        const created = await createRes!.json() as { ok: boolean; id: string };
+        expect(created.ok).toBe(true);
+        expect(created.id).toMatch(/^pxv_[0-9a-f]{16}$/);
+
+        const listRes = await handleUiRequest(
+            new Request("http://127.0.0.1:50400/ui/api/proxy-vault"),
+            {} as Launcher,
+            s,
+        );
+        expect(listRes!.status).toBe(200);
+        assertSecurityHeaders(listRes!);
+        const listRaw = await listRes!.text();
+        expect(listRaw).not.toContain("VAULT_SECRET_PASS");
+        expect(listRaw).not.toContain("endpoint_hash");
+        const listBody = JSON.parse(listRaw) as { ok: boolean; items: Array<{ id: string }> };
+        expect(listBody.ok).toBe(true);
+        expect(listBody.items.some((item) => item.id === created.id)).toBe(true);
+
+        emitted.length = 0;
+        const bindRes = await handleUiRequest(
+            new Request("http://127.0.0.1:50400/ui/api/proxy-vault/bind", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ proxyIds: [created.id], profileIds: ["k1d0cd11"], mode: "single" }),
+            }),
+            {} as Launcher,
+            s,
+        );
+        expect(bindRes!.status).toBe(200);
+        assertSecurityHeaders(bindRes!);
+        expect((await bindRes!.json() as { updated: number }).updated).toBe(1);
+        expect(emitted.some((ev) => ev.type === "roster.changed")).toBe(true);
+
+        // 2. Streaming /ui/api/proxy-vault/check carries security headers & acquires/releases workspace mutation lease
+        const maintenance = new WorkspaceMaintenance();
+        let leaseAcquired = 0;
+        let leaseReleased = 0;
+        const checkRes = await handleUiRequest(
+            new Request("http://127.0.0.1:50400/ui/api/proxy-vault/check", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ ids: [created.id] }),
+            }),
+            {} as Launcher,
+            s,
+            {
+                workspaceManagement: {
+                    isManagementPath: () => false,
+                    acquireMutationLease: () => {
+                        leaseAcquired++;
+                        const release = maintenance.acquireMutationLease();
+                        return () => {
+                            leaseReleased++;
+                            release();
+                        };
+                    },
+                } as any,
+                proxyVaultCheckOptions: {
+                    attempts: 1,
+                    endpoints: ["http://egress.test/json"],
+                    relayFactory: async () => ({ port: 19999, close: () => {} }),
+                    fetchDirect: async () => ({ ip: "198.51.100.1" }),
+                    fetchEgress: async () => new Response(JSON.stringify({ ip: "203.0.113.42", country: "US" }), { status: 200 }),
+                },
+            },
+        );
+        expect(checkRes!.status).toBe(200);
+        assertSecurityHeaders(checkRes!);
+        expect(checkRes!.headers.get("content-type")).toContain("application/x-ndjson");
+        const ndjsonText = await checkRes!.text();
+        expect(ndjsonText).toContain("\"type\":\"done\"");
+        expect(leaseAcquired).toBe(1);
+        expect(leaseReleased).toBe(1);
+
+        // 3. /ui/api/metrics/snapshot & /ui/api/windows/registered-launches with security headers
+        const snapRes = await handleUiRequest(
+            new Request("http://127.0.0.1:50400/ui/api/metrics/snapshot"),
+            {} as Launcher,
+            s,
+        );
+        expect(snapRes!.status).toBe(200);
+        assertSecurityHeaders(snapRes!);
+        expect((await snapRes!.json() as { ok: boolean; snapshot: unknown }).ok).toBe(true);
+
+        const winRes = await handleUiRequest(
+            new Request("http://127.0.0.1:50400/ui/api/windows/registered-launches"),
+            {} as Launcher,
+            s,
+        );
+        expect(winRes!.status).toBe(200);
+        assertSecurityHeaders(winRes!);
+        expect((await winRes!.json() as { ok: boolean; launches: unknown[] }).ok).toBe(true);
+
+        // 4. Schema v3 profile_resource_policies works directly via ProfileStore.rawDatabase() fallback & cleans up on delete
+        const patchPolicyRes = await handleUiRequest(
+            new Request("http://127.0.0.1:50400/ui/api/profiles/k1d0cd11/resource-policy", {
+                method: "PATCH",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ memorySaverMode: "on", dataSaver: { mode: "on", blockImages: true } }),
+            }),
+            {} as Launcher,
+            s,
+        );
+        expect(patchPolicyRes!.status).toBe(200);
+        assertSecurityHeaders(patchPolicyRes!);
+        expect((await patchPolicyRes!.json() as { policy: { memorySaverMode: string } }).policy.memorySaverMode).toBe("on");
+
+        s.deleteProfile("k1d0cd11");
+        const remainingBindings = s.rawDatabase().query<{ c: number }, [string]>(
+            "SELECT COUNT(*) AS c FROM profile_proxy_bindings WHERE profile_id = ?",
+        ).get("k1d0cd11")!.c;
+        const remainingPolicies = s.rawDatabase().query<{ c: number }, [string]>(
+            "SELECT COUNT(*) AS c FROM profile_resource_policies WHERE profile_id = ?",
+        ).get("k1d0cd11")!.c;
+        expect(remainingBindings).toBe(0);
+        expect(remainingPolicies).toBe(0);
+    } finally {
+        bus.closeAll();
+        s.close();
+    }
+});

@@ -65,7 +65,7 @@ try {
   await page.locator(".inspection-counts").waitFor();
   await page.screenshot({ path: join(output, "inspection-light.png") });
   await page.locator('.sidenav .navitem[aria-label="代理管理"]').click();
-  await page.locator('.proxy-page .tools-tabs button').last().click();
+  await page.locator('.proxy-page .tools-tabs button').filter({ hasText: "替换代理" }).click();
   assert.equal(await page.locator('.proxy-workflow-navigation [data-proxy-workflow-step]').count(), 4);
   await page.locator('[data-proxy-workflow-step="input"]').click();
   assert.equal(await page.locator('.proxy-workflow-target:focus').count(), 1);

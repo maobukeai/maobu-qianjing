@@ -2821,6 +2821,7 @@
   "No other running browser windows available as slaves.": "没有其他运行中的浏览器窗口可作为从控。",
   "No proxies match these filters": "没有符合筛选条件的代理",
   "No proxies saved in the vault yet.": "资产库中尚未保存任何代理。",
+  "No risk": "无风险",
   "No running target windows selected.": "尚未选择运行中的目标窗口。",
   "Normal": "正常水位",
   "Note: inserting addresses uses desensitized endpoints. To apply stored credentials directly, bind from the Proxy vault tab.": "提示：此处插入的是脱敏地址；如需直接带入已加密保存的认证凭据，请在「代理资产库」标签页一键绑定。",
