@@ -1,7 +1,7 @@
 import * as React from "react";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "./i18n.tsx";
-import { AssistantRequestError, cancelLocalAssistant, fetchLocalModels, sendLocalAssistant, type LocalModelCatalog } from "./local-assistant-api.ts";
+import { AssistantRequestError, cancelLocalAssistant, fetchLocalModels, sendLocalAssistant, stripProposalFence, type AnomalyCriterion, type CompiledProposalView, type LocalModelCatalog } from "./local-assistant-api.ts";
 import "./local-assistant.css";
 import { assistantHistory } from "./assistant-history.ts";
 import { useAssistantTranscriptPosition } from "./assistant-transcript-position.ts";
@@ -10,8 +10,9 @@ import { useDesktopCloseDraft } from "./desktop-close.tsx";
 import { useOptionalWorkspaceOperations, type WorkspaceOperationCoordinator } from "./workspace-operations.tsx";
 import { readAssistantServices, requiresAssistantServiceKey, type AssistantServiceView } from "./assistant-services-api.ts";
 import { AssistantApiSidebar } from "./assistant-api-sidebar.tsx";
+import { AssistantProposalCard } from "./assistant-proposal-card.tsx";
 
-interface ChatMessage { id: number; role: "user" | "assistant"; content: string; model?: string; durationMs?: number; overview?: boolean; source?: AssistantTaskSource }
+interface ChatMessage { id: number; role: "user" | "assistant"; content: string; model?: string; durationMs?: number; overview?: boolean; proposalMode?: boolean; proposal?: CompiledProposalView | null; proposalParseError?: string; source?: AssistantTaskSource }
 export interface AssistantTaskSource { title: string; description?: string; returnKey?: string }
 export interface AssistantDraftSuggestion { id: number; text: string; source?: AssistantTaskSource }
 type TaskPhase = "draft" | "waiting" | "complete" | "failed" | "cancelled";
@@ -30,19 +31,26 @@ interface LocalAssistantPageProps {
   draftSuggestion?: AssistantDraftSuggestion | null;
   onDismissDraftSuggestion?: (id: number) => void;
   onReturnToTask?: (source: AssistantTaskSource) => void;
+  onLocateProfiles?: (profileIds: string[], criteria?: AnomalyCriterion[]) => void;
 }
 interface ChatOperation { id: string; controller: AbortController; content: string; previousHistory: ChatMessage[]; source: AssistantTaskSource | null }
 interface Cancellation { id: string; reason: "manual" | "navigation"; status: "pending" | "unconfirmed" }
 interface ConversationCopy { replyId: number; status: "pending" | "copied" | "failed" }
 interface ConversationMatch { id: number; start: number; end: number }
 
+function visibleMessageContent(item: Pick<ChatMessage, "content" | "proposal">): string {
+  if (!item.proposal) return item.content;
+  const prose = stripProposalFence(item.content);
+  return prose || item.content;
+}
+
 function findConversationMatches(history: readonly ChatMessage[], lastReplyIndex: number, text: string): ConversationMatch[] {
   const query = text.trim();
   if (!query || lastReplyIndex < 0) return [];
   const literal = new RegExp(query.replace(/[.*+?^$(){}|[\]\\]/g, "\\$&"), "iu");
-  return history.slice(0, lastReplyIndex + 1).flatMap(({ id, content }) => {
-    const match = literal.exec(content);
-    return match ? [{ id, start: match.index, end: match.index + match[0].length }] : [];
+  return history.slice(0, lastReplyIndex + 1).flatMap((item) => {
+    const match = literal.exec(visibleMessageContent(item));
+    return match ? [{ id: item.id, start: match.index, end: match.index + match[0].length }] : [];
   });
 }
 
@@ -60,10 +68,10 @@ export function LocalAssistantPage(props: LocalAssistantPageProps) {
   return <LocalAssistantSession key={workspaceId} {...props} draftSuggestion={suggestion} workspaceId={workspaceId} coordinator={workspace?.coordinator} workspaceBlocked={workspace?.snapshot.blocked ?? false} />;
 }
 
-function LocalAssistantSession({ active, onOpenMcp, onOpenModelServices, draftSuggestion, onDismissDraftSuggestion, onReturnToTask, workspaceId, coordinator, workspaceBlocked }: LocalAssistantPageProps & { workspaceId: string; coordinator?: WorkspaceOperationCoordinator; workspaceBlocked: boolean }) {
+function LocalAssistantSession({ active, onOpenMcp, onOpenModelServices, draftSuggestion, onDismissDraftSuggestion, onReturnToTask, onLocateProfiles, workspaceId, coordinator, workspaceBlocked }: LocalAssistantPageProps & { workspaceId: string; coordinator?: WorkspaceOperationCoordinator; workspaceBlocked: boolean }) {
   const { t } = useTranslation();
   const [endpoint, setEndpoint] = useState("http://127.0.0.1:11434"), [catalog, setCatalog] = useState<LocalModelCatalog | null>(null), [model, setModel] = useState("");
-  const [loading, setLoading] = useState(false), [sending, setSending] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState(""), [draft, setDraft] = useState(""), [overview, setOverview] = useState(false), [history, setHistory] = useState<ChatMessage[]>([]);
+  const [loading, setLoading] = useState(false), [sending, setSending] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState(""), [draft, setDraft] = useState(""), [overview, setOverview] = useState(false), [proposalMode, setProposalMode] = useState(false), [history, setHistory] = useState<ChatMessage[]>([]);
   const [undo, setUndo] = useState<{ history: ChatMessage[]; source: AssistantTaskSource | null } | null>(null);
   const [conversationCopy, setConversationCopy] = useState<ConversationCopy | null>(null);
   const copyInProgress = useRef(false);
@@ -196,8 +204,12 @@ function LocalAssistantSession({ active, onOpenMcp, onOpenModelServices, draftSu
     if (appliedRoute.current && (appliedRoute.current !== route || serviceId !== undefined && provider !== "ollama")) {
       historyBoundary.current = nextId.current;
       setOverview(false);
+      setProposalMode(false);
     }
-    if (!appliedRoute.current && provider !== "ollama") setOverview(false);
+    if (!appliedRoute.current && provider !== "ollama") {
+      setOverview(false);
+      setProposalMode(false);
+    }
     appliedRoute.current = route;
   }
   function openApiKeyEditor(id: string) {
@@ -270,9 +282,20 @@ function LocalAssistantSession({ active, onOpenMcp, onOpenModelServices, draftSu
     const owns = () => ownsSession() && activeRequest.current === operation && abort.current === controller;
     try {
       const route = activeService ? { serviceId: activeService.id, serviceProvider: activeService.provider, serviceEndpoint: activeService.endpoint } : { endpoint: catalog!.endpoint };
-      const result = await sendLocalAssistant({ ...route, model: selectedModel, messages: context.messages, includeWorkspaceOverview: overview }, controller.signal, requestId);
+      const result = await sendLocalAssistant({ ...route, model: selectedModel, messages: context.messages, includeWorkspaceOverview: overview, ...(proposalMode ? { proposalMode: true } : {}) }, controller.signal, requestId);
       if (!owns() || controller.signal.aborted) return;
-      const reply: ChatMessage = { id: nextId.current++, role: "assistant", content: result.message.content, model: result.model, durationMs: result.durationMs, overview: result.workspaceOverviewIncluded, source: operation.source ?? undefined };
+      const reply: ChatMessage = {
+        id: nextId.current++,
+        role: "assistant",
+        content: result.message.content,
+        model: result.model,
+        durationMs: result.durationMs,
+        overview: result.workspaceOverviewIncluded,
+        ...(proposalMode ? { proposalMode: true } : {}),
+        ...(result.proposal !== undefined ? { proposal: result.proposal } : {}),
+        ...(result.proposalParseError !== undefined ? { proposalParseError: result.proposalParseError } : {}),
+        source: operation.source ?? undefined,
+      };
       setHistory(current => [...current, reply].slice(-40));
       setModelEvidence("reply");
       setPhase("complete");
@@ -408,7 +431,7 @@ function LocalAssistantSession({ active, onOpenMcp, onOpenModelServices, draftSu
       {apiVisited && onOpenModelServices && <AssistantApiSidebar active={active && settingsOpen && settingsMode === "api"} disabled={workspaceBlocked || loading || sending || cancelling} keyEditRequest={keyEditRequest} onApply={applySavedService} />}
       {onOpenModelServices && <div className="assistant-api-actions assistant-service-shortcuts"><button className="btn xs" type="button" disabled={workspaceBlocked || loading || sending || cancelling} onClick={() => void useDefaultService()}>{t("Use default model")}</button><button className="btn xs ghost" type="button" disabled={sending} onClick={onOpenModelServices}>{t("Manage model services")}</button></div>}
       {defaultError && <p className="feature-alert assistant-connection-error" role="alert">{t(defaultError)}</p>}
-      <div className="assistant-privacy"><strong>{t("Choose the context you share")}</strong><label><input type="checkbox" checked={overview} disabled={sending} onChange={event => setOverview(event.target.checked)} /><span>{t("Include an anonymous workspace overview")}</span></label><p>{t("Adds counts of profiles, groups, engines and proxy configuration. Account details and session data are excluded.")}</p></div>
+      <div className="assistant-privacy"><strong>{t("Choose the context you share")}</strong><label><input type="checkbox" checked={overview} disabled={sending} onChange={event => setOverview(event.target.checked)} /><span>{t("Include an anonymous workspace overview")}</span></label><p>{t("Adds counts of profiles, groups, engines and proxy configuration. Account details and session data are excluded.")}</p><label className="assistant-proposal-toggle"><input type="checkbox" data-assistant-proposal-toggle="true" checked={proposalMode} disabled={sending} onChange={event => setProposalMode(event.target.checked)} /><span>{t("Allow actionable proposals (review before running)")}</span></label><p>{t("Shares redacted profile metadata (ID, name, group, tags, health status) and safe Proxy Vault labels so the model can propose previewable actions. Passwords, cookies, 2FA, proxy credentials, sessions and notes are never sent, and nothing runs automatically.")}</p></div>
       {onOpenMcp && <div className="assistant-session-info"><strong>{t("Browser tools")}</strong><p>{t("Connect your MCP client to run browser workflows alongside these plans and drafts.")}</p><button className="btn xs" type="button" onClick={onOpenMcp}>{t("Configure MCP connection")}</button></div>}
     </aside><section className="assistant-chat" aria-label={t("AI conversation")}>
       <div className="assistant-chat-header">
@@ -464,7 +487,9 @@ function LocalAssistantSession({ active, onOpenMcp, onOpenModelServices, draftSu
       </div>
       <div ref={transcript.viewport} onScroll={transcript.onScroll} className="assistant-messages" role="log" aria-live="off" aria-label={t("Conversation history")} tabIndex={0}>
         {!history.length && <div className="assistant-welcome"><span className="assistant-welcome-mark" aria-hidden="true">✦</span><h2>{t("What would you like to work on?")}</h2><p>{t("Start with a question or use one of these prompts as a draft.")}</p><div className="assistant-examples">{EXAMPLES.map(example => <button key={example.title} type="button" disabled={sending || loading} onClick={() => reuseMessage(t(example.prompt))}><strong>{t(example.title)}</strong><span aria-hidden="true">↗</span></button>)}</div></div>}
-        {history.map(item => <article key={item.id} className={`assistant-message ${item.role}`} data-find-selected={selectedMatch?.id === item.id || undefined}>
+        {history.map(item => {
+          const displayContent = visibleMessageContent(item);
+          return <article key={item.id} className={`assistant-message ${item.role}`} data-find-selected={selectedMatch?.id === item.id || undefined}>
           <div className="assistant-message-heading">
             {item.role === "assistant"
               ? <h3 tabIndex={-1} data-assistant-reply-heading={item.id}>{t("Assistant")}</h3>
@@ -474,14 +499,18 @@ function LocalAssistantSession({ active, onOpenMcp, onOpenModelServices, draftSu
               void copyText(item.content).then(() => setNotice("Copied")).catch(() => setError("Copy failed. Select and copy the text."));
             }}>{t("Copy")}</button>}
           </div>
-          <div className="assistant-message-content">{selectedMatch?.id === item.id ? <>{item.content.slice(0, selectedMatch.start)}<mark data-assistant-find-match>{item.content.slice(selectedMatch.start, selectedMatch.end)}</mark>{item.content.slice(selectedMatch.end)}</> : item.content}</div>
+          <div className="assistant-message-content">{selectedMatch?.id === item.id ? <>{displayContent.slice(0, selectedMatch.start)}<mark data-assistant-find-match>{displayContent.slice(selectedMatch.start, selectedMatch.end)}</mark>{displayContent.slice(selectedMatch.end)}</> : displayContent}</div>
+          {item.role === "assistant" && item.proposalParseError && <p className="assistant-proposal-parse-error" role="alert">{t("Action proposal could not be verified: {reason}", { reason: item.proposalParseError })}</p>}
+          {item.role === "assistant" && item.proposal && <AssistantProposalCard proposal={item.proposal} disabled={workspaceBlocked} onLocateProfiles={onLocateProfiles} />}
           {item.overview && <span className="assistant-context-label">{t("Anonymous workspace overview included")}</span>}
+          {item.proposalMode && <span className="assistant-context-label">{t("Action proposal mode enabled")}</span>}
           {item.role === "assistant" && item.source && <div className="assistant-answer-source">
             <span>{t("From task: {task}", { task: item.source.title })}</span>
             {onReturnToTask && <button className="btn xs ghost" type="button" onClick={() => onReturnToTask(item.source!)}>{t("Return to source inspection")}</button>}
           </div>}
           <div className="assistant-message-actions"><button className="btn xs ghost" type="button" disabled={sending} onClick={() => reuseMessage(item.content, item.source)}>{t(item.role === "user" ? "Edit request" : "Use response as draft")}</button></div>
-        </article>)}
+        </article>;
+        })}
         {sending && <div className="assistant-generating" aria-hidden="true"><span />{t("Generating a response…")}</div>}
       </div>
       {suggestion && <section className="assistant-suggestion" aria-label={t("Fingerprint explanation draft")}>
@@ -501,7 +530,7 @@ function LocalAssistantSession({ active, onOpenMcp, onOpenModelServices, draftSu
           <button type="button" className="btn xs ghost" onClick={dismissSuggestion}>{t("Dismiss suggestion")}</button>
         </div>
       </section>}
-      <div ref={composer} className="assistant-composer"><div className="assistant-feedback">{error && <p className="feature-alert" role="alert">{t(error)}</p>}{notice && <p role="status">{t(notice)} {undo && <button className="btn xs" type="button" onClick={() => { setHistory(undo.history); setTaskSource(undo.source); setUndo(null); setNotice(""); }}>{t("Undo")}</button>}</p>}</div><label className="assistant-draft"><span className="sr-only">{t("Message the assistant")}</span><textarea ref={input} rows={3} maxLength={MESSAGE_BYTES} value={draft} disabled={sending} placeholder={t("Describe your task…")} onChange={event => { if (!activeRequest.current) updateDraft(event.target.value); }} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} /></label><div className="assistant-composer-footer"><span>{isRemote && activeService ? t("Send to {service}", { service: activeService.name }) : t(selectedModel ? "Ctrl / ⌘ + Enter to send" : "Connect a model before sending.")}</span>{sending ? <button className="btn" type="button" onClick={() => cancel()}>{t("Cancel request")}</button> : <button className="btn primary" type="button" disabled={loading || cancelling || needsKey || !selectedModel || !draft.trim()} onClick={() => void send()}>{t("Send message")} ↑</button>}</div></div>
+      <div ref={composer} className="assistant-composer"><div className="assistant-feedback">{error && <p className="feature-alert" role="alert">{t(error)}</p>}{notice && <p role="status">{t(notice)} {undo && <button className="btn xs" type="button" onClick={() => { setHistory(undo.history); setTaskSource(undo.source); setUndo(null); setNotice(""); }}>{t("Undo")}</button>}</p>}</div><label className="assistant-draft"><span className="sr-only">{t("Message the assistant")}</span><textarea ref={input} rows={3} maxLength={MESSAGE_BYTES} value={draft} disabled={sending} placeholder={t("Describe your task…")} onChange={event => { if (!activeRequest.current) updateDraft(event.target.value); }} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} /></label><div className="assistant-composer-footer"><span className="assistant-composer-meta">{isRemote && activeService ? t("Send to {service}", { service: activeService.name }) : t(selectedModel ? "Ctrl / ⌘ + Enter to send" : "Connect a model before sending.")}{proposalMode && <span className="assistant-proposal-mode-pill">{t("Action proposals on")}</span>}</span>{sending ? <button className="btn" type="button" onClick={() => cancel()}>{t("Cancel request")}</button> : <button className="btn primary" type="button" disabled={loading || cancelling || needsKey || !selectedModel || !draft.trim()} onClick={() => void send()}>{t("Send message")} ↑</button>}</div></div>
     </section></div>
   </div>;
 }

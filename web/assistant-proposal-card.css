@@ -1,0 +1,490 @@
+/* AI Copilot Action Proposal Card — Linear / Arc dual-theme tokens, GPU-only motion. */
+.proposal-card {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  overflow: hidden;
+  color: var(--ink);
+  transition: opacity 150ms var(--ease), transform 150ms var(--ease);
+}
+
+.proposal-card[data-risk="high"] {
+  border-color: var(--danger-line);
+}
+
+.proposal-card[data-phase="discarded"] {
+  padding: 10px 14px;
+  background: var(--surface-sunken);
+  color: var(--muted);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.proposal-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--surface-sunken);
+}
+
+.proposal-card-heading {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.proposal-card-eyebrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.proposal-card-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.proposal-card-summary {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.proposal-risk-badge,
+.proposal-action-chip,
+.proposal-phase-badge,
+.proposal-item-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  font-size: 11px;
+  font-weight: 550;
+  line-height: 1.4;
+  white-space: nowrap;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-soft);
+}
+
+.proposal-risk-badge[data-risk="read-only"] {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  color: var(--accent-ink);
+}
+
+.proposal-risk-badge[data-risk="low"] {
+  background: var(--success-soft);
+  border-color: var(--success-line);
+  color: var(--success-ink);
+}
+
+.proposal-risk-badge[data-risk="medium"] {
+  background: var(--warn-soft);
+  border-color: var(--warn-line);
+  color: var(--warn-ink);
+}
+
+.proposal-risk-badge[data-risk="high"] {
+  background: var(--danger-soft);
+  border-color: var(--danger-line);
+  color: var(--danger-ink);
+}
+
+.proposal-action-chip {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.proposal-phase-badge[data-phase="running"] {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  color: var(--accent-ink);
+}
+
+.proposal-phase-badge[data-phase="completed"] {
+  background: var(--success-soft);
+  border-color: var(--success-line);
+  color: var(--success-ink);
+}
+
+.proposal-phase-badge[data-phase="aborted"] {
+  background: var(--warn-soft);
+  border-color: var(--warn-line);
+  color: var(--warn-ink);
+}
+
+.proposal-phase-badge[data-phase="failed"] {
+  background: var(--danger-soft);
+  border-color: var(--danger-line);
+  color: var(--danger-ink);
+}
+
+.proposal-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--warn-soft);
+}
+
+.proposal-warning-item {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--warn-ink);
+}
+
+.proposal-scope-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 14px;
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.proposal-scope-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.proposal-scope-stats strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.proposal-scope-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.proposal-progress {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--surface-sunken);
+}
+
+.proposal-progress-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 7px;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.proposal-progress-track {
+  position: relative;
+  height: 5px;
+  width: 100%;
+  border-radius: var(--r-pill);
+  background: var(--line);
+  overflow: hidden;
+}
+
+.proposal-progress-fill {
+  width: 100%;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  transform-origin: left center;
+  will-change: transform;
+  transition: transform 180ms var(--ease);
+}
+
+.proposal-progress-fill[data-tone="completed"] {
+  background: var(--success);
+}
+
+.proposal-progress-fill[data-tone="aborted"] {
+  background: var(--warn);
+}
+
+.proposal-progress-fill[data-tone="failed"] {
+  background: var(--danger);
+}
+
+.proposal-table-wrap {
+  max-height: 260px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.proposal-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.proposal-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 7px 12px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--muted);
+  background: var(--surface-sunken);
+  border-bottom: 1px solid var(--line);
+}
+
+.proposal-table tbody td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  vertical-align: top;
+  color: var(--ink);
+}
+
+.proposal-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.proposal-table tbody tr:hover {
+  background: var(--surface-hover);
+}
+
+.proposal-table tbody tr[data-executable="false"] {
+  color: var(--muted);
+  opacity: 0.82;
+}
+
+.proposal-col-check {
+  width: 34px;
+  text-align: center;
+}
+
+.proposal-col-check input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.proposal-profile-cell strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 550;
+  color: inherit;
+  overflow-wrap: anywhere;
+}
+
+.proposal-profile-cell code {
+  display: inline-block;
+  margin-top: 2px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--faint);
+}
+
+.proposal-diff {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.proposal-diff-before {
+  color: var(--muted);
+}
+
+.proposal-diff-arrow {
+  color: var(--faint);
+}
+
+.proposal-diff-after {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.proposal-skip-detail {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.proposal-item-status[data-status="succeeded"] {
+  background: var(--success-soft);
+  border-color: var(--success-line);
+  color: var(--success-ink);
+}
+
+.proposal-item-status[data-status="skipped"] {
+  background: var(--surface-sunken);
+  border-color: var(--line);
+  color: var(--muted);
+}
+
+.proposal-item-status[data-status="failed"] {
+  background: var(--danger-soft);
+  border-color: var(--danger-line);
+  color: var(--danger-ink);
+}
+
+.proposal-item-status[data-status="aborted"] {
+  background: var(--warn-soft);
+  border-color: var(--warn-line);
+  color: var(--warn-ink);
+}
+
+.proposal-item-status[data-status="running"] {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  color: var(--accent-ink);
+}
+
+.proposal-fp-summary {
+  padding: 12px 16px;
+  border-top: 1px solid var(--line-soft);
+  background: var(--surface-sunken);
+}
+
+.proposal-fp-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.proposal-fp-stat {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  font-variant-numeric: tabular-nums;
+}
+
+.proposal-fp-stat strong {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.proposal-fp-stat span {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.proposal-fp-stat[data-tone="good"] strong { color: var(--success-ink); }
+.proposal-fp-stat[data-tone="warn"] strong { color: var(--warn-ink); }
+.proposal-fp-stat[data-tone="danger"] strong { color: var(--danger-ink); }
+
+.proposal-fp-checks {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.proposal-secondary-confirm {
+  padding: 10px 16px;
+  border-top: 1px solid var(--danger-line);
+  background: var(--danger-soft);
+}
+
+.proposal-secondary-confirm label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--danger-ink);
+  cursor: pointer;
+}
+
+.proposal-secondary-confirm input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  margin-top: 2px;
+  accent-color: var(--danger);
+}
+
+.proposal-error {
+  margin: 0;
+  padding: 9px 16px;
+  border-top: 1px solid var(--danger-line);
+  background: var(--danger-soft);
+  color: var(--danger-ink);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.proposal-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 16px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-sunken);
+}
+
+.proposal-receipt-counts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.proposal-footer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-inline-start: auto;
+}
+
+@media (max-width: 640px) {
+  .proposal-card-header {
+    flex-direction: column;
+  }
+  .proposal-fp-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .proposal-card,
+  .proposal-progress-fill {
+    transition: none;
+  }
+}

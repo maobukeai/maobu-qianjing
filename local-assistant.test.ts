@@ -124,6 +124,36 @@ describe("workspace context projection", () => {
     expect(overview.groups.reduce((sum, group) => sum + group.profileCount, 0) + overview.otherGroupProfileCount).toBe(30);
     expect(overview.otherGroupProfileCount).toBe(6); expect(JSON.stringify(overview)).not.toContain("private");
   });
+  test("proposalMode injects only redacted action catalog when explicitly enabled and never enables model tools", async () => {
+    let catalogReads = 0;
+    const provider = () => {
+      catalogReads++;
+      return {
+        profiles: [{
+          id: "p1", name: "Env 1", group: "Ops", tags: ["vip"], engine: "chromium" as const,
+          running: false, hasProxy: true, proxyError: true, restartPending: false, mobilePersona: false,
+          fpStatus: "issues" as const, lastOpenAt: 0, password: "private-catalog-password", notes: "private-note",
+        }],
+        omittedCount: 0, totalProfiles: 1, groups: ["Ops"], tags: ["vip"],
+        proxyVaultSummary: [], proxyVaultAvailable: false,
+      };
+    };
+    const f = stub();
+    expect(await code(f.service.chat({ ...input, proposalMode: "true" as never }))).toBe("invalid-request");
+    await f.service.chat(input, { actionCatalog: provider });
+    expect(catalogReads).toBe(0);
+    expect(await code(f.service.chat({ ...input, proposalMode: true }))).toBe("context-unavailable");
+    await f.service.chat({ ...input, proposalMode: true }, { actionCatalog: provider });
+    expect(catalogReads).toBe(1);
+    const body = f.calls.at(-1)!.options.body as any;
+    expect(body.tools).toBeUndefined();
+    const system = body.messages[0].content as string;
+    expect(system).toContain("maobu-proposal");
+    expect(system).toContain('"id":"p1"');
+    expect(system).not.toContain("private-catalog-password");
+    expect(system).not.toContain("private-note");
+    expect(Buffer.byteLength(system, "utf8")).toBeLessThan(16 * 1024);
+  });
 });
 
 describe("bounded generation, cancellation and failures", () => {

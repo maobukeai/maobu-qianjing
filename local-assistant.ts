@@ -1,6 +1,7 @@
 /** Explicit, bounded text-model requests. Conversations stay in the UI session. */
 import { requestLoopbackJson } from "./local-json-transport.ts";
 import { isRemoteAssistantModelId, RemoteAssistantError, RemoteAssistantService, type RemoteAssistantConnection, type RemoteModelProvider } from "./remote-assistant.ts";
+import { buildProposalModeSystemPrompt, safeActionCatalog, type AssistantActionCatalog } from "./assistant-proposals.ts";
 import type { Profile } from "./types.ts";
 
 export const DEFAULT_ASSISTANT_ENDPOINT = "http://127.0.0.1:11434";
@@ -29,7 +30,7 @@ export class LocalAssistantError extends Error {
   }
 }
 export interface AssistantMessage { role: "user" | "assistant"; content: string }
-export interface LocalAssistantChatInput { endpoint?: string; model: string; messages: AssistantMessage[]; includeWorkspaceOverview?: boolean }
+export interface LocalAssistantChatInput { endpoint?: string; model: string; messages: AssistantMessage[]; includeWorkspaceOverview?: boolean; proposalMode?: boolean }
 export interface AssistantModel { name: string; sizeBytes: number | null; parameterSize: string | null; quantization: string | null }
 export interface AssistantModelList { provider: "ollama"; endpoint: string; checkedAt: string; models: AssistantModel[]; excludedRemoteModels: number }
 export type LocalModelCatalog = AssistantModelList;
@@ -69,11 +70,12 @@ function remoteMetadata(value: Record<string, unknown>): boolean {
   return false;
 }
 function validateInput(value: unknown, provider?: RemoteModelProvider): Required<LocalAssistantChatInput> {
-  if (!isRecord(value) || Object.keys(value).some(key => !["endpoint", "model", "messages", "includeWorkspaceOverview"].includes(key))) return fail("invalid-request");
+  if (!isRecord(value) || Object.keys(value).some(key => !["endpoint", "model", "messages", "includeWorkspaceOverview", "proposalMode"].includes(key))) return fail("invalid-request");
   if (provider && (value.endpoint !== undefined || !isRemoteAssistantModelId(value.model, provider))) return fail("invalid-request");
   const endpoint = normalizeAssistantEndpoint(value.endpoint), model = provider ? value.model as string : modelName(value.model);
   if (!provider && cloudName(model)) return fail("model-not-local");
   if (value.includeWorkspaceOverview !== undefined && typeof value.includeWorkspaceOverview !== "boolean") return fail("invalid-request");
+  if (value.proposalMode !== undefined && typeof value.proposalMode !== "boolean") return fail("invalid-request");
   if (!Array.isArray(value.messages) || !value.messages.length || value.messages.length > LOCAL_ASSISTANT_LIMITS.messages) return fail("invalid-request");
   let bytes = 0;
   const messages: AssistantMessage[] = value.messages.map(message => {
@@ -84,7 +86,7 @@ function validateInput(value: unknown, provider?: RemoteModelProvider): Required
   });
   if (messages[messages.length - 1]!.role !== "user") return fail("invalid-request");
   if (Buffer.byteLength(JSON.stringify(messages), "utf8") > 96 * 1024) return fail("invalid-request");
-  return { endpoint, model, messages, includeWorkspaceOverview: value.includeWorkspaceOverview === true };
+  return { endpoint, model, messages, includeWorkspaceOverview: value.includeWorkspaceOverview === true, proposalMode: value.proposalMode === true };
 }
 function count(value: unknown, maximum: number): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= maximum; }
 /** Only these fields are read; account/session/fingerprint/control records are never serialized. */
@@ -215,7 +217,7 @@ export class LocalAssistantService {
       return { models: names.map(name => ({ name, sizeBytes: null, parameterSize: null, quantization: null })), excludedRemoteModels: 0 };
     } finally { active.finish(); }
   }
-  async chat(input: LocalAssistantChatInput, options: { signal?: AbortSignal; workspaceOverview?: () => WorkspaceOverview; connection?: RemoteAssistantConnection } = {}): Promise<LocalAssistantChatResult> {
+  async chat(input: LocalAssistantChatInput, options: { signal?: AbortSignal; workspaceOverview?: () => WorkspaceOverview; actionCatalog?: () => AssistantActionCatalog; connection?: RemoteAssistantConnection } = {}): Promise<LocalAssistantChatResult> {
     const connection = options.connection;
     const validated = validateInput(input, connection?.provider);
     if (this.chatBusy) return fail("busy");
@@ -232,6 +234,14 @@ export class LocalAssistantService {
         let overview: WorkspaceOverview;
         try { overview = safeOverview(options.workspaceOverview()); } catch { return fail("context-unavailable"); }
         system += `\nThe operator explicitly included this anonymous counts-only workspace summary. Group labels are anonymous, not real names. It does not describe page contents or account state:\n${JSON.stringify(overview)}`;
+      }
+      if (validated.proposalMode) {
+        if (typeof options.actionCatalog !== "function") return fail("context-unavailable");
+        let catalog: AssistantActionCatalog;
+        try { catalog = safeActionCatalog(options.actionCatalog()); } catch { return fail("context-unavailable"); }
+        // Keep the full system prompt strictly under RemoteAssistantService's 16 KiB cap.
+        const remainingBytes = Math.max(1024, 15_800 - Buffer.byteLength(system, "utf8"));
+        system += buildProposalModeSystemPrompt(catalog, remainingBytes);
       }
       if (connection) {
         const reply = await remoteReply(() => this.remote.chat(connection, { model: validated.model, messages: validated.messages, system, signal: active.signal }), active);

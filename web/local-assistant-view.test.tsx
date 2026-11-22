@@ -25,9 +25,9 @@ describe("local assistant initial view", () => {
         const elements = await elementsIn(html);
         const workspace = elements.find(element => element.attrs.class?.split(" ").includes("assistant-workspace"))!;
         expect(Object.hasOwn(workspace.attrs, "hidden")).toBe(!active);
-        const checkbox = elements.find(element => element.tag === "input" && element.attrs.type === "checkbox")!;
-        expect(checkbox).toBeDefined();
-        expect(checkbox.attrs.checked).toBeUndefined();
+        const checkboxes = elements.filter(element => element.tag === "input" && element.attrs.type === "checkbox");
+        expect(checkboxes).toHaveLength(2);
+        for (const checkbox of checkboxes) expect(checkbox.attrs.checked).toBeUndefined();
         expect(elements.filter(element => ["iframe", "img", "script", "form"].includes(element.tag))).toHaveLength(0);
       }
       expect(network).not.toHaveBeenCalled();
@@ -42,7 +42,8 @@ describe("local assistant initial view", () => {
     expect(connectionInput.attrs.disabled).toBeUndefined();
     expect(await elementsIn(html, "label.assistant-draft > textarea")).toHaveLength(1);
     expect(await elementsIn(html, "label.assistant-draft > .sr-only")).toHaveLength(1);
-    expect(await elementsIn(html, "label > input[type=checkbox]")).toHaveLength(1);
+    expect(await elementsIn(html, "label > input[type=checkbox]")).toHaveLength(2);
+    expect(await elementsIn(html, 'input[data-assistant-proposal-toggle="true"]')).toHaveLength(1);
     const buttons = elements.filter(element => element.tag === "button");
     expect(buttons.every(element => element.attrs.type === "button")).toBe(true);
     expect(buttons.filter(element => Object.hasOwn(element.attrs, "disabled"))).toHaveLength(1);

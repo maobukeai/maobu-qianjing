@@ -12,6 +12,13 @@ import { probeMcpIntegration } from "./agent/integration-probe.ts";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { createSyncSnapshot, listSyncSnapshots, previewSyncSnapshot, readSyncSnapshot, writeSyncSnapshot } from "./encrypted-sync.ts";
 import { buildWorkspaceOverview, LocalAssistantError, LocalAssistantService } from "./local-assistant.ts";
+import {
+  buildAssistantActionCatalog,
+  parseAndCompileProposalFromReply,
+  resolveProposalWorkspaceId,
+  type AssistantProposalRegistry,
+  type AssistantProxyVaultLookup,
+} from "./assistant-proposals.ts";
 import { AssistantModelServices, AssistantServicesError } from "./assistant-model-services.ts";
 import { RemoteAssistantError, type RemoteAssistantConnection } from "./remote-assistant.ts";
 import { ProfileTemplateStore, PROFILE_TEMPLATES_FILE } from "./profile-templates.ts";
@@ -82,7 +89,7 @@ export function initializeFeatureSettings(paths?: StatePaths): void {
     }
   } catch { /* A damaged optional preferences file must not prevent opening the workspace. */ }
 }
-export async function handleFeatureSettingsRequest(request: Request, store: ProfileStore, options: { paths?: StatePaths; desktopAvailable?: boolean; launcher?: Pick<Launcher, "certifiedActive">; assistant?: LocalAssistantService; runtimeInventory?: RuntimeInventoryDeployment; discoverLocalProxies?: typeof discoverLocalProxies } = {}): Promise<Response | null> {
+export async function handleFeatureSettingsRequest(request: Request, store: ProfileStore, options: { paths?: StatePaths; desktopAvailable?: boolean; launcher?: Pick<Launcher, "certifiedActive">; assistant?: LocalAssistantService; runtimeInventory?: RuntimeInventoryDeployment; discoverLocalProxies?: typeof discoverLocalProxies; workspaceManagement?: { currentId(): string }; proxyVault?: AssistantProxyVaultLookup; proposalRegistry?: AssistantProposalRegistry } = {}): Promise<Response | null> {
   const { pathname: path, search } = new URL(request.url);
   if (!(path === "/ui/api/settings" || path.startsWith("/ui/api/settings/"))) return null;
   const rejected = guard(request);
@@ -145,9 +152,26 @@ export async function handleFeatureSettingsRequest(request: Request, store: Prof
       if (request.signal.aborted) cancel(); else request.signal.addEventListener("abort", cancel, { once: true });
       if (id) assistantRequests.set(id, { controller, store });
       try {
-        return json({ ok: true, reply: await (options.assistant ?? defaultAssistant).chat(chatInput, { signal: controller.signal, connection,
+        const reply = await (options.assistant ?? defaultAssistant).chat(chatInput, {
+          signal: controller.signal,
+          connection,
           workspaceOverview: () => buildWorkspaceOverview(store.listProfiles(), store.listLaunches().map(launch => launch.profileId)),
-        }) });
+          actionCatalog: () => buildAssistantActionCatalog(store, { proxyVault: options.proxyVault }),
+        });
+        if (chatInput.proposalMode === true) {
+          const compiled = parseAndCompileProposalFromReply(reply.message.content, store, {
+            workspaceId: resolveProposalWorkspaceId(store, options),
+            registry: options.proposalRegistry,
+            proxyVault: options.proxyVault,
+          });
+          return json({
+            ok: true,
+            reply,
+            proposal: compiled.proposal,
+            ...(compiled.proposalParseError ? { proposalParseError: compiled.proposalParseError } : {}),
+          });
+        }
+        return json({ ok: true, reply });
       } finally { request.signal.removeEventListener("abort", cancel); if (id) assistantRequests.delete(id); }
     }
     if (path === "/ui/api/settings/assistant/cancel" && request.method === "POST") {

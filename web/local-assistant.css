@@ -139,6 +139,10 @@
 .assistant-draft textarea:focus { outline: 1px solid var(--accent); outline-offset: 1px; }
 .assistant-composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; }
 .assistant-composer-footer > span { color: var(--faint); font-size: 10px; }
+.assistant-composer-meta { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.assistant-proposal-mode-pill { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: var(--r-pill); border: 1px solid var(--accent-line); background: var(--accent-soft); color: var(--accent-ink); font-size: 10px; font-weight: 550; }
+.assistant-proposal-toggle { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+.assistant-proposal-parse-error { margin: 10px 0 0; padding: 8px 11px; border: 1px solid var(--warn-line); border-radius: var(--r-sm); background: var(--warn-soft); color: var(--warn-ink); font-size: 11.5px; line-height: 1.55; }
 @media (max-width: 1150px) { .assistant-layout.settings-open { grid-template-columns: minmax(0, 1fr) 250px; gap: 12px; } .assistant-layout.settings-open .assistant-examples { grid-template-columns: 1fr; } }
 @media (max-width: 540px) {
   .assistant-examples { grid-template-columns: 1fr; }
