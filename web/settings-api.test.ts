@@ -116,3 +116,45 @@ test("sync previews reject impossible counts and unknown file formats before ena
   response({ ok: true, preview: { ...preview, conflictCount: 1 }, previewHash: "a".repeat(64) }); await expect(api.previewSyncFile("file", "password-for-test")).rejects.toThrow("incomplete");
   response({ ok: true, files: [{ fileName: "../../outside", bytes: 123, createdAt: 0, modifiedAt: 0 }] }); await expect(api.fetchSyncFiles()).rejects.toThrow("incomplete");
 });
+
+test("network resource settings validate firefoxMemorySaver, dataSaver, and batchLaunchMemoryGuard strictly", async () => {
+  api.resetSharedSettingsCache();
+  const base = defaultAppSettings();
+  const extendedNetwork = {
+    checkLocalProxyBeforeLaunch: false,
+    chromiumPreloading: "browser-default" as const,
+    chromiumMemorySaver: true,
+    firefoxMemorySaver: true,
+    dataSaver: { enabled: true, blockImages: true, blockMedia: false, blockFonts: true },
+    batchLaunchMemoryGuard: { enabled: true, softWatermarkPercent: 75, hardWatermarkPercent: 88, minAvailableMb: 1536 },
+  };
+  response({ ok: true, settings: { ...base, network: extendedNetwork } });
+  expect((await api.fetchSettings()).network).toEqual(extendedNetwork);
+
+  for (const badNetwork of [
+    { ...extendedNetwork, firefoxMemorySaver: "yes" },
+    { ...extendedNetwork, dataSaver: { enabled: true, blockImages: true, blockMedia: false, blockFonts: false, extra: true } },
+    { ...extendedNetwork, batchLaunchMemoryGuard: { enabled: true, softWatermarkPercent: 90, hardWatermarkPercent: 80, minAvailableMb: 1536 } },
+    { ...extendedNetwork, batchLaunchMemoryGuard: { enabled: true, softWatermarkPercent: 75, hardWatermarkPercent: 88, minAvailableMb: 64 } },
+  ]) {
+    response({ ok: true, settings: { ...base, network: badNetwork } });
+    await expect(api.fetchSettings()).rejects.toThrow("incomplete");
+  }
+});
+
+test("fetchSettingsShared reuses an in-flight or just-resolved read without issuing extra requests", async () => {
+  api.resetSharedSettingsCache();
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls++;
+    await new Promise(resolve => setTimeout(resolve, 10));
+    return Response.json({ ok: true, settings: defaultAppSettings() });
+  }) as unknown as typeof fetch;
+
+  const [first, shared] = await Promise.all([api.fetchSettings(), api.fetchSettingsShared()]);
+  expect(calls).toBe(1);
+  expect(shared).toEqual(first);
+  const cached = await api.fetchSettingsShared();
+  expect(calls).toBe(1);
+  expect(cached).toEqual(first);
+});

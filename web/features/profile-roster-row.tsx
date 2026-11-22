@@ -25,6 +25,8 @@ export interface ProfileRosterRowHandlers {
   setLaunchFailure: (id: string, message: string | null) => void;
   openNetworkSettings: () => void;
   openLogs: () => void;
+  trimMemory?: (id: string) => Promise<void>;
+  hibernateProfile?: (id: string) => Promise<void>;
 }
 
 export interface ProfileRosterRowProps {
@@ -308,6 +310,8 @@ export const ProfileRosterRow = React.memo(function ProfileRosterRow({
               {canEditRow && <button role="menuitem" className="pop-item" onClick={() => openCookie([p])}><Icon name="cookie" className="sm" />{t("Add cookies")}</button>}
               {p.has2fa && <button role="menuitem" className="pop-item" onClick={() => copy2fa(p.id)}><Icon name={twoFaFlashed ? "check" : "key"} className="sm" />{twoFaFlashed ? t("Copied") : t("Copy current 2FA code")}</button>}
               {p.running && p.engine === "chromium" && <button role="menuitem" className="pop-item" disabled={isBusy} onClick={() => act(p.id, raiseProfile)}><Icon name="raise" className="sm" />{t("Bring to front")}</button>}
+              {p.running && handlers.trimMemory && <button role="menuitem" className="pop-item" disabled={isBusy} onClick={() => void handlers.trimMemory!(p.id)}><Icon name="activity" className="sm" />{t("Trim memory")}</button>}
+              {p.running && handlers.hibernateProfile && <button role="menuitem" className="pop-item" disabled={isBusy} onClick={() => void handlers.hibernateProfile!(p.id)}><Icon name="moon" className="sm" />{t("Save session & hibernate")}</button>}
             </ProfileActionMenu>
           </span>
         </td>

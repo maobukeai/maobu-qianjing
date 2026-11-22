@@ -35,7 +35,7 @@
 .tools-panel-head p { margin-top: 5px; }
 .tools-panel-head > .btn { flex-shrink: 0; }
 .tools-panel-body { padding: 0 20px 20px; display: flex; flex-direction: column; gap: 14px; }
-.tools-tabs { display: flex; align-items: stretch; gap: 25px; padding: 0; background: transparent; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; }
+.tools-tabs { display: flex; align-items: stretch; flex-wrap: wrap; gap: 12px 25px; padding: 0; background: transparent; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; }
 .tools-tabs button { flex: 0 1 auto; min-width: 0; text-align: left; padding: 0 1px 12px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); font-size: 12px; font-weight: 500; cursor: pointer; }
 .tools-tabs button small { display: block; margin-top: 3px; font-size: 11px; font-weight: 400; }
 .tools-tabs button.selected { color: var(--accent-ink); background: transparent; border-bottom-color: var(--accent); box-shadow: none; }

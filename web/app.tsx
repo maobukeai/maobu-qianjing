@@ -50,7 +50,11 @@ import { ProfileFileUpdateDialog, ProfileFileUpdatePanel, useProfileFileUpdate }
 import { ProfileMoveFeedback, useProfileMove, type ProfileMoveResult } from "./profile-move.tsx";
 import { changeProfileRangeSelection, reconcileProfileSelectionAnchor, type ProfileSelectionAnchor } from "./profile-range-selection.ts";
 import { ProfileTagsDialog, type ProfileTagsTarget } from "./profile-tags.tsx";
-import { ProxiesPage } from "./proxies.tsx";
+import { ProxiesPage, type ProxyPageTask } from "./proxies.tsx";
+import { ProfileResourceChip, ResourceDashboardDrawer, ResourceTopCapsule } from "./resource-dashboard.tsx";
+import { formatMemoryBytes, hibernateProfile as hibernateProfileApi, trimProfileMemory as trimProfileMemoryApi, useResourceMonitor, watermarkConcurrency } from "./resource-monitor-api.ts";
+import { pauseWindowSync, stopWindowSync, useWindowSyncState } from "./window-control-api.ts";
+import { SyncEmergencyBar, WindowSyncPanel } from "./window-sync-panel.tsx";
 import type { ProxyAssignmentSnapshot } from "./proxy-assignment-task.ts";
 import { ROSTER_DENSITY_KEY, RosterDensityControl, parseRosterDensity, type RosterDensity } from "./roster-density.tsx";
 import { RosterViews } from "./roster-views.tsx";
@@ -382,6 +386,16 @@ function App() {
   const [bulkExt, setBulkExt] = useState(""), [showUpdate, setShowUpdate] = useState(false), [exportOpen, setExportOpen] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null), [renameVal, setRenameVal] = useState(""), [addingGroup, setAddingGroup] = useState(false), [sidebarGroupName, setSidebarGroupName] = useState("");
   const { profilesById, runningCount, selectedMobileCount, selectedProfilesSupportChromeExtensions } = useProfileMetrics(profiles, selected);
+  const [resourceDrawerOpen, setResourceDrawerOpen] = useState(false), [windowSyncOpen, setWindowSyncOpen] = useState(false);
+  const [proxyTabRequest, setProxyTabRequest] = useState<{ task: ProxyPageTask; seq: number } | null>(null);
+  const resourceMonitor = useResourceMonitor({ enabled: !!appMode, runningCount, panelOpen: resourceDrawerOpen, eventsStream: appMode?.eventsStream === true });
+  const latestMetricsRef = useRef(resourceMonitor.snapshot); latestMetricsRef.current = resourceMonitor.snapshot;
+  const { syncState, setSyncState } = useWindowSyncState(!!appMode);
+  const renderResourceChips = useCallback((profile: UiProfile) => {
+    const metrics = profile.running ? resourceMonitor.byProfileId.get(profile.id) : undefined;
+    const hibernated = !profile.running && resourceMonitor.hibernatedIds.has(profile.id);
+    return metrics || hibernated ? <ProfileResourceChip metrics={metrics} hibernated={hibernated} /> : null;
+  }, [resourceMonitor.byProfileId, resourceMonitor.hibernatedIds]);
 
   const saveGroupDisclosure = (next: Map<string, boolean>) => { const value = serializeGroupDisclosure(next); setGroupDisclosure(readGroupDisclosure(value)); writeSetting(GROUP_DISCLOSURE_KEY, value); };
   const toggleProfileGroup = (name: string, collapsed: boolean) => { const next = new Map(groupDisclosure); next.delete(name); next.set(name, !collapsed); saveGroupDisclosure(next); };
@@ -406,7 +420,7 @@ function App() {
     onLoadRoster: load, onRefreshImportedProfiles: refreshImportedProfiles, onActionError: setActionErr, onFlash: flash, onOpenProfilesView: () => setView("profiles"), t,
   });
   const reuseCanOpen = view === "profiles" && !createModal.showCreate && !editModal.editId && !importModal.showBulk && !showUpdate && !cookieTargets && !importModal.pendingView
-    && !movingFolder && !logView && !logErr && !scriptRunOpen && !commandOpen && !shortcutHelpOpen && !tagsTarget && !showDiag;
+    && !movingFolder && !logView && !logErr && !scriptRunOpen && !commandOpen && !shortcutHelpOpen && !tagsTarget && !showDiag && !resourceDrawerOpen && !windowSyncOpen;
   useSyncReuseCanOpen(createModal, reuseCanOpen);
 
   useWindowBackdrop(theme);
@@ -423,6 +437,8 @@ function App() {
   const escapeHandlerRef = useRef<() => void>(() => {});
   escapeHandlerRef.current = () => {
     if (isConfirmOpen) return;
+    if (windowSyncOpen) { setWindowSyncOpen(false); return; }
+    if (resourceDrawerOpen) { setResourceDrawerOpen(false); return; }
     if (movingFolder) { if (!folderMoveBusy) setMovingFolder(null); return; }
     if (logView || logErr) { setLogView(null); setLogErr(null); return; }
     if (showUpdate) { setShowUpdate(false); return; }
@@ -746,7 +762,7 @@ function App() {
       if (action === "close" && !profile.running) return { ok: true, warning: "Already stopped; no extra close request was sent." };
       if (action === "restart" && !profile.running) return { ok: false, error: "The environment stopped before the restart. Start it explicitly if needed." };
       return (action === "open" ? openProfile : action === "close" ? closeProfile : restartProfile)(id);
-    } });
+    }, ...(action === "open" ? { getConcurrency: () => watermarkConcurrency(latestMetricsRef.current) } : {}) });
     const lease = workspaceCoordinator.acquire("profile-batch", catalog?.currentId);
     if (!lease) { setActionErr(t(workspaceOperationMessage(workspaceCoordinator.getSnapshot()))); return; }
     bulkTaskLease.current = lease; bulkTaskWorkspace.current = lease.workspaceId;
@@ -869,6 +885,7 @@ function App() {
     copy2fa: (...args) => rowHandlersRef.current!.copy2fa(...args), toggleFavorite: (...args) => rowHandlersRef.current!.toggleFavorite(...args),
     changeProfileSelection: (...args) => rowHandlersRef.current!.changeProfileSelection(...args), setLaunchFailure: (...args) => rowHandlersRef.current!.setLaunchFailure(...args),
     openNetworkSettings: () => rowHandlersRef.current!.openNetworkSettings(), openLogs: () => rowHandlersRef.current!.openLogs(),
+    trimMemory: (id) => rowHandlersRef.current!.trimMemory!(id), hibernateProfile: (id) => rowHandlersRef.current!.hibernateProfile!(id),
   }), []);
 
   const submitStandaloneAuthToken = (event: React.FormEvent) => {
@@ -964,6 +981,20 @@ function App() {
     reuseProfileConfiguration: createModal.reuseProfileConfiguration, openProfileTags, copy2fa, toggleFavorite,
     changeProfileSelection, setLaunchFailure, openNetworkSettings: () => { setSettingsTab("network"); openSettings(); },
     openLogs: () => { setLogErr(null); void fetchLogs().then(setLogView).catch((error) => setLogErr(error instanceof Error ? error.message : String(error))); },
+    trimMemory: async (id) => {
+      try {
+        const res = await trimProfileMemoryApi(id);
+        flash(t("Trimmed memory (freed {freed}).", { freed: formatMemoryBytes(res.totalFreedBytes) }));
+        await resourceMonitor.refreshNow();
+      } catch (error) { setActionErr(error instanceof Error ? error.message : String(error)); }
+    },
+    hibernateProfile: async (id) => {
+      try {
+        await hibernateProfileApi(id);
+        flash(t("Saved session and hibernated environment."));
+        await Promise.all([load(), resourceMonitor.refreshNow()]);
+      } catch (error) { setActionErr(error instanceof Error ? error.message : String(error)); }
+    },
   };
 
   const activityItems: WorkbenchActivityItem[] = [];
@@ -991,6 +1022,9 @@ function App() {
     { id: "shortcuts", label: "Keyboard shortcuts", keywords: ["快捷键", "键盘", "帮助", "keyboard", "help"], run: () => setShortcutHelpOpen(true) },
     { id: "refresh", label: "Refresh profiles", keywords: ["刷新", "reload"], disabled: refreshing, run: () => { void refreshRoster(); } },
     { id: "proxies", label: "Proxies", keywords: ["网络", "代理", "proxy"], run: () => setView("proxies") },
+    { id: "proxy-vault", label: "Proxy vault", keywords: ["代理库", "资产库", "vault", "proxy"], run: () => { setProxyTabRequest((prev) => ({ task: "vault", seq: (prev?.seq ?? 0) + 1 })); setView("proxies"); } },
+    { id: "window-sync", label: "Window layout & synchronizer", keywords: ["窗口", "排布", "平铺", "同步器", "群控", "sync", "grid"], run: () => setWindowSyncOpen(true) },
+    { id: "resource-monitor", label: "Real-time resource monitor", keywords: ["资源", "内存", "监控", "休眠", "ram", "cpu", "metrics"], run: () => setResourceDrawerOpen(true) },
     { id: "scripts", label: "Scripts", keywords: ["脚本", "自动化", "automation"], run: () => setView("scripts") },
     { id: "assistant", label: "AI workspace", keywords: ["AI", "助手", "模型", "智能体", "聊天", "Ollama"], run: () => setView("assistant") },
     { id: "extensions", label: "Manage extensions", keywords: ["扩展", "插件", "extension"], run: openExtensions },
@@ -1008,6 +1042,7 @@ function App() {
       <ShortcutHelp open={shortcutHelpOpen} desktop={!!desktopInvoke()} onClose={() => setShortcutHelpOpen(false)} onAction={(action) => shortcutAction.current(action)} returnFocus={() => document.querySelector<HTMLButtonElement>(".shortcut-help-trigger") ?? document.querySelector<HTMLButtonElement>(".command-palette-trigger")} />
       <ProfileTagsDialog target={tagsTarget} sessionKey={catalog?.currentId} onSave={saveProfileTags} onClose={() => setTagsTarget(null)} returnFocus={() => (tagsReturnFocus.current?.isConnected ? tagsReturnFocus.current : document.getElementById("profiles-page-title"))} />
       <WindowActionError chrome={windowChrome} />
+      <SyncEmergencyBar state={syncState} profiles={profiles} onOpenPanel={() => setWindowSyncOpen(true)} onPauseToggle={(paused) => { void pauseWindowSync(paused).then(setSyncState).catch((error) => setActionErr(error instanceof Error ? error.message : String(error))); }} onEmergencyStop={() => { void stopWindowSync().then(setSyncState).catch((error) => setActionErr(error instanceof Error ? error.message : String(error))); }} />
       <div data-roster-density={rosterDensity} className={`app airy-workbench folded-workbench${windowChrome.enabled ? " desktop-frameless" : ""}${windowChrome.enabled && !windowChrome.focused ? " is-window-unfocused" : ""}`}
         onDragOver={(e) => { if (!Array.from(e.dataTransfer.types).includes("Files") || e.defaultPrevented || readWorkbenchShortcutContext(e.target).modalOpen) return; e.preventDefault(); if (!dragging) setDragging(true); }}
         onDragLeave={(e) => { e.preventDefault(); if (e.currentTarget === e.target) setDragging(false); }}
@@ -1031,6 +1066,8 @@ function App() {
               {hasUpdateNotice && <span className="desktop-brand-dot" data-update-available="true" aria-hidden="true" />}
             </button>
             <div className="topbar-actions">
+              <ResourceTopCapsule runningCount={runningCount} snapshot={resourceMonitor.snapshot} open={resourceDrawerOpen} onToggle={() => setResourceDrawerOpen((open) => !open)} />
+              <button type="button" className="iconbtn tip wsync-topbar-trigger" data-tip={t("Window layout & synchronizer")} aria-label={t("Window layout & synchronizer")} aria-haspopup="dialog" aria-expanded={windowSyncOpen} onClick={() => setWindowSyncOpen((open) => !open)}><Icon name="window" />{syncState.active && <span className="wsync-topbar-dot" aria-hidden="true" />}</button>
               <WorkbenchActivity items={activityItems} />
               <button type="button" className="command-palette-trigger" aria-label={t("Command palette")} title={t("Command palette")} aria-haspopup="dialog" aria-expanded={commandOpen} onClick={() => setCommandOpen(true)}><Icon name="search" className="sm" /><span>{t("Command palette")}</span><kbd>{typeof navigator !== "undefined" && /Mac/.test(navigator.platform) ? "⌘ K" : "Ctrl K"}</kbd></button>
               <button type="button" className="iconbtn tip shortcut-help-trigger" data-tip={`${t("Keyboard shortcuts")} · ?`} aria-label={t("Keyboard shortcuts")} aria-haspopup="dialog" aria-expanded={shortcutHelpOpen} onClick={() => setShortcutHelpOpen(true)}><Icon name="help" /></button>
@@ -1064,7 +1101,7 @@ function App() {
                 </div>
               )}
 
-              <ProxiesPage key={`proxies-${currentWorkspaceId ?? "loading"}`} active={view === "proxies"} groups={["", ...groups.slice(1)]} folders={folders} profiles={profiles} loadingProfiles={!loaded} onChanged={refreshImportedProfiles} onTaskSnapshotChange={publishProxyTask} focusTask={view === "proxies" && proxyTaskFocusRequest !== null && proxyTaskFocusRequest.workspaceId === currentWorkspaceId} onTaskFocused={completeProxyTaskFocus} localAssignmentIntent={activeLocalProxyIntent} onDismissLocalAssignmentIntent={dismissLocalProxyAssignment} />
+              <ProxiesPage key={`proxies-${currentWorkspaceId ?? "loading"}`} active={view === "proxies"} groups={["", ...groups.slice(1)]} folders={folders} profiles={profiles} loadingProfiles={!loaded} onChanged={refreshImportedProfiles} onTaskSnapshotChange={publishProxyTask} focusTask={view === "proxies" && proxyTaskFocusRequest !== null && proxyTaskFocusRequest.workspaceId === currentWorkspaceId} onTaskFocused={completeProxyTaskFocus} localAssignmentIntent={activeLocalProxyIntent} onDismissLocalAssignmentIntent={dismissLocalProxyAssignment} requestedTask={proxyTabRequest} />
               <LocalAssistantPage active={view === "assistant"} onOpenMcp={() => { setSettingsTab("integrations"); setView("settings"); }} onOpenModelServices={() => openSettingsFromPalette("models")} draftSuggestion={assistantDraftSuggestion} onDismissDraftSuggestion={(id) => setAssistantDraftSuggestion((current) => (current?.id === id ? null : current))} onReturnToTask={(source) => { if (source.returnKey) { setInspectionId(source.returnKey); setView("inspection"); } }} />
               <EnvironmentInspectionPage active={view === "inspection"} profile={inspectionId ? profilesById.get(inspectionId) ?? null : null} refreshVersion={fingerprintRefreshVersion} onBack={backFromInspection} onEditProfile={(id, field, trigger) => { if (!editModal.isEditSessionOpen()) editModal.openEdit(id, field, trigger); }} onExplainFingerprint={explainFingerprint} />
               <TrashPage key={`trash-${currentWorkspaceId ?? "loading"}`} active={view === "trash"} onChanged={refreshImportedProfiles} folderTree={folders} onTaskSnapshotChange={(snapshot) => setTrashTaskState({ workspaceId: currentWorkspaceId, snapshot })} />
@@ -1120,9 +1157,15 @@ function App() {
                   {!cookieTargets && cookieImport.snapshot.phase !== "idle" && <div ref={cookieTaskPanelRef} tabIndex={-1} className="cookie-import-result-anchor"><CookieImportTaskPanel snapshot={cookieImport.snapshot} onRetryFailed={() => { void cookieImport.task.retryFailed(); }} onDismiss={() => { cookieImport.task.dismiss(); }} /></div>}
                   {!showUpdate && (fileUpdateBusy || fileUpdate.snapshot.latest) && <div ref={fileUpdatePanelRef} tabIndex={-1} className="profile-file-update-result-anchor"><ProfileFileUpdatePanel snapshot={fileUpdate.snapshot} onChooseFile={openUpdate} onBrowseProfiles={() => { setSelected(new Set()); chooseRosterScope("all"); selectFolder("all"); }} onDismiss={() => { fileUpdate.task.dismissResults(); }} /></div>}
                   <div ref={moveTaskPanelRef} tabIndex={-1} className="profile-move-result-anchor"><ProfileMoveFeedback state={profileMove.state} onRetry={() => void runMoveAction(profileMove.retry)} onRecheck={() => void runMoveAction(profileMove.recheck)} onDismiss={profileMove.dismiss} /></div>
+                  {bulkTaskSnapshot && bulkTaskActive && bulkTaskSnapshot.action === "open" && (bulkTaskSnapshot.throttled || (resourceMonitor.snapshot && resourceMonitor.snapshot.watermark.level !== "normal")) && (
+                    <div className={`bulk-watermark-notice${resourceMonitor.snapshot?.watermark.level === "critical" ? " is-critical" : ""}`} role="status">
+                      <span>{t("Memory watermark guard active: batch start concurrency throttled to {limit} ({load}% RAM).", { limit: bulkTaskSnapshot.effectiveConcurrency, load: Math.round(resourceMonitor.snapshot?.host.memoryLoadPercent ?? 0) })}</span>
+                      <button type="button" className="btn xs ghost" onClick={() => setResourceDrawerOpen(true)}>{t("View resources")}</button>
+                    </div>
+                  )}
                   {bulkTaskSnapshot && <BulkProfileTaskPanel snapshot={bulkTaskSnapshot} expanded={bulkTaskExpanded} refreshing={bulkTaskRefreshing} onExpandedChange={setBulkTaskExpanded} onStopPending={() => bulkTaskRef.current?.stopPending()} onRetryFailed={retryBulkFailures} onDismiss={dismissBulkTask} />}
 
-                  <ProfileRosterTable loaded={loaded} profilesCount={profiles.length} filteredCount={filtered.length} flatItems={flatItems} selectableProfilesCount={selectableProfiles.length} numbering={numbering} rosterScope={rosterScope} rosterDensity={rosterDensity} missingRosterGroup={missingRosterGroup} hasRosterRefinements={hasRosterRefinements} revealGroupMatches={revealGroupMatches} sort={sort} hiddenCols={hiddenCols} shownColumns={shownColumns} visibleColumnCount={visibleColumnCount} tableMinWidth={tableMinWidth} tableScrolled={tableScrolled} onTableScrolledChange={setTableScrolled} selected={selected} allVisibleSelected={allVisibleSelected} busy={busy} favoriteProfileIds={favoriteProfileIds} reuseLoadingId={createModal.reuseRequest?.status === "loading" ? createModal.reuseRequest.id : null} twoFaFlashId={twoFaFlash?.id ?? null} viewPreferencesReady={viewPreferencesReady} viewPreferenceBusy={viewPreferenceBusy} language={language} rangeKeyboardActivation={rangeKeyboardActivation} profilePageCount={profilePageCount} visibleProfilePage={visibleProfilePage} pageSize={pageSize} onPageChange={setProfilePage} onPageSizeChange={applyPageSize} runningCount={runningCount} diag={diag} diagWhen={diagWhen} showDiag={showDiag} onToggleDiag={() => setShowDiag((s) => !s)} hasDetails={!!detailsProfile} detailsPanel={<ProfileDetailsPanel profile={detailsProfile} headingRef={detailsHeading} onClose={closeDetails} onEdit={(id) => editModal.openEdit(id, undefined, detailsTrigger.current ?? undefined)} onInspect={openInspection} />} groupDisclosureKey={groupDisclosureKey} motionAllowed={motion.effective === "full"} folderLabel={folderLabel} openLabel={openLabel} onToggleSort={toggleSort} onToggleAll={() => { rangeSelectionAnchor.current = null; toggleAll(); }} onToggleProfileGroup={toggleProfileGroup} onToggleGroupSelection={(matches) => { rangeSelectionAnchor.current = null; setSelected((current) => toggleProfileSelection(current, matches)); }} onCreateInGroup={openCreateInGroup} onManageGroup={(name) => { selectFolder(name); setGroupManagerOpen(true); }} onNewSubfolder={(name) => { setNewFolderParent(name || null); setSidebarGroupName(""); setAddingGroup(true); setGroupManagerOpen(true); }} onOpenCreate={createModal.openCreate} onOpenBulk={importModal.openBulk} onSelectAllGroups={() => setGroup("all")} onChooseRosterScope={chooseRosterScope} onClearRosterRefinements={clearRosterRefinements} rowHandlers={stableRowHandlers} t={t} />
+                  <ProfileRosterTable loaded={loaded} profilesCount={profiles.length} filteredCount={filtered.length} flatItems={flatItems} selectableProfilesCount={selectableProfiles.length} numbering={numbering} rosterScope={rosterScope} rosterDensity={rosterDensity} missingRosterGroup={missingRosterGroup} hasRosterRefinements={hasRosterRefinements} revealGroupMatches={revealGroupMatches} sort={sort} hiddenCols={hiddenCols} shownColumns={shownColumns} visibleColumnCount={visibleColumnCount} tableMinWidth={tableMinWidth} tableScrolled={tableScrolled} onTableScrolledChange={setTableScrolled} selected={selected} allVisibleSelected={allVisibleSelected} busy={busy} favoriteProfileIds={favoriteProfileIds} reuseLoadingId={createModal.reuseRequest?.status === "loading" ? createModal.reuseRequest.id : null} twoFaFlashId={twoFaFlash?.id ?? null} viewPreferencesReady={viewPreferencesReady} viewPreferenceBusy={viewPreferenceBusy} language={language} rangeKeyboardActivation={rangeKeyboardActivation} profilePageCount={profilePageCount} visibleProfilePage={visibleProfilePage} pageSize={pageSize} onPageChange={setProfilePage} onPageSizeChange={applyPageSize} runningCount={runningCount} diag={diag} diagWhen={diagWhen} showDiag={showDiag} onToggleDiag={() => setShowDiag((s) => !s)} hasDetails={!!detailsProfile} detailsPanel={<ProfileDetailsPanel profile={detailsProfile} headingRef={detailsHeading} onClose={closeDetails} onEdit={(id) => editModal.openEdit(id, undefined, detailsTrigger.current ?? undefined)} onInspect={openInspection} />} groupDisclosureKey={groupDisclosureKey} motionAllowed={motion.effective === "full"} renderResourceChips={renderResourceChips} folderLabel={folderLabel} openLabel={openLabel} onToggleSort={toggleSort} onToggleAll={() => { rangeSelectionAnchor.current = null; toggleAll(); }} onToggleProfileGroup={toggleProfileGroup} onToggleGroupSelection={(matches) => { rangeSelectionAnchor.current = null; setSelected((current) => toggleProfileSelection(current, matches)); }} onCreateInGroup={openCreateInGroup} onManageGroup={(name) => { selectFolder(name); setGroupManagerOpen(true); }} onNewSubfolder={(name) => { setNewFolderParent(name || null); setSidebarGroupName(""); setAddingGroup(true); setGroupManagerOpen(true); }} onOpenCreate={createModal.openCreate} onOpenBulk={importModal.openBulk} onSelectAllGroups={() => setGroup("all")} onChooseRosterScope={chooseRosterScope} onClearRosterRefinements={clearRosterRefinements} rowHandlers={stableRowHandlers} t={t} />
 
                   <ActionDock
                     selectedCount={selected.size}
@@ -1199,6 +1242,8 @@ function App() {
         <ProfileImportModal controller={importModal} existingGroups={existingGroups} />
         <ProfileFileUpdateDialog open={showUpdate} task={fileUpdate.task} onClose={() => setShowUpdate(false)} selectedCount={selected.size} onExport={exportSelected} onDownloadTemplate={() => downloadText("maobu-qianjing-update-template.csv", UPDATE_TEMPLATE_CSV, "text/csv")} />
         <ScriptRunPanel open={scriptRunOpen} selectedProfiles={scriptRunProfiles} onClose={() => setScriptRunOpen(false)} />
+        <ResourceDashboardDrawer open={resourceDrawerOpen} onClose={() => setResourceDrawerOpen(false)} profiles={profiles} monitor={resourceMonitor} onRefreshRoster={load} onFlash={flash} />
+        <WindowSyncPanel open={windowSyncOpen} onClose={() => setWindowSyncOpen(false)} profiles={profiles} syncState={syncState} onSyncStateChange={setSyncState} onFlash={flash} />
       </div>
     </>
   );

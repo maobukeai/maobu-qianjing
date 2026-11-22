@@ -120,3 +120,52 @@ test("authentication schemes redact the complete Basic and Bearer credentials, i
   const json = redactBulkTaskMessage('{"Authorization":"Bearer PRIVATE_JSON_TOKEN","password":"PRIVATE_JSON_PASSWORD"}');
   expect(json).not.toContain("PRIVATE_JSON_TOKEN"); expect(json).not.toContain("PRIVATE_JSON_PASSWORD");
 });
+
+test("getConcurrency dynamically throttles batch dispatch under memory watermark pressure and exposes throttled status", async () => {
+  let limit = 2;
+  let active = 0, peak = 0;
+  const calls: string[] = [];
+  const pending = new Map<string, ReturnType<typeof deferred>>();
+  const task = createBulkProfileTask({
+    action: "open",
+    concurrency: 4,
+    getConcurrency: () => limit,
+    targets: Array.from({ length: 5 }, (_, i) => ({ id: `p${i}`, name: `Profile ${i}` })),
+    run: id => {
+      calls.push(id); active++; peak = Math.max(peak, active);
+      const d = deferred(); pending.set(id, d);
+      return d.promise.finally(() => { active--; });
+    },
+  });
+
+  const running = task.start();
+  await tick();
+  expect(calls).toEqual(["p0", "p1"]);
+  expect(peak).toBe(2);
+  expect(task.getSnapshot().effectiveConcurrency).toBe(2);
+  expect(task.getSnapshot().throttled).toBe(true);
+
+  // Drop watermark to serial (1): finishing p0 must not start p2 while p1 is still active
+  limit = 1;
+  pending.get("p0")!.resolve({ ok: true });
+  await tick();
+  expect(calls).toEqual(["p0", "p1"]);
+  expect(task.getSnapshot().effectiveConcurrency).toBe(1);
+
+  // Finishing p1 now allows serial p2
+  pending.get("p1")!.resolve({ ok: true });
+  await tick();
+  expect(calls).toEqual(["p0", "p1", "p2"]);
+
+  // Watermark returns to normal (4): finishing p2 dispatches remaining p3 and p4 concurrently
+  limit = 4;
+  pending.get("p2")!.resolve({ ok: true });
+  await tick();
+  expect(calls).toEqual(["p0", "p1", "p2", "p3", "p4"]);
+  expect(task.getSnapshot().throttled).toBe(false);
+
+  pending.get("p3")!.resolve({ ok: true });
+  pending.get("p4")!.resolve({ ok: true });
+  const done = await running;
+  expect(done.summary.succeeded).toBe(5);
+});

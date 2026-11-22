@@ -1,0 +1,422 @@
+/* Win32 Multi-Window Layout, Safe Synchronizer & Emergency Stop Bar */
+
+@keyframes sync-dot-pulse {
+  0% { transform: scale(1); opacity: 0.72; }
+  70% { transform: scale(2.1); opacity: 0; }
+  100% { transform: scale(2.1); opacity: 0; }
+}
+
+.sync-emergency-bar {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translate3d(-50%, 0, 0);
+  z-index: var(--z-toast, 140);
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  max-width: min(760px, calc(100vw - 24px));
+  padding: 6px 10px 6px 12px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--danger-line);
+  background: var(--glass-surface, var(--surface));
+  backdrop-filter: var(--glass-blur, blur(16px));
+  box-shadow: var(--sh-pop);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.sync-emergency-bar.is-paused {
+  border-color: var(--warn-line);
+}
+
+.sync-status-dot {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  flex: 0 0 auto;
+}
+
+.sync-status-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--success);
+  opacity: 0;
+  pointer-events: none;
+}
+
+:root[data-desktop-motion="full"] .sync-status-dot.is-live::after {
+  animation: sync-dot-pulse 1.8s var(--desktop-motion-ease, ease-out) infinite;
+}
+
+.sync-status-dot.is-paused {
+  background: var(--warn);
+}
+
+.sync-emergency-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-weight: 500;
+}
+
+.sync-emergency-sub {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sync-emergency-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sync-emergency-stop-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--danger-fill);
+  background: var(--danger-fill);
+  color: var(--on-primary);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: transform 90ms ease, opacity 120ms ease;
+}
+
+.sync-emergency-stop-btn:hover:not(:disabled) {
+  background: var(--danger-fill-hover);
+}
+
+.sync-emergency-stop-btn kbd {
+  padding: 1px 5px;
+  border-radius: var(--r-xs);
+  background: rgba(255, 255, 255, 0.18);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+/* Slide-over drawer for multi-window layout & synchronizer */
+.wsync-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal, 75);
+  display: flex;
+  justify-content: flex-end;
+  background: var(--backdrop);
+}
+
+.wsync-drawer {
+  width: min(560px, calc(100vw - 24px));
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  box-shadow: var(--sh-modal);
+  color: var(--ink);
+  min-width: 0;
+}
+
+.wsync-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+
+.wsync-drawer-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.wsync-drawer-head p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.wsync-drawer-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.wsync-section {
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 14px 16px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.wsync-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.wsync-section-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.wsync-section-head span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.wsync-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.wsync-preset-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-sunken);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  transition: transform 90ms ease, opacity 120ms ease;
+}
+
+.wsync-preset-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--accent-line);
+}
+
+.wsync-preset-btn small {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 400;
+}
+
+.wsync-form-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.wsync-form-row.cols-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.wsync-form-row .fld {
+  min-width: 0;
+}
+
+.wsync-form-row .fld input,
+.wsync-form-row .fld select {
+  width: 100%;
+  min-width: 0;
+}
+
+.wsync-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.wsync-slave-list {
+  max-height: 170px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-sunken);
+}
+
+.wsync-slave-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.wsync-slave-item:last-child {
+  border-bottom: 0;
+}
+
+.wsync-slave-item:hover {
+  background: var(--surface-hover);
+}
+
+.wsync-slave-item small {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-family: var(--mono);
+}
+
+.wsync-switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+.wsync-switch-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.wsync-switch-item input {
+  accent-color: var(--accent);
+}
+
+.wsync-safety-note {
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--surface-sunken);
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.wsync-degraded-box {
+  padding: 14px 16px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--warn-line);
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.wsync-mode-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 3px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--surface-sunken);
+}
+
+.wsync-mode-tabs button {
+  flex: 1 1 auto;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.wsync-mode-tabs button[aria-pressed="true"] {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--sh-xs);
+}
+
+.wsync-preview-list {
+  margin: 0;
+  padding: 8px 10px;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-sunken);
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.wsync-preview-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.wsync-preview-list code {
+  font-family: var(--mono);
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.wsync-topbar-trigger {
+  position: relative;
+}
+
+.wsync-topbar-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .sync-emergency-bar {
+    background: var(--surface);
+    backdrop-filter: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .wsync-form-row,
+  .wsync-form-row.cols-4,
+  .wsync-preset-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+:root[data-desktop-motion="off"] .sync-emergency-stop-btn,
+:root[data-desktop-motion="off"] .wsync-preset-btn {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sync-status-dot.is-live::after {
+    animation: none;
+  }
+  .sync-emergency-stop-btn,
+  .wsync-preset-btn {
+    transition: none;
+  }
+}

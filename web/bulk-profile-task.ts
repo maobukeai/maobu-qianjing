@@ -30,6 +30,10 @@ export interface BulkProfileTaskSnapshot {
   readonly startedAt?: number;
   readonly finishedAt?: number;
   readonly stopped: boolean;
+  /** Effective bounded concurrency for the latest dispatch cycle (1–4). */
+  readonly effectiveConcurrency: number;
+  /** True when `getConcurrency()` lowered active concurrency below the configured maximum. */
+  readonly throttled: boolean;
   readonly rows: readonly BulkProfileTaskRow[];
   readonly summary: BulkProfileTaskSummary;
 }
@@ -39,6 +43,8 @@ export interface BulkProfileTaskOptions {
   run: (id: string) => Promise<unknown>;
   /** Clamped to 1–4; starting many browsers must not exhaust the desktop. */
   concurrency?: number;
+  /** Optional dynamic concurrency provider (e.g. host memory watermark guard). */
+  getConcurrency?: () => number;
   now?: () => number;
   sanitizeMessage?: (message: string) => string;
 }
@@ -84,7 +90,20 @@ export function createBulkProfileTask(options: BulkProfileTaskOptions): BulkProf
   let phase: BulkProfileTaskPhase = "idle", stopped = false;
   let startedAt: number | undefined, finishedAt: number | undefined;
   let current: Promise<BulkProfileTaskSnapshot> | null = null;
+  let effectiveConcurrency = concurrency;
   const listeners = new Set<() => void>();
+  const readConcurrencyLimit = (): number => {
+    if (!options.getConcurrency) return concurrency;
+    try {
+      const value = options.getConcurrency();
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return Math.max(1, Math.min(concurrency, Math.floor(value)));
+      }
+    } catch {
+      // Keep the safe configured upper bound if telemetry callback throws.
+    }
+    return concurrency;
+  };
   const message = (value: unknown, fallback: string): string => {
     const raw = typeof value === "string" && value.trim() ? value : fallback;
     try {
@@ -97,8 +116,11 @@ export function createBulkProfileTask(options: BulkProfileTaskOptions): BulkProf
     const counts = { total: rows.length, pending: 0, running: 0, succeeded: 0, failed: 0, skipped: 0, settled: 0 };
     for (const row of rows) counts[row.status]++;
     counts.settled = counts.succeeded + counts.failed + counts.skipped;
-    return Object.freeze({ id, action: options.action, phase, startedAt, finishedAt, stopped,
-      rows: Object.freeze([...rows]), summary: Object.freeze(counts) });
+    return Object.freeze({
+      id, action: options.action, phase, startedAt, finishedAt, stopped,
+      effectiveConcurrency, throttled: effectiveConcurrency < concurrency,
+      rows: Object.freeze([...rows]), summary: Object.freeze(counts),
+    });
   };
   let published = snapshot();
   const publish = () => {
@@ -114,35 +136,65 @@ export function createBulkProfileTask(options: BulkProfileTaskOptions): BulkProf
     rows[index] = Object.freeze({ ...rows[index]!, ...update });
     publish();
   };
-  const worker = async () => {
-    while (!stopped) {
-      const index = rows.findIndex(row => row.status === "pending");
-      if (index < 0) return;
-      const row = rows[index]!;
-      settleRow(index, { status: "running", attempts: row.attempts + 1, startedAt: now(), finishedAt: undefined, error: undefined, warning: undefined, cause: undefined, skipReason: undefined });
-      try {
-        const result = await options.run(row.id);
-        if (!result || typeof result !== "object" || !("ok" in result) || typeof result.ok !== "boolean") {
-          settleRow(index, { status: "failed", error: message(undefined, INCOMPLETE_RESULT), finishedAt: now() });
-        } else if (!result.ok) {
-          settleRow(index, { status: "failed", error: message("error" in result ? result.error : undefined, ACTION_FAILED), finishedAt: now() });
-        } else {
-          const warning = "warning" in result && typeof result.warning === "string" && result.warning.trim() ? message(result.warning, "") : undefined;
-          settleRow(index, { status: "succeeded", warning, finishedAt: now() });
-        }
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : typeof error === "string" ? error : undefined;
-        settleRow(index, { status: "failed", error: message(detail, ACTION_FAILED), finishedAt: now() });
+  const dispatchAll = (): Promise<void> => new Promise<void>(resolve => {
+    let inFlight = 0;
+    let finished = false;
+    const maybeComplete = () => {
+      if (finished) return;
+      if (inFlight === 0 && (stopped || !rows.some(row => row.status === "pending"))) {
+        finished = true;
+        resolve();
       }
-    }
-  };
+    };
+    const pump = () => {
+      let limitChanged = false;
+      while (!stopped) {
+        const limit = readConcurrencyLimit();
+        if (limit !== effectiveConcurrency) {
+          effectiveConcurrency = limit;
+          limitChanged = true;
+        }
+        if (inFlight >= limit) break;
+        const index = rows.findIndex(row => row.status === "pending");
+        if (index < 0) break;
+        const row = rows[index]!;
+        inFlight++;
+        limitChanged = false;
+        settleRow(index, { status: "running", attempts: row.attempts + 1, startedAt: now(), finishedAt: undefined, error: undefined, warning: undefined, cause: undefined, skipReason: undefined });
+        void Promise.resolve().then(() => options.run(row.id)).then(
+          result => {
+            if (!result || typeof result !== "object" || !("ok" in result) || typeof result.ok !== "boolean") {
+              settleRow(index, { status: "failed", error: message(undefined, INCOMPLETE_RESULT), finishedAt: now() });
+            } else if (!result.ok) {
+              settleRow(index, { status: "failed", error: message("error" in result ? result.error : undefined, ACTION_FAILED), finishedAt: now() });
+            } else {
+              const warning = "warning" in result && typeof result.warning === "string" && result.warning.trim() ? message(result.warning, "") : undefined;
+              settleRow(index, { status: "succeeded", warning, finishedAt: now() });
+            }
+          },
+          error => {
+            const detail = error instanceof Error ? error.message : typeof error === "string" ? error : undefined;
+            settleRow(index, { status: "failed", error: message(detail, ACTION_FAILED), finishedAt: now() });
+          },
+        ).finally(() => {
+          inFlight--;
+          pump();
+          maybeComplete();
+        });
+      }
+      if (limitChanged) publish();
+      maybeComplete();
+    };
+    pump();
+  });
   const run = (): Promise<BulkProfileTaskSnapshot> => {
     if (current) return current;
     phase = "running"; stopped = false; finishedAt = undefined; startedAt ??= now();
+    effectiveConcurrency = readConcurrencyLimit();
     // Defer dispatch until the stable active promise is installed, including
     // for callers that immediately react to the first subscriber notification.
     current = Promise.resolve().then(async () => {
-      await Promise.all(Array.from({ length: concurrency }, worker));
+      await dispatchAll();
       phase = "complete"; finishedAt = now(); current = null;
       return publish();
     });

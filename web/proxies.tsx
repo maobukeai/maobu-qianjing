@@ -8,6 +8,7 @@ import { useOptionalWorkspaceOperations, workspaceOperationMessage, type Workspa
 import { useDesktopCloseDraft } from "./desktop-close.tsx";
 import { folderScope, type FolderInfo } from "../folders.ts";
 import { analyzeProxyList, matchingProxyChecks, proxyCheckOverview, proxyRosterSignature, proxyScopeOverview, type ProxyScopeProfile } from "./proxy-workflow.ts";
+import { ProxyVaultPanel, ProxyVaultPickerModal } from "./proxy-vault-panel.tsx";
 import type {
   ProxyCheckView,
   ProxyPreview,
@@ -280,10 +281,12 @@ interface ProxyReviewContext {
 }
 interface CheckReplacementDraft { profiles: ProxyCheckView["profiles"]; ids: string[]; input: string; capacity: string; completed?: true }
 
-export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = false, onChanged, onTaskSnapshotChange, focusTask, onTaskFocused, localAssignmentIntent, onDismissLocalAssignmentIntent, active }: {
+export type ProxyPageTask = "check" | "replace" | "vault";
+
+export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = false, onChanged, onTaskSnapshotChange, focusTask, onTaskFocused, localAssignmentIntent, onDismissLocalAssignmentIntent, active, initialTask = "check", requestedTask }: {
   groups: string[];
   folders?: FolderInfo[];
-  profiles?: readonly (ProxyScopeProfile & Partial<Pick<LocalProxyAssignmentProfile, "name">>)[];
+  profiles?: readonly (ProxyScopeProfile & Partial<Pick<LocalProxyAssignmentProfile, "name">> & { platform?: string })[];
   loadingProfiles?: boolean;
   onChanged: () => Promise<void>;
   onTaskSnapshotChange?: (snapshot: ProxyAssignmentSnapshot) => void;
@@ -292,6 +295,8 @@ export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = 
   localAssignmentIntent?: LocalProxyAssignmentIntent;
   onDismissLocalAssignmentIntent?: (id: number, options?: { returnToSettings?: boolean }) => void;
   active: boolean;
+  initialTask?: ProxyPageTask;
+  requestedTask?: { task: ProxyPageTask; seq: number } | null;
 }) {
   const { t, language } = useTranslation();
   const workspace = useOptionalWorkspaceOperations();
@@ -329,7 +334,15 @@ export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = 
   useEffect(() => { assignmentContext.current.onTaskSnapshotChange?.(assignment); }, [assignment]);
   const [all, setAll] = useState(true);
   const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
-  const [task, setTask] = useState<"check" | "replace">("check");
+  const [task, setTask] = useState<ProxyPageTask>(initialTask);
+  const [vaultPickerOpen, setVaultPickerOpen] = useState(false);
+  const lastRequestedSeq = useRef(0);
+  useEffect(() => {
+    if (!requestedTask || requestedTask.seq === lastRequestedSeq.current) return;
+    if (controller.current || assignmentOwner.isBusy()) return;
+    lastRequestedSeq.current = requestedTask.seq;
+    setTask(requestedTask.task);
+  }, [requestedTask, assignmentOwner]);
   const [manualMode, setMode] = useState<ProxyReplacementMode>("list");
   const [manualInput, setInput] = useState("");
   const [manualCapacity, setPerProxyDraft] = useState("1");
@@ -684,7 +697,11 @@ export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = 
     <div className="tools-tabs" aria-label={t("Proxy tools")}>
       <button type="button" className={task === "check" ? "selected" : ""} aria-pressed={task === "check"} disabled={!!busy} onClick={() => changeTask("check")}>{t("Check proxies")} <small>{t("Find connection problems")}</small></button>
       <button type="button" className={task === "replace" ? "selected" : ""} aria-pressed={task === "replace"} disabled={!!busy} onClick={() => changeTask("replace")}>{t("Replace proxies")} <small>{t("Assign new connections")}</small></button>
+      <button type="button" className={task === "vault" ? "selected" : ""} aria-pressed={task === "vault"} disabled={!!busy} onClick={() => changeTask("vault")}>{t("Proxy vault")} <small>{t("Reusable pool & risk alerts")}</small></button>
     </div>
+    {task === "vault" ? (
+      <ProxyVaultPanel active={active && task === "vault"} profiles={profiles} onChanged={onChanged} />
+    ) : <>
     {checkReplacement && task === "check" && <div className="tools-notice proxy-repair-return"><span>{t(repairCompleted ? "A replacement receipt for {count} environments is open." : "A replacement draft for {count} environments is open.", { count: checkReplacement.ids.length })}</span><button type="button" className="btn xs" disabled={!!busy} onClick={() => { focusRepair.current = "draft"; changeTask("replace"); }}>{t(repairCompleted ? "Return to replacement receipt" : "Return to replacement draft")}</button></div>}
     {targetedReplacement ? <section className="tools-panel proxy-repair-scope">
       <div className="tools-panel-head"><div><h3 id={`${workflowId}-scope`} className="proxy-workflow-target" ref={repairHeading} tabIndex={-1}>{!repairCompleted && <span className="tools-step" aria-hidden="true">1</span>}{t(repairCompleted ? "Environments from the check result" : "Replace proxies for this check result")}</h3><p>{t(repairCompleted ? "The receipt below shows the result for each environment." : "Only the listed environments are included. Running environments will be skipped.")}</p></div><button type="button" className="btn" disabled={!!busy} onClick={discardCheckReplacement}>{t(repairCompleted ? "Back to proxy checks" : "Discard replacement draft")}</button></div>
@@ -783,7 +800,8 @@ export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = 
             {overview && perProxyValid && !inputAnalysis.invalidRows.length && <p>{t("This list covers up to {capacity} of {selected} selected environments. Review the exact assignments next.", { capacity: Math.min(inputAnalysis.readable * perProxy, overview.total), selected: overview.total })}{inputAnalysis.readable * perProxy < overview.total && <> {t("Environments without a replacement keep their saved proxy.")}</>}</p>}
             <span>{t("This is a local format check. The preview validates assignments; connection checks run only when requested.")}</span>
           </div>}
-          <div className="tools-result-bar"><label className="proxy-upload">{t("Or upload a file")}<input type="file" accept=".csv,.txt,text/csv,text/plain" disabled={!!busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void loadFile(file); }} /></label>
+          <div className="tools-result-bar"><div className="proxy-actions"><label className="proxy-upload">{t("Or upload a file")}<input type="file" accept=".csv,.txt,text/csv,text/plain" disabled={!!busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void loadFile(file); }} /></label>
+            {mode === "list" && <button type="button" className="btn" disabled={!!busy} onClick={() => setVaultPickerOpen(true)}>{t("Pick from proxy vault")}</button>}</div>
             <button type="button" className="btn primary" disabled={!!busy || blocked || !scopeReady || !inputReady} onClick={() => void makePreview()}>{busy === "preview" ? t("Preparing preview…") : t(review?.localEndpoint && assignment.phase === "review" ? "Replace local review with manual preview" : "Preview changes")}</button></div>
         </div>
       </section>}
@@ -822,6 +840,16 @@ export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = 
         </> : <div className="tools-empty compact"><p>{t("Your preview will appear here. Saved sessions and fingerprints stay unchanged.")}</p></div>}
       </section>
     </>}
+    </>}
+    <ProxyVaultPickerModal
+      open={vaultPickerOpen}
+      onClose={() => setVaultPickerOpen(false)}
+      onInsertEndpoints={(lines) => {
+        const next = input.trim() ? `${input.trimEnd()}\n${lines}` : lines;
+        editReplacementInput(next);
+        invalidatePreview();
+      }}
+    />
   </>;
 
   return <div className="workspace proxy-page proxy-manager" hidden={!active} aria-labelledby="proxy-page-title" aria-busy={!!localBusy}>
