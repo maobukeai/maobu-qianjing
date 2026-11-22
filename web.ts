@@ -9,7 +9,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { join } from "node:path";
 import index from "./web/index.html";
 import { profileDisplayNo, type Launcher } from "./launcher.ts";
-import type { ProfileStore } from "./store.ts";
+import { ProfileStore } from "./store.ts";
 import type { AppConfigStore } from "./app-config.ts";
 import type { StatePaths } from "./paths.ts";
 import type { RuntimeInventoryDeployment } from "./runtime-inventory.ts";
@@ -266,16 +266,17 @@ export function serveDashboard(opts: DashboardServerOptions) {
         : undefined;
     const eventBus = opts.eventBus ?? new UiEventBus({
         workspaceId: opts.health?.instance,
-        launcher: typeof launcher?.reconcileOrphans === "function" ? launcher : undefined,
-        store: typeof store?.listLaunches === "function" ? store : undefined,
+        launcher,
+        store,
         log,
     });
-    const previousStoreMutation = store && typeof store === "object" ? store.onMutation : undefined;
+    const attachStoreMutation = store instanceof ProfileStore;
+    const previousStoreMutation = attachStoreMutation ? store.onMutation : undefined;
     const storeMutationHandler: NonNullable<ProfileStore["onMutation"]> = (event) => {
         previousStoreMutation?.(event);
         eventBus.handleStoreMutation(event);
     };
-    if (store && typeof store === "object") {
+    if (attachStoreMutation) {
         store.onMutation = storeMutationHandler;
     }
     const unsubscribeDownloads = subscribeRuntimeDownloads((downloads) => {
@@ -286,7 +287,7 @@ export function serveDashboard(opts: DashboardServerOptions) {
         if (eventsClosed) return;
         eventsClosed = true;
         unsubscribeDownloads();
-        if (store && typeof store === "object" && store.onMutation === storeMutationHandler) {
+        if (attachStoreMutation && store.onMutation === storeMutationHandler) {
             store.onMutation = previousStoreMutation;
         }
         eventBus.closeAll();

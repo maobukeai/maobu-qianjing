@@ -2661,5 +2661,11 @@
   "Memory saver preference saved. It will apply the next time you open a closed profile.": "Настройка экономии памяти сохранена. Она применится при следующем открытии закрытого профиля.",
   "Memory saver settings could not be loaded. Try again.": "Не удалось загрузить настройки экономии памяти. Повторите попытку.",
   "Memory saver settings could not be saved. Reload or try again.": "Не удалось сохранить настройки экономии памяти. Обновите страницу или повторите попытку.",
-  "Save memory saver preference": "Сохранить настройку экономии памяти"
+  "Save memory saver preference": "Сохранить настройку экономии памяти",
+  "Bulk actions": "Массовые действия",
+  "Notifications": "Уведомления",
+  "Standard": "Стандартная",
+  "All (virtual scroll)": "Все (виртуальная прокрутка)",
+  "All {count}": "Все {count}",
+  "Rename {profile}": "Переименовать {profile}"
 }

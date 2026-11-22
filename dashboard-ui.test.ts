@@ -22,6 +22,9 @@ const rosterTableSource = readWebSource("features", "profile-roster-table.tsx");
 const createModalSource = readWebSource("features", "profile-create-modal.tsx");
 const editModalSource = readWebSource("features", "profile-edit-modal.tsx");
 const importModalSource = readWebSource("features", "profile-import-modal.tsx");
+const actionDockSource = readWebSource("components", "action-dock.tsx");
+const toastStackSource = readWebSource("components", "toast-stack.tsx");
+const rosterSkeletonSource = readWebSource("components", "roster-skeleton.tsx");
 const app = [
     appShell,
     rosterQuerySource,
@@ -32,6 +35,9 @@ const app = [
     createModalSource,
     editModalSource,
     importModalSource,
+    actionDockSource,
+    toastStackSource,
+    rosterSkeletonSource,
 ].join("\n");
 const extensionPage = readFileSync(join(import.meta.dir, "web", "extensions-page.tsx"), "utf8");
 const baseStyles = readFileSync(join(import.meta.dir, "web", "styles.css"), "utf8").replaceAll("\r\n", "\n");
@@ -535,9 +541,11 @@ test("the 20-row default preserves valid saved page sizes and survives unavailab
 });
 test("selection controls expose scope selection and clearing without changing export permissions", () => {
     expect(app).not.toContain("allVisibleSelected && !allFilteredSelected");
-    expect(app).toContain("disabled={deleting || allFilteredSelected}");
-    expect(app).toContain("rangeSelectionAnchor.current = null; selectAllFiltered();");
-    expect(app).toContain('aria-label={t("Clear selection")} onClick={() => { rangeSelectionAnchor.current = null; setSelected(new Set()); }}');
+    expect(actionDockSource).toContain("disabled={deleting || allFilteredSelected}");
+    expect(appShell).toContain("onSelectAllFiltered={() => { rangeSelectionAnchor.current = null; selectAllFiltered(); }}");
+    expect(actionDockSource).toContain('aria-label={t("Clear selection")}');
+    expect(actionDockSource).toContain("onClick={onClear}");
+    expect(appShell).toContain("onClear={() => { rangeSelectionAnchor.current = null; setSelected(new Set()); }}");
     expect(app).toContain('q.trim() ? t("matching profiles") : t("profiles")');
     expect(app).toContain('t("{count} {kind} in “{group}”",');
     expect(app).toContain("const ids = [...selected];");
@@ -769,11 +777,12 @@ test("rows expose start or stop directly and keep secondary actions in an access
 });
 test("the Action column stays reachable while the roster scrolls sideways", () => {
     expect(styles).toContain("position: sticky; right: 0;");
-    // A sticky cell has no row behind it, so every row state repaints its own.
-    expect(styles).toContain(".profile-table tbody tr.selected td.col-action { background: var(--accent-soft); }");
+    // A sticky cell has no row behind it, so every row state repaints its own opaque fill.
+    expect(styles).toContain(".profile-table tbody tr.selected td.col-action { background: var(--table-row-selected); }");
+    expect(styles).toContain(".profile-table tbody tr.selected:hover td.col-action { background: var(--table-row-selected-hover); }");
     expect(styles).toContain(".profile-table thead th.col-action { z-index: 3; background: var(--surface-sunken); }");
     // Hover labels must paint above the next row's sticky Action cell.
-    expect(styles).toContain(".profile-table tbody tr:hover td.col-action { background: var(--surface-sunken); z-index: 2; }");
+    expect(styles).toContain(".profile-table tbody tr:hover td.col-action { background: var(--table-row-hover); z-index: 2; }");
     // The edge shadow only appears once there is content underneath it.
     expect(app).toContain("onTableScrolledChange(event.currentTarget.scrollLeft > 0)");
     expect(styles).toContain(".tablewrap.scrolled td.col-action::before");

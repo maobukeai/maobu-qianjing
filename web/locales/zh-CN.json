@@ -2661,5 +2661,11 @@
   "Memory saver preference saved. It will apply the next time you open a closed profile.": "内存节省设置已保存，将在下次打开已关闭的环境时生效。",
   "Memory saver settings could not be loaded. Try again.": "无法加载内存节省设置，请重试。",
   "Memory saver settings could not be saved. Reload or try again.": "无法保存内存节省设置，请刷新或重试。",
-  "Save memory saver preference": "保存内存节省设置"
+  "Save memory saver preference": "保存内存节省设置",
+  "Bulk actions": "批量操作",
+  "Notifications": "通知",
+  "Standard": "标准",
+  "All (virtual scroll)": "全部（虚拟滚动）",
+  "All {count}": "全部 {count}",
+  "Rename {profile}": "重命名 {profile}"
 }

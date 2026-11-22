@@ -84,6 +84,7 @@
   flex-wrap: wrap;
   gap: 6px;
 }
+.action-dock .action-dock-bar.toolbar.active .selcount,
 .action-dock-bar .selcount,
 .action-dock-bar .selcount-exiting {
   display: inline-flex;
@@ -105,7 +106,7 @@
   margin-left: auto;
 }
 
-.action-dock-tray.bulk-advanced {
+.action-dock .action-dock-tray.bulk-advanced {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -117,8 +118,12 @@
   background: var(--surface-sunken);
   border-radius: 13px 13px 0 0;
 }
-.action-dock-tray.bulk-advanced[hidden] {
+.action-dock .action-dock-tray.bulk-advanced[hidden] {
   display: none !important;
+}
+.action-dock-tray .exportmenu.popover {
+  top: auto;
+  bottom: calc(100% + 6px);
 }
 
 /* Tooltips on dock buttons open upward so they never clip against the bottom edge. */

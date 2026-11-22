@@ -10,13 +10,15 @@ import { profileTagsUpdate } from "../profile-tags.ts";
 import { FAVORITE_PROFILES_KEY, SAVED_PROFILE_VIEWS_KEY, parseFavoriteProfiles, parseSavedProfileViews, serializeFavoriteProfiles, serializeSavedProfileViews, type RosterScope, type SavedProfileView } from "../profile-view-state.ts";
 import { AboutPopover } from "./about-popover.tsx";
 import { assignExtensionBulk, closeProfile, convertMobileProfile, createGroup, deleteGroup, deleteProfiles, exportProfiles, fetchAppMode, fetchDiagnose, fetchDiskSpace, fetchExtensions, fetchGroupExtensionDefaults, fetchHealth, fetchLogs, fetchRuntimeDownloads, fetchTotp, installWebStoreExtension, isUnauthorizedError, moveGroup, openProfile, previewGroupExtensionDefaults, removeExtension, renameGroup, restartProfile, setGroupExtensionDefaults, setStandaloneSessionToken, subscribeUnauthorized, updateProfile, uploadExtensions, type AppModeConfig, type DiagnoseReport, type DiskSpace, type ExportFormat, type ExportProgress, type Extension, type GroupExtensionDefaults, type RuntimeDownload, type UiProfile } from "./api.ts";
-import { useBackgroundScriptRun } from "./background-script-run.tsx";
+import { backgroundScriptRuns, useBackgroundScriptRun } from "./background-script-run.tsx";
 import { BulkProfileTaskPanel } from "./bulk-profile-task-panel.tsx";
 import { createBulkProfileTask, type BulkProfileAction, type BulkProfileTask, type BulkProfileTaskSnapshot } from "./bulk-profile-task.ts";
 import { CommandPalette, type CommandPaletteCommand } from "./command-palette.tsx";
+import { ActionDock } from "./components/action-dock.tsx";
+import { ToastStack, useToastStack, type ToastTone } from "./components/toast-stack.tsx";
 import { CookieImportTaskDialog, CookieImportTaskPanel, useCookieImportTask } from "./cookie-import-task-panel.tsx";
 import { DesktopCloseHost, DesktopCloseRegistryProvider, useDesktopCloseDraft, useDesktopCloseRegistry } from "./desktop-close.tsx";
-import { MotionPresence, useDesktopMotion, usePanelMotion } from "./desktop-motion.tsx";
+import { useDesktopMotion, usePanelMotion } from "./desktop-motion.tsx";
 import { EnvironmentInspectionPage } from "./environment-inspection.tsx";
 import { ErrorBoundary } from "./error-boundary.tsx";
 import { createExtensionDefaultDrafts } from "./extension-default-drafts.ts";
@@ -37,7 +39,7 @@ import { SettingsPanel } from "./features/settings-panel.tsx";
 import { WorkbenchSidebar } from "./features/workbench-sidebar.tsx";
 import { buildFingerprintAssistantBrief } from "./fingerprint-assistant-brief.ts";
 import { useProfileMetrics } from "./hooks/use-profile-selection.ts";
-import { useRosterPolling } from "./hooks/use-roster-polling.ts";
+import { applyProfileLifecyclePatch, useRosterEvents } from "./hooks/use-roster-events.ts";
 import { CHECKBOX_COLUMN_WIDTH, COLUMNS, HIDDEN_COLUMNS_KEY, PAGE_SIZE_KEY, PAGE_SIZES, readHiddenColumns, readPageSize, useRosterQuery, type ColumnKey, type SortKey } from "./hooks/use-roster-query.ts";
 import { I18nProvider, useTranslation } from "./i18n.tsx";
 import { ImportReceiptPanel } from "./import-receipt.tsx";
@@ -62,7 +64,7 @@ import { readThemeChoice, THEME_KEY, themeCookie, type ThemeChoice } from "./the
 import { TrashPage } from "./trash.tsx";
 import type { TrashTaskSnapshot } from "./trash-task.ts";
 import { AppIcon, useConfirmDialog } from "./ui-primitives.tsx";
-import { DesktopStartupBar, useWindowChrome, WindowActionError, WindowControls } from "./window-chrome.tsx";
+import { DesktopStartupBar, useWindowBackdrop, useWindowChrome, WindowActionError, WindowControls } from "./window-chrome.tsx";
 import { WorkbenchActivity, type WorkbenchActivityItem } from "./workbench-activity.tsx";
 import { getWorkbenchShortcut, readWorkbenchShortcutContext, type WorkbenchShortcutAction } from "./workbench-shortcuts.ts";
 import { DevicePanel, useWorkspaceCatalog, WorkspaceActivity, WorkspaceManagementPage, WorkspaceProvider, WorkspaceSwitcher, type WorkspacePageIntent, type WorkspacePageRequest } from "./workspace-manager.tsx";
@@ -135,10 +137,27 @@ function App() {
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set()), [folderMenu, setFolderMenu] = useState<string | null>(null), [folderMenuPosition, setFolderMenuPosition] = useState({ left: 0, top: 0 });
   const [newFolderParent, setNewFolderParent] = useState<string | null>(null), [movingFolder, setMovingFolder] = useState<string | null>(null), [folderParent, setFolderParent] = useState(""), [folderMoveBusy, setFolderMoveBusy] = useState(false), [folderMoveErr, setFolderMoveErr] = useState<string | null>(null);
   const [appMode, setAppMode] = useState<AppModeConfig | null>(null), [appModeErr, setAppModeErr] = useState<string | null>(null), [authRequired, setAuthRequired] = useState(false), [authTokenInput, setAuthTokenInput] = useState(""), [authTokenErr, setAuthTokenErr] = useState<string | null>(null);
+  const [runtimeDownloads, setRuntimeDownloads] = useState<RuntimeDownload[]>([]), [runtimeDownloadsStale, setRuntimeDownloadsStale] = useState(false);
+  const runtimeTransfersObserved = useRef(false), initialDownloadsFetched = useRef(false);
   const bulkOwnerActive = useRef(true);
-  const { loaded, connErr, connectionAlertDismissed, dismissConnectionAlert, retryConnection, refreshing, setRefreshing, load, readFreshRoster, lastRosterResult } = useRosterPolling({
-    enabled: !!appMode, intervalMs: REFRESH_MS, bulkOwnerActiveRef: bulkOwnerActive,
+  const { loaded, connErr, connectionAlertDismissed, dismissConnectionAlert, retryConnection, refreshing, setRefreshing, load, readFreshRoster, lastRosterResult, transport } = useRosterEvents({
+    enabled: !!appMode, sseEnabled: appMode?.eventsStream === true, intervalMs: REFRESH_MS, bulkOwnerActiveRef: bulkOwnerActive,
     onRoster: (roster) => { setProfiles(roster.profiles); setRegisteredGroups(roster.groups); setLocalFolders(roster.folders ?? []); },
+    onLifecyclePatch: (ev) => {
+      setProfiles((current) => {
+        const patched = applyProfileLifecyclePatch({ profiles: current, groups: [], folders: [] }, ev);
+        return patched.matched ? patched.roster.profiles : current;
+      });
+    },
+    onDownloads: (downloads) => {
+      initialDownloadsFetched.current = true;
+      runtimeTransfersObserved.current = downloads.length > 0;
+      setRuntimeDownloads(downloads);
+      setRuntimeDownloadsStale(false);
+    },
+    onScriptRun: (run) => {
+      try { backgroundScriptRuns.observe(run); } catch { /* Ignore malformed stream frames; explicit reads still validate. */ }
+    },
   });
   const effectiveConnErr = appModeErr ?? connErr, [modeErr] = useState<string | null>(null);
   const [view, setView] = useState<"profiles" | "inspection" | "scripts" | "settings" | "extensions" | "proxies" | "trash" | "workspaces" | "assistant">("profiles");
@@ -213,6 +232,7 @@ function App() {
   const favoriteProfileIds = useMemo(() => new Set(favoriteProfiles), [favoriteProfiles]);
   const paletteSavedViews = useMemo(() => (viewPreferencesReady ? savedProfileViews.map(({ id, name, filters }) => ({ id, name, group: filters.group, scope: filters.scope, status: filters.status })) : []), [savedProfileViews, viewPreferencesReady]);
   const [colsOpen, setColsOpen] = useState(false), [groupDisclosure, setGroupDisclosure] = useState(() => readGroupDisclosure(null)), [groupManagerOpen, setGroupManagerOpen] = useState(false), [bulkToolsOpen, setBulkToolsOpen] = useState(false), [groupsOpen, setGroupsOpen] = useState(true);
+  const groupDisclosureKey = useMemo(() => serializeGroupDisclosure(groupDisclosure), [groupDisclosure]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed), sidebarChoice = useRef<{ workspaceId: string | null } | null>(null), [railForced, setRailForced] = useState(readRailForced), sidebarIsCompact = sidebarCollapsed || railForced;
   const [tableScrolled, setTableScrolled] = useState(false), [theme, setTheme] = useState<ThemeChoice>(readTheme), [manualBusy, setBusy] = useState<Record<string, boolean>>({});
   const profileMove = useProfileMove({ readRoster: () => readFreshRoster() }), moveUiInFlight = useRef(false), moveDraftRevision = useRef(0);
@@ -261,8 +281,7 @@ function App() {
   }, [manualBusy, bulkTaskSnapshot, profileMove.busy, profileMove.state.attempt, cookieImportBusy, cookieImport.snapshot, fileUpdateBusy, profiles]);
   useEffect(() => { bulkOwnerActive.current = true; return () => { bulkOwnerActive.current = false; bulkTaskRef.current?.stopPending(); }; }, []);
 
-  const [runtimeDownloads, setRuntimeDownloads] = useState<RuntimeDownload[]>([]), [runtimeDownloadsStale, setRuntimeDownloadsStale] = useState(false);
-  const runtimeTransfersObserved = useRef(false), [actionErr, setActionErr] = useState<string | null>(null);
+  const [actionErr, setActionErr] = useState<string | null>(null);
   const [launchFailureState, setLaunchFailureState] = useState<{ workspaceId: string | null; byId: ReadonlyMap<string, string> }>(() => ({ workspaceId: currentWorkspaceId, byId: new Map() }));
   const launchFailures = launchFailureState.workspaceId === currentWorkspaceId ? launchFailureState.byId : null, manualActions = useRef(new Set<string>());
   useEffect(() => {
@@ -333,13 +352,9 @@ function App() {
     writeSetting(HIDDEN_COLUMNS_KEY, JSON.stringify(filters.hiddenColumns)); writeSetting(PAGE_SIZE_KEY, String(filters.pageSize));
   };
 
-  const [notice, setNotice] = useState<string | null>(null);
-  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const clearNoticeTimer = () => { if (noticeTimer.current !== null) clearTimeout(noticeTimer.current); noticeTimer.current = null; };
-  useEffect(() => () => clearNoticeTimer(), []);
-  // ---- Transient success banner ----
-  const expireNotice = () => { clearNoticeTimer(); if (document.querySelector(".notice:focus-within, .notice:hover")) return; noticeTimer.current = setTimeout(() => { noticeTimer.current = null; setNotice(null); }, 5000); };
-  const flash = (m: string) => { clearNoticeTimer(); setNotice(m); expireNotice(); };
+  const { toasts, pushToast, dismissToast } = useToastStack();
+  // ---- Transient feedback toast stack ----
+  const flash = useCallback((m: string, tone: ToastTone = "success") => { pushToast(m, tone); }, [pushToast]);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const latestSelection = useRef(selected); latestSelection.current = selected;
@@ -394,6 +409,7 @@ function App() {
     && !movingFolder && !logView && !logErr && !scriptRunOpen && !commandOpen && !shortcutHelpOpen && !tagsTarget && !showDiag;
   useSyncReuseCanOpen(createModal, reuseCanOpen);
 
+  useWindowBackdrop(theme);
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
@@ -473,20 +489,22 @@ function App() {
 
   const anyBusy = Object.values(busy).some(Boolean);
   useEffect(() => {
+    if (transport === "sse" && initialDownloadsFetched.current) return;
     let live = true, timer: number | undefined, failures = 0;
     const poll = () => {
       void fetchRuntimeDownloads().then((next) => {
         if (!live) return;
+        initialDownloadsFetched.current = true;
         failures = 0; runtimeTransfersObserved.current = next.length > 0; setRuntimeDownloads(next); setRuntimeDownloadsStale(false);
-        if (next.length > 0 || anyBusy) timer = window.setTimeout(poll, 1000);
+        if (transport !== "sse" && (next.length > 0 || anyBusy)) timer = window.setTimeout(poll, 1000);
       }).catch(() => {
         if (!live) return;
         setRuntimeDownloadsStale(true); failures++;
-        if (anyBusy || runtimeTransfersObserved.current || failures === 1) timer = window.setTimeout(poll, 1000 * 2 ** Math.min(3, failures - 1));
+        if (transport !== "sse" && (anyBusy || runtimeTransfersObserved.current || failures === 1)) timer = window.setTimeout(poll, 1000 * 2 ** Math.min(3, failures - 1));
       });
     };
     poll(); return () => { live = false; window.clearTimeout(timer); };
-  }, [anyBusy, profiles.length]);
+  }, [anyBusy, profiles.length, transport]);
 
   const {
     deferredQ, folders, tree, folderLabels, groups, existingGroups, missingRosterGroup, hasRosterRefinements,
@@ -1036,11 +1054,7 @@ function App() {
                   <button className="dismiss" aria-label={t("Dismiss error")} onClick={() => { setActionErr(null); if (effectiveConnErr) dismissConnectionAlert(); }}><Icon name="close" className="sm" /></button>
                 </div>
               )}
-              <MotionPresence present={!!notice} kind="panel">{() => (
-                <div className="notice" role="status" onPointerEnter={clearNoticeTimer} onPointerLeave={expireNotice} onFocusCapture={clearNoticeTimer} onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) expireNotice(); }}>
-                  <Icon name="check" className="sm" /><span>{notice}</span><button type="button" className="notice-dismiss" aria-label={t("Dismiss")} onClick={() => { clearNoticeTimer(); setNotice(null); }}><Icon name="close" className="sm" /></button>
-                </div>
-              )}</MotionPresence>
+              <ToastStack toasts={toasts} onDismiss={dismissToast} />
               {exportProgress && (<div className="notice" role="status"><Icon name="export" className="sm" />{exportProgress.completed >= exportProgress.total ? t("Building export file…") : t("Preparing export: {completed} / {total} profiles", { completed: exportProgress.completed.toLocaleString(), total: exportProgress.total.toLocaleString() })}</div>)}
               {diskSpace?.low && diskSpace.freeBytes !== null && !diskWarningDismissed && (
                 <div className="update-banner update-result warning" role="alert">
@@ -1108,63 +1122,61 @@ function App() {
                   <div ref={moveTaskPanelRef} tabIndex={-1} className="profile-move-result-anchor"><ProfileMoveFeedback state={profileMove.state} onRetry={() => void runMoveAction(profileMove.retry)} onRecheck={() => void runMoveAction(profileMove.recheck)} onDismiss={profileMove.dismiss} /></div>
                   {bulkTaskSnapshot && <BulkProfileTaskPanel snapshot={bulkTaskSnapshot} expanded={bulkTaskExpanded} refreshing={bulkTaskRefreshing} onExpandedChange={setBulkTaskExpanded} onStopPending={() => bulkTaskRef.current?.stopPending()} onRetryFailed={retryBulkFailures} onDismiss={dismissBulkTask} />}
 
-                  {filtered.length > 0 && selected.size > 0 && (
-                    <div className="toolbar" role="status">
-                      <button type="button" className="btn" disabled={deleting || allFilteredSelected} onClick={() => { rangeSelectionAnchor.current = null; selectAllFiltered(); }}>{allFilteredSelected ? t("All {scope} selected", { scope: selectionScope }) : t("Select all {scope}", { scope: selectionScope })}</button>
-                      <span className="muted">{deleting ? t("Moving selected profiles…") : t("Across all pages")}</span>
-                      {!allFilteredSelected && selectedOutsideFilter > 0 && <span className="muted">{t("This replaces your selection, excluding {count} outside this view.", { count: selectedOutsideFilter })}</span>}
-                    </div>
-                  )}
+                  <ProfileRosterTable loaded={loaded} profilesCount={profiles.length} filteredCount={filtered.length} flatItems={flatItems} selectableProfilesCount={selectableProfiles.length} numbering={numbering} rosterScope={rosterScope} rosterDensity={rosterDensity} missingRosterGroup={missingRosterGroup} hasRosterRefinements={hasRosterRefinements} revealGroupMatches={revealGroupMatches} sort={sort} hiddenCols={hiddenCols} shownColumns={shownColumns} visibleColumnCount={visibleColumnCount} tableMinWidth={tableMinWidth} tableScrolled={tableScrolled} onTableScrolledChange={setTableScrolled} selected={selected} allVisibleSelected={allVisibleSelected} busy={busy} favoriteProfileIds={favoriteProfileIds} reuseLoadingId={createModal.reuseRequest?.status === "loading" ? createModal.reuseRequest.id : null} twoFaFlashId={twoFaFlash?.id ?? null} viewPreferencesReady={viewPreferencesReady} viewPreferenceBusy={viewPreferenceBusy} language={language} rangeKeyboardActivation={rangeKeyboardActivation} profilePageCount={profilePageCount} visibleProfilePage={visibleProfilePage} pageSize={pageSize} onPageChange={setProfilePage} onPageSizeChange={applyPageSize} runningCount={runningCount} diag={diag} diagWhen={diagWhen} showDiag={showDiag} onToggleDiag={() => setShowDiag((s) => !s)} hasDetails={!!detailsProfile} detailsPanel={<ProfileDetailsPanel profile={detailsProfile} headingRef={detailsHeading} onClose={closeDetails} onEdit={(id) => editModal.openEdit(id, undefined, detailsTrigger.current ?? undefined)} onInspect={openInspection} />} groupDisclosureKey={groupDisclosureKey} motionAllowed={motion.effective === "full"} folderLabel={folderLabel} openLabel={openLabel} onToggleSort={toggleSort} onToggleAll={() => { rangeSelectionAnchor.current = null; toggleAll(); }} onToggleProfileGroup={toggleProfileGroup} onToggleGroupSelection={(matches) => { rangeSelectionAnchor.current = null; setSelected((current) => toggleProfileSelection(current, matches)); }} onCreateInGroup={openCreateInGroup} onManageGroup={(name) => { selectFolder(name); setGroupManagerOpen(true); }} onNewSubfolder={(name) => { setNewFolderParent(name || null); setSidebarGroupName(""); setAddingGroup(true); setGroupManagerOpen(true); }} onOpenCreate={createModal.openCreate} onOpenBulk={importModal.openBulk} onSelectAllGroups={() => setGroup("all")} onChooseRosterScope={chooseRosterScope} onClearRosterRefinements={clearRosterRefinements} rowHandlers={stableRowHandlers} t={t} />
 
-                  {selected.size > 0 && (
-                    <div className="toolbar active">
-                      <span className="selcount"><Icon name="check" className="sm" />{t("{count} selected", { count: selected.size })}</span>
-                      <button type="button" className="btn ghost" aria-label={t("Clear selection")} onClick={() => { rangeSelectionAnchor.current = null; setSelected(new Set()); }}>{t("Clear selection")}</button>
-                      <button className="btn primary tip" data-tip={t(workspaceOperationState.blocked ? workspaceOperationMessage(workspaceOperationState) : "Open selected browsers")} disabled={!selected.size || bulkTaskActive || bulkTaskRefreshing || workspaceOperationState.blocked} onClick={openSelected}><Icon name="play" className="sm" />{t("Start")}</button>
-                      <button className="btn solid-danger tip" data-tip={t(workspaceOperationState.blocked ? workspaceOperationMessage(workspaceOperationState) : "Close selected browsers")} disabled={!selected.size || bulkTaskActive || bulkTaskRefreshing || workspaceOperationState.blocked} onClick={closeSelected}><Icon name="power" className="sm" />{t("Stop")}</button>
-                      <button type="button" className="btn ghost bulk-tools-toggle" aria-expanded={bulkToolsOpen} onClick={() => setBulkToolsOpen((open) => !open)}>{t(bulkToolsOpen ? "Fewer actions" : "More actions")}<Icon name={bulkToolsOpen ? "chevronUp" : "chevronDown"} className="sm" /></button>
-                      <div className="bulk-advanced" hidden={!bulkToolsOpen}>
-                        <button className="btn" type="button" onClick={() => { setScriptRunProfiles(profiles.filter((profile) => selected.has(profile.id))); setScriptRunOpen(true); }}><Icon name="play" className="sm" />{t("Run script")}</button>
-                        <button className="btn tip" type="button" data-tip={t("Open browsers get the cookies now; closed profiles at their next start")} onClick={() => openCookie(profiles.filter((profile) => selected.has(profile.id)))}><Icon name="cookie" className="sm" />{t("Add cookies")}</button>
-                        <span className="vsep" />
-                        {selectedMobileCount > 0 && <button className="btn warn" onClick={convertSelectedMobile}><Icon name="laptop" className="sm" />{t("Convert mobile ({count})", { count: selectedMobileCount })}</button>}
-                        <div className="menuwrap" ref={exportRef}>
-                          <button className="btn tip" data-tip={t("Export selected profiles")} disabled={!selected.size || !!exportProgress} onClick={() => setExportOpen((o) => !o)}><Icon name="export" className="sm" />{t("Export")}<Icon name="chevronDown" className="sm" /></button>
-                          {exportOpen && selected.size > 0 && !exportProgress && (
-                            <div className="exportmenu popover below-left" onMouseLeave={() => setExportOpen(false)}>
-                              <button className="pop-item" onClick={() => exportSelected("csv")}><Icon name="file" className="sm" />{t("Export as CSV (credentials)")}</button>
-                              <button className="pop-item" onClick={() => exportSelected("txt")}><Icon name="file" className="sm" />{t("Export as .txt (full profile)")}</button>
-                              <button className="pop-item" onClick={() => exportSelected("xlsx")}><Icon name="file" className="sm" />{t("Export as Excel (full profile)")}</button>
-                            </div>
-                          )}
+                  <ActionDock
+                    selectedCount={selected.size}
+                    totalFilteredCount={filtered.length}
+                    allFilteredSelected={allFilteredSelected}
+                    selectedOutsideFilter={selectedOutsideFilter}
+                    selectionScope={selectionScope}
+                    deleting={deleting}
+                    busy={bulkTaskActive || bulkTaskRefreshing}
+                    blockedMessage={workspaceOperationState.blocked ? workspaceOperationMessage(workspaceOperationState) : null}
+                    onSelectAllFiltered={() => { rangeSelectionAnchor.current = null; selectAllFiltered(); }}
+                    onClear={() => { rangeSelectionAnchor.current = null; setSelected(new Set()); }}
+                    onStart={openSelected}
+                    onStop={closeSelected}
+                    moreOpen={bulkToolsOpen}
+                    onMoreOpenChange={setBulkToolsOpen}
+                  >
+                    <button className="btn" type="button" onClick={() => { setScriptRunProfiles(profiles.filter((profile) => selected.has(profile.id))); setScriptRunOpen(true); }}><Icon name="play" className="sm" />{t("Run script")}</button>
+                    <button className="btn tip" type="button" data-tip={t("Open browsers get the cookies now; closed profiles at their next start")} onClick={() => openCookie(profiles.filter((profile) => selected.has(profile.id)))}><Icon name="cookie" className="sm" />{t("Add cookies")}</button>
+                    <span className="vsep" />
+                    {selectedMobileCount > 0 && <button className="btn warn" onClick={convertSelectedMobile}><Icon name="laptop" className="sm" />{t("Convert mobile ({count})", { count: selectedMobileCount })}</button>}
+                    <div className="menuwrap" ref={exportRef}>
+                      <button className="btn tip" data-tip={t("Export selected profiles")} disabled={!selected.size || !!exportProgress} onClick={() => setExportOpen((o) => !o)}><Icon name="export" className="sm" />{t("Export")}<Icon name="chevronDown" className="sm" /></button>
+                      {exportOpen && selected.size > 0 && !exportProgress && (
+                        <div className="exportmenu popover below-left" onMouseLeave={() => setExportOpen(false)}>
+                          <button className="pop-item" onClick={() => exportSelected("csv")}><Icon name="file" className="sm" />{t("Export as CSV (credentials)")}</button>
+                          <button className="pop-item" onClick={() => exportSelected("txt")}><Icon name="file" className="sm" />{t("Export as .txt (full profile)")}</button>
+                          <button className="pop-item" onClick={() => exportSelected("xlsx")}><Icon name="file" className="sm" />{t("Export as Excel (full profile)")}</button>
                         </div>
-                        <button className="btn tip" data-tip={t("Export → edit → re-upload")} disabled={!selected.size || !!exportProgress} onClick={openUpdate} title={t("Export → edit → re-upload to change credentials in bulk")}><Icon name="edit" className="sm" />{t("Edit from file")}</button>
-                        <span className="vsep" />
-                        <div className="movewrap">
-                          {newMode ? (<input className="input" autoFocus placeholder={t("new group name")} value={newGroup} disabled={profileMove.busy} onChange={(e) => { if (moveUiInFlight.current) return; moveDraftRevision.current++; setNewGroup(e.target.value); }} />) : (
-                            <select className="select move-group" aria-label={t("Move to group")} title={moveTarget === null ? t("Choose destination group") : moveTarget || t("Ungrouped")} disabled={!selected.size || profileMove.busy} value={moveTarget === null ? "choose" : `group:${moveTarget}`} onChange={(e) => { if (moveUiInFlight.current) return; moveDraftRevision.current++; if (e.target.value === "new") setNewMode(true); else if (e.target.value.startsWith("group:")) setMoveTarget(e.target.value.slice(6)); else setMoveTarget(null); }}>
-                              <option value="choose">{t("Move to…")}</option><option value="group:">{t("Ungrouped")}</option>{existingGroups.map((g) => <option key={g} value={`group:${g}`}>{g}</option>)}<option value="new">{t("+ new group…")}</option>
-                            </select>
-                          )}
-                          {newMode && <button className="btn ghost" disabled={profileMove.busy} onClick={() => { if (moveUiInFlight.current) return; moveDraftRevision.current++; setNewMode(false); setNewGroup(""); }}>{t("cancel")}</button>}
-                          <button className="btn accent" disabled={!selected.size || profileMove.busy || workspaceOperationState.blocked || (newMode ? !newGroup.trim() : moveTarget === null)} onClick={moveSelected}><Icon name="move" className="sm" />{t(profileMove.busy ? "Moving…" : "Move")}</button>
-                        </div>
-                        {extensions.length > 0 && selectedProfilesSupportChromeExtensions && (<>
-                          <span className="vsep" />
-                          <div className="extctl">
-                            <span className="extctl-lbl"><Icon name="puzzle" className="sm" />{t("Extension")}</span>
-                            <select className="select extctl-sel" aria-label={t("Extension for bulk assignment")} disabled={!selected.size} value={bulkExt} onChange={(e) => setBulkExt(e.target.value)}><option value="">{t("choose…")}</option>{extensions.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select>
-                            <button className="btn xs" disabled={!selected.size || !bulkExt} onClick={() => bulkAssignExt("add")}>{t("Add")}</button>
-                            <button className="btn xs" disabled={!selected.size || !bulkExt} onClick={() => bulkAssignExt("remove")}>{t("Remove")}</button>
-                          </div>
-                        </>)}
-                        <span className="spacer" />
-                        <button className="btn danger tip" data-tip={t("Move selected profiles to Trash")} disabled={!selected.size || deleting} onClick={deleteSelected}><Icon name="trash" className="sm" />{deleting ? t("Processing…") : t("Move {count} to Trash", { count: selected.size.toLocaleString() })}</button>
+                      )}
+                    </div>
+                    <button className="btn tip" data-tip={t("Export → edit → re-upload")} disabled={!selected.size || !!exportProgress} onClick={openUpdate} title={t("Export → edit → re-upload to change credentials in bulk")}><Icon name="edit" className="sm" />{t("Edit from file")}</button>
+                    <span className="vsep" />
+                    <div className="movewrap">
+                      {newMode ? (<input className="input" autoFocus placeholder={t("new group name")} value={newGroup} disabled={profileMove.busy} onChange={(e) => { if (moveUiInFlight.current) return; moveDraftRevision.current++; setNewGroup(e.target.value); }} />) : (
+                        <select className="select move-group" aria-label={t("Move to group")} title={moveTarget === null ? t("Choose destination group") : moveTarget || t("Ungrouped")} disabled={!selected.size || profileMove.busy} value={moveTarget === null ? "choose" : `group:${moveTarget}`} onChange={(e) => { if (moveUiInFlight.current) return; moveDraftRevision.current++; if (e.target.value === "new") setNewMode(true); else if (e.target.value.startsWith("group:")) setMoveTarget(e.target.value.slice(6)); else setMoveTarget(null); }}>
+                          <option value="choose">{t("Move to…")}</option><option value="group:">{t("Ungrouped")}</option>{existingGroups.map((g) => <option key={g} value={`group:${g}`}>{g}</option>)}<option value="new">{t("+ new group…")}</option>
+                        </select>
+                      )}
+                      {newMode && <button className="btn ghost" disabled={profileMove.busy} onClick={() => { if (moveUiInFlight.current) return; moveDraftRevision.current++; setNewMode(false); setNewGroup(""); }}>{t("cancel")}</button>}
+                      <button className="btn accent" disabled={!selected.size || profileMove.busy || workspaceOperationState.blocked || (newMode ? !newGroup.trim() : moveTarget === null)} onClick={moveSelected}><Icon name="move" className="sm" />{t(profileMove.busy ? "Moving…" : "Move")}</button>
+                    </div>
+                    {extensions.length > 0 && selectedProfilesSupportChromeExtensions && (<>
+                      <span className="vsep" />
+                      <div className="extctl">
+                        <span className="extctl-lbl"><Icon name="puzzle" className="sm" />{t("Extension")}</span>
+                        <select className="select extctl-sel" aria-label={t("Extension for bulk assignment")} disabled={!selected.size} value={bulkExt} onChange={(e) => setBulkExt(e.target.value)}><option value="">{t("choose…")}</option>{extensions.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select>
+                        <button className="btn xs" disabled={!selected.size || !bulkExt} onClick={() => bulkAssignExt("add")}>{t("Add")}</button>
+                        <button className="btn xs" disabled={!selected.size || !bulkExt} onClick={() => bulkAssignExt("remove")}>{t("Remove")}</button>
                       </div>
-                    </div>
-                  )}
-
-                  <ProfileRosterTable loaded={loaded} profilesCount={profiles.length} filteredCount={filtered.length} flatItems={flatItems} selectableProfilesCount={selectableProfiles.length} numbering={numbering} rosterScope={rosterScope} rosterDensity={rosterDensity} missingRosterGroup={missingRosterGroup} hasRosterRefinements={hasRosterRefinements} revealGroupMatches={revealGroupMatches} sort={sort} hiddenCols={hiddenCols} shownColumns={shownColumns} visibleColumnCount={visibleColumnCount} tableMinWidth={tableMinWidth} tableScrolled={tableScrolled} onTableScrolledChange={setTableScrolled} selected={selected} allVisibleSelected={allVisibleSelected} busy={busy} favoriteProfileIds={favoriteProfileIds} reuseLoadingId={createModal.reuseRequest?.status === "loading" ? createModal.reuseRequest.id : null} twoFaFlashId={twoFaFlash?.id ?? null} viewPreferencesReady={viewPreferencesReady} viewPreferenceBusy={viewPreferenceBusy} language={language} rangeKeyboardActivation={rangeKeyboardActivation} profilePageCount={profilePageCount} visibleProfilePage={visibleProfilePage} pageSize={pageSize} onPageChange={setProfilePage} onPageSizeChange={applyPageSize} runningCount={runningCount} diag={diag} diagWhen={diagWhen} showDiag={showDiag} onToggleDiag={() => setShowDiag((s) => !s)} hasDetails={!!detailsProfile} detailsPanel={<ProfileDetailsPanel profile={detailsProfile} headingRef={detailsHeading} onClose={closeDetails} onEdit={(id) => editModal.openEdit(id, undefined, detailsTrigger.current ?? undefined)} onInspect={openInspection} />} folderLabel={folderLabel} openLabel={openLabel} onToggleSort={toggleSort} onToggleAll={() => { rangeSelectionAnchor.current = null; toggleAll(); }} onToggleProfileGroup={toggleProfileGroup} onToggleGroupSelection={(matches) => { rangeSelectionAnchor.current = null; setSelected((current) => toggleProfileSelection(current, matches)); }} onCreateInGroup={openCreateInGroup} onManageGroup={(name) => { selectFolder(name); setGroupManagerOpen(true); }} onNewSubfolder={(name) => { setNewFolderParent(name || null); setSidebarGroupName(""); setAddingGroup(true); setGroupManagerOpen(true); }} onOpenCreate={createModal.openCreate} onOpenBulk={importModal.openBulk} onSelectAllGroups={() => setGroup("all")} onChooseRosterScope={chooseRosterScope} onClearRosterRefinements={clearRosterRefinements} rowHandlers={stableRowHandlers} t={t} />
+                    </>)}
+                    <span className="spacer" />
+                    <button className="btn danger tip" data-tip={t("Move selected profiles to Trash")} disabled={!selected.size || deleting} onClick={deleteSelected}><Icon name="trash" className="sm" />{deleting ? t("Processing…") : t("Move {count} to Trash", { count: selected.size.toLocaleString() })}</button>
+                  </ActionDock>
                 </div>
               ) : view === "extensions" ? (
                 <ExtensionsPage extensions={extensions} profiles={profiles} groupDefaults={groupExtensionDefaults} selectedGroup={groupDefaultName} selectedExtensionIds={groupDefaultExts} source={extSource} loading={extLoading} installing={extInstallBusy} uploading={extBusy} applying={groupDefaultBusy} error={extErr} dataFresh={extDataFresh} selectedGroupAvailable={extensionDraftState.selected?.available !== false} draftDirty={!!extensionDraftState.selected?.dirty} onDiscardGroupDraft={() => extensionDrafts.discard()} retainedGroupDrafts={extensionDraftState.drafts.filter((draft) => !draft.available && draft.dirty).map((draft) => draft.group)} onReload={async () => { if (!await refreshExtensionState()) throw new Error("The latest extension data could not be loaded. Your draft is kept. Reload before applying changes."); }} onPreviewGroupDefaults={(selection, signal) => previewGroupExtensionDefaults(selection.group, selection.extensions, signal)} onSourceChange={setExtSource} onSelectGroup={(name) => extensionDrafts.select(name)} onToggleExtension={toggleGroupDefaultExt} onInstall={doInstallWebStoreExtension} onUpload={doUploadExtensions} onApplyGroupDefaults={applyGroupExtensionDefault} onRemove={doRemoveExtension} onOpenProfile={(id) => { if (!editModal.isEditSessionOpen()) editModal.openEdit(id); }} />

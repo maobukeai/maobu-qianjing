@@ -2,6 +2,9 @@ import { type CSSProperties, type FocusEvent, type KeyboardEvent, type MutableRe
 import type { RosterScope } from "../../profile-view-state.ts";
 import { ROSTER_DENSITY_ROW_HEIGHT, type RosterDensity } from "../../roster-density-state.ts";
 import type { DiagnoseReport, UiProfile } from "../api.ts";
+import { RosterSkeleton } from "../components/roster-skeleton.tsx";
+import { useEffectiveDesktopMotion } from "../desktop-motion.tsx";
+import { useFlipGroup } from "../hooks/use-flip-group.ts";
 import {
   CHECKBOX_COLUMN_WIDTH,
   COLUMNS,
@@ -93,6 +96,10 @@ export interface ProfileRosterTableProps {
   virtualThreshold?: number;
   /** Override fallback viewport height when clientHeight === 0 (defaults to 800). */
   fallbackViewportHeight?: number;
+  /** Serialized group disclosure signature driving FLIP collapse/expand transitions. */
+  groupDisclosureKey?: string;
+  /** Whether motion animations (including group FLIP) are permitted under desktop-motion settings. */
+  motionAllowed?: boolean;
   /** Optional ref to expose the table body for FLIP group animations (Author C integration). */
   tbodyRef?: React.RefObject<HTMLTableSectionElement | null>;
 }
@@ -167,10 +174,24 @@ export function ProfileRosterTable({
   pinnedKeys: externalPinnedKeys,
   virtualThreshold = DEFAULT_VIRTUAL_THRESHOLD,
   fallbackViewportHeight = DEFAULT_FALLBACK_VIEWPORT_HEIGHT,
+  groupDisclosureKey,
+  motionAllowed,
   tbodyRef,
 }: ProfileRosterTableProps) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const focusFrameRef = useRef<number | null>(null);
+  const effectiveDesktopMotion = useEffectiveDesktopMotion();
+  const flipMotionAllowed = motionAllowed ?? (effectiveDesktopMotion === "full");
+  const resolvedDisclosureKey = useMemo(
+    () =>
+      groupDisclosureKey ??
+      flatItems
+        .filter((item): item is Extract<FlatRosterItem, { kind: "group-header" }> => item.kind === "group-header")
+        .map((item) => `${item.section.name}:${item.collapsed ? "1" : "0"}`)
+        .join("|"),
+    [groupDisclosureKey, flatItems],
+  );
+  useFlipGroup(scrollContainerRef, resolvedDisclosureKey, flipMotionAllowed);
   const [focusedFlatKey, setFocusedFlatKey] = useState<string | null>(null);
   const prevInlineRenameIdRef = useRef(inlineRenameId);
   if (prevInlineRenameIdRef.current !== inlineRenameId) {
@@ -370,11 +391,7 @@ export function ProfileRosterTable({
             <tbody ref={tbodyRef} id="profile-roster-body" className="profile-roster-body">
               {!loaded && (
                 loadingContent ?? (
-                  <tr>
-                    <td colSpan={visibleColumnCount} className="empty">
-                      <div className="emptystate" role="status">{t("Loading environments…")}</div>
-                    </td>
-                  </tr>
+                  <RosterSkeleton rows={8} visibleColumnCount={visibleColumnCount} density={rosterDensity} />
                 )
               )}
               {virtual.blocks.map((block) => {

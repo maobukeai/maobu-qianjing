@@ -34,6 +34,14 @@ export function readWindowBackdrop(candidate?: unknown): WindowBackdropKind {
   return value === "mica-alt" || value === "mica" || value === "none" ? value : "none";
 }
 
+/** True when the Tauri host explicitly injected `window.__MAOBU_BACKDROP__` and exposes `set_window_theme`. */
+export function hasWindowBackdropHost(candidate?: unknown): boolean {
+  const host = candidate !== undefined ? candidate : (typeof window !== "undefined" ? window : undefined);
+  if (!host || typeof host !== "object") return false;
+  const value = (host as { __MAOBU_BACKDROP__?: unknown }).__MAOBU_BACKDROP__;
+  return value === "mica-alt" || value === "mica" || value === "none";
+}
+
 function isValidWindowTheme(theme: unknown): theme is WindowThemeChoice {
   return theme === "light" || theme === "dark" || theme === "system";
 }
@@ -78,6 +86,7 @@ export function useWindowBackdrop(theme: WindowThemeChoice): WindowBackdropKind 
   }, [backdrop]);
 
   useEffect(() => {
+    if (!hasWindowBackdropHost()) return;
     void syncWindowTheme(theme);
     if (theme !== "system" || typeof window === "undefined" || typeof window.matchMedia !== "function") {
       return;
