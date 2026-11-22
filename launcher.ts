@@ -14,6 +14,8 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { fingerprintLaunchDigest } from "./fingerprint-source.ts";
 import { LocalProxyPreflightError, loopbackProxyTarget, type LocalProxyEndpoint } from "./local-proxy-preflight.ts";
 import { applyChromiumPreloadingPreference, type ChromiumPreloadingMode } from "./chromium-preloading-preferences.ts";
+import { mergeChromiumLaunchArgs, type LaunchPolicyResolver } from "./src/launcher/resource-policy.ts";
+export type { LaunchPolicyResolver } from "./src/launcher/resource-policy.ts";
 import {
   mkdirSync,
   rmSync,
@@ -28,7 +30,7 @@ import {
 } from "node:fs";
 import { lstat, readdir, rm } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import type { CookieRecord, LaunchInfo, LaunchPersona, Profile, ProxySpec } from "./types.ts";
+import type { CookieRecord, JsonValue, LaunchInfo, LaunchPersona, Profile, ProxySpec } from "./types.ts";
 import { cookiesForEngine } from "./parse.ts";
 import type { ProfileStore } from "./store.ts";
 import { lookupProxyExitLocation, type ExitLocation } from "./geoip.ts";
@@ -459,6 +461,8 @@ export interface LauncherOptions {
   chromiumPreloading?: () => ChromiumPreloadingMode;
   /** Workspace preference: cap Chromium renderer processes to lower memory use. */
   chromiumMemorySaver?: () => boolean;
+  /** Optional profile-aware memory saver and data saver launch policy resolver. */
+  launchPolicy?: LaunchPolicyResolver;
   readSession?: typeof readSessionInSubprocess;
   applySession?: typeof applySessionToEndpoint;
   /** Budget for the graceful close above before falling through to the force-kill. */
@@ -577,6 +581,7 @@ export class Launcher {
   private checkLocalProxyBeforeLaunchFn?: (endpoint: LocalProxyEndpoint) => Promise<void>;
   private chromiumPreloadingFn?: () => ChromiumPreloadingMode;
   private chromiumMemorySaverFn?: () => boolean;
+  private launchPolicy?: LaunchPolicyResolver;
   private readSessionFn: typeof readSessionInSubprocess;
   private applySessionFn: typeof applySessionToEndpoint;
   private navigateFn: LaunchNavigator;
@@ -707,6 +712,7 @@ export class Launcher {
     this.checkLocalProxyBeforeLaunchFn = opts.checkLocalProxyBeforeLaunch;
     this.chromiumPreloadingFn = opts.chromiumPreloading;
     this.chromiumMemorySaverFn = opts.chromiumMemorySaver;
+    this.launchPolicy = opts.launchPolicy;
     this.readSessionFn = opts.readSession ?? readSessionInSubprocess;
     this.applySessionFn = opts.applySession ?? applySessionToEndpoint;
     this.navigateFn = opts.navigate ?? defaultNavigate;
@@ -1228,6 +1234,10 @@ export class Launcher {
       args.push(`--renderer-process-limit=${CHROMIUM_MEMORY_SAVER_RENDERER_LIMIT}`);
     }
     args.push(...this.baseArgs, ...forwardedArgs.filter((arg) => !profile.chromiumRuntime || !arg.startsWith(disableFeatures)));
+    if (this.launchPolicy) {
+      try { mergeChromiumLaunchArgs(args, this.launchPolicy.resolveChromiumArgs(profile)); }
+      catch (error) { this.log(`launch policy chromium args unavailable: ${error instanceof Error ? error.message : String(error)}`); }
+    }
     return args;
   }
 
@@ -1827,6 +1837,8 @@ export class Launcher {
       if (applied.status === "user-change-preserved" && preloading === "disabled") throw new BrowserLaunchError("preflight", "chromium_preloading_changed");
     }
     await this.repairCorruptPrefs(profileId);
+    try { this.launchPolicy?.prepareChromiumProfileDir?.(this.dataRoot, userDataDir, profile); }
+    catch (error) { this.log(`launch policy prepare failed for ${profileId}: ${error instanceof Error ? error.message : String(error)}`); }
 
     // …and clear the OTHER leftovers an unclean exit leaves behind, which repairCorruptPrefs
     // doesn't cover: a stale Singleton lock (the next Chrome stalls trying to hand off to the
@@ -2367,12 +2379,16 @@ export class Launcher {
       const windowLabel = this.skipDefaultWindowLabel
         ? undefined
         : buildWindowLabel(profile.name, profileDisplayNo(profile.customNo, this.store.getSerial(profileId))).replace(/ — $/, "");
+      let policyPrefs: Record<string, JsonValue> = {};
+      try { policyPrefs = this.launchPolicy?.resolveFirefoxPrefs(profile) ?? {}; }
+      catch (error) { this.log(`launch policy firefox prefs unavailable: ${error instanceof Error ? error.message : String(error)}`); }
       const running = await this.firefoxRuntime.start({
         profileId, executablePath: binary.path, executableSha256: binary.sha256,
         userDataDir, config: firefoxLaunchConfig(profile, windowLabel, fontsDir, webRtcIp, intelMac, hostAvail), proxy, headless,
         prefs: {
           ...firefoxStartupPrefs(profile, this.hostPlatform, this.hostArch),
           ...(fontsDir ? firefoxFontPackPrefs(fontsDir, this.hostPlatform) : {}),
+          ...policyPrefs,
           // Firefox outlives its last window on macOS anyway; elsewhere the engine keeps running for this pref.
 
         },

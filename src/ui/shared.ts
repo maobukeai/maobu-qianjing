@@ -30,6 +30,9 @@ import type { ScriptLibrary, ScriptSupervisor } from "../../scripts.ts";
 import type { PythonRuntime } from "../../python-runtime.ts";
 import type { WorkspaceManagement } from "../../workspace-management.ts";
 import type { UiEventBus } from "./events-bus.ts";
+import type { AppSettingsStore } from "../../app-settings.ts";
+import type { MetricsService } from "../metrics/metrics-service.ts";
+import type { ResourcePolicyStore } from "../metrics/resource-policy-store.ts";
 import { buildFingerprintImportComparison, type FingerprintImportComparison } from "../../fingerprint-import-comparison.ts";
 import type { ImportOverrides } from "../../inbox.ts";
 
@@ -106,6 +109,10 @@ export interface UiRuntimeOptions {
   extensionFetch?: ExtensionFetch;
   setCookies?: (ws: string, cookies: CookieRecord[]) => Promise<void>;
   events?: UiEventBus;
+  metrics?: MetricsService;
+  resourcePolicies?: ResourcePolicyStore;
+  appSettings?: AppSettingsStore;
+  metricsHeartbeatIntervalMs?: number;
 }
 
 /**

@@ -11,11 +11,15 @@ import index from "./web/index.html";
 import { profileDisplayNo, type Launcher } from "./launcher.ts";
 import { ProfileStore } from "./store.ts";
 import type { AppConfigStore } from "./app-config.ts";
+import { AppSettingsStore, resolveBatchLaunchMemoryGuardSettings } from "./app-settings.ts";
 import type { StatePaths } from "./paths.ts";
 import type { RuntimeInventoryDeployment } from "./runtime-inventory.ts";
 import { handleRequest, isLoopbackAddress, rejectUntrustedLocalRequest, type BrowserLifecycleContext } from "./server.ts";
 import { handleUiRequest, type UiHealthMetadata } from "./ui.ts";
 import { UiEventBus } from "./src/ui/events-bus.ts";
+import { MemoryWatermarkGuard } from "./src/metrics/memory-watermark-guard.ts";
+import { MetricsService } from "./src/metrics/metrics-service.ts";
+import type { ResourcePolicyStore } from "./src/metrics/resource-policy-store.ts";
 import { subscribeRuntimeDownloads } from "./runtime-download.ts";
 import { ScriptLibrary, ScriptSupervisor } from "./scripts.ts";
 import { PythonRuntime } from "./python-runtime.ts";
@@ -51,6 +55,14 @@ export interface DashboardServerOptions {
     automationToken?: string;
     /** Optional pre-configured UI SSE event bus (primarily for testing). */
     eventBus?: UiEventBus;
+    /** Optional pre-configured real-time process metrics service. */
+    metricsService?: MetricsService;
+    /** Optional per-profile resource policy store. */
+    resourcePolicies?: ResourcePolicyStore;
+    /** Optional workspace application settings store. */
+    appSettings?: AppSettingsStore;
+    /** Optional heartbeat interval override for /ui/api/metrics/stream (testing). */
+    metricsHeartbeatIntervalMs?: number;
 }
 
 export const STANDALONE_SESSION_COOKIE = "maobu_session";
@@ -270,10 +282,23 @@ export function serveDashboard(opts: DashboardServerOptions) {
         store,
         log,
     });
+    const appSettings = opts.appSettings ?? (opts.paths ? new AppSettingsStore(join(opts.paths.root, "app-settings.json")) : undefined);
+    const ownsMetrics = !opts.metricsService;
+    const metricsService = opts.metricsService ?? new MetricsService({
+        store,
+        launcher,
+        watermarkGuard: new MemoryWatermarkGuard({
+            ...(appSettings ? { getSettings: () => resolveBatchLaunchMemoryGuardSettings(appSettings.read().network) } : {}),
+        }),
+        log,
+    });
     const attachStoreMutation = store instanceof ProfileStore;
     const previousStoreMutation = attachStoreMutation ? store.onMutation : undefined;
     const storeMutationHandler: NonNullable<ProfileStore["onMutation"]> = (event) => {
         previousStoreMutation?.(event);
+        if (event.kind === "lifecycle" && event.running) {
+            metricsService.clearHibernated(event.profileId);
+        }
         eventBus.handleStoreMutation(event);
     };
     if (attachStoreMutation) {
@@ -283,12 +308,54 @@ export function serveDashboard(opts: DashboardServerOptions) {
         eventBus.emitDownloadsUpdated(downloads);
     });
     let eventsClosed = false;
+    let metricsBridgeUnsub: (() => void) | null = null;
+    const syncMetricsBridge = () => {
+        if (eventsClosed || eventBus.isClosed() || eventBus.clientCount() === 0) {
+            metricsBridgeUnsub?.();
+            metricsBridgeUnsub = null;
+            return;
+        }
+        if (!metricsBridgeUnsub) {
+            metricsBridgeUnsub = metricsService.subscribe((snapshot) => {
+                if (eventsClosed || eventBus.isClosed() || eventBus.clientCount() === 0) {
+                    syncMetricsBridge();
+                    return;
+                }
+                eventBus.emitMetricsSnapshot(snapshot as unknown as Record<string, unknown>);
+            });
+        }
+    };
+    const originalEventBusSubscribe = eventBus.subscribe.bind(eventBus);
+    eventBus.subscribe = (subscriber) => {
+        const wrapped = {
+            send: (chunk: Uint8Array) => subscriber.send(chunk),
+            close: () => {
+                try {
+                    subscriber.close();
+                } finally {
+                    queueMicrotask(syncMetricsBridge);
+                }
+            },
+        };
+        const unsub = originalEventBusSubscribe(wrapped);
+        syncMetricsBridge();
+        return () => {
+            unsub();
+            syncMetricsBridge();
+        };
+    };
     const closeEvents = () => {
         if (eventsClosed) return;
         eventsClosed = true;
+        metricsBridgeUnsub?.();
+        metricsBridgeUnsub = null;
+        eventBus.subscribe = originalEventBusSubscribe;
         unsubscribeDownloads();
         if (attachStoreMutation && store.onMutation === storeMutationHandler) {
             store.onMutation = previousStoreMutation;
+        }
+        if (ownsMetrics) {
+            metricsService.close();
         }
         eventBus.closeAll();
     };
@@ -438,6 +505,10 @@ export function serveDashboard(opts: DashboardServerOptions) {
                     runtimeInventory: opts.runtimeInventory,
                     scripts,
                     events: eventBus,
+                    metrics: metricsService,
+                    resourcePolicies: opts.resourcePolicies,
+                    appSettings,
+                    metricsHeartbeatIntervalMs: opts.metricsHeartbeatIntervalMs,
                 });
                 if (ui)
                     return withSecurityHeaders(ui, "api");

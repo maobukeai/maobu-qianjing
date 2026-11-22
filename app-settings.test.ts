@@ -1,7 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, resolve, sep } from "node:path";
-import { AppSettingsStore, defaultAppSettings, normalizeUpdateRepository, parseAppSettings } from "./app-settings.ts";
+import {
+  AppSettingsStore,
+  DEFAULT_BATCH_LAUNCH_MEMORY_GUARD_SETTINGS,
+  DEFAULT_DATA_SAVER_SETTINGS,
+  defaultAppSettings,
+  normalizeUpdateRepository,
+  parseAppSettings,
+  resolveBatchLaunchMemoryGuardSettings,
+  resolveDataSaverSettings,
+} from "./app-settings.ts";
 
 const roots: string[] = [];
 const fixtureParent = resolve(import.meta.dir, "node_modules", ".cache", "settings-tests");
@@ -100,5 +109,53 @@ describe("independent application preferences", () => {
     let message = "";
     try { store.read(); } catch (error) { message = (error as Error).message; }
     expect(message).toBe("Application settings file is invalid"); expect(message).not.toContain("private-configuration-secret");
+  });
+  test("firefoxMemorySaver, dataSaver and batchLaunchMemoryGuard stay backward-compatible and strictly validated", () => {
+    const { store } = fixture();
+    const initial = store.read();
+    expect(initial.network?.firefoxMemorySaver).toBeUndefined();
+    expect(initial.network?.dataSaver).toBeUndefined();
+    expect(initial.network?.batchLaunchMemoryGuard).toBeUndefined();
+    expect(resolveDataSaverSettings(initial.network)).toEqual(DEFAULT_DATA_SAVER_SETTINGS);
+    expect(resolveBatchLaunchMemoryGuardSettings(initial.network)).toEqual(DEFAULT_BATCH_LAUNCH_MEMORY_GUARD_SETTINGS);
+
+    const saved = store.patch({
+      network: {
+        firefoxMemorySaver: true,
+        dataSaver: { enabled: true, blockImages: true },
+        batchLaunchMemoryGuard: { softWatermarkPercent: 72, hardWatermarkPercent: 86, minAvailableMb: 2048 },
+      },
+    });
+    expect(saved.network?.firefoxMemorySaver).toBe(true);
+    expect(saved.network?.dataSaver).toEqual({ enabled: true, blockImages: true, blockMedia: false, blockFonts: false });
+    expect(saved.network?.batchLaunchMemoryGuard).toEqual({ enabled: true, softWatermarkPercent: 72, hardWatermarkPercent: 86, minAvailableMb: 2048 });
+    expect(new AppSettingsStore(store.path).read()).toEqual(saved);
+
+    // Subsequent partial patches preserve existing nested fields
+    const toggled = store.patch({ network: { dataSaver: { blockFonts: true }, batchLaunchMemoryGuard: { enabled: false } } });
+    expect(toggled.network?.dataSaver).toEqual({ enabled: true, blockImages: true, blockMedia: false, blockFonts: true });
+    expect(toggled.network?.batchLaunchMemoryGuard).toEqual({ enabled: false, softWatermarkPercent: 72, hardWatermarkPercent: 86, minAvailableMb: 2048 });
+    expect(toggled.network?.firefoxMemorySaver).toBe(true);
+
+    const beforeInvalid = readFileSync(store.path, "utf8");
+    for (const badNetwork of [
+      { firefoxMemorySaver: "true" },
+      { dataSaver: null },
+      { dataSaver: { enabled: "yes" } },
+      { dataSaver: { enabled: true, extra: true } },
+      { batchLaunchMemoryGuard: null },
+      { batchLaunchMemoryGuard: { enabled: 1 } },
+      { batchLaunchMemoryGuard: { softWatermarkPercent: 90, hardWatermarkPercent: 85 } },
+      { batchLaunchMemoryGuard: { softWatermarkPercent: 80, hardWatermarkPercent: 80 } },
+      { batchLaunchMemoryGuard: { softWatermarkPercent: 75.5 } },
+      { batchLaunchMemoryGuard: { softWatermarkPercent: 10 } },
+      { batchLaunchMemoryGuard: { hardWatermarkPercent: 100 } },
+      { batchLaunchMemoryGuard: { minAvailableMb: 64 } },
+      { batchLaunchMemoryGuard: { minAvailableMb: 100000 } },
+      { batchLaunchMemoryGuard: { token: "secret" } },
+    ]) {
+      expect(() => store.patch({ network: badNetwork })).toThrow();
+      expect(readFileSync(store.path, "utf8")).toBe(beforeInvalid);
+    }
   });
 });

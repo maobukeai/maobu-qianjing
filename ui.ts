@@ -16,6 +16,7 @@ import { handleFeatureSettingsRequest } from "./feature-settings.ts";
 import { API_SECURITY_HEADERS } from "./server.ts";
 import { handleEventsUiRoutes } from "./src/ui/events-routes.ts";
 import { handleGroupsAndExtensionsUiRoutes } from "./src/ui/groups-extensions-routes.ts";
+import { handleMetricsAndWindowsRoutes } from "./src/ui/metrics-windows-routes.ts";
 import { handleProfilesUiRoutes } from "./src/ui/profiles-routes.ts";
 import { handleScriptsUiRoutes } from "./src/ui/scripts-routes.ts";
 import {
@@ -104,6 +105,7 @@ export async function handleUiRequest(
     (await handleScriptsUiRoutes(req, pathname, options)) ??
     (await handleSystemUiRoutes(req, pathname, launcher, store, options)) ??
     (await handleGroupsAndExtensionsUiRoutes(req, pathname, store, options)) ??
+    (await handleMetricsAndWindowsRoutes(req, pathname, launcher, store, options)) ??
     (await handleProfilesUiRoutes(req, pathname, launcher, store, options));
 
   return withUiSecurityHeaders(

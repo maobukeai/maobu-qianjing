@@ -16,9 +16,62 @@ export interface SyncSettings {
   folder: string;
   retainSnapshots: number;
 }
-export interface NetworkSettings { checkLocalProxyBeforeLaunch: boolean; chromiumPreloading?: ChromiumPreloadingMode; chromiumMemorySaver?: boolean }
+export interface DataSaverSettings {
+  enabled: boolean;
+  blockImages: boolean;
+  blockMedia: boolean;
+  blockFonts: boolean;
+}
+export interface BatchLaunchMemoryGuardSettings {
+  enabled: boolean;
+  softWatermarkPercent: number;
+  hardWatermarkPercent: number;
+  minAvailableMb: number;
+}
+export interface NetworkSettings {
+  checkLocalProxyBeforeLaunch: boolean;
+  chromiumPreloading?: ChromiumPreloadingMode;
+  chromiumMemorySaver?: boolean;
+  firefoxMemorySaver?: boolean;
+  dataSaver?: DataSaverSettings;
+  batchLaunchMemoryGuard?: BatchLaunchMemoryGuardSettings;
+}
 export interface SignedUpdateSettings { checkOnStartup: boolean }
 export interface AppSettings { version: 1; updates: UpdateSettings; sync: SyncSettings; network?: NetworkSettings; signedUpdates?: SignedUpdateSettings }
+
+export const DEFAULT_DATA_SAVER_SETTINGS: Readonly<DataSaverSettings> = Object.freeze({
+  enabled: false,
+  blockImages: false,
+  blockMedia: false,
+  blockFonts: false,
+});
+
+export const DEFAULT_BATCH_LAUNCH_MEMORY_GUARD_SETTINGS: Readonly<BatchLaunchMemoryGuardSettings> = Object.freeze({
+  enabled: true,
+  softWatermarkPercent: 75,
+  hardWatermarkPercent: 88,
+  minAvailableMb: 1536,
+});
+
+export function resolveDataSaverSettings(network?: NetworkSettings): DataSaverSettings {
+  const ds = network?.dataSaver;
+  return {
+    enabled: ds?.enabled === true,
+    blockImages: ds?.blockImages === true,
+    blockMedia: ds?.blockMedia === true,
+    blockFonts: ds?.blockFonts === true,
+  };
+}
+
+export function resolveBatchLaunchMemoryGuardSettings(network?: NetworkSettings): BatchLaunchMemoryGuardSettings {
+  const guard = network?.batchLaunchMemoryGuard;
+  return {
+    enabled: guard ? guard.enabled : DEFAULT_BATCH_LAUNCH_MEMORY_GUARD_SETTINGS.enabled,
+    softWatermarkPercent: guard ? guard.softWatermarkPercent : DEFAULT_BATCH_LAUNCH_MEMORY_GUARD_SETTINGS.softWatermarkPercent,
+    hardWatermarkPercent: guard ? guard.hardWatermarkPercent : DEFAULT_BATCH_LAUNCH_MEMORY_GUARD_SETTINGS.hardWatermarkPercent,
+    minAvailableMb: guard ? guard.minAvailableMb : DEFAULT_BATCH_LAUNCH_MEMORY_GUARD_SETTINGS.minAvailableMb,
+  };
+}
 
 export function defaultAppSettings(): AppSettings {
   return {
@@ -46,6 +99,56 @@ export function normalizeUpdateRepository(value: unknown): string {
   return repository;
 }
 
+function parseDataSaverSettings(value: unknown): DataSaverSettings {
+  const raw = object(value, "Data saver settings");
+  if (Object.keys(raw).some((key) => !["enabled", "blockImages", "blockMedia", "blockFonts"].includes(key))) {
+    throw new Error("Invalid network settings");
+  }
+  if (
+    typeof raw.enabled !== "boolean" ||
+    typeof raw.blockImages !== "boolean" ||
+    typeof raw.blockMedia !== "boolean" ||
+    typeof raw.blockFonts !== "boolean"
+  ) {
+    throw new Error("Invalid network settings");
+  }
+  return {
+    enabled: raw.enabled,
+    blockImages: raw.blockImages,
+    blockMedia: raw.blockMedia,
+    blockFonts: raw.blockFonts,
+  };
+}
+
+function parseBatchLaunchMemoryGuardSettings(value: unknown): BatchLaunchMemoryGuardSettings {
+  const raw = object(value, "Batch launch memory guard settings");
+  if (
+    Object.keys(raw).some(
+      (key) => !["enabled", "softWatermarkPercent", "hardWatermarkPercent", "minAvailableMb"].includes(key),
+    )
+  ) {
+    throw new Error("Invalid network settings");
+  }
+  const soft = raw.softWatermarkPercent;
+  const hard = raw.hardWatermarkPercent;
+  const minAvail = raw.minAvailableMb;
+  if (
+    typeof raw.enabled !== "boolean" ||
+    typeof soft !== "number" || !Number.isInteger(soft) || soft < 30 || soft > 95 ||
+    typeof hard !== "number" || !Number.isInteger(hard) || hard < 40 || hard > 99 ||
+    soft >= hard ||
+    typeof minAvail !== "number" || !Number.isInteger(minAvail) || minAvail < 128 || minAvail > 65536
+  ) {
+    throw new Error("Invalid network settings");
+  }
+  return {
+    enabled: raw.enabled,
+    softWatermarkPercent: soft,
+    hardWatermarkPercent: hard,
+    minAvailableMb: minAvail,
+  };
+}
+
 /** Strict parsing prevents accidentally writing tokens or passwords as preferences. */
 export function parseAppSettings(value: unknown): AppSettings {
   const raw = object(value, "Application settings"); keys(raw, ["version", "updates", "sync", "network", "signedUpdates"], "application");
@@ -61,9 +164,21 @@ export function parseAppSettings(value: unknown): AppSettings {
   if (folder && !(sync.enabled ? isAbsolute(folder) : posix.isAbsolute(folder) || win32.isAbsolute(folder))) throw new Error("Sync folder must be an absolute path");
   if (sync.enabled && !folder) throw new Error("Choose a sync folder before enabling sync");
   const network = raw.network === undefined ? { checkLocalProxyBeforeLaunch: false } : object(raw.network, "Network settings");
-  keys(network, ["checkLocalProxyBeforeLaunch", "chromiumPreloading", "chromiumMemorySaver"], "network");
-  if (typeof network.checkLocalProxyBeforeLaunch !== "boolean" || network.chromiumPreloading !== undefined && !["browser-default", "disabled"].includes(network.chromiumPreloading as string)
-    || network.chromiumMemorySaver !== undefined && typeof network.chromiumMemorySaver !== "boolean") throw new Error("Invalid network settings");
+  keys(
+    network,
+    ["checkLocalProxyBeforeLaunch", "chromiumPreloading", "chromiumMemorySaver", "firefoxMemorySaver", "dataSaver", "batchLaunchMemoryGuard"],
+    "network",
+  );
+  if (
+    typeof network.checkLocalProxyBeforeLaunch !== "boolean"
+    || (network.chromiumPreloading !== undefined && !["browser-default", "disabled"].includes(network.chromiumPreloading as string))
+    || (network.chromiumMemorySaver !== undefined && typeof network.chromiumMemorySaver !== "boolean")
+    || (network.firefoxMemorySaver !== undefined && typeof network.firefoxMemorySaver !== "boolean")
+  ) throw new Error("Invalid network settings");
+  const dataSaver = network.dataSaver === undefined ? undefined : parseDataSaverSettings(network.dataSaver);
+  const batchLaunchMemoryGuard = network.batchLaunchMemoryGuard === undefined
+    ? undefined
+    : parseBatchLaunchMemoryGuardSettings(network.batchLaunchMemoryGuard);
   const signedUpdates = raw.signedUpdates === undefined ? { checkOnStartup: false } : object(raw.signedUpdates, "Signed update settings");
   keys(signedUpdates, ["checkOnStartup"], "signed update");
   if (typeof signedUpdates.checkOnStartup !== "boolean") throw new Error("Invalid signed update settings");
@@ -71,7 +186,14 @@ export function parseAppSettings(value: unknown): AppSettings {
     version: 1,
     updates: { repository: normalizeUpdateRepository(updates.repository), channel: updates.channel as UpdateChannel, checkOnStartup: updates.checkOnStartup },
     sync: { enabled: sync.enabled, folder, retainSnapshots: sync.retainSnapshots as number },
-    network: { checkLocalProxyBeforeLaunch: network.checkLocalProxyBeforeLaunch, chromiumPreloading: network.chromiumPreloading as ChromiumPreloadingMode ?? "browser-default", chromiumMemorySaver: network.chromiumMemorySaver === true },
+    network: {
+      checkLocalProxyBeforeLaunch: network.checkLocalProxyBeforeLaunch,
+      chromiumPreloading: network.chromiumPreloading as ChromiumPreloadingMode ?? "browser-default",
+      chromiumMemorySaver: network.chromiumMemorySaver === true,
+      ...(network.firefoxMemorySaver !== undefined ? { firefoxMemorySaver: network.firefoxMemorySaver } : {}),
+      ...(dataSaver !== undefined ? { dataSaver } : {}),
+      ...(batchLaunchMemoryGuard !== undefined ? { batchLaunchMemoryGuard } : {}),
+    },
     signedUpdates: { checkOnStartup: signedUpdates.checkOnStartup },
   };
 }
@@ -97,11 +219,29 @@ export class AppSettingsStore {
   patch(value: unknown): AppSettings {
     const patch = object(value, "Settings patch"); keys(patch, ["updates", "sync", "network", "signedUpdates"], "application");
     const current = this.read();
+    const patchNetwork = patch.network === undefined ? {} : object(patch.network, "Network patch");
+    const mergedNetwork: Record<string, unknown> = {
+      checkLocalProxyBeforeLaunch: false,
+      ...current.network,
+      ...patchNetwork,
+    };
+    if (patchNetwork.dataSaver !== undefined) {
+      mergedNetwork.dataSaver = {
+        ...resolveDataSaverSettings(current.network),
+        ...object(patchNetwork.dataSaver, "Data saver patch"),
+      };
+    }
+    if (patchNetwork.batchLaunchMemoryGuard !== undefined) {
+      mergedNetwork.batchLaunchMemoryGuard = {
+        ...resolveBatchLaunchMemoryGuardSettings(current.network),
+        ...object(patchNetwork.batchLaunchMemoryGuard, "Batch launch memory guard patch"),
+      };
+    }
     return this.write({
       ...current,
       updates: { ...current.updates, ...(patch.updates === undefined ? {} : object(patch.updates, "Update patch")) },
       sync: { ...current.sync, ...(patch.sync === undefined ? {} : object(patch.sync, "Sync patch")) },
-      network: { checkLocalProxyBeforeLaunch: false, ...current.network, ...(patch.network === undefined ? {} : object(patch.network, "Network patch")) },
+      network: mergedNetwork,
       signedUpdates: { checkOnStartup: false, ...current.signedUpdates, ...(patch.signedUpdates === undefined ? {} : object(patch.signedUpdates, "Signed update patch")) },
     });
   }

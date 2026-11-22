@@ -14,8 +14,11 @@ import { importBuffers, importInbox, watchInbox } from "./inbox.ts";
 import { ensureStateDirectories, resolveStateRoot, statePaths, type StatePaths } from "./paths.ts";
 import { migrateLegacyState, type LegacyMigrationResult, type MigrationOptions } from "./migration.ts";
 import { AppConfigStore } from "./app-config.ts";
-import { AppSettingsStore } from "./app-settings.ts";
+import { AppSettingsStore, resolveBatchLaunchMemoryGuardSettings } from "./app-settings.ts";
 import { createLocalProxyPreflight } from "./local-proxy-preflight.ts";
+import { createLaunchPolicyResolver } from "./src/launcher/resource-policy.ts";
+import { MemoryWatermarkGuard } from "./src/metrics/memory-watermark-guard.ts";
+import { ResourcePolicyStore } from "./src/metrics/resource-policy-store.ts";
 import { runDiagnostics } from "./diagnose.ts";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, renameSync, statSync, writeFileSync } from "node:fs";
@@ -156,17 +159,26 @@ function makeLauncher(
   // Browser runtimes are downloaded only when a profile is explicitly opened.
   chromiumRuntimeRoot?: string,
   settingsPath?: string,
+  resourcePolicies?: ResourcePolicyStore,
+  preferencesStore?: AppSettingsStore,
 ): Launcher {
   const unsafeCanary = has(rest, "unsafe-disable-identity-gates");
   const autofill = new AutofillBridge(store);
   autofill.listen();
-  const preferences = settingsPath ? new AppSettingsStore(settingsPath) : undefined;
+  const preferences = preferencesStore ?? (settingsPath ? new AppSettingsStore(settingsPath) : undefined);
+  const launchPolicy = preferences || resourcePolicies
+    ? createLaunchPolicyResolver({
+      ...(preferences ? { readSettings: () => preferences.read() } : {}),
+      policyStore: resourcePolicies,
+      log: console.log,
+    })
+    : undefined;
   return new Launcher({
     store,
     autofill,
     ...(preferences ? { checkLocalProxyBeforeLaunch: createLocalProxyPreflight(() => preferences.read()) } : {}),
     ...(preferences ? { chromiumPreloading: () => preferences.read().network?.chromiumPreloading ?? "browser-default" } : {}),
-    ...(preferences ? { chromiumMemorySaver: () => preferences.read().network?.chromiumMemorySaver === true } : {}),
+    ...(launchPolicy ? { launchPolicy } : {}),
     dataRoot: defaultDataRoot,
     ...(chromiumRuntimeRoot ? { chromiumRuntimeRoot } : {}),
     headless: has(rest, "headless"),
@@ -365,10 +377,19 @@ async function startLocalServer(
 ): Promise<void> {
   const store = new ProfileStore(dbPath);
   const workspaceHome = resolve(flag(rest, "workspace-home") ?? paths.root);
-  const admission = new LifecycleAdmissionController(lifecycleAdmissionOptionsFromEnv());
+  const settingsPath = join(paths.root, "app-settings.json");
+  const preferences = new AppSettingsStore(settingsPath);
+  const resourcePolicies = new ResourcePolicyStore(dbPath);
+  const memoryGuard = new MemoryWatermarkGuard({
+    getSettings: () => resolveBatchLaunchMemoryGuardSettings(preferences.read().network),
+  });
+  const admission = new LifecycleAdmissionController({
+    ...lifecycleAdmissionOptionsFromEnv(),
+    memoryGuard,
+  });
   console.log("local mode: preparing browser recovery");
   console.log("startup: initializing autofill bridge");
-  const launcher = makeLauncher(store, rest, profileDataRoot, join(workspaceHome, "runtimes"), join(paths.root, "app-settings.json"));
+  const launcher = makeLauncher(store, rest, profileDataRoot, join(workspaceHome, "runtimes"), settingsPath, resourcePolicies, preferences);
   console.log("startup: checking " + store.listLaunches().length + " saved browser process(es)");
   await launcher.reconcileOrphans();
   console.log("startup: verifying surviving local browsers");
@@ -411,12 +432,24 @@ async function startLocalServer(
     health, agentNonce: nonce ?? undefined, workspaceManagement, workspaceHome, runtimeInventory: launcher.browserRuntimeDeployment,
     dashboardSession: desktopAccess?.dashboardSession,
     accessToken: standaloneAccessToken,
+    resourcePolicies,
+    appSettings: preferences,
   });
   if (!health && standaloneAccessToken && server.port) {
     console.log(`dashboard access URL: http://127.0.0.1:${server.port}/?token=${standaloneAccessToken}`);
     console.log("standalone access token required (pass --no-auth or MAOBU_NO_AUTH=1 to disable)");
   }
-  const runtime = new ManagedDesktopRuntime({ server, automationServer, admission, store, launcher, stopInbox });
+  const runtime = new ManagedDesktopRuntime({
+    server,
+    automationServer,
+    admission,
+    store,
+    launcher,
+    stopInbox: () => {
+      stopInbox?.();
+      resourcePolicies.close();
+    },
+  });
   if (health) {
     if (!server.port) throw new Error("desktop sidecar did not receive a loopback port");
     attachDesktopControl(runtime, health, server.port);
