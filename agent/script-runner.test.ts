@@ -300,3 +300,239 @@ test("Python script runner exits on parent EOF while user code blocks", async ()
     rmSync(root, { recursive: true, force: true });
   }
 }, PYTHON_TEST_TIMEOUT_MS);
+
+function nodeRuntimeWithScreenshot(root: string, screenshotBehavior = "ok"): string {
+  const runner = join(root, "agent", "script-runner.mjs");
+  mkdirSync(join(root, "agent"), { recursive: true });
+  cpSync(nodeRunner, runner);
+  const playwright = join(root, "node_modules", "playwright-core");
+  mkdirSync(playwright, { recursive: true });
+  writeFileSync(join(playwright, "package.json"), JSON.stringify({ type: "module", exports: "./index.mjs" }));
+  writeFileSync(
+    join(playwright, "index.mjs"),
+    `
+    let browserClosed = false;
+    const page = {
+      kind: "shot-page",
+      isClosed: () => browserClosed,
+      async screenshot(opts) {
+        process.stdout.write("shot:" + opts.type + ":" + opts.quality + ":closed=" + browserClosed + "\\n");
+        if (${JSON.stringify(screenshotBehavior)} === "throw") {
+          throw new Error("screenshot boom");
+        }
+        if (${JSON.stringify(screenshotBehavior)} === "oversize") {
+          return Buffer.alloc(opts.quality === 75 ? 3 * 1024 * 1024 : 1024, 0xff);
+        }
+        return Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+      },
+    };
+    const browserObj = {
+      contexts: () => [{ pages: () => [page], newPage: async () => page }],
+      close: async () => { browserClosed = true; process.stdout.write("detached\\n"); },
+    };
+    export const chromium = { async connectOverCDP() { return browserObj; } };
+    export const firefox = { async connect() { return browserObj; } };
+    `,
+  );
+  return runner;
+}
+
+test("Node script runner records steps JSONL, caps screenshots at 5 (JPEG q=75 <= 2MiB), and retries oversize", async () => {
+  const root = workspace();
+  try {
+    const runner = nodeRuntimeWithScreenshot(root, "oversize");
+    const script = join(root, "script.mjs");
+    const stepsPath = join(root, "steps.jsonl");
+    const artifactsDir = join(root, "artifacts");
+    writeFileSync(
+      script,
+      `
+      export default async ({ step, screenshot }) => {
+        const val = await step("First step", async () => 42);
+        if (val !== 42) throw new Error("unexpected return");
+        for (let i = 1; i <= 6; i++) {
+          await screenshot("Capture " + i);
+        }
+      };
+      `,
+    );
+    const child = Bun.spawn(["node", runner, script], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    child.stdin.write(`${JSON.stringify({ ...input, stepsPath, artifactsDir })}\n`);
+    const result = await output(child);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe("");
+    // First call at quality 75 exceeded 2 MiB and automatically retried at quality 45.
+    expect(result.stdout).toContain("shot:jpeg:75:closed=false");
+    expect(result.stdout).toContain("shot:jpeg:45:closed=false");
+
+    const stepLines = (await Bun.file(stepsPath).text()).trim().split(/\r?\n/).map((line) => JSON.parse(line));
+    expect(stepLines.at(-1)).toMatchObject({ index: 1, title: "First step", status: "succeeded" });
+    expect(typeof stepLines.at(-1).durationMs).toBe("number");
+
+    const manifestLines = (await Bun.file(join(artifactsDir, "manifest.jsonl")).text())
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line));
+    expect(manifestLines).toHaveLength(5);
+    expect(manifestLines[0].sizeBytes).toBe(1024);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Node script runner captures error-final.jpg before browser.close() and never masks original error if screenshot fails", async () => {
+  const root = workspace();
+  try {
+    // 1. Succeeds capturing error-final.jpg BEFORE detached (browser.close()).
+    const runner = nodeRuntimeWithScreenshot(root, "ok");
+    const script = join(root, "fail.mjs");
+    const stepsPath = join(root, "steps.jsonl");
+    const artifactsDir = join(root, "artifacts");
+    writeFileSync(
+      script,
+      `
+      export default async ({ step }) => {
+        await step("Explode", async () => { throw new Error("ORIGINAL_BOOM"); });
+      };
+      `,
+    );
+    const child = Bun.spawn(["node", runner, script], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    child.stdin.write(`${JSON.stringify({ ...input, stepsPath, artifactsDir })}\n`);
+    const result = await output(child);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("ORIGINAL_BOOM");
+    expect(result.stdout).toContain("shot:jpeg:75:closed=false\ndetached\n");
+    expect(await Bun.file(join(artifactsDir, "error-final.jpg")).exists()).toBe(true);
+    const stepLines = (await Bun.file(stepsPath).text()).trim().split(/\r?\n/).map((line) => JSON.parse(line));
+    expect(stepLines.at(-1)).toMatchObject({ title: "Explode", status: "failed", error: "ORIGINAL_BOOM" });
+
+    // 2. When screenshot itself throws, original error is still preserved verbatim.
+    const root2 = workspace();
+    try {
+      const runner2 = nodeRuntimeWithScreenshot(root2, "throw");
+      const script2 = join(root2, "fail2.mjs");
+      writeFileSync(script2, `export default async () => { throw new Error("REAL_ROOT_CAUSE"); };`);
+      const child2 = Bun.spawn(["node", runner2, script2], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+      child2.stdin.write(`${JSON.stringify({ ...input, artifactsDir: join(root2, "artifacts") })}\n`);
+      const res2 = await output(child2);
+      expect(res2.code).toBe(1);
+      expect(res2.stderr).toContain("REAL_ROOT_CAUSE");
+      expect(res2.stderr).not.toContain("screenshot boom");
+    } finally {
+      rmSync(root2, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Python script runner supports step(), screenshot(), auto error-final.jpg, and strict-signature scripts", async () => {
+  const root = workspace();
+  try {
+    const fake = join(root, "fake-py-shot", "playwright");
+    mkdirSync(fake, { recursive: true });
+    writeFileSync(join(fake, "__init__.py"), "");
+    writeFileSync(
+      join(fake, "async_api.py"),
+      `
+class Page:
+    def __init__(self, browser):
+        self._browser = browser
+    async def screenshot(self, type="jpeg", quality=75, timeout=5000):
+        print(f"pyshot:{type}:{quality}:closed={self._browser.closed}", flush=True)
+        return b"\\xff\\xd8\\xff\\xe0\\x00\\x10"
+
+class Context:
+    def __init__(self, browser):
+        self.pages = [Page(browser)]
+    async def new_page(self):
+        return self.pages[0]
+
+class Browser:
+    def __init__(self):
+        self.closed = False
+        self.contexts = [Context(self)]
+    async def close(self):
+        self.closed = True
+        print("detached", flush=True)
+
+class Chromium:
+    async def connect_over_cdp(self, endpoint, timeout=None):
+        return Browser()
+
+class Firefox:
+    async def connect(self, endpoint, timeout=None):
+        return Browser()
+
+class Playwright:
+    chromium = Chromium()
+    firefox = Firefox()
+    async def start(self):
+        return self
+    async def stop(self):
+        pass
+
+def async_playwright():
+    return Playwright()
+`,
+    );
+
+    const pyPath = join(root, "fake-py-shot");
+    const stepsPath = join(root, "py-steps.jsonl");
+    const artifactsDir = join(root, "py-artifacts");
+
+    // 1. step + screenshot + auto error-final.jpg on failure.
+    const script = join(root, "py_fail.py");
+    writeFileSync(
+      script,
+      `
+async def run(*, step, screenshot, **_):
+    async def ok_work():
+        await screenshot("before")
+        return 7
+    val = await step("Prepare", ok_work)
+    assert val == 7
+    async def boom():
+        raise RuntimeError("PY_ORIGINAL_ERROR")
+    await step("Fail step", boom)
+`,
+    );
+    const child = Bun.spawn([pythonExecutable, pythonRunner, script], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, PYTHONPATH: pyPath },
+    });
+    child.stdin.write(`${JSON.stringify({ ...input, stepsPath, artifactsDir })}\n`);
+    const result = await output(child);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("PY_ORIGINAL_ERROR");
+    expect(result.stdout).toContain("pyshot:jpeg:75:closed=False\ndetached\n");
+    expect(await Bun.file(join(artifactsDir, "error-final.jpg")).exists()).toBe(true);
+    const steps = (await Bun.file(stepsPath).text()).trim().split(/\r?\n/).map((line) => JSON.parse(line));
+    expect(steps.some((s) => s.title === "Prepare" && s.status === "succeeded")).toBe(true);
+    expect(steps.some((s) => s.title === "Fail step" && s.status === "failed" && s.error === "PY_ORIGINAL_ERROR")).toBe(true);
+
+    // 2. Legacy strict signature without **_ or step/screenshot must still execute cleanly.
+    const legacy = join(root, "py_legacy.py");
+    writeFileSync(
+      legacy,
+      `
+async def run(*, browser, context, page, profile, inputs, credentials, log):
+    log("legacy-ok", profile["id"])
+`,
+    );
+    const legacyChild = Bun.spawn([pythonExecutable, pythonRunner, legacy], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, PYTHONPATH: pyPath },
+    });
+    legacyChild.stdin.write(`${JSON.stringify(input)}\n`);
+    const legacyResult = await output(legacyChild);
+    expect(legacyResult.code).toBe(0);
+    expect(legacyResult.stdout).toContain("legacy-ok profile-1");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, PYTHON_TEST_TIMEOUT_MS);

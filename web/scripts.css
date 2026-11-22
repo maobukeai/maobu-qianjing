@@ -73,9 +73,10 @@
 .script-run-modal:focus { outline: none; }
 .script-run-modal .script-progress { padding: 14px 15px; gap: 10px; border-color: var(--line); border-radius: var(--r-md); background: var(--surface); }
 .script-run-modal .script-progress > b { color: var(--ink-soft); font-size: 12px; font-weight: 500; padding-bottom: 9px; border-bottom: 1px solid var(--line-soft); overflow-wrap: anywhere; }
-.script-run-modal .script-profile { gap: 4px 12px; padding: 4px 0; font-size: 12px; }
+.script-run-modal .script-profile { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; padding: 6px 0; font-size: 12px; border-bottom: 1px solid var(--line-soft); }
+.script-run-modal .script-profile:last-child { border-bottom: 0; }
 .script-run-modal .script-profile > span:first-child { min-width: 0; overflow-wrap: anywhere; }
-.script-run-modal .script-profile small { font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.script-run-modal .script-profile small { flex-basis: 100%; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
 .script-run-modal .script-log { min-height: 105px; max-height: 260px; padding: 14px 15px; border-radius: var(--r-md); border-color: var(--line); color: var(--ink-soft); background: var(--surface-sunken); font: 11px/1.8 var(--mono); }
 .script-background-trigger { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 10.5px; }
 .script-background-trigger strong { color: var(--ink-soft); font-size: 10px; font-weight: 550; font-variant-numeric: tabular-nums; }

@@ -1,4 +1,6 @@
 import { validAgentAuthorization } from "../../agent-control.ts";
+import { RpaRecorderError, type RpaRecorderManager } from "../../rpa-recorder.ts";
+import { listRpaTemplates } from "../../rpa-templates.ts";
 import { ScriptError } from "../../scripts.ts";
 import { msg, noStoreJson, rejectUntrustedJsonMutation, type UiRuntimeOptions } from "./shared.ts";
 
@@ -24,7 +26,58 @@ export async function handleScriptsUiRoutes(
     const rejected = rejectUntrustedJsonMutation(req);
     if (rejected) return rejected;
   }
+
+  const recorder: RpaRecorderManager | undefined =
+    (scripts as { recorder?: RpaRecorderManager }).recorder ?? scripts.runner.recorder;
+
   try {
+    if (pathname === "/ui/api/scripts/templates" && req.method === "GET") {
+      return noStoreJson({ ok: true, templates: listRpaTemplates() });
+    }
+    if (pathname === "/ui/api/scripts/runs" && req.method === "GET") {
+      return noStoreJson({ ok: true, runs: scripts.runner.listRuns() });
+    }
+    const stopRunMatch = pathname.match(/^\/ui\/api\/scripts\/runs\/([^/]+)\/stop$/);
+    if (stopRunMatch && req.method === "POST") {
+      const runId = decodeURIComponent(stopRunMatch[1]!);
+      const run = await scripts.runner.stop(runId);
+      if (!run) return noStoreJson({ ok: false, error: "Run not found" }, 404);
+      return noStoreJson({ ok: true, run });
+    }
+    const artifactMatch = pathname.match(/^\/ui\/api\/scripts\/runs\/([^/]+)\/artifacts\/([^/]+)\/([^/]+)$/);
+    if (artifactMatch && req.method === "GET") {
+      const runId = decodeURIComponent(artifactMatch[1]!);
+      const profileId = decodeURIComponent(artifactMatch[2]!);
+      const fileName = decodeURIComponent(artifactMatch[3]!);
+      const artifact = scripts.runner.readArtifact(runId, profileId, fileName);
+      return new Response(artifact.bytes, {
+        status: 200,
+        headers: {
+          "Content-Type": artifact.mimeType,
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+    }
+    if (pathname === "/ui/api/scripts/recorder/status" && req.method === "GET") {
+      if (!recorder) return noStoreJson({ ok: false, error: "Recorder is unavailable" }, 503);
+      return noStoreJson({ ok: true, recorder: recorder.status() });
+    }
+    if (pathname === "/ui/api/scripts/recorder/start" && req.method === "POST") {
+      if (!recorder) return noStoreJson({ ok: false, error: "Recorder is unavailable" }, 503);
+      const body = await req.json();
+      return noStoreJson({ ok: true, recorder: await recorder.start(body) });
+    }
+    if (pathname === "/ui/api/scripts/recorder/stop" && req.method === "POST") {
+      if (!recorder) return noStoreJson({ ok: false, error: "Recorder is unavailable" }, 503);
+      const body = await req.json();
+      return noStoreJson({ ok: true, recorder: await recorder.stop(body) });
+    }
+    if (pathname === "/ui/api/scripts/recorder/codegen" && req.method === "POST") {
+      if (!recorder) return noStoreJson({ ok: false, error: "Recorder is unavailable" }, 503);
+      const body = await req.json();
+      return noStoreJson({ ok: true, ...recorder.codegen(body) });
+    }
     if (pathname === "/ui/api/scripts/run") {
       if (req.method === "GET") return noStoreJson({ ok: true, run: scripts.runner.status() });
       if (req.method === "POST") return noStoreJson({ ok: true, run: scripts.runner.start(await req.json()) });
@@ -72,7 +125,7 @@ export async function handleScriptsUiRoutes(
     }
     return noStoreJson({ ok: false, error: "Unknown script operation" }, 404);
   } catch (error) {
-    const status = error instanceof ScriptError
+    const status = error instanceof ScriptError || error instanceof RpaRecorderError
       ? error.status
       : error instanceof SyntaxError || error instanceof URIError ? 400 : 500;
     return noStoreJson(

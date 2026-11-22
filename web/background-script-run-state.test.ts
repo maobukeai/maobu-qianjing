@@ -71,3 +71,38 @@ test("incomplete status bodies fail closed instead of producing a fabricated bac
   const store = createBackgroundScriptRunStore({ read: async () => ({}) as ScriptRun });
   await expect(store.refresh()).rejects.toThrow("incomplete script run status"); expect(store.getSnapshot().run).toBeNull(); store.dispose();
 });
+
+test("copyObservedScriptRun supports queued runs, steps, durationMs, and sanitized screenshots while rejecting unsafe artifact filenames", () => {
+  const source = {
+    id: "run_receipt",
+    scriptName: "Batch Check",
+    status: "queued" as const,
+    createdAt: 1000,
+    queuePosition: 2,
+    profiles: [
+      {
+        id: "p1",
+        name: "Profile 1",
+        status: "failed" as const,
+        durationMs: 420,
+        steps: [
+          { index: 1, title: "Open", status: "failed", startedAt: 1000, finishedAt: 1420, durationMs: 420, error: "http://u:SECRET_STEP_PASS@host.invalid" },
+        ],
+        screenshots: [
+          { fileName: "error-final.jpg", label: "Error snapshot", mimeType: "image/jpeg", sizeBytes: 1200, capturedAt: 1420, kind: "error" },
+          { fileName: "../escape.jpg", label: "Evil", mimeType: "image/jpeg", sizeBytes: 100, capturedAt: 1420, kind: "manual" },
+        ],
+      },
+    ],
+  };
+  const copied = copyObservedScriptRun(source);
+  expect(copied.status).toBe("queued");
+  expect(copied.queuePosition).toBe(2);
+  expect(copied.profiles[0]?.durationMs).toBe(420);
+  expect(copied.profiles[0]?.steps).toHaveLength(1);
+  expect(copied.profiles[0]?.steps?.[0]?.error).not.toContain("SECRET_STEP_PASS");
+  expect(copied.profiles[0]?.screenshots).toHaveLength(1);
+  expect(copied.profiles[0]?.screenshots?.[0]?.fileName).toBe("error-final.jpg");
+  expect(Object.isFrozen(copied.profiles[0]?.steps)).toBe(true);
+  expect(Object.isFrozen(copied.profiles[0]?.screenshots)).toBe(true);
+});

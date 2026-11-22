@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ScriptLibrary, ScriptSupervisor, resolveScriptRunner, verifyScriptRuntime, type ScriptExecution } from "./scripts.ts";
@@ -708,4 +708,272 @@ test("retains bounded run history and logs across subsequent runs", async () => 
     expect(() => h.supervisor.log(ids[0]!, 0)).toThrow("Run not found");
     expect(h.supervisor.log(ids[1]!, 0).text).toContain("run-log-2");
     expect(h.supervisor.log(ids[3]!, 0).text).toContain("run-log-4");
+});
+
+test("queueIfBusy queues up to 10 FIFO batches, rejects the 11th, supports cancelling queued batches, and emits onRunChanged", async () => {
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const observedEvents: Array<{ id: string; status: string; queuePosition?: number }> = [];
+
+    const directory = root();
+    const launches = new Map<string, any>();
+    const profiles = [{ id: "a", name: "Profile A", group: "", platform: "", username: "", password: "", twofa: "" }];
+    const library = new ScriptLibrary(directory);
+    const script = await library.save(input);
+
+    const supervisor = new ScriptSupervisor({
+        root: directory,
+        library,
+        maxConcurrentRuns: 1,
+        maxRunHistory: 20,
+        onRunChanged: (run) => {
+            observedEvents.push({ id: run.id, status: run.status, queuePosition: run.queuePosition });
+        },
+        execute: async ({ input: data }) => {
+            const tag = String(data.inputs.tag ?? "");
+            order.push(tag);
+            if (tag === "batch-0") await firstGate;
+        },
+        store: { getProfile: (id: string) => profiles.find((p) => p.id === id), getLaunch: (id: string) => launches.get(id), listAgentTemporary: () => [] } as any,
+        launcher: {
+            certifiedActive: async (id: string) => launches.has(id),
+            start: async (id: string) => { const v = { ws: `ws://test/${id}`, debugPort: 9000 }; launches.set(id, v); return { ws: v.ws, port: 9000 }; },
+            stop: async (id: string) => { launches.delete(id); return true; },
+        } as any,
+        admission: { run: async (_: unknown, work: () => Promise<unknown>) => work() } as any,
+    });
+
+    const first = supervisor.start({ scriptId: script.id, profileIds: ["a"], inputs: { tag: "batch-0" }, useCredentials: false });
+    await until(() => order.includes("batch-0"));
+
+    // Enqueue 10 batches.
+    const queued: string[] = [];
+    for (let i = 1; i <= 10; i++) {
+        const q = supervisor.start({
+            scriptId: script.id,
+            profileIds: ["a"],
+            inputs: { tag: `batch-${i}` },
+            useCredentials: false,
+            queueIfBusy: true,
+        });
+        expect(q.status).toBe("queued");
+        expect(q.queuePosition).toBe(i);
+        queued.push(q.id);
+    }
+
+    // 11th queued batch must fail with 409.
+    expect(() => supervisor.start({
+        scriptId: script.id,
+        profileIds: ["a"],
+        inputs: { tag: "batch-11" },
+        useCredentials: false,
+        queueIfBusy: true,
+    })).toThrow("queue is full");
+
+    // Cancel queued batch #2 before release.
+    const cancelled = await supervisor.stop(queued[1]!);
+    expect(cancelled?.status).toBe("finished");
+    expect(cancelled?.profiles[0]?.status).toBe("cancelled");
+    expect(supervisor.status(queued[2]!)?.queuePosition).toBe(2);
+
+    releaseFirst();
+    await supervisor.settled();
+
+    expect(order).toEqual(["batch-0", "batch-1", "batch-3", "batch-4", "batch-5", "batch-6", "batch-7", "batch-8", "batch-9", "batch-10"]);
+    expect(observedEvents.some((e) => e.id === queued[0] && e.status === "queued")).toBe(true);
+    expect(observedEvents.some((e) => e.id === first.id && e.status === "finished")).toBe(true);
+    await supervisor.shutdown();
+});
+
+test("exposes RPA templates, runs queue, per-run stop, artifact security (no symlink / regex / no-store), and recorder routes", async () => {
+    const h = harness(async ({ input: data }) => {
+        if (data.stepsPath) {
+            mkdirSync(join(data.stepsPath, ".."), { recursive: true });
+            writeFileSync(
+                data.stepsPath,
+                `${JSON.stringify({ index: 1, title: "Open page", status: "succeeded", startedAt: 1000, finishedAt: 1250, durationMs: 250 })}\n`,
+            );
+        }
+        if (data.artifactsDir) {
+            mkdirSync(data.artifactsDir, { recursive: true });
+            const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+            writeFileSync(join(data.artifactsDir, "error-final.jpg"), jpeg);
+            writeFileSync(
+                join(data.artifactsDir, "manifest.jsonl"),
+                `${JSON.stringify({ fileName: "error-final.jpg", label: "Error snapshot", mimeType: "image/jpeg", sizeBytes: jpeg.length, capturedAt: 1250, kind: "error" })}\n`,
+            );
+        }
+    });
+
+    const nonce = "e".repeat(64);
+    const options = { scripts: { library: h.library, runner: h.supervisor, nonce } };
+    const authHeaders = { authorization: `Bearer ${nonce}` };
+
+    // All new routes must reject missing auth with 401.
+    for (const [method, path] of [
+        ["GET", "/templates"],
+        ["GET", "/runs"],
+        ["POST", "/runs/some-id/stop"],
+        ["GET", "/runs/some-id/artifacts/a/error-final.jpg"],
+        ["GET", "/recorder/status"],
+        ["POST", "/recorder/start"],
+        ["POST", "/recorder/stop"],
+        ["POST", "/recorder/codegen"],
+    ]) {
+        const res = await handleUiRequest(new Request(`http://127.0.0.1/ui/api/scripts${path}`, { method }), {} as any, {} as any, options);
+        expect(res?.status).toBe(401);
+    }
+
+    // Templates endpoint returns all 4 built-in templates.
+    const templatesRes = await handleUiRequest(
+        new Request("http://127.0.0.1/ui/api/scripts/templates", { headers: authHeaders }),
+        {} as any,
+        {} as any,
+        options,
+    );
+    expect(templatesRes?.status).toBe(200);
+    const templatesBody = await templatesRes!.json() as { ok: boolean; templates: Array<{ id: string }> };
+    expect(templatesBody.templates.map((t) => t.id)).toEqual([
+        "cookie-warmup",
+        "batch-status-check",
+        "page-health-snapshot",
+        "form-fill-skeleton",
+    ]);
+
+    // Run a built-in template directly via template:<id> and verify receipts & artifact route.
+    const startRes = await handleUiRequest(
+        new Request("http://127.0.0.1/ui/api/scripts/run", {
+            method: "POST",
+            headers: { ...authHeaders, "content-type": "application/json" },
+            body: JSON.stringify({
+                scriptId: "template:cookie-warmup",
+                profileIds: ["a"],
+                inputs: { urls: ["https://example.com"] },
+                useCredentials: false,
+            }),
+        }),
+        {} as any,
+        {} as any,
+        options,
+    );
+    expect(startRes?.status).toBe(200);
+    const startedRun = (await startRes!.json() as { run: { id: string } }).run;
+    await h.supervisor.settled(startedRun.id);
+
+    const runsRes = await handleUiRequest(
+        new Request("http://127.0.0.1/ui/api/scripts/runs", { headers: authHeaders }),
+        {} as any,
+        {} as any,
+        options,
+    );
+    expect(runsRes?.status).toBe(200);
+    const runsBody = await runsRes!.json() as { runs: any[] };
+    expect(runsBody.runs[0].scriptName).toBe("Cookie Warmup Bot");
+    expect(runsBody.runs[0].profiles[0].steps).toHaveLength(1);
+    expect(runsBody.runs[0].profiles[0].screenshots).toEqual([
+      expect.objectContaining({ fileName: "error-final.jpg", kind: "error" }),
+    ]);
+
+    // Artifact route serves valid JPEG with Cache-Control: no-store.
+    const artRes = await handleUiRequest(
+        new Request(`http://127.0.0.1/ui/api/scripts/runs/${startedRun.id}/artifacts/a/error-final.jpg`, { headers: authHeaders }),
+        {} as any,
+        {} as any,
+        options,
+    );
+    expect(artRes?.status).toBe(200);
+    expect(artRes?.headers.get("content-type")).toBe("image/jpeg");
+    expect(artRes?.headers.get("cache-control")).toBe("no-store");
+    expect((await artRes!.arrayBuffer()).byteLength).toBe(6);
+
+    // Rejects invalid filenames (traversal / wrong extension) and unsafe profile IDs.
+    for (const badPath of [
+        `/runs/${startedRun.id}/artifacts/a/..%2Foutput.log`,
+        `/runs/${startedRun.id}/artifacts/a/script.mjs`,
+        `/runs/${startedRun.id}/artifacts/CON/error-final.jpg`,
+    ]) {
+        const badRes = await handleUiRequest(
+            new Request(`http://127.0.0.1/ui/api/scripts${badPath}`, { headers: authHeaders }),
+            {} as any,
+            {} as any,
+            options,
+        );
+        expect(badRes?.status).toBe(400);
+    }
+
+    // Recorder status and codegen routes work cleanly.
+    const recStatus = await handleUiRequest(
+        new Request("http://127.0.0.1/ui/api/scripts/recorder/status", { headers: authHeaders }),
+        {} as any,
+        {} as any,
+        options,
+    );
+    expect(recStatus?.status).toBe(200);
+    expect((await recStatus!.json() as { recorder: { state: string } }).recorder.state).toBe("idle");
+
+    const codegenRes = await handleUiRequest(
+        new Request("http://127.0.0.1/ui/api/scripts/recorder/codegen", {
+            method: "POST",
+            headers: { ...authHeaders, "content-type": "application/json" },
+            body: JSON.stringify({
+                steps: [{ kind: "fill", selector: "input[type='password']", credentialRef: "password", value: "LEAK" }],
+            }),
+        }),
+        {} as any,
+        {} as any,
+        options,
+    );
+    expect(codegenRes?.status).toBe(200);
+    const codegenBody = await codegenRes!.json() as { source: string; usesCredentials: boolean };
+    expect(codegenBody.usesCredentials).toBe(true);
+    expect(codegenBody.source).not.toContain("LEAK");
+
+    // Rejects symlink / junction directories inside artifacts via lstat check.
+    let artifactsRootDir = "";
+    const hSym = harness(async ({ input: data }) => {
+        if (data.artifactsDir) {
+            artifactsRootDir = join(data.artifactsDir, "..");
+            mkdirSync(artifactsRootDir, { recursive: true });
+        }
+    });
+    const symRun = hSym.supervisor.start({
+        scriptId: "template:cookie-warmup",
+        profileIds: ["a"],
+        inputs: { urls: ["https://example.com"] },
+        useCredentials: false,
+    });
+    await hSym.supervisor.settled(symRun.id);
+    const outsideDir = root();
+    writeFileSync(join(outsideDir, "stolen.jpg"), Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+    const linkDir = join(artifactsRootDir, "a");
+    let linkCreated = false;
+    try {
+        symlinkSync(outsideDir, linkDir, process.platform === "win32" ? "junction" : "dir");
+        linkCreated = true;
+        const symRes = await handleUiRequest(
+            new Request(`http://127.0.0.1/ui/api/scripts/runs/${symRun.id}/artifacts/a/stolen.jpg`, { headers: authHeaders }),
+            {} as any,
+            {} as any,
+            { scripts: { library: hSym.library, runner: hSym.supervisor, nonce } },
+        );
+        expect(symRes?.status).toBe(403);
+    } finally {
+        if (linkCreated) {
+            try { unlinkSync(linkDir); } catch { rmSync(linkDir, { force: true }); }
+        }
+    }
+
+    // Per-run stop returns 404 for unknown run ID.
+    const unknownStop = await handleUiRequest(
+        new Request("http://127.0.0.1/ui/api/scripts/runs/missing-id/stop", {
+            method: "POST",
+            headers: { ...authHeaders, "content-type": "application/json" },
+            body: "{}",
+        }),
+        {} as any,
+        {} as any,
+        options,
+    );
+    expect(unknownStop?.status).toBe(404);
 });

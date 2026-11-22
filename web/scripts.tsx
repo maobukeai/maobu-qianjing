@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import "./scripts.css";
+import "./rpa-studio.css";
 import type {
   ScriptInput,
   ScriptLanguage,
@@ -16,6 +17,10 @@ import { useDesktopCloseDraft } from "./desktop-close.tsx";
 import { hasActiveWorkbenchModal } from "./workbench-shortcuts.ts";
 import { backgroundScriptRuns, useBackgroundScriptRun } from "./background-script-run.tsx";
 import { createScriptDetailsDrafts, scriptDetailsWithDraft } from "./script-details-drafts.ts";
+import { RpaRecorderPanel } from "./rpa-recorder-panel.tsx";
+import { RpaProfileReceipt, RpaRunsQueuePanel } from "./rpa-run-receipt.tsx";
+import { RpaTemplatesPanel } from "./rpa-templates-panel.tsx";
+import { startQueuedScriptRun } from "./rpa-api.ts";
 import {
   createScript,
   deleteScript,
@@ -49,9 +54,25 @@ function languageName(language: ScriptLanguage): string {
   return language === "python" ? "Python" : "JavaScript";
 }
 
-function scriptStatusLabel(status: ScriptRun["status"] | ScriptRun["profiles"][number]["status"], t: (key: string) => string): string {
-  const labels = { queued: "Queued", running: "Running", stopping: "Stopping", finished: "Finished", succeeded: "Succeeded", failed: "Failed", cancelled: "Cancelled" };
+function scriptStatusLabel(
+  status: ScriptRun["status"] | ScriptRun["profiles"][number]["status"],
+  t: (key: string) => string,
+): string {
+  const labels = {
+    queued: "Queued",
+    running: "Running",
+    stopping: "Stopping",
+    finished: "Finished",
+    succeeded: "Succeeded",
+    failed: "Failed",
+    cancelled: "Cancelled",
+  } as const;
   return t(labels[status]);
+}
+
+function formatDurationMs(ms?: number): string {
+  if (ms === undefined || !Number.isFinite(ms)) return "";
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
 
 /** The Python runtime status while `active`; polls while it downloads. */
@@ -120,15 +141,25 @@ function confirmsScriptWrite(record: ScriptRecord, input: ScriptInput, before?: 
     && record.language === input.language && record.source === input.source;
 }
 
+type RpaStudioTab = "scripts" | "templates" | "recorder" | "runs";
+
+interface SourceDraftEntry {
+  baselineRevision: number;
+  source: string;
+}
+
 export function ScriptsPage({ onViewRun, active = true }: { onViewRun: () => void; active?: boolean }) {
   const { t } = useTranslation();
   const { requestConfirm, confirmDialogNode } = useConfirmDialog();
+  const [studioTab, setStudioTab] = useState<RpaStudioTab>("scripts");
   const [scripts, setScripts] = useState<ScriptSummary[]>([]);
   const [script, setScript] = useState<ScriptRecord | null>(null);
   const [drafts] = useState(createScriptDetailsDrafts);
+  const [sourceDrafts, setSourceDrafts] = useState<ReadonlyMap<string, SourceDraftEntry>>(() => new Map());
+  const [editingSource, setEditingSource] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [mutation, setMutation] = useState<"import" | "save" | "replace" | "delete" | null>(null);
+  const [mutation, setMutation] = useState<"import" | "save" | "save-source" | "replace" | "delete" | null>(null);
   const [notice, setNotice] = useState("");
   const [, setDraftVersion] = useState(0);
   const [restoredDraft, setRestoredDraft] = useState(false);
@@ -146,6 +177,10 @@ export function ScriptsPage({ onViewRun, active = true }: { onViewRun: () => voi
   const draft = script ? drafts.get(script.id) : undefined;
   const dirty = !!draft;
   const staleDraft = !!draft && draft.baseline.revision !== script?.revision;
+  const sourceDraft = script ? sourceDrafts.get(script.id) : undefined;
+  const sourceDirty = !!sourceDraft && !!savedRecord.current && sourceDraft.source !== savedRecord.current.source;
+  const staleSourceDraft = !!sourceDraft && !!script && sourceDraft.baselineRevision !== script.revision;
+  const activeSourceValue = sourceDraft ? sourceDraft.source : (script?.source ?? "");
   const needsReload = !!script && reloadRequired.has(script.id);
   const undo = !!script && drafts.canUndo(script.id);
   const missingDrafts = drafts.ids().flatMap(id => {
@@ -153,7 +188,11 @@ export function ScriptsPage({ onViewRun, active = true }: { onViewRun: () => voi
     return missingDraft && !scripts.some(item => item.id === id) ? [missingDraft] : [];
   });
   const desktop = scriptsDesktopAvailable();
-  useDesktopCloseDraft("script-details", { active: desktop, dirty: drafts.count() > 0, busy: mutation !== null });
+  useDesktopCloseDraft("script-details", {
+    active: desktop,
+    dirty: drafts.count() > 0 || sourceDrafts.size > 0,
+    busy: mutation !== null,
+  });
   const [python, downloadPython] = usePythonRuntime(active && desktop && scripts.some(item => item.language === "python"));
 
   useLayoutEffect(() => {
@@ -200,6 +239,15 @@ export function ScriptsPage({ onViewRun, active = true }: { onViewRun: () => voi
     });
   }
 
+  function clearSourceDraft(id: string) {
+    setSourceDrafts((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Map(prev);
+      next.delete(id);
+      return next;
+    });
+  }
+
   function reportError(nextError: unknown, id?: string) {
     if (!mounted.current) return;
     const message = errorText(nextError);
@@ -217,6 +265,8 @@ export function ScriptsPage({ onViewRun, active = true }: { onViewRun: () => voi
       if (!summary) {
         savedRecord.current = null;
         setScript(null);
+        setEditingSource(false);
+        clearSourceDraft(selected.id);
         resolveReload(selected.id);
       } else if (summary.revision !== selected.revision) {
         requireReload(selected.id);
@@ -251,6 +301,7 @@ export function ScriptsPage({ onViewRun, active = true }: { onViewRun: () => voi
   async function select(id: string) {
     if (!beginOperation()) return;
     try {
+      setEditingSource(false);
       await readScript(id);
     } catch (nextError) {
       reportError(nextError, id);
@@ -265,6 +316,16 @@ export function ScriptsPage({ onViewRun, active = true }: { onViewRun: () => voi
     const activeDraft = drafts.observe(record);
     setScript(scriptDetailsWithDraft(record, activeDraft));
     setRestoredDraft(restore && !!activeDraft);
+    setSourceDrafts((prev) => {
+      const existing = prev.get(record.id);
+      if (!existing) return prev;
+      if (existing.source === record.source) {
+        const next = new Map(prev);
+        next.delete(record.id);
+        return next;
+      }
+      return prev;
+    });
   }
 
   function editDetails(key: "name" | "description", value: string) {
@@ -274,6 +335,43 @@ export function ScriptsPage({ onViewRun, active = true }: { onViewRun: () => voi
     setScript({ ...script, [key]: value });
     setRestoredDraft(false);
     setNotice("");
+  }
+
+  function editSource(nextSource: string) {
+    const saved = savedRecord.current;
+    if (!script || !saved || operation.current) return;
+    setNotice("");
+    setSourceDrafts((prev) => {
+      const next = new Map(prev);
+      if (nextSource === saved.source) {
+        next.delete(saved.id);
+      } else {
+        const existing = prev.get(saved.id);
+        next.set(saved.id, {
+          baselineRevision: existing?.baselineRevision ?? saved.revision,
+          source: nextSource,
+        });
+      }
+      return next;
+    });
+  }
+
+  function discardSourceDraft() {
+    const saved = savedRecord.current;
+    if (!saved || operation.current) return;
+    clearSourceDraft(saved.id);
+    setNotice("Source changes discarded.");
+  }
+
+  function rebaseSourceDraft() {
+    const saved = savedRecord.current;
+    const current = saved ? sourceDrafts.get(saved.id) : undefined;
+    if (!saved || !current || needsReload || operation.current) return;
+    setSourceDrafts((prev) => {
+      const next = new Map(prev);
+      next.set(saved.id, { baselineRevision: saved.revision, source: current.source });
+      return next;
+    });
   }
 
   function discardDraft() {
@@ -348,6 +446,7 @@ export function ScriptsPage({ onViewRun, active = true }: { onViewRun: () => voi
       if (!mounted.current) return;
       if (!confirmsScriptWrite(updated, input, saved)) throw new Error(SCRIPT_RECORD_UNCONFIRMED);
       drafts.acknowledgeSourceReplacement(saved, updated);
+      clearSourceDraft(saved.id);
       updateSummary(updated);
       acceptRecord(updated, true);
       setNotice(drafts.get(saved.id) ? "Script file replaced. Your detail draft is still unsaved." : "Script file replaced.");
@@ -378,6 +477,37 @@ export function ScriptsPage({ onViewRun, active = true }: { onViewRun: () => voi
     }
   }
 
+  async function saveSource() {
+    const saved = savedRecord.current;
+    const currentDraft = saved ? sourceDrafts.get(saved.id) : undefined;
+    if (
+      !saved
+      || !currentDraft
+      || !currentDraft.source.trim()
+      || currentDraft.baselineRevision !== saved.revision
+      || needsReload
+      || !beginOperation("save-source")
+    ) {
+      return;
+    }
+    try {
+      const input = { ...saved, source: currentDraft.source };
+      const updated = await updateScript(saved.id, input);
+      if (!mounted.current) return;
+      if (!confirmsScriptWrite(updated, input, saved)) throw new Error(SCRIPT_RECORD_UNCONFIRMED);
+      drafts.acknowledgeSourceReplacement(saved, updated);
+      clearSourceDraft(saved.id);
+      updateSummary(updated);
+      acceptRecord(updated, true);
+      setNotice("Script source saved.");
+      await refreshAfterSave();
+    } catch (nextError) {
+      reportError(nextError, saved.id);
+    } finally {
+      endOperation();
+    }
+  }
+
   async function remove() {
     const saved = savedRecord.current;
     if (!saved || operation.current || !visible.current || needsReload) return;
@@ -394,6 +524,8 @@ export function ScriptsPage({ onViewRun, active = true }: { onViewRun: () => voi
       await deleteScript(saved.id, saved.revision);
       if (!mounted.current) return;
       drafts.forget(saved.id);
+      clearSourceDraft(saved.id);
+      setEditingSource(false);
       savedRecord.current = null;
       setScript(null);
       setScripts(list => list.filter(item => item.id !== saved.id));
@@ -406,6 +538,12 @@ export function ScriptsPage({ onViewRun, active = true }: { onViewRun: () => voi
     }
   }
 
+  function handleCreatedExternalScript(created: ScriptRecord) {
+    updateSummary(created);
+    acceptRecord(created, false);
+    setEditingSource(false);
+    setStudioTab("scripts");
+  }
 
   const visibility = { hidden: !active, inert: !active || undefined, style: !active ? { display: "none" } : undefined };
   if (!desktop) {
@@ -415,19 +553,89 @@ export function ScriptsPage({ onViewRun, active = true }: { onViewRun: () => voi
   return (
     <div className="workspace scripts-page" {...visibility} aria-busy={busy} aria-labelledby="scripts-page-title">
       <header className="scripts-head page-heading">
-        <div><h2 className="sect-title" id="scripts-page-title">{t("Scripts")}</h2><p className="page-subtitle">{t("Scripts, runs, and logs stay on this computer.")}</p></div>
-        <div className="page-actions"><button className="btn ghost" type="button" disabled={busy} onClick={() => void refreshList()}>{t("Refresh scripts")}</button><button className="btn primary" type="button" disabled={busy} onClick={() => importRef.current?.click()}>{t("Import script")}</button></div>
+        <div>
+          <h2 className="sect-title" id="scripts-page-title">{t("Scripts")}</h2>
+          <p className="page-subtitle">{t("Scripts, runs, and logs stay on this computer.")}</p>
+        </div>
+        <div className="page-actions">
+          <button className="btn ghost" type="button" disabled={busy} onClick={() => void refreshList()}>{t("Refresh scripts")}</button>
+          <button className="btn primary" type="button" disabled={busy} onClick={() => importRef.current?.click()}>{t("Import script")}</button>
+        </div>
       </header>
+
+      <nav className="rpa-studio-tabs" aria-label={t("RPA Studio sections")}>
+        <button
+          type="button"
+          className={`rpa-studio-tab${studioTab === "scripts" ? " active" : ""}`}
+          aria-pressed={studioTab === "scripts"}
+          onClick={() => setStudioTab("scripts")}
+        >
+          {t("Saved scripts")}
+          <span className="rpa-studio-tab-badge">{scripts.length}</span>
+        </button>
+        <button
+          type="button"
+          className={`rpa-studio-tab${studioTab === "templates" ? " active" : ""}`}
+          aria-pressed={studioTab === "templates"}
+          onClick={() => setStudioTab("templates")}
+        >
+          {t("Templates")}
+        </button>
+        <button
+          type="button"
+          className={`rpa-studio-tab${studioTab === "recorder" ? " active" : ""}`}
+          aria-pressed={studioTab === "recorder"}
+          onClick={() => setStudioTab("recorder")}
+        >
+          {t("Visual recorder")}
+        </button>
+        <button
+          type="button"
+          className={`rpa-studio-tab${studioTab === "runs" ? " active" : ""}`}
+          aria-pressed={studioTab === "runs"}
+          onClick={() => setStudioTab("runs")}
+        >
+          {t("Runs & receipts")}
+        </button>
+      </nav>
+
       {error && <div className="modal-err" role="alert">{error}</div>}
       {notice && <p className="script-notice" role="status">{t(notice)}{undo && <button className="btn xs ghost" type="button" disabled={busy} onClick={undoDiscard}>{t("Undo discard")}</button>}</p>}
-        {currentRun && <button className="scripts-run-note" type="button" onClick={onViewRun}>{t("{scriptName}: {status}. View run", { scriptName: currentRun.scriptName, status: runSnapshot.state === "unavailable" ? t("Status unavailable") : scriptStatusLabel(currentRun.status, t) })}</button>}
-        <PythonRuntimeNote status={python} onDownload={downloadPython} />
+      {currentRun && <button className="scripts-run-note" type="button" onClick={onViewRun}>{t("{scriptName}: {status}. View run", { scriptName: currentRun.scriptName, status: runSnapshot.state === "unavailable" ? t("Status unavailable") : scriptStatusLabel(currentRun.status, t) })}</button>}
+      <PythonRuntimeNote status={python} onDownload={downloadPython} />
+
+      {studioTab === "templates" && (
+        <RpaTemplatesPanel
+          active={active && studioTab === "templates"}
+          onScriptCopied={handleCreatedExternalScript}
+          onRunStarted={(run) => {
+            backgroundScriptRuns.observe(run);
+            setStudioTab("runs");
+          }}
+        />
+      )}
+
+      {studioTab === "recorder" && (
+        <RpaRecorderPanel
+          active={active && studioTab === "recorder"}
+          onSavedScript={handleCreatedExternalScript}
+        />
+      )}
+
+      {studioTab === "runs" && (
+        <RpaRunsQueuePanel
+          active={active && studioTab === "runs"}
+          onObservedRun={(run) => backgroundScriptRuns.observe(run)}
+        />
+      )}
+
+      {studioTab === "scripts" && (
         <div className="scripts-layout">
           <aside className="scripts-list" aria-label={t("Saved scripts")}>
             <div className="scripts-list-head"><h3>{t("Saved scripts")}</h3><span>{scripts.length.toLocaleString()}</span></div>
             <div className="scripts-list-body">{scripts.length === 0 ? <p className="scripts-list-empty">{t("No scripts yet.")}</p> : scripts.map((item) => (
               <button className={`script-row${script?.id === item.id ? " active" : ""}`} type="button" key={item.id} data-script-id={item.id} disabled={busy} aria-pressed={script?.id === item.id} onClick={() => void select(item.id)}>
-                <b>{item.name}{drafts.get(item.id) && <em className="script-draft-badge">{t("Unsaved")}</em>}</b><span>{languageName(item.language)}</span>
+                <b>{item.name}{(drafts.get(item.id) || sourceDrafts.has(item.id)) && <em className="script-draft-badge">{t("Unsaved")}</em>}</b><span>{languageName(item.language)}</span>
                 {item.description && <small>{item.description}</small>}
               </button>
             ))}</div>
@@ -452,7 +660,7 @@ export function ScriptsPage({ onViewRun, active = true }: { onViewRun: () => voi
           </aside>
           {script ? (
             <section className="settings-card script-detail">
-              <header><h2>{script.name}</h2>{dirty && <span className="script-draft-badge">{t("Unsaved")}</span>}<span className="chip">{languageName(script.language)}</span></header>
+              <header><h2>{script.name}</h2>{(dirty || sourceDirty) && <span className="script-draft-badge">{t("Unsaved")}</span>}<span className="chip">{languageName(script.language)}</span></header>
               <div className="card-body">
                 {needsReload && (
                   <div className="script-draft-note has-conflict">
@@ -487,11 +695,86 @@ export function ScriptsPage({ onViewRun, active = true }: { onViewRun: () => voi
                   <button className="btn" type="button" disabled={busy || needsReload} onClick={() => replaceRef.current?.click()}>{t("Replace file")}</button>
                   <button className="btn danger" type="button" disabled={busy || needsReload} onClick={() => void remove()}>{t("Delete")}</button>
                 </div>
-                <label className="fld"><span>{t("Source")}</span><pre className="script-source">{script.source}</pre></label>
+
+                {staleSourceDraft && !needsReload && (
+                  <div className="script-draft-note has-conflict">
+                    <div role="status">
+                      <strong>{t("Source revision conflict detected.")}</strong>
+                      <p>{t("This script was updated to revision {rev} while you edited the source.", { rev: script.revision })}</p>
+                    </div>
+                    <button className="btn xs" type="button" disabled={busy} onClick={rebaseSourceDraft}>
+                      {t("Keep my source edits on this version")}
+                    </button>
+                  </div>
+                )}
+
+                <div className="fld">
+                  <div className="script-source-header">
+                    <span>{t("Source")}</span>
+                    <div className="script-source-meta">
+                      <span>{t("Rev {rev}", { rev: script.revision })}</span>
+                      <span>{t("{lines} lines", { lines: activeSourceValue.split(/\r?\n/).length })}</span>
+                      {editingSource ? (
+                        <>
+                          <button
+                            type="button"
+                            className="btn xs primary"
+                            disabled={busy || !sourceDirty || staleSourceDraft || needsReload || !activeSourceValue.trim()}
+                            onClick={() => void saveSource()}
+                          >
+                            {mutation === "save-source" ? t("Saving…") : t("Save source")}
+                          </button>
+                          {sourceDirty && (
+                            <button type="button" className="btn xs ghost" disabled={busy} onClick={discardSourceDraft}>
+                              {t("Discard source edits")}
+                            </button>
+                          )}
+                          <button type="button" className="btn xs ghost" disabled={busy} onClick={() => setEditingSource(false)}>
+                            {t("Preview source")}
+                          </button>
+                        </>
+                      ) : (
+                        <button type="button" className="btn xs" disabled={busy} onClick={() => setEditingSource(true)}>
+                          {sourceDirty ? t("Continue editing source") : t("Edit source")}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {editingSource ? (
+                    <textarea
+                      className="script-source-editor"
+                      aria-label={t("Script source editor")}
+                      value={activeSourceValue}
+                      disabled={busy}
+                      spellCheck={false}
+                      onKeyDown={(event) => {
+                        if (event.key === "Tab") {
+                          event.preventDefault();
+                          const target = event.currentTarget;
+                          const start = target.selectionStart;
+                          const end = target.selectionEnd;
+                          const next = `${activeSourceValue.slice(0, start)}  ${activeSourceValue.slice(end)}`;
+                          editSource(next);
+                          requestAnimationFrame(() => {
+                            target.selectionStart = target.selectionEnd = start + 2;
+                          });
+                        } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+                          event.preventDefault();
+                          void saveSource();
+                        }
+                      }}
+                      onChange={(event) => editSource(event.target.value)}
+                    />
+                  ) : (
+                    <pre className="script-source">{script.source}</pre>
+                  )}
+                </div>
               </div>
             </section>
           ) : <div className="emptystate scripts-empty"><span className="scripts-empty-symbol" aria-hidden="true">{"</>"}</span><b>{busy ? t("Loading…") : t("Select a script")}</b><p>{t("Import a .js, .mjs, or .py file to begin.")}</p></div>}
         </div>
+      )}
+
       <input ref={importRef} type="file" accept=".js,.mjs,.py,text/javascript,text/x-python" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void importFile(file); event.target.value = ""; }} />
       <input ref={replaceRef} type="file" accept=".js,.mjs,.py,text/javascript,text/x-python" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void replaceFile(file); event.target.value = ""; }} />
       {confirmDialogNode}
@@ -513,6 +796,7 @@ export function ScriptRunPanel({ open, selectedProfiles, onClose }: {
   const runSnapshot = useBackgroundScriptRun(), run = runSnapshot.run;
   const [log, setLog] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [queueNotice, setQueueNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [monitorLoading, setMonitorLoading] = useState(false), [monitorError, setMonitorError] = useState<string | null>(null), [loadAttempt, setLoadAttempt] = useState(0);
   const dialog = useRef<HTMLDivElement>(null), closeButton = useRef<HTMLButtonElement>(null), close = useRef(onClose);
@@ -520,7 +804,7 @@ export function ScriptRunPanel({ open, selectedProfiles, onClose }: {
   const mounted = useRef(true), commandInFlight = useRef(false);
   const offset = useRef(0);
   const desktop = scriptsDesktopAvailable();
-  const runActive = run?.status === "running" || run?.status === "stopping";
+  const runActive = run?.status === "running" || run?.status === "stopping" || run?.status === "queued";
   const [python, downloadPython] = usePythonRuntime(open && desktop && scripts.find((script) => script.id === scriptId)?.language === "python");
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -587,22 +871,56 @@ export function ScriptRunPanel({ open, selectedProfiles, onClose }: {
     return () => { active = false; if (timer !== undefined) window.clearTimeout(timer); };
   }, [open, run?.id]);
 
-  const start = async () => {
-    if (!open || commandInFlight.current || runActive || monitorLoading || runSnapshot.error) return;
+  const parseRunInput = () => {
     let parsed: unknown;
     try { parsed = JSON.parse(inputs); }
-    catch { setError(t("Inputs must be valid JSON.")); return; }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) { setError(t("Inputs must be a JSON object.")); return; }
-    if (!scriptId || selectedProfiles.length === 0) return;
+    catch { setError(t("Inputs must be valid JSON.")); return null; }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) { setError(t("Inputs must be a JSON object.")); return null; }
+    if (!scriptId || selectedProfiles.length === 0) return null;
     const parallel = Number(concurrency);
-    if (!Number.isSafeInteger(parallel) || parallel < 1) { setError(t("Parallel browsers must be a positive whole number.")); return; }
+    if (!Number.isSafeInteger(parallel) || parallel < 1) { setError(t("Parallel browsers must be a positive whole number.")); return null; }
+    return { parsed: parsed as Record<string, unknown>, parallel };
+  };
+
+  const start = async () => {
+    if (!open || commandInFlight.current || runActive || monitorLoading || runSnapshot.error) return;
+    const validated = parseRunInput();
+    if (!validated) return;
     commandInFlight.current = true; setBusy(true);
     setError(null);
+    setQueueNotice(null);
     try {
       offset.current = 0;
       setLog("");
-      const nextRun = await startScriptRun({ scriptId, profileIds: selectedProfiles.map((profile) => profile.id), inputs: parsed, useCredentials, concurrency: parallel });
+      const nextRun = await startScriptRun({ scriptId, profileIds: selectedProfiles.map((profile) => profile.id), inputs: validated.parsed, useCredentials, concurrency: validated.parallel });
       backgroundScriptRuns.observe(nextRun);
+    } catch (nextError) { if (mounted.current) setError(errorText(nextError)); }
+    finally { commandInFlight.current = false; if (mounted.current) setBusy(false); }
+  };
+
+  const queueBatch = async () => {
+    if (!open || commandInFlight.current || monitorLoading || runSnapshot.error) return;
+    const validated = parseRunInput();
+    if (!validated) return;
+    commandInFlight.current = true; setBusy(true);
+    setError(null);
+    setQueueNotice(null);
+    try {
+      const queued = await startQueuedScriptRun({
+        scriptId,
+        profileIds: selectedProfiles.map((profile) => profile.id),
+        inputs: validated.parsed,
+        useCredentials,
+        concurrency: validated.parallel,
+        queueIfBusy: true,
+      });
+      if (mounted.current) {
+        setQueueNotice(
+          queued.status === "queued"
+            ? t("Queued as batch #{pos}.", { pos: queued.queuePosition ?? 1 })
+            : t("Batch started immediately."),
+        );
+      }
     } catch (nextError) { if (mounted.current) setError(errorText(nextError)); }
     finally { commandInFlight.current = false; if (mounted.current) setBusy(false); }
   };
@@ -636,18 +954,28 @@ export function ScriptRunPanel({ open, selectedProfiles, onClose }: {
             {monitorError && <div className="modal-err" role="alert">{monitorError} <button className="btn xs" type="button" disabled={monitorLoading} onClick={() => setLoadAttempt(value => value + 1)}>{t("Reload monitor")}</button></div>}
             {!monitorError && runSnapshot.error && <div className="modal-err" role="alert">{t(runSnapshot.error)} <button className="btn xs" type="button" disabled={monitorLoading} onClick={() => setLoadAttempt(value => value + 1)}>{t("Reload monitor")}</button></div>}
             {error && <div className="modal-err" role="alert">{error}</div>}
+            {queueNotice && <p className="script-notice" role="status">{queueNotice}</p>}
             <PythonRuntimeNote status={python} onDownload={downloadPython} />
             <label className="fld"><span>{t("Script")}</span><select className="select" value={scriptId} onChange={(event) => setScriptId(event.target.value)} disabled={busy || runActive || monitorLoading}><option value="">{t("Choose a script…")}</option>{scripts.map((script) => <option key={script.id} value={script.id}>{script.name}</option>)}</select></label>
             <label className="fld"><span>{t("JSON inputs")}</span><textarea className="input script-inputs" value={inputs} onChange={(event) => setInputs(event.target.value)} disabled={busy || runActive || monitorLoading} /></label>
             <label className="script-credentials"><input type="checkbox" checked={useCredentials} onChange={(event) => setUseCredentials(event.target.checked)} disabled={busy || runActive || monitorLoading} />{t("Use saved profile login details")}</label>
             <label className="fld"><span>{t("Parallel browsers")}</span><input className="input" type="number" min={1} step={1} value={concurrency} onChange={(event) => setConcurrency(event.target.value)} disabled={busy || runActive || monitorLoading} /></label>
             <p className="formnote">{t("{n} selected profiles. Run up to this many at a time; the rest wait for a free slot. Browser startup may be staggered. Parallel runs share the log below.", { n: String(selectedProfiles.length) })}</p>
-            {run && <div className="script-progress" role="status" aria-live="polite"><b>{run.scriptName} · {runSnapshot.state === "unavailable" ? t("Status unavailable") : scriptStatusLabel(run.status, t)}</b>{run.profiles.map((profile) => <div key={profile.id} className={`script-profile ${profile.status}`}><span>{profile.name}</span><span>{scriptStatusLabel(profile.status, t)}</span>{profile.error && <small>{profile.error}</small>}{profile.warning && <small className="warning">{profile.warning}</small>}</div>)}</div>}
+            {run && <div className="script-progress" role="status" aria-live="polite"><b>{run.scriptName} · {runSnapshot.state === "unavailable" ? t("Status unavailable") : scriptStatusLabel(run.status, t)}{run.durationMs !== undefined ? ` · ${formatDurationMs(run.durationMs)}` : ""}</b>{run.profiles.map((profile) => <div key={profile.id} className={`script-profile ${profile.status}`}><span>{profile.name}</span><span>{scriptStatusLabel(profile.status, t)}{profile.durationMs !== undefined ? ` · ${formatDurationMs(profile.durationMs)}` : ""}</span>{profile.error && <small>{profile.error}</small>}{profile.warning && <small className="warning">{profile.warning}</small>}<RpaProfileReceipt runId={run.id} profile={profile} /></div>)}</div>}
             {run && <pre className="script-log" aria-label={t("Script log")}>{log || t("Waiting for log output…")}</pre>}
           </>}
           {desktop && <p className="script-monitor-close-note" id="script-run-close-note">{t("Closing this monitor keeps your inputs and does not stop a run. Use Stop run to request a stop.")}</p>}
         </div>
-        <div className="modal-foot"><button className="btn ghost" type="button" onClick={onClose}>{t(desktop ? "Close monitor" : "Close")}</button>{desktop && !runActive && <button className="btn primary" type="button" disabled={busy || monitorLoading || !!monitorError || !!runSnapshot.error || !scriptId || selectedProfiles.length === 0} onClick={() => void start()}>{busy ? t("Starting…") : t("Run script")}</button>}{desktop && runActive && <button className="btn solid-danger" type="button" disabled={busy || run?.status === "stopping"} onClick={() => void stop()}>{run?.status === "stopping" ? t("Stopping…") : busy ? t("Stopping…") : t("Stop run")}</button>}</div>
+        <div className="modal-foot">
+          <button className="btn ghost" type="button" onClick={onClose}>{t(desktop ? "Close monitor" : "Close")}</button>
+          {desktop && runActive && scriptId && selectedProfiles.length > 0 && (
+            <button className="btn" type="button" disabled={busy || monitorLoading || !!monitorError || !!runSnapshot.error} onClick={() => void queueBatch()}>
+              {t("Queue next batch")}
+            </button>
+          )}
+          {desktop && !runActive && <button className="btn primary" type="button" disabled={busy || monitorLoading || !!monitorError || !!runSnapshot.error || !scriptId || selectedProfiles.length === 0} onClick={() => void start()}>{busy ? t("Starting…") : t("Run script")}</button>}
+          {desktop && runActive && <button className="btn solid-danger" type="button" disabled={busy || run?.status === "stopping"} onClick={() => void stop()}>{run?.status === "stopping" ? t("Stopping…") : busy ? t("Stopping…") : t("Stop run")}</button>}
+        </div>
       </div>
     </div>
   )}</MotionPresence>;
