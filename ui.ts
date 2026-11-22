@@ -12,11 +12,17 @@
  */
 import type { Launcher } from "./launcher.ts";
 import type { ProfileStore } from "./store.ts";
+import { createProxyVaultLookup } from "./assistant-proposals.ts";
 import { handleFeatureSettingsRequest } from "./feature-settings.ts";
 import { API_SECURITY_HEADERS } from "./server.ts";
+import { handleAppLockRoutes } from "./src/ui/app-lock-routes.ts";
+import { handleAssistantProposalRoutes, type AssistantProposalRouteOptions } from "./src/ui/assistant-proposals-routes.ts";
+import { handleDiagnosticsRoutes, type DiagnosticsRouteOptions } from "./src/ui/diagnostics-routes.ts";
 import { handleEventsUiRoutes } from "./src/ui/events-routes.ts";
 import { handleGroupsAndExtensionsUiRoutes } from "./src/ui/groups-extensions-routes.ts";
 import { handleMetricsAndWindowsRoutes } from "./src/ui/metrics-windows-routes.ts";
+import { handleProfilePackageRoutes } from "./src/ui/profile-package-routes.ts";
+import { handleProfileTimelineRoutes } from "./src/ui/profile-timeline-routes.ts";
 import { handleProfilesUiRoutes } from "./src/ui/profiles-routes.ts";
 import { handleProxyVaultRoutes, type ProxyVaultRouteOptions } from "./src/ui/proxy-vault-routes.ts";
 import { handleScriptsUiRoutes } from "./src/ui/scripts-routes.ts";
@@ -67,23 +73,29 @@ export async function handleUiRequest(
   req: Request,
   launcher: Launcher,
   store: ProfileStore,
-  options: ProxyVaultRouteOptions = {},
+  options: ProxyVaultRouteOptions & DiagnosticsRouteOptions & AssistantProposalRouteOptions = {},
 ): Promise<Response | null> {
   const { pathname } = new URL(req.url);
   if (!pathname.startsWith("/ui/api/")) return null;
 
+  const opts = options ?? {};
+  const proxyVault = opts.proxyVault ?? createProxyVaultLookup(store);
+
   const featureSettings = await handleFeatureSettingsRequest(req, store, {
-    paths: options?.paths,
-    desktopAvailable: !!options?.health,
+    paths: opts.paths,
+    desktopAvailable: !!opts.health,
     launcher,
-    assistant: options?.assistant,
-    runtimeInventory: options?.runtimeInventory,
-    discoverLocalProxies: options?.discoverLocalProxies,
+    assistant: opts.assistant,
+    runtimeInventory: opts.runtimeInventory,
+    discoverLocalProxies: opts.discoverLocalProxies,
+    workspaceManagement: opts.workspaceManagement,
+    proxyVault,
+    proposalRegistry: opts.proposalRegistry,
   });
   if (featureSettings) return withUiSecurityHeaders(featureSettings);
 
-  if (options?.workspaceManagement?.isManagementPath(pathname)) {
-    const managed = await options.workspaceManagement.handle(req);
+  if (opts.workspaceManagement?.isManagementPath(pathname)) {
+    const managed = await opts.workspaceManagement.handle(req);
     if (managed) return withUiSecurityHeaders(managed);
   }
 
@@ -102,13 +114,18 @@ export async function handleUiRequest(
   }
 
   const handled =
-    handleEventsUiRoutes(req, pathname, options) ??
-    (await handleScriptsUiRoutes(req, pathname, options)) ??
-    (await handleSystemUiRoutes(req, pathname, launcher, store, options)) ??
-    (await handleGroupsAndExtensionsUiRoutes(req, pathname, store, options)) ??
-    (await handleProxyVaultRoutes(req, pathname, store, options)) ??
-    (await handleMetricsAndWindowsRoutes(req, pathname, launcher, store, options)) ??
-    (await handleProfilesUiRoutes(req, pathname, launcher, store, options));
+    handleEventsUiRoutes(req, pathname, opts) ??
+    (await handleAppLockRoutes(req, pathname, opts)) ??
+    (await handleDiagnosticsRoutes(req, pathname, launcher, store, opts)) ??
+    (await handleAssistantProposalRoutes(req, pathname, store, { ...opts, launcher, proxyVault })) ??
+    (await handleScriptsUiRoutes(req, pathname, opts)) ??
+    (await handleSystemUiRoutes(req, pathname, launcher, store, opts)) ??
+    (await handleGroupsAndExtensionsUiRoutes(req, pathname, store, opts)) ??
+    (await handleProxyVaultRoutes(req, pathname, store, opts)) ??
+    (await handleMetricsAndWindowsRoutes(req, pathname, launcher, store, opts)) ??
+    (await handleProfilePackageRoutes(req, pathname, launcher, store, opts)) ??
+    (await handleProfileTimelineRoutes(req, pathname, store, opts)) ??
+    (await handleProfilesUiRoutes(req, pathname, launcher, store, opts));
 
   return withUiSecurityHeaders(
     handled ?? Response.json({ error: `unknown ui route: ${pathname}` }, { status: 404 }),

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppLockStatus } from "../app-lock.ts";
+import { getStandaloneSessionToken } from "./api.ts";
 
 export type { AppLockStatus };
 
@@ -80,6 +81,10 @@ async function lockRequest(
   signal?: AbortSignal,
 ): Promise<AppLockStatus> {
   const headers: Record<string, string> = { Accept: "application/json" };
+  const standaloneToken = getStandaloneSessionToken();
+  if (standaloneToken) {
+    headers["X-Maobu-Session"] = standaloneToken;
+  }
   if (method !== "GET") {
     headers["X-Maobu-Settings"] = "1";
     headers["Content-Type"] = "application/json";
@@ -146,6 +151,8 @@ export async function reportAppLockActivity(): Promise<AppLockStatus> {
 }
 
 export interface UseAppLockControllerOptions {
+  /** When false, skips all `/ui/api/app-lock/*` requests until advertised by `/ui/api/app-mode`. Default true. */
+  enabled?: boolean;
   /** Minimum interval between user activity heartbeats sent to backend (default 30s). */
   activityThrottleMs?: number;
   /** Interval for polling backend idle-lock transition while enabled & unlocked (default 15s). */
@@ -153,15 +160,20 @@ export interface UseAppLockControllerOptions {
 }
 
 export function useAppLockController(options: UseAppLockControllerOptions = {}) {
+  const enabled = options.enabled ?? true;
   const activityThrottleMs = options.activityThrottleMs ?? 30_000;
   const idlePollMs = options.idlePollMs ?? 15_000;
 
   const [status, setStatus] = useState<AppLockStatus | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
   const lastPingRef = useRef(0);
 
   const refresh = useCallback(async () => {
+    if (!enabled) {
+      setLoading(false);
+      return null;
+    }
     try {
       const next = await fetchAppLockStatus();
       setStatus(next);
@@ -173,9 +185,10 @@ export function useAppLockController(options: UseAppLockControllerOptions = {}) 
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [enabled]);
 
   const lockNow = useCallback(async () => {
+    if (!enabled) return null;
     try {
       const next = await lockAppNow();
       setStatus(next);
@@ -185,20 +198,25 @@ export function useAppLockController(options: UseAppLockControllerOptions = {}) 
       setError(err instanceof Error ? err.message : String(err));
       return null;
     }
-  }, []);
+  }, [enabled]);
 
   const notifyLocked = useCallback(() => {
+    if (!enabled) return;
     setStatus((prev) => (prev ? { ...prev, locked: true, enabled: true } : prev));
     void refresh();
-  }, [refresh]);
+  }, [enabled, refresh]);
 
   useEffect(() => {
+    if (!enabled) {
+      setLoading(false);
+      return;
+    }
     void refresh();
-  }, [refresh]);
+  }, [enabled, refresh]);
 
   // Global Ctrl+Shift+L (Cmd+Shift+L on macOS) manual lock shortcut & active user heartbeat.
   useEffect(() => {
-    if (!status?.enabled || status.locked) return;
+    if (!enabled || !status?.enabled || status.locked) return;
 
     const pingActivity = () => {
       const now = Date.now();
@@ -242,7 +260,7 @@ export function useAppLockController(options: UseAppLockControllerOptions = {}) 
       window.removeEventListener("focus", pingActivity);
       if (timer) clearInterval(timer);
     };
-  }, [status?.enabled, status?.locked, status?.idleTimeoutMinutes, activityThrottleMs, idlePollMs, lockNow, refresh]);
+  }, [enabled, status?.enabled, status?.locked, status?.idleTimeoutMinutes, activityThrottleMs, idlePollMs, lockNow, refresh]);
 
   return {
     status,

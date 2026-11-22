@@ -21,6 +21,8 @@ export interface UiProfile {
     platform: string;
     /** Free-form custom tags. */
     tags: string[];
+    /** Operator memo/notes (<= 500 chars / 2048 bytes). */
+    notes?: string;
     /** Saved extension IDs. Missing on older servers; never infer zero from absence. */
     extensions?: string[];
     proxy: string | null;
@@ -94,6 +96,8 @@ export interface AppModeConfig {
     defaultEngine?: "chromium" | "firefox";
     /** Advertised by servers that expose the authenticated `GET /ui/api/events` SSE stream. */
     eventsStream?: boolean;
+    /** Advertised by servers that expose the optional local master password lock routes. */
+    appLockAvailable?: boolean;
 }
 export class UnauthorizedError extends Error {
     readonly status = 401;
@@ -660,6 +664,8 @@ export interface EditProfile {
     extensions: string[];
     /** Comma-separated custom tags. */
     tags: string;
+    /** Operator memo/notes (<= 500 chars / 2048 bytes). */
+    notes?: string;
     /** Operator-chosen "custom NO."; "" falls back to the store serial. Local mode only. */
     customNo?: string;
     /** Stored timezone; blank uses the browser default. */

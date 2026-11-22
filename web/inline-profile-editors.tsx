@@ -253,6 +253,8 @@ export interface QuickProfileNotesEditorProps {
   onSaveNotes?: (id: string, nextNotes: string) => Promise<void>;
   onSaved?: (id: string, nextNotes: string) => void;
   onError?: (message: string) => void;
+  /** Optional open-state listener so virtualized rows can pin while editing notes. */
+  onOpenChange?: (open: boolean) => void;
 }
 
 /**
@@ -268,9 +270,28 @@ export function QuickProfileNotesEditor({
   onSaveNotes,
   onSaved,
   onError,
+  onOpenChange,
 }: QuickProfileNotesEditorProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const onOpenChangeRef = useRef(onOpenChange);
+  onOpenChangeRef.current = onOpenChange;
+  const didNotifyOpenRef = useRef(false);
+  useEffect(() => {
+    if (open) {
+      didNotifyOpenRef.current = true;
+      onOpenChangeRef.current?.(true);
+    } else if (didNotifyOpenRef.current) {
+      didNotifyOpenRef.current = false;
+      onOpenChangeRef.current?.(false);
+    }
+  }, [open]);
+  useEffect(() => () => {
+    if (didNotifyOpenRef.current) {
+      didNotifyOpenRef.current = false;
+      onOpenChangeRef.current?.(false);
+    }
+  }, []);
   const [draft, setDraft] = useState(notes);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);

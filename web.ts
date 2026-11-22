@@ -11,6 +11,7 @@ import index from "./web/index.html";
 import { profileDisplayNo, type Launcher } from "./launcher.ts";
 import { ProfileStore } from "./store.ts";
 import type { AppConfigStore } from "./app-config.ts";
+import { AppLockService, checkAppLockGate } from "./app-lock.ts";
 import { AppSettingsStore, resolveBatchLaunchMemoryGuardSettings } from "./app-settings.ts";
 import type { StatePaths } from "./paths.ts";
 import type { RuntimeInventoryDeployment } from "./runtime-inventory.ts";
@@ -63,6 +64,10 @@ export interface DashboardServerOptions {
     appSettings?: AppSettingsStore;
     /** Optional heartbeat interval override for /ui/api/metrics/stream (testing). */
     metricsHeartbeatIntervalMs?: number;
+    /** Optional pre-configured local app master password lock service. */
+    appLock?: AppLockService;
+    /** Optional automation API port for system diagnostics probing. */
+    automationPort?: number;
 }
 
 export const STANDALONE_SESSION_COOKIE = "maobu_session";
@@ -282,6 +287,15 @@ export function serveDashboard(opts: DashboardServerOptions) {
         store,
         log,
     });
+    const emitEvent = (type: string, payload: Record<string, unknown>) => {
+        if (type === "task.updated") {
+            eventBus.emitTaskUpdated(payload);
+        } else {
+            eventBus.emitTaskUpdated({ kind: type, ...payload });
+        }
+    };
+    const appLockHome = opts.workspaceHome ?? opts.workspaceManagement?.options.home ?? opts.paths?.root;
+    const appLock = opts.appLock ?? (appLockHome ? new AppLockService({ home: appLockHome, emitEvent }) : undefined);
     const appSettings = opts.appSettings ?? (opts.paths ? new AppSettingsStore(join(opts.paths.root, "app-settings.json")) : undefined);
     const ownsMetrics = !opts.metricsService;
     const metricsService = opts.metricsService ?? new MetricsService({
@@ -466,6 +480,9 @@ export function serveDashboard(opts: DashboardServerOptions) {
                 if (!agentHealthAuthorized && !isStandaloneRequestAuthorized(req, accessToken)) return sessionRequired();
             }
 
+            const lockBlocked = checkAppLockGate(appLock, req);
+            if (lockBlocked) return withSecurityHeaders(lockBlocked, "api");
+
             if (reqUrl.pathname !== "/ui/api/workspace/restore" && Number(req.headers.get("content-length") || 0) > 128 * 1024 ** 2)
                 return withSecurityHeaders(Response.json({ ok: false, error: "Request body is too large" }, { status: 413 }), "api");
             if ((reqUrl.pathname === "/ui/api/scripts" || reqUrl.pathname.startsWith("/ui/api/scripts/"))
@@ -505,6 +522,10 @@ export function serveDashboard(opts: DashboardServerOptions) {
                     runtimeInventory: opts.runtimeInventory,
                     scripts,
                     events: eventBus,
+                    emitEvent,
+                    appLock,
+                    workspaceHome: appLockHome,
+                    automationPort: opts.automationPort,
                     metrics: metricsService,
                     resourcePolicies: opts.resourcePolicies,
                     appSettings,

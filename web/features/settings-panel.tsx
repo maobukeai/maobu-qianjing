@@ -79,6 +79,8 @@ export interface SettingsPanelProps {
   logDir?: string;
   modeErr: string | null;
   onDone: () => void;
+  /** Optional Wave 4 app lock capability flag (when false, omits AppLockSettings to avoid unadvertised fetches). */
+  appLockAvailable?: boolean;
   /** Optional Wave 4 app lock state & change hook (self-managed if omitted). */
   appLockStatus?: AppLockStatus | null;
   onAppLockStatusChange?: (status: AppLockStatus) => void;
@@ -134,6 +136,7 @@ export function SettingsPanel({
   logDir,
   modeErr,
   onDone,
+  appLockAvailable = true,
   appLockStatus,
   onAppLockStatusChange,
   onboardingState,
@@ -373,10 +376,12 @@ export function SettingsPanel({
               value={motionPreference}
               onChange={onMotionPreferenceChange}
             />
-            <AppLockSettings
-              status={appLockStatus}
-              onStatusChange={onAppLockStatusChange}
-            />
+            {appLockAvailable && (
+              <AppLockSettings
+                status={appLockStatus}
+                onStatusChange={onAppLockStatusChange}
+              />
+            )}
             <section className="settings-card" data-onboarding-settings-card="true">
               <header>
                 <AppIcon name="star" className="sm" />

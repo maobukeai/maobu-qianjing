@@ -1,7 +1,7 @@
 import { useDeferredValue, useMemo } from "react";
 import { folderScope, folderTree, type FolderInfo } from "../../folders.ts";
 import { profileGroupCollapsed, profileGroupSections, type GroupDisclosure, type ProfileGroupSection } from "../../profile-group-state.ts";
-import { inProfileScope, type RosterScope } from "../../profile-view-state.ts";
+import { inProfileScope, matchesTagFilter, type RosterScope, type TagFilterMode } from "../../profile-view-state.ts";
 import { ROSTER_DENSITY_ROW_HEIGHT, type RosterDensity } from "../../roster-density-state.ts";
 import type { UiProfile } from "../api.ts";
 
@@ -174,6 +174,9 @@ export function computeRosterPipeline<T extends RosterPipelineProfile>(options: 
   profilePage: number;
   rosterScope: RosterScope;
   favoriteProfileIds: ReadonlySet<string>;
+  selectedTags?: readonly string[];
+  tagMode?: TagFilterMode;
+  locatedProfileIds?: readonly string[] | null;
 }): {
   matchingProfiles: T[];
   matchingRunningCount: number;
@@ -195,18 +198,24 @@ export function computeRosterPipeline<T extends RosterPipelineProfile>(options: 
     profilePage,
     rosterScope,
     favoriteProfileIds,
+    selectedTags,
+    tagMode,
+    locatedProfileIds,
   } = options;
   const trimmedQ = q.trim();
   const exactId = trimmedQ ? /^id:(\S+)$/.exec(trimmedQ) : null;
   const needle = trimmedQ && !exactId ? trimmedQ.toLowerCase() : "";
+  const locatedSet = locatedProfileIds && locatedProfileIds.length > 0 ? new Set(locatedProfileIds) : null;
 
   const matchingProfiles: T[] = [];
   let matchingRunningCount = 0;
 
   for (let i = 0; i < profiles.length; i++) {
     const p = profiles[i]!;
+    if (locatedSet && !locatedSet.has(p.id)) continue;
     if (!inProfileScope(p, rosterScope, favoriteProfileIds)) continue;
     if (group !== "all" && !selectedScope.has(p.group)) continue;
+    if (selectedTags && selectedTags.length > 0 && !matchesTagFilter(p.tags, selectedTags, tagMode ?? "any")) continue;
     if (exactId) {
       if (p.id !== exactId[1]) continue;
     } else if (needle) {
@@ -315,6 +324,9 @@ export interface UseRosterQueryOptions {
   favoriteProfileIds: ReadonlySet<string>;
   groupDisclosure: GroupDisclosure;
   launchFailures: ReadonlyMap<string, string> | null;
+  selectedTags?: readonly string[];
+  tagMode?: TagFilterMode;
+  locatedProfileIds?: readonly string[] | null;
 }
 
 export function useRosterQuery({
@@ -332,8 +344,13 @@ export function useRosterQuery({
   favoriteProfileIds,
   groupDisclosure,
   launchFailures,
+  selectedTags,
+  tagMode,
+  locatedProfileIds,
 }: UseRosterQueryOptions) {
   const deferredQ = useDeferredValue(q);
+  const hasTagFilter = (selectedTags?.length ?? 0) > 0;
+  const hasLocatedFilter = (locatedProfileIds?.length ?? 0) > 0;
 
   const folders = useMemo<FolderInfo[]>(() => {
     const metadata = new Map(localFolders.map((folder) => [folder.name, folder]));
@@ -346,7 +363,7 @@ export function useRosterQuery({
   const groups = useMemo(() => ["all", ...tree.map((folder) => folder.name)], [tree]);
   const existingGroups = useMemo(() => groups.slice(1), [groups]);
   const missingRosterGroup = loaded && group !== "all" && group !== "" && !groups.includes(group) ? group : null;
-  const hasRosterRefinements = !!q.trim() || group !== "all" || profileStatus !== "all";
+  const hasRosterRefinements = !!q.trim() || group !== "all" || profileStatus !== "all" || hasTagFilter || hasLocatedFilter;
   const selectedScope = useMemo(() => (group === "" ? new Set([""]) : folderScope(folders, group)), [folders, group]);
   const breadcrumb = useMemo(() => tree.find((folder) => folder.name === group), [tree, group]);
 
@@ -385,11 +402,14 @@ export function useRosterQuery({
         profilePage,
         rosterScope,
         favoriteProfileIds,
+        selectedTags,
+        tagMode,
+        locatedProfileIds,
       }),
-    [profiles, numbering, searchIndex, deferredQ, group, selectedScope, profileStatus, sort, pageSize, profilePage, rosterScope, favoriteProfileIds],
+    [profiles, numbering, searchIndex, deferredQ, group, selectedScope, profileStatus, sort, pageSize, profilePage, rosterScope, favoriteProfileIds, selectedTags, tagMode, locatedProfileIds],
   );
 
-  const revealGroupMatches = !!deferredQ.trim() || profileStatus !== "all" || group !== "all" || rosterScope !== "all";
+  const revealGroupMatches = !!deferredQ.trim() || profileStatus !== "all" || group !== "all" || rosterScope !== "all" || hasTagFilter || hasLocatedFilter;
 
   const profileSections = useMemo(
     () =>
@@ -399,9 +419,9 @@ export function useRosterQuery({
             visibleProfiles,
             filtered,
             tree.filter((folder) => group === "all" || selectedScope.has(folder.name)).map((folder) => folder.name),
-            visibleProfilePage === 0 && !deferredQ.trim() && profileStatus === "all" && rosterScope === "all",
+            visibleProfilePage === 0 && !deferredQ.trim() && profileStatus === "all" && rosterScope === "all" && !hasTagFilter && !hasLocatedFilter,
           ),
-    [visibleProfiles, filtered, tree, group, selectedScope, visibleProfilePage, deferredQ, profileStatus, rosterScope],
+    [visibleProfiles, filtered, tree, group, selectedScope, visibleProfilePage, deferredQ, profileStatus, rosterScope, hasTagFilter, hasLocatedFilter],
   );
 
   const selectableProfiles = useMemo(

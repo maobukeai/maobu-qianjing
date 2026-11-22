@@ -423,11 +423,11 @@ input[type="checkbox"]:focus-visible, input[type="radio"]:focus-visible { outlin
   opacity: 1; visibility: visible; transform: translate(-50%, 0);
 }
 /* Right-edge actions align tooltips inward so they never clip off the viewport. */
-:is(.topbar-actions, .profile-view-tools > .headactions, .roster-view-actions) .tip::after,
+:is(.topbar-actions, .profile-view-tools, .roster-view-actions) .tip::after,
 .profile-group-create.tip::after {
   left: auto; right: 0; transform: translateY(-3px);
 }
-:is(.topbar-actions, .profile-view-tools > .headactions, .roster-view-actions) .tip:hover:not(:disabled):not(:active):not([aria-expanded="true"])::after,
+:is(.topbar-actions, .profile-view-tools, .roster-view-actions) .tip:hover:not(:disabled):not(:active):not([aria-expanded="true"])::after,
 .profile-group-create.tip:hover:not(:disabled):not(:active):not([aria-expanded="true"])::after {
   transform: translateY(0);
 }

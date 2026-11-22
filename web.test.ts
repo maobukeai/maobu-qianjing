@@ -375,3 +375,72 @@ test("serveDesktopAutomationApi logs a clear warning instead of swallowing bind 
         await blocker?.stop(true);
     }
 });
+
+test("serveDashboard enforces 423 Locked app-lock gate across protected routes while allowing unlock", async () => {
+    const root = mkdtempSync(join(tmpdir(), "maobu-web-applock-"));
+    const paths = statePaths(root);
+    const store = new ProfileStore(paths.database);
+    const server = serveDashboard({
+        port: 0,
+        paths,
+        workspaceHome: root,
+        store,
+        launcher: {
+            reconcileOrphans: async () => 0,
+            dataDriveFreeBytes: () => 50 * 1024 ** 3,
+        } as any,
+        log: () => {},
+    });
+    const base = `http://127.0.0.1:${server.port}`;
+    try {
+        const modeRes = await fetch(`${base}/ui/api/app-mode`);
+        expect(modeRes.status).toBe(200);
+        expect((await modeRes.json() as { appLockAvailable?: boolean }).appLockAvailable).toBe(true);
+
+        const setupRes = await fetch(`${base}/ui/api/app-lock/setup`, {
+            method: "POST",
+            headers: { "content-type": "application/json", "X-Maobu-Settings": "1" },
+            body: JSON.stringify({ password: "master-pass-123", idleTimeoutMinutes: 15, lockOnStartup: true }),
+        });
+        expect(setupRes.status).toBe(200);
+
+        const lockRes = await fetch(`${base}/ui/api/app-lock/lock`, {
+            method: "POST",
+            headers: { "content-type": "application/json", "X-Maobu-Settings": "1" },
+            body: "{}",
+        });
+        expect(lockRes.status).toBe(200);
+        expect((await lockRes.json() as { status: { locked: boolean } }).status.locked).toBe(true);
+
+        // Protected endpoints must return 423 Locked with security headers
+        const blockedProfiles = await fetch(`${base}/ui/api/profiles`);
+        expect(blockedProfiles.status).toBe(423);
+        expect(blockedProfiles.headers.get("x-content-type-options")).toBe("nosniff");
+        expect(blockedProfiles.headers.get("x-frame-options")).toBe("DENY");
+        expect((await blockedProfiles.json() as { code?: string }).code).toBe("app_locked");
+
+        const blockedCard = await fetch(`${base}/card?id=nonexistent`);
+        expect(blockedCard.status).toBe(423);
+
+        // Allowlisted shell/status/unlock endpoints stay reachable
+        expect((await fetch(`${base}/`)).status).toBe(200);
+        expect((await fetch(`${base}/ui/api/app-mode`)).status).toBe(200);
+        expect((await fetch(`${base}/ui/api/app-lock/status`)).status).toBe(200);
+
+        const unlockRes = await fetch(`${base}/ui/api/app-lock/unlock`, {
+            method: "POST",
+            headers: { "content-type": "application/json", "X-Maobu-Settings": "1" },
+            body: JSON.stringify({ password: "master-pass-123" }),
+        });
+        expect(unlockRes.status).toBe(200);
+        expect((await unlockRes.json() as { status: { locked: boolean } }).status.locked).toBe(false);
+
+        const profilesAfterUnlock = await fetch(`${base}/ui/api/profiles`);
+        expect(profilesAfterUnlock.status).toBe(200);
+    } finally {
+        await server.stopScripts();
+        await server.stop(true);
+        store.close();
+        rmSync(root, { recursive: true, force: true });
+    }
+});

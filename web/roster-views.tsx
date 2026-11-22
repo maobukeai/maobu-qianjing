@@ -42,7 +42,7 @@ export function RosterViews(props: RosterViewsProps) {
     target?.focus({ preventScroll: true });
   }, [locked, editing, managing]);
   const match = props.views.find(view => sameProfileView(view.filters, props.current));
-  const defaultFilters = !props.current.query && props.current.group === "all" && props.current.status === "all";
+  const defaultFilters = !props.current.query && props.current.group === "all" && props.current.status === "all" && !(props.current.tags?.length);
   const selected = match ? `saved:${match.id}` : defaultFilters ? props.current.scope : "custom";
   function closeEditor() { if (operation.current) return; setEditing(false); setError(""); saveButton.current?.focus(); }
   async function run(task: () => Promise<boolean>, success: () => void) {
@@ -59,7 +59,17 @@ export function RosterViews(props: RosterViewsProps) {
     if (!normalized) { setError("Give this view a name."); entry.current?.focus(); return; }
     if (Array.from(normalized).length > 40 || /[\x00-\x1f\x7f]/.test(normalized)) { setError("View names must contain 1–40 characters."); entry.current?.focus(); return; }
     if (props.views.some(view => view.name.toLowerCase() === normalized.toLowerCase())) { setError("A saved view already uses this name."); entry.current?.focus(); return; }
-    const view: SavedProfileView = { id: `view_${crypto.randomUUID().replaceAll("-", "")}`, name: normalized, filters: { ...props.current, sort: { ...props.current.sort }, hiddenColumns: [...props.current.hiddenColumns] } };
+    const nextFilters: ProfileViewFilters = {
+      scope: props.current.scope,
+      query: props.current.query,
+      group: props.current.group,
+      status: props.current.status,
+      ...(props.current.tags?.length ? { tags: [...props.current.tags], tagMode: props.current.tagMode ?? "any" } : {}),
+      sort: { ...props.current.sort },
+      hiddenColumns: [...props.current.hiddenColumns],
+      pageSize: props.current.pageSize,
+    };
+    const view: SavedProfileView = { id: `view_${crypto.randomUUID().replaceAll("-", "")}`, name: normalized, filters: nextFilters };
     void run(() => props.onSave(view), () => { setEditing(false); setName(""); setRemoved(null); setNotice("View saved in this workspace."); returnFocus.current = saveButton.current; });
   }
   return <section className="roster-views" aria-label={t("Environment views")} aria-busy={locked}>

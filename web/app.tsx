@@ -10,6 +10,8 @@ import { profileTagsUpdate } from "../profile-tags.ts";
 import { FAVORITE_PROFILES_KEY, SAVED_PROFILE_VIEWS_KEY, parseFavoriteProfiles, parseSavedProfileViews, serializeFavoriteProfiles, serializeSavedProfileViews, type RosterScope, type SavedProfileView } from "../profile-view-state.ts";
 import { AboutPopover } from "./about-popover.tsx";
 import { assignExtensionBulk, closeProfile, convertMobileProfile, createGroup, deleteGroup, deleteProfiles, exportProfiles, fetchAppMode, fetchDiagnose, fetchDiskSpace, fetchExtensions, fetchGroupExtensionDefaults, fetchHealth, fetchLogs, fetchRuntimeDownloads, fetchTotp, installWebStoreExtension, isUnauthorizedError, moveGroup, openProfile, previewGroupExtensionDefaults, removeExtension, renameGroup, restartProfile, setGroupExtensionDefaults, setStandaloneSessionToken, subscribeUnauthorized, updateProfile, uploadExtensions, type AppModeConfig, type DiagnoseReport, type DiskSpace, type ExportFormat, type ExportProgress, type Extension, type GroupExtensionDefaults, type RuntimeDownload, type UiProfile } from "./api.ts";
+import { useAppLockController } from "./app-lock-api.ts";
+import { AppLockScreen } from "./app-lock-screen.tsx";
 import { backgroundScriptRuns, useBackgroundScriptRun } from "./background-script-run.tsx";
 import { BulkProfileTaskPanel } from "./bulk-profile-task-panel.tsx";
 import { createBulkProfileTask, type BulkProfileAction, type BulkProfileTask, type BulkProfileTaskSnapshot } from "./bulk-profile-task.ts";
@@ -46,10 +48,14 @@ import { ImportReceiptPanel } from "./import-receipt.tsx";
 import { LocalAssistantPage, type AssistantDraftSuggestion } from "./local-assistant.tsx";
 import type { LocalProxyAssignmentIntent } from "./local-proxy-assignment-draft.tsx";
 import { useNavigationMotion } from "./navigation-motion.ts";
+import { ONBOARDING_STATE_KEY, OnboardingChecklist, parseOnboardingState, type OnboardingChecklistState } from "./onboarding-checklist.tsx";
 import { ProfileFileUpdateDialog, ProfileFileUpdatePanel, useProfileFileUpdate } from "./profile-file-update-panel.tsx";
 import { ProfileMoveFeedback, useProfileMove, type ProfileMoveResult } from "./profile-move.tsx";
+import { isMqProfileFile } from "./profile-package-api.ts";
+import { ProfilePackageExportModal, ProfilePackageImportModal, useMqProfileDrop } from "./profile-package-modals.tsx";
 import { changeProfileRangeSelection, reconcileProfileSelectionAnchor, type ProfileSelectionAnchor } from "./profile-range-selection.ts";
 import { ProfileTagsDialog, type ProfileTagsTarget } from "./profile-tags.tsx";
+import { TagFilterBar, type TagFilterMode } from "./tag-filter-bar.tsx";
 import { ProxiesPage, type ProxyPageTask } from "./proxies.tsx";
 import { ProfileResourceChip, ResourceDashboardDrawer, ResourceTopCapsule } from "./resource-dashboard.tsx";
 import { formatMemoryBytes, hibernateProfile as hibernateProfileApi, trimProfileMemory as trimProfileMemoryApi, useResourceMonitor, watermarkConcurrency } from "./resource-monitor-api.ts";
@@ -107,9 +113,17 @@ let preferenceRevision = 0;
 function readFavorites(): string[] { try { return parseFavoriteProfiles(localStorage.getItem(FAVORITE_PROFILES_KEY)) ?? []; } catch { return []; } }
 function readSavedViews(): SavedProfileView[] { try { return parseSavedProfileViews(localStorage.getItem(SAVED_PROFILE_VIEWS_KEY)) ?? []; } catch { return []; } }
 function readRosterDensity(): RosterDensity { try { return parseRosterDensity(localStorage.getItem(ROSTER_DENSITY_KEY)); } catch { return "comfortable"; } }
+function readOnboardingState(): OnboardingChecklistState | null {
+  try {
+    const raw = localStorage.getItem(ONBOARDING_STATE_KEY);
+    return raw === "open" || raw === "collapsed" || raw === "dismissed" ? raw : null;
+  } catch {
+    return null;
+  }
+}
 function writeSetting(key: string, value: string): void {
   try { localStorage.setItem(key, value); } catch { /* private mode / disabled storage */ }
-  if ([HIDDEN_COLUMNS_KEY, PAGE_SIZE_KEY, SIDEBAR_KEY, GROUP_DISCLOSURE_KEY].includes(key)) {
+  if ([HIDDEN_COLUMNS_KEY, PAGE_SIZE_KEY, SIDEBAR_KEY, GROUP_DISCLOSURE_KEY, ONBOARDING_STATE_KEY].includes(key)) {
     preferenceRevision++; void saveWorkspacePreference(key, value).catch((error) => window.dispatchEvent(new CustomEvent("workspace-preference-error", { detail: error instanceof Error ? error.message : String(error) })));
   }
 }
@@ -141,11 +155,13 @@ function App() {
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set()), [folderMenu, setFolderMenu] = useState<string | null>(null), [folderMenuPosition, setFolderMenuPosition] = useState({ left: 0, top: 0 });
   const [newFolderParent, setNewFolderParent] = useState<string | null>(null), [movingFolder, setMovingFolder] = useState<string | null>(null), [folderParent, setFolderParent] = useState(""), [folderMoveBusy, setFolderMoveBusy] = useState(false), [folderMoveErr, setFolderMoveErr] = useState<string | null>(null);
   const [appMode, setAppMode] = useState<AppModeConfig | null>(null), [appModeErr, setAppModeErr] = useState<string | null>(null), [authRequired, setAuthRequired] = useState(false), [authTokenInput, setAuthTokenInput] = useState(""), [authTokenErr, setAuthTokenErr] = useState<string | null>(null);
+  const appLock = useAppLockController({ enabled: appMode?.appLockAvailable === true });
+  const appUnlocked = !!appMode && (appMode.appLockAvailable !== true || (appLock.status !== null && !appLock.status.locked));
   const [runtimeDownloads, setRuntimeDownloads] = useState<RuntimeDownload[]>([]), [runtimeDownloadsStale, setRuntimeDownloadsStale] = useState(false);
   const runtimeTransfersObserved = useRef(false), initialDownloadsFetched = useRef(false);
   const bulkOwnerActive = useRef(true);
   const { loaded, connErr, connectionAlertDismissed, dismissConnectionAlert, retryConnection, refreshing, setRefreshing, load, readFreshRoster, lastRosterResult, transport } = useRosterEvents({
-    enabled: !!appMode, sseEnabled: appMode?.eventsStream === true, intervalMs: REFRESH_MS, bulkOwnerActiveRef: bulkOwnerActive,
+    enabled: appUnlocked, sseEnabled: appMode?.eventsStream === true, intervalMs: REFRESH_MS, bulkOwnerActiveRef: bulkOwnerActive,
     onRoster: (roster) => { setProfiles(roster.profiles); setRegisteredGroups(roster.groups); setLocalFolders(roster.folders ?? []); },
     onLifecyclePatch: (ev) => {
       setProfiles((current) => {
@@ -228,6 +244,14 @@ function App() {
   const [logDir, setLogDir] = useState<string | undefined>(undefined), [diskSpace, setDiskSpace] = useState<DiskSpace | null>(null), [diskWarningDismissed, setDiskWarningDismissed] = useState(false);
   const [logView, setLogView] = useState<{ file: string; content: string } | null>(null), [logErr, setLogErr] = useState<string | null>(null), [diag, setDiag] = useState<DiagnoseReport | null>(null), [showDiag, setShowDiag] = useState(false);
   const [q, setQ] = useState(""), [profileStatus, setProfileStatus] = useState<"all" | "running" | "stopped">("all"), [group, setGroup] = useState("all"), [profilePage, setProfilePage] = useState(0), [pageSize, setPageSize] = useState(readPageSize);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]), [tagMode, setTagMode] = useState<TagFilterMode>("any"), [locatedProfileIds, setLocatedProfileIds] = useState<string[] | null>(null);
+  const [explicitOnboardingState, setExplicitOnboardingState] = useState<OnboardingChecklistState | null>(readOnboardingState), [diagnosticsRun, setDiagnosticsRun] = useState(false);
+  const onboardingState: OnboardingChecklistState = explicitOnboardingState ?? (profiles.some((p) => p.running || (p.lastOpenAt ?? 0) > 0) ? "collapsed" : "open");
+  const updateOnboardingState = useCallback((next: OnboardingChecklistState) => { setExplicitOnboardingState(next); writeSetting(ONBOARDING_STATE_KEY, next); }, []);
+  const [packageExportOpen, setPackageExportOpen] = useState(false), [packageImportOpen, setPackageImportOpen] = useState(false), [packageImportFile, setPackageImportFile] = useState<File | null>(null);
+  const openPackageImport = useCallback((file?: File | null) => { setPackageImportFile(file ?? null); setPackageImportOpen(true); }, []);
+  useEffect(() => { setLocatedProfileIds(null); setSelectedTags([]); setTagMode("any"); }, [currentWorkspaceId]);
+  useMqProfileDrop((file) => { if (!readWorkbenchShortcutContext(document.activeElement).modalOpen) openPackageImport(file); }, appUnlocked);
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "no", dir: 1 });
   const [hiddenCols, setHiddenCols] = useState<Set<ColumnKey>>(readHiddenColumns), [rosterScope, setRosterScope] = useState<RosterScope>("all");
   const [favoriteProfiles, setFavoriteProfiles] = useState<string[]>(readFavorites), [savedProfileViews, setSavedProfileViews] = useState<SavedProfileView[]>(readSavedViews), [rosterDensity, setRosterDensity] = useState<RosterDensity>(readRosterDensity);
@@ -319,6 +343,7 @@ function App() {
       if (rawPageSize !== undefined && rawPageSize.trim() !== "" && PAGE_SIZES.includes(Number(rawPageSize))) setPageSize(Number(rawPageSize));
       if (!preserveSidebarChoice && preferences[SIDEBAR_KEY] !== undefined) setSidebarCollapsed(preferences[SIDEBAR_KEY] === "1");
       setGroupDisclosure(readGroupDisclosure(preferences[GROUP_DISCLOSURE_KEY]));
+      if (preferences[ONBOARDING_STATE_KEY] !== undefined) setExplicitOnboardingState(parseOnboardingState(preferences[ONBOARDING_STATE_KEY], "open"));
     }).catch((error) => { if (ownsWorkspace()) setViewPreferenceReadError(error instanceof Error ? error.message : String(error)); })
       .finally(() => { if (ownsWorkspace()) setViewPreferencesLoading(false); });
     return () => { alive = false; };
@@ -348,10 +373,11 @@ function App() {
   const chooseRosterDensity = async (density: RosterDensity) => { if (density !== rosterDensity && await writeViewPreference(ROSTER_DENSITY_KEY, density)) setRosterDensity(density); };
   const saveProfileView = async (savedView: SavedProfileView): Promise<boolean> => { const next = [...savedProfileViews, savedView]; if (!await writeViewPreference(SAVED_PROFILE_VIEWS_KEY, serializeSavedProfileViews(next))) return false; setSavedProfileViews(next); return true; };
   const removeProfileView = async (id: string): Promise<boolean> => { const next = savedProfileViews.filter((savedView) => savedView.id !== id); if (!await writeViewPreference(SAVED_PROFILE_VIEWS_KEY, serializeSavedProfileViews(next))) return false; setSavedProfileViews(next); return true; };
-  const chooseRosterScope = (scope: RosterScope) => { setRosterScope(scope); setQ(""); setGroup("all"); setProfileStatus("all"); setProfilePage(0); };
+  const chooseRosterScope = (scope: RosterScope) => { setRosterScope(scope); setQ(""); setGroup("all"); setProfileStatus("all"); setSelectedTags([]); setTagMode("any"); setLocatedProfileIds(null); setProfilePage(0); };
   const applyProfileView = (saved: SavedProfileView) => {
     const filters = saved.filters;
     setRosterScope(filters.scope); setQ(filters.query); setGroup(filters.group); setProfileStatus(filters.status);
+    setSelectedTags(filters.tags ? [...filters.tags] : []); setTagMode(filters.tagMode ?? "any"); setLocatedProfileIds(null);
     setSort(filters.sort); setHiddenCols(new Set(filters.hiddenColumns)); setPageSize(filters.pageSize); setProfilePage(0);
     writeSetting(HIDDEN_COLUMNS_KEY, JSON.stringify(filters.hiddenColumns)); writeSetting(PAGE_SIZE_KEY, String(filters.pageSize));
   };
@@ -388,9 +414,9 @@ function App() {
   const { profilesById, runningCount, selectedMobileCount, selectedProfilesSupportChromeExtensions } = useProfileMetrics(profiles, selected);
   const [resourceDrawerOpen, setResourceDrawerOpen] = useState(false), [windowSyncOpen, setWindowSyncOpen] = useState(false);
   const [proxyTabRequest, setProxyTabRequest] = useState<{ task: ProxyPageTask; seq: number } | null>(null);
-  const resourceMonitor = useResourceMonitor({ enabled: !!appMode, runningCount, panelOpen: resourceDrawerOpen, eventsStream: appMode?.eventsStream === true });
+  const resourceMonitor = useResourceMonitor({ enabled: appUnlocked, runningCount, panelOpen: resourceDrawerOpen, eventsStream: appMode?.eventsStream === true });
   const latestMetricsRef = useRef(resourceMonitor.snapshot); latestMetricsRef.current = resourceMonitor.snapshot;
-  const { syncState, setSyncState } = useWindowSyncState(!!appMode);
+  const { syncState, setSyncState } = useWindowSyncState(appUnlocked);
   const renderResourceChips = useCallback((profile: UiProfile) => {
     const metrics = profile.running ? resourceMonitor.byProfileId.get(profile.id) : undefined;
     const hibernated = !profile.running && resourceMonitor.hibernatedIds.has(profile.id);
@@ -420,7 +446,7 @@ function App() {
     onLoadRoster: load, onRefreshImportedProfiles: refreshImportedProfiles, onActionError: setActionErr, onFlash: flash, onOpenProfilesView: () => setView("profiles"), t,
   });
   const reuseCanOpen = view === "profiles" && !createModal.showCreate && !editModal.editId && !importModal.showBulk && !showUpdate && !cookieTargets && !importModal.pendingView
-    && !movingFolder && !logView && !logErr && !scriptRunOpen && !commandOpen && !shortcutHelpOpen && !tagsTarget && !showDiag && !resourceDrawerOpen && !windowSyncOpen;
+    && !movingFolder && !logView && !logErr && !scriptRunOpen && !commandOpen && !shortcutHelpOpen && !tagsTarget && !showDiag && !resourceDrawerOpen && !windowSyncOpen && !packageExportOpen && !packageImportOpen;
   useSyncReuseCanOpen(createModal, reuseCanOpen);
 
   useWindowBackdrop(theme);
@@ -437,6 +463,8 @@ function App() {
   const escapeHandlerRef = useRef<() => void>(() => {});
   escapeHandlerRef.current = () => {
     if (isConfirmOpen) return;
+    if (packageExportOpen) { setPackageExportOpen(false); return; }
+    if (packageImportOpen) { setPackageImportOpen(false); setPackageImportFile(null); return; }
     if (windowSyncOpen) { setWindowSyncOpen(false); return; }
     if (resourceDrawerOpen) { setResourceDrawerOpen(false); return; }
     if (movingFolder) { if (!folderMoveBusy) setMovingFolder(null); return; }
@@ -461,7 +489,7 @@ function App() {
     requestAnimationFrame(() => { const row = [...document.querySelectorAll<HTMLTableRowElement>("tr[data-profile-id]")].find((item) => item.dataset.profileId === inspectionId); (row?.querySelector<HTMLButtonElement>(".profile-menu-trigger") ?? document.getElementById("profiles-page-title"))?.focus({ preventScroll: true }); });
   };
   const openWorkspaceManagement = (intent: WorkspacePageIntent) => { setWorkspacePageRequest((current) => ({ ...intent, id: current.id + 1 })); setView("workspaces"); };
-  const showRunningProfiles = () => { setRosterScope("all"); setQ(""); setGroup("all"); setSelected(new Set()); setProfilePage(0); setProfileStatus("running"); setView("profiles"); };
+  const showRunningProfiles = () => { setRosterScope("all"); setQ(""); setGroup("all"); setSelectedTags([]); setTagMode("any"); setLocatedProfileIds(null); setSelected(new Set()); setProfilePage(0); setProfileStatus("running"); setView("profiles"); };
 
   const loadAppMode = useCallback(() => {
     fetchAppMode().then((config) => { setAuthRequired(false); setAuthTokenErr(null); setAppModeErr(null); setAppMode({ ...config, mode: "local", localAnalytics: false }); })
@@ -471,17 +499,17 @@ function App() {
   useEffect(() => subscribeUnauthorized(() => { setAuthRequired(true); }), []);
   useEffect(() => { const invoke = desktopInvoke(); if (!appMode || !invoke) return; void invoke("agent_runtime_ready", { readiness: "local" }).catch(() => undefined); }, [appMode]);
   useEffect(() => {
-    if (!appMode) return; load();
+    if (!appUnlocked) return; load();
     fetchHealth().then((health) => { setAppVersion(health.version); setLogDir(health.logDir); }).catch((error) => console.warn("[health]", error));
     fetchDiagnose().then(setDiag).catch((error) => console.warn("[diagnose]", error));
-  }, [appMode]);
+  }, [appUnlocked]);
   useEffect(() => {
-    if (!appMode || !extensionWorkspaceId) return;
+    if (!appUnlocked || !extensionWorkspaceId) return;
     const generation = ++extensionReadVersion.current;
     void fetchExtensions().then((items) => { if (generation === extensionReadVersion.current && extensionWorkspace.current === extensionWorkspaceId) setExtensions(items); }).catch((error) => console.warn("[extensions]", error));
-  }, [appMode, extensionWorkspaceId]);
+  }, [appUnlocked, extensionWorkspaceId]);
   useEffect(() => {
-    if (view !== "extensions" || !appMode || !extensionWorkspaceId) return;
+    if (view !== "extensions" || !appUnlocked || !extensionWorkspaceId) return;
     let alive = true; const generation = ++extensionReadVersion.current;
     setExtLoading(true); markExtensionFresh(false);
     void Promise.allSettled([fetchExtensions(), fetchGroupExtensionDefaults(), readFreshRoster()]).then((results) => {
@@ -492,10 +520,12 @@ function App() {
       markExtensionFresh(!failed); setExtErr(failed ? t("The latest extension data could not be loaded. Your draft is kept. Reload before applying changes.") : null);
     }).finally(() => { if (alive && generation === extensionReadVersion.current) setExtLoading(false); });
     return () => { alive = false; if (generation === extensionReadVersion.current) extensionReadVersion.current++; setExtLoading(false); };
-  }, [view, appMode, extensionPageRefresh, extensionWorkspaceId]);
+  }, [view, appUnlocked, extensionPageRefresh, extensionWorkspaceId]);
+  const appLockedRef = useRef(false);
+  appLockedRef.current = appMode?.appLockAvailable === true && appLock.status?.locked === true;
   useEffect(() => {
     let live = true, lastCheckedAt = 0;
-    const runCheck = () => { lastCheckedAt = Date.now(); void fetchDiskSpace().then((next) => { if (live) setDiskSpace(next); }).catch((error) => console.warn("[disk-space]", error)); };
+    const runCheck = () => { if (appLockedRef.current) return; lastCheckedAt = Date.now(); void fetchDiskSpace().then((next) => { if (live) setDiskSpace(next); }).catch((error) => console.warn("[disk-space]", error)); };
     const check = () => { if (typeof document !== "undefined" && document.hidden) return; runCheck(); };
     const onVisibility = () => { if (typeof document !== "undefined" && !document.hidden && Date.now() - lastCheckedAt >= 60_000) runCheck(); };
     check(); const timer = setInterval(check, 60_000);
@@ -505,9 +535,11 @@ function App() {
 
   const anyBusy = Object.values(busy).some(Boolean);
   useEffect(() => {
+    if (appMode?.appLockAvailable === true && appLock.status?.locked === true) return;
     if (transport === "sse" && initialDownloadsFetched.current) return;
     let live = true, timer: number | undefined, failures = 0;
     const poll = () => {
+      if (appLockedRef.current) return;
       void fetchRuntimeDownloads().then((next) => {
         if (!live) return;
         initialDownloadsFetched.current = true;
@@ -520,24 +552,25 @@ function App() {
       });
     };
     poll(); return () => { live = false; window.clearTimeout(timer); };
-  }, [anyBusy, profiles.length, transport]);
+  }, [anyBusy, profiles.length, transport, appMode?.appLockAvailable, appLock.status?.locked]);
 
   const {
     deferredQ, folders, tree, folderLabels, groups, existingGroups, missingRosterGroup, hasRosterRefinements,
     breadcrumb, numbering, matchingProfiles, matchingRunningCount, filtered, profilePageCount, visibleProfilePage,
     revealGroupMatches, selectableProfiles, rangeVisibleIds, flatItems, rosterViewCounts, folderCounts,
-  } = useRosterQuery({ profiles, registeredGroups, localFolders, loaded, q, group, profileStatus, sort, pageSize, profilePage, rosterScope, favoriteProfileIds, groupDisclosure, launchFailures });
-  const clearRosterRefinements = () => { setQ(""); setGroup("all"); setProfileStatus("all"); setProfilePage(0); };
+  } = useRosterQuery({ profiles, registeredGroups, localFolders, loaded, q, group, profileStatus, sort, pageSize, profilePage, rosterScope, favoriteProfileIds, groupDisclosure, launchFailures, selectedTags, tagMode, locatedProfileIds });
+  const clearRosterRefinements = () => { setQ(""); setGroup("all"); setProfileStatus("all"); setSelectedTags([]); setTagMode("any"); setLocatedProfileIds(null); setProfilePage(0); };
   const selectFolder = (name: string) => { setGroup(name); setView("profiles"); }, folderLabel = (name: string) => folderLabels.get(name) ?? name, countFor = (g: string) => folderCounts.get(g) ?? 0;
-  const previousProfileFilters = useRef({ q, group, pageSize, profileStatus });
+  const selectedTagsKey = selectedTags.join("\0"), locatedIdsKey = locatedProfileIds?.join("\0") ?? "";
+  const previousProfileFilters = useRef({ q, group, pageSize, profileStatus, selectedTagsKey, tagMode, locatedIdsKey });
   useEffect(() => {
     const previous = previousProfileFilters.current;
-    const filtersChanged = previous.q !== q || previous.group !== group || previous.pageSize !== pageSize || previous.profileStatus !== profileStatus;
-    previousProfileFilters.current = { q, group, pageSize, profileStatus };
+    const filtersChanged = previous.q !== q || previous.group !== group || previous.pageSize !== pageSize || previous.profileStatus !== profileStatus || previous.selectedTagsKey !== selectedTagsKey || previous.tagMode !== tagMode || previous.locatedIdsKey !== locatedIdsKey;
+    previousProfileFilters.current = { q, group, pageSize, profileStatus, selectedTagsKey, tagMode, locatedIdsKey };
     const nextPage = filtersChanged ? 0 : visibleProfilePage; if (profilePage !== nextPage) setProfilePage(nextPage);
-  }, [q, group, pageSize, profileStatus, profilePage, visibleProfilePage]);
+  }, [q, group, pageSize, profileStatus, selectedTagsKey, tagMode, locatedIdsKey, profilePage, visibleProfilePage]);
 
-  const rangeViewKey = JSON.stringify([catalog?.currentId ?? "", view, rosterScope, deferredQ, group, profileStatus, sort.key, sort.dir, visibleProfilePage, pageSize]);
+  const rangeViewKey = JSON.stringify([catalog?.currentId ?? "", view, rosterScope, deferredQ, group, profileStatus, selectedTagsKey, tagMode, locatedIdsKey, sort.key, sort.dir, visibleProfilePage, pageSize]);
   rangeSelectionAnchor.current = reconcileProfileSelectionAnchor(rangeSelectionAnchor.current, rangeViewKey, rangeVisibleIds);
   const folderMenuRef = useDismiss<HTMLSpanElement>(folderMenu !== null, () => setFolderMenu(null)), colsRef = useDismiss<HTMLDivElement>(colsOpen, () => setColsOpen(false));
   const groupManagerRef = useDismiss<HTMLDivElement>(groupManagerOpen, () => { setGroupManagerOpen(false); setFolderMenu(null); }), exportRef = useDismiss<HTMLDivElement>(exportOpen, () => setExportOpen(false));
@@ -887,6 +920,20 @@ function App() {
     openNetworkSettings: () => rowHandlersRef.current!.openNetworkSettings(), openLogs: () => rowHandlersRef.current!.openLogs(),
     trimMemory: (id) => rowHandlersRef.current!.trimMemory!(id), hibernateProfile: (id) => rowHandlersRef.current!.hibernateProfile!(id),
   }), []);
+  const handleInlineNameSaved = useCallback((id: string, nextName: string) => {
+    setProfiles((current) => current.map((item) => (item.id === id ? { ...item, name: nextName } : item)));
+    void load();
+  }, [load]);
+  const handleQuickNotesSaved = useCallback((id: string, nextNotes: string) => {
+    setProfiles((current) => current.map((item) => (item.id === id ? { ...item, notes: nextNotes } : item)));
+    void load();
+  }, [load]);
+  const handleDetailsSaveNotes = useCallback(async (id: string, nextNotes: string) => {
+    const res = await updateProfile(id, { notes: nextNotes });
+    if (res?.ok !== true) throw new Error(res?.error || t("Could not save notes."));
+    setProfiles((current) => current.map((item) => (item.id === id ? { ...item, notes: nextNotes } : item)));
+    await load();
+  }, [load, t]);
 
   const submitStandaloneAuthToken = (event: React.FormEvent) => {
     event.preventDefault();
@@ -943,6 +990,16 @@ function App() {
   const locateProfile = (id: string) => {
     chooseRosterScope("all"); setGroup("all"); setProfileStatus("all"); setQ(`id:${id}`); setProfilePage(0); setView("profiles");
     requestAnimationFrame(() => { const row = [...document.querySelectorAll<HTMLTableRowElement>("tr[data-profile-id]")].find((item) => item.dataset.profileId === id); (row?.querySelector<HTMLButtonElement>(".profile-menu-trigger") ?? document.getElementById("profiles-page-title"))?.focus({ preventScroll: true }); });
+  };
+  const locateProfilesFromAssistant = (profileIds: string[]) => {
+    const uniqueIds = [...new Set(profileIds.filter((id) => typeof id === "string" && id.trim().length > 0))];
+    if (uniqueIds.length === 1) {
+      locateProfile(uniqueIds[0]!);
+      return;
+    }
+    chooseRosterScope("all"); setGroup("all"); setProfileStatus("all"); setSelectedTags([]); setTagMode("any"); setQ("");
+    setLocatedProfileIds(uniqueIds.length > 0 ? uniqueIds : null);
+    setProfilePage(0); setView("profiles");
   };
   const activateSavedViewFromPalette = (id: string) => {
     if (!viewPreferencesReady || viewPreferenceWrite.current || workspaceCoordinator.getSnapshot().workspaceId !== currentWorkspaceId) return;
@@ -1018,6 +1075,7 @@ function App() {
     { id: "profiles", label: "Profiles", keywords: ["环境", "列表", "roster"], run: () => setView("profiles") },
     { id: "new-profile", label: "New Profile", keywords: ["创建", "新建", "create"], run: createModal.openCreate },
     { id: "import", label: "Import profiles", keywords: ["导入", "adspower", "csv", "xlsx"], run: importModal.openBulk },
+    { id: "import-package", label: "Import encrypted profile package (.mqprofile)", keywords: ["导入", "加密包", "mqprofile", "package", "import"], run: () => openPackageImport(null) },
     { id: "search", label: "Search profiles", keywords: ["搜索", "查找", "find"], run: focusProfileSearch },
     { id: "shortcuts", label: "Keyboard shortcuts", keywords: ["快捷键", "键盘", "帮助", "keyboard", "help"], run: () => setShortcutHelpOpen(true) },
     { id: "refresh", label: "Refresh profiles", keywords: ["刷新", "reload"], disabled: refreshing, run: () => { void refreshRoster(); } },
@@ -1030,11 +1088,21 @@ function App() {
     { id: "extensions", label: "Manage extensions", keywords: ["扩展", "插件", "extension"], run: openExtensions },
     { id: "workspaces", label: "Workspace management", keywords: ["工作区", "备份", "backup"], run: () => openWorkspaceManagement({ mode: "manage" }) },
     { id: "trash", label: "Trash", keywords: ["回收站", "恢复", "restore"], run: () => setView("trash") },
+    ...(appMode.appLockAvailable === true && appLock.status?.enabled && !appLock.status.locked
+      ? [{ id: "lock-app", label: "Lock now (Ctrl+Shift+L)", keywords: ["锁屏", "密码锁", "隐私", "lock"], run: () => { void appLock.lockNow(); } }]
+      : []),
     ...SETTINGS_TABS.map((tab) => ({ id: `settings-${tab.key}`, label: tab.key === "account" ? "Settings" : tab.label, keywords: ["设置", "settings"], run: () => openSettingsFromPalette(tab.key) })),
   ];
 
   return (
     <>
+      {appMode.appLockAvailable === true && appLock.status?.locked && (
+        <AppLockScreen
+          status={appLock.status}
+          onUnlocked={(next) => { appLock.setStatus(next); void load(); }}
+          onRefreshStatus={appLock.refresh}
+        />
+      )}
       {confirmDialogNode}
       <CommandPalette commands={paletteCommands} profiles={profiles} favoriteIds={favoriteProfileIds} onLocateProfile={locateProfile}
         savedViews={paletteSavedViews} savedViewsState={viewPreferencesReady ? "ready" : viewPreferenceReadError || workspaceCatalogError ? "unavailable" : "loading"}
@@ -1046,14 +1114,27 @@ function App() {
       <div data-roster-density={rosterDensity} className={`app airy-workbench folded-workbench${windowChrome.enabled ? " desktop-frameless" : ""}${windowChrome.enabled && !windowChrome.focused ? " is-window-unfocused" : ""}`}
         onDragOver={(e) => { if (!Array.from(e.dataTransfer.types).includes("Files") || e.defaultPrevented || readWorkbenchShortcutContext(e.target).modalOpen) return; e.preventDefault(); if (!dragging) setDragging(true); }}
         onDragLeave={(e) => { e.preventDefault(); if (e.currentTarget === e.target) setDragging(false); }}
-        onDrop={(e) => { const handled = e.defaultPrevented || readWorkbenchShortcutContext(e.target).modalOpen; e.preventDefault(); setDragging(false); if (!handled && e.dataTransfer.files?.length) void importModal.doUpload(e.dataTransfer.files); }}>
-        {dragging && <div className="dropzone"><Icon name="fileImport" /><span>{t("Drop TXT, CSV, JSON, or XLSX profile exports to import")}</span></div>}
+        onDrop={(e) => {
+          const handled = e.defaultPrevented || readWorkbenchShortcutContext(e.target).modalOpen;
+          e.preventDefault();
+          setDragging(false);
+          if (!handled && e.dataTransfer.files?.length) {
+            const pkgFile = Array.from(e.dataTransfer.files).find((candidate) => isMqProfileFile(candidate));
+            if (pkgFile) {
+              e.stopPropagation();
+              openPackageImport(pkgFile);
+            } else {
+              void importModal.doUpload(e.dataTransfer.files);
+            }
+          }
+        }}>
+        {dragging && <div className="dropzone"><Icon name="fileImport" /><span>{t("Drop TXT, CSV, JSON, XLSX, or .mqprofile exports to import")}</span></div>}
 
         <WorkbenchSidebar compact={sidebarIsCompact} collapsed={sidebarCollapsed} forced={railForced} view={view} profileCount={profiles.length} extensionCount={extensions.length} loaded={loaded} onToggle={toggleSidebar} onNavigate={setView} onProfiles={() => { chooseRosterScope("all"); selectFolder("all"); }} onExtensions={openExtensions} onSettings={openSettings} navigationRef={navigationMotion.navRef} error={modeErr}
           switcher={<WorkspaceSwitcher variant="rail" compact={sidebarIsCompact} profileCount={profiles.length} runningCount={runningCount} connection={loaded && !connErr} onShowRunning={showRunningProfiles} onOpenManagement={openWorkspaceManagement} onShowBatchTask={showBulkTask} managementActive={view === "workspaces"} />}
           device={<DevicePanel variant="rail" runningCount={runningCount} downloads={runtimeDownloads} downloadStatusUnavailable={runtimeDownloadsStale} connection={loaded && !connErr} connectionLoading={!loaded} version={appVersion ?? ""} theme={theme} chooseTheme={chooseTheme} language={language} setLanguage={setLanguage} onShowRunning={showRunningProfiles} onSettings={(section) => { setSettingsTab(section === "advanced" ? "advanced" : "account"); setView("settings"); }} onViewLogs={() => { setLogErr(null); fetchLogs().then(setLogView).catch((error) => setLogErr(error instanceof Error ? error.message : String(error))); }} onRetryConnection={refreshRoster} />}>
           <RosterNavigation compact={sidebarIsCompact} active={view === "profiles"} group={group} total={profiles.length} ungrouped={countFor("")} groups={tree.map((folder) => ({ name: folder.name, label: folder.label ?? folderLabel(folder.name), depth: folder.depth, count: countFor(folder.name) }))} onGroup={selectFolder}>
-            <RosterViews current={{ scope: rosterScope, query: q, group, status: profileStatus, sort, hiddenColumns: [...hiddenCols], pageSize }} views={viewPreferencesReady ? savedProfileViews : []} counts={rosterViewCounts} ready={viewPreferencesReady} loading={!workspaceCatalogError && viewPreferencesLoading} readError={viewPreferenceReadError || workspaceCatalogError} busy={viewPreferenceBusy} onRetry={() => { if (workspaceCatalogError) void refreshWorkspaceCatalog(); else setPreferenceLoadAttempt((value) => value + 1); }} onScope={chooseRosterScope} onApply={applyProfileView} onSave={saveProfileView} onRemove={removeProfileView} />
+            <RosterViews current={{ scope: rosterScope, query: q, group, status: profileStatus, ...(selectedTags.length > 0 ? { tags: selectedTags, tagMode } : {}), sort, hiddenColumns: [...hiddenCols], pageSize }} views={viewPreferencesReady ? savedProfileViews : []} counts={rosterViewCounts} ready={viewPreferencesReady} loading={!workspaceCatalogError && viewPreferencesLoading} readError={viewPreferenceReadError || workspaceCatalogError} busy={viewPreferenceBusy} onRetry={() => { if (workspaceCatalogError) void refreshWorkspaceCatalog(); else setPreferenceLoadAttempt((value) => value + 1); }} onScope={chooseRosterScope} onApply={applyProfileView} onSave={saveProfileView} onRemove={removeProfileView} />
           </RosterNavigation>
         </WorkbenchSidebar>
 
@@ -1102,7 +1183,7 @@ function App() {
               )}
 
               <ProxiesPage key={`proxies-${currentWorkspaceId ?? "loading"}`} active={view === "proxies"} groups={["", ...groups.slice(1)]} folders={folders} profiles={profiles} loadingProfiles={!loaded} onChanged={refreshImportedProfiles} onTaskSnapshotChange={publishProxyTask} focusTask={view === "proxies" && proxyTaskFocusRequest !== null && proxyTaskFocusRequest.workspaceId === currentWorkspaceId} onTaskFocused={completeProxyTaskFocus} localAssignmentIntent={activeLocalProxyIntent} onDismissLocalAssignmentIntent={dismissLocalProxyAssignment} requestedTask={proxyTabRequest} />
-              <LocalAssistantPage active={view === "assistant"} onOpenMcp={() => { setSettingsTab("integrations"); setView("settings"); }} onOpenModelServices={() => openSettingsFromPalette("models")} draftSuggestion={assistantDraftSuggestion} onDismissDraftSuggestion={(id) => setAssistantDraftSuggestion((current) => (current?.id === id ? null : current))} onReturnToTask={(source) => { if (source.returnKey) { setInspectionId(source.returnKey); setView("inspection"); } }} />
+              <LocalAssistantPage active={view === "assistant"} onOpenMcp={() => { setSettingsTab("integrations"); setView("settings"); }} onOpenModelServices={() => openSettingsFromPalette("models")} draftSuggestion={assistantDraftSuggestion} onDismissDraftSuggestion={(id) => setAssistantDraftSuggestion((current) => (current?.id === id ? null : current))} onReturnToTask={(source) => { if (source.returnKey) { setInspectionId(source.returnKey); setView("inspection"); } }} onLocateProfiles={locateProfilesFromAssistant} />
               <EnvironmentInspectionPage active={view === "inspection"} profile={inspectionId ? profilesById.get(inspectionId) ?? null : null} refreshVersion={fingerprintRefreshVersion} onBack={backFromInspection} onEditProfile={(id, field, trigger) => { if (!editModal.isEditSessionOpen()) editModal.openEdit(id, field, trigger); }} onExplainFingerprint={explainFingerprint} />
               <TrashPage key={`trash-${currentWorkspaceId ?? "loading"}`} active={view === "trash"} onChanged={refreshImportedProfiles} folderTree={folders} onTaskSnapshotChange={(snapshot) => setTrashTaskState({ workspaceId: currentWorkspaceId, snapshot })} />
               <WorkspaceManagementPage key="local-workspaces" active={view === "workspaces"} request={workspacePageRequest} onBack={() => setView("profiles")} onShowRunning={showRunningProfiles} onShowBatchTask={showBulkTask} />
@@ -1117,6 +1198,22 @@ function App() {
                       <button className="btn primary" onClick={createModal.openCreate}><Icon name="plus" className="sm" />{t("New Profile")}</button>
                     </div>
                   </div>
+                  {loaded && onboardingState !== "dismissed" && (
+                    <OnboardingChecklist
+                      profiles={profiles}
+                      appLockEnabled={appLock.status?.enabled === true}
+                      diagnosticsRun={diagnosticsRun}
+                      state={onboardingState}
+                      onStateChange={updateOnboardingState}
+                      onCreateProfile={createModal.openCreate}
+                      onImportProfiles={importModal.openBulk}
+                      onOpenProxies={() => setView("proxies")}
+                      onLaunchFirstProfile={(id) => void act(id, openProfile)}
+                      onOpenDiagnostics={() => { setSettingsTab("advanced"); setView("settings"); }}
+                      onOpenAppLock={() => { setSettingsTab("account"); setView("settings"); }}
+                      onOpenScripts={() => setView("scripts")}
+                    />
+                  )}
                   {!!breadcrumb?.ancestors.length && <nav className="folder-breadcrumb" aria-label={t("Folder path")}><button className="btn ghost xs" onClick={() => selectFolder("all")}>{t("All profiles")}</button>{breadcrumb.ancestors.map((name) => <span key={name}> / <button className="btn ghost xs" onClick={() => selectFolder(name)}>{folderLabel(name)}</button></span>)}<span aria-current="location"> / {folderLabel(group)}</span></nav>}
                   <div className="profile-filter-row">
                     <div className="searchfield heading-search"><Icon name="search" className="sm" /><input className="input search" placeholder={t("Search name, No., tag or proxy…")} aria-label={t("Search profiles")} value={q} onChange={(e) => setQ(e.target.value)} />{q && <button type="button" className="clear" aria-label={t("Clear search")} onClick={() => setQ("")}><Icon name="close" className="sm" /></button>}</div>
@@ -1131,6 +1228,7 @@ function App() {
                       <button type="button" className={profileStatus === "running" ? "active" : ""} aria-pressed={profileStatus === "running"} onClick={() => setProfileStatus("running")}>{t("Running")}<span>{matchingRunningCount}</span></button>
                       <button type="button" className={profileStatus === "stopped" ? "active" : ""} aria-pressed={profileStatus === "stopped"} onClick={() => setProfileStatus("stopped")}>{t("Stopped")}<span>{matchingProfiles.length - matchingRunningCount}</span></button>
                     </div></div>
+                    <TagFilterBar profiles={profiles} selectedTags={selectedTags} tagMode={tagMode} onChangeTags={setSelectedTags} onChangeTagMode={setTagMode} />
                     <div className="profile-view-tools">
                       <div className="headactions">
                         <button type="button" className="iconbtn tip" data-tip={t("Refresh")} aria-label={t("Refresh profiles")} disabled={refreshing} onClick={() => void refreshRoster()}><Icon name="refresh" /></button>
@@ -1150,6 +1248,13 @@ function App() {
                       </div>
                     </div>
                   </div>
+                  {locatedProfileIds && locatedProfileIds.length > 0 && (
+                    <div className="notice" role="status">
+                      <Icon name="search" className="sm" />
+                      <span>{t("Filtered to {count} environment(s) from AI Copilot.", { count: locatedProfileIds.length })}</span>
+                      <button type="button" className="btn xs ghost" onClick={() => setLocatedProfileIds(null)}>{t("Clear filters")}</button>
+                    </div>
+                  )}
 
                   {runtimeDownloads.length > 0 && (runtimeDownloadsStale ? <div className="update-progress" role="status">{t("Download status temporarily unavailable")}</div> : <RuntimeDownloadProgressView downloads={runtimeDownloads} />)}
                   {importModal.importBusy && <div className="import-task-indicator" role="status"><Icon name="refresh" className="sm" /><span>{t("Importing environments…")}</span></div>}
@@ -1165,7 +1270,7 @@ function App() {
                   )}
                   {bulkTaskSnapshot && <BulkProfileTaskPanel snapshot={bulkTaskSnapshot} expanded={bulkTaskExpanded} refreshing={bulkTaskRefreshing} onExpandedChange={setBulkTaskExpanded} onStopPending={() => bulkTaskRef.current?.stopPending()} onRetryFailed={retryBulkFailures} onDismiss={dismissBulkTask} />}
 
-                  <ProfileRosterTable loaded={loaded} profilesCount={profiles.length} filteredCount={filtered.length} flatItems={flatItems} selectableProfilesCount={selectableProfiles.length} numbering={numbering} rosterScope={rosterScope} rosterDensity={rosterDensity} missingRosterGroup={missingRosterGroup} hasRosterRefinements={hasRosterRefinements} revealGroupMatches={revealGroupMatches} sort={sort} hiddenCols={hiddenCols} shownColumns={shownColumns} visibleColumnCount={visibleColumnCount} tableMinWidth={tableMinWidth} tableScrolled={tableScrolled} onTableScrolledChange={setTableScrolled} selected={selected} allVisibleSelected={allVisibleSelected} busy={busy} favoriteProfileIds={favoriteProfileIds} reuseLoadingId={createModal.reuseRequest?.status === "loading" ? createModal.reuseRequest.id : null} twoFaFlashId={twoFaFlash?.id ?? null} viewPreferencesReady={viewPreferencesReady} viewPreferenceBusy={viewPreferenceBusy} language={language} rangeKeyboardActivation={rangeKeyboardActivation} profilePageCount={profilePageCount} visibleProfilePage={visibleProfilePage} pageSize={pageSize} onPageChange={setProfilePage} onPageSizeChange={applyPageSize} runningCount={runningCount} diag={diag} diagWhen={diagWhen} showDiag={showDiag} onToggleDiag={() => setShowDiag((s) => !s)} hasDetails={!!detailsProfile} detailsPanel={<ProfileDetailsPanel profile={detailsProfile} headingRef={detailsHeading} onClose={closeDetails} onEdit={(id) => editModal.openEdit(id, undefined, detailsTrigger.current ?? undefined)} onInspect={openInspection} />} groupDisclosureKey={groupDisclosureKey} motionAllowed={motion.effective === "full"} renderResourceChips={renderResourceChips} folderLabel={folderLabel} openLabel={openLabel} onToggleSort={toggleSort} onToggleAll={() => { rangeSelectionAnchor.current = null; toggleAll(); }} onToggleProfileGroup={toggleProfileGroup} onToggleGroupSelection={(matches) => { rangeSelectionAnchor.current = null; setSelected((current) => toggleProfileSelection(current, matches)); }} onCreateInGroup={openCreateInGroup} onManageGroup={(name) => { selectFolder(name); setGroupManagerOpen(true); }} onNewSubfolder={(name) => { setNewFolderParent(name || null); setSidebarGroupName(""); setAddingGroup(true); setGroupManagerOpen(true); }} onOpenCreate={createModal.openCreate} onOpenBulk={importModal.openBulk} onSelectAllGroups={() => setGroup("all")} onChooseRosterScope={chooseRosterScope} onClearRosterRefinements={clearRosterRefinements} rowHandlers={stableRowHandlers} t={t} />
+                  <ProfileRosterTable loaded={loaded} profilesCount={profiles.length} filteredCount={filtered.length} flatItems={flatItems} selectableProfilesCount={selectableProfiles.length} numbering={numbering} rosterScope={rosterScope} rosterDensity={rosterDensity} missingRosterGroup={missingRosterGroup} hasRosterRefinements={hasRosterRefinements} revealGroupMatches={revealGroupMatches} sort={sort} hiddenCols={hiddenCols} shownColumns={shownColumns} visibleColumnCount={visibleColumnCount} tableMinWidth={tableMinWidth} tableScrolled={tableScrolled} onTableScrolledChange={setTableScrolled} selected={selected} allVisibleSelected={allVisibleSelected} busy={busy} favoriteProfileIds={favoriteProfileIds} reuseLoadingId={createModal.reuseRequest?.status === "loading" ? createModal.reuseRequest.id : null} twoFaFlashId={twoFaFlash?.id ?? null} viewPreferencesReady={viewPreferencesReady} viewPreferenceBusy={viewPreferenceBusy} language={language} rangeKeyboardActivation={rangeKeyboardActivation} profilePageCount={profilePageCount} visibleProfilePage={visibleProfilePage} pageSize={pageSize} onPageChange={setProfilePage} onPageSizeChange={applyPageSize} runningCount={runningCount} diag={diag} diagWhen={diagWhen} showDiag={showDiag} onToggleDiag={() => setShowDiag((s) => !s)} hasDetails={!!detailsProfile} detailsPanel={<ProfileDetailsPanel profile={detailsProfile} headingRef={detailsHeading} onClose={closeDetails} onEdit={(id) => editModal.openEdit(id, undefined, detailsTrigger.current ?? undefined)} onInspect={openInspection} onSaveNotes={handleDetailsSaveNotes} onOpenLogs={stableRowHandlers.openLogs} onRetryLaunch={(id) => void act(id, openProfile)} onEditProxy={(id) => editModal.openEdit(id, "proxy", detailsTrigger.current ?? undefined)} />} groupDisclosureKey={groupDisclosureKey} motionAllowed={motion.effective === "full"} renderResourceChips={renderResourceChips} onInlineNameSaved={handleInlineNameSaved} onQuickNotesSaved={handleQuickNotesSaved} onInlineEditorError={setActionErr} folderLabel={folderLabel} openLabel={openLabel} onToggleSort={toggleSort} onToggleAll={() => { rangeSelectionAnchor.current = null; toggleAll(); }} onToggleProfileGroup={toggleProfileGroup} onToggleGroupSelection={(matches) => { rangeSelectionAnchor.current = null; setSelected((current) => toggleProfileSelection(current, matches)); }} onCreateInGroup={openCreateInGroup} onManageGroup={(name) => { selectFolder(name); setGroupManagerOpen(true); }} onNewSubfolder={(name) => { setNewFolderParent(name || null); setSidebarGroupName(""); setAddingGroup(true); setGroupManagerOpen(true); }} onOpenCreate={createModal.openCreate} onOpenBulk={importModal.openBulk} onSelectAllGroups={() => setGroup("all")} onChooseRosterScope={chooseRosterScope} onClearRosterRefinements={clearRosterRefinements} rowHandlers={stableRowHandlers} t={t} />
 
                   <ActionDock
                     selectedCount={selected.size}
@@ -1194,6 +1299,7 @@ function App() {
                           <button className="pop-item" onClick={() => exportSelected("csv")}><Icon name="file" className="sm" />{t("Export as CSV (credentials)")}</button>
                           <button className="pop-item" onClick={() => exportSelected("txt")}><Icon name="file" className="sm" />{t("Export as .txt (full profile)")}</button>
                           <button className="pop-item" onClick={() => exportSelected("xlsx")}><Icon name="file" className="sm" />{t("Export as Excel (full profile)")}</button>
+                          <button className="pop-item" onClick={() => { setExportOpen(false); setPackageExportOpen(true); }}><Icon name="lock" className="sm" />{t("Export encrypted profile package (.mqprofile)")}</button>
                         </div>
                       )}
                     </div>
@@ -1227,7 +1333,7 @@ function App() {
 
               {scriptsVisit.current.visited && <ScriptsPage key={currentWorkspaceId} active={view === "scripts"} onViewRun={() => setScriptRunOpen(true)} />}
               {settingsVisited.current && (
-                <SettingsPanel visible={view === "settings"} workspaceId={catalog?.currentId} tabs={SETTINGS_TABS} activeTab={settingsTab} onTabChange={setSettingsTab} updateTabRef={updateTabRef} settingsPanelRef={settingsPanelRef} signedUpdateStartup={signedUpdateStartup} onProfilesImported={refreshImportedProfiles} onLocateSnapshotProfile={locateProfile} onOpenAssistant={() => setView("assistant")} onCreateWithLocalProxy={createModal.beginCreate} runtimeDownloads={runtimeDownloads} runtimeDownloadsStale={runtimeDownloadsStale} onAssignLocalProxy={startLocalProxyAssignment} onResumeLocalProxyAssignment={activeLocalProxyIntent ? () => setView("proxies") : undefined} localProxyAssignmentBlocked={workspaceOperationState.blocked} fingerprintRefreshVersion={fingerprintRefreshVersion} onInspectProfile={openInspection} onEditProfile={(id) => { if (!editModal.isEditSessionOpen()) editModal.openEdit(id); }} onExplainFingerprint={explainFingerprint} currentWorkspaceName={currentName} profileCount={profiles.length} language={language} onLanguageChange={setLanguage} onLanguageError={setActionErr} themes={THEMES} theme={theme} onThemeChange={chooseTheme} rosterDensity={rosterDensity} onRosterDensityChange={chooseRosterDensity} viewPreferencesReady={viewPreferencesReady} viewPreferencesLoading={viewPreferencesLoading} viewPreferenceBusy={viewPreferenceBusy} viewPreferenceReadError={viewPreferenceReadError} onRetryViewPreferences={() => setPreferenceLoadAttempt((value) => value + 1)} motionPreference={motion.preference} onMotionPreferenceChange={motion.setPreference} logErr={logErr} onLogErr={setLogErr} onLogView={setLogView} logDir={logDir} modeErr={modeErr} onDone={() => setView("profiles")} />
+                <SettingsPanel visible={view === "settings"} workspaceId={catalog?.currentId} tabs={SETTINGS_TABS} activeTab={settingsTab} onTabChange={setSettingsTab} updateTabRef={updateTabRef} settingsPanelRef={settingsPanelRef} signedUpdateStartup={signedUpdateStartup} onProfilesImported={refreshImportedProfiles} onLocateSnapshotProfile={locateProfile} onOpenAssistant={() => setView("assistant")} onCreateWithLocalProxy={createModal.beginCreate} runtimeDownloads={runtimeDownloads} runtimeDownloadsStale={runtimeDownloadsStale} onAssignLocalProxy={startLocalProxyAssignment} onResumeLocalProxyAssignment={activeLocalProxyIntent ? () => setView("proxies") : undefined} localProxyAssignmentBlocked={workspaceOperationState.blocked} fingerprintRefreshVersion={fingerprintRefreshVersion} onInspectProfile={openInspection} onEditProfile={(id) => { if (!editModal.isEditSessionOpen()) editModal.openEdit(id); }} onExplainFingerprint={explainFingerprint} currentWorkspaceName={currentName} profileCount={profiles.length} language={language} onLanguageChange={setLanguage} onLanguageError={setActionErr} themes={THEMES} theme={theme} onThemeChange={chooseTheme} rosterDensity={rosterDensity} onRosterDensityChange={chooseRosterDensity} viewPreferencesReady={viewPreferencesReady} viewPreferencesLoading={viewPreferencesLoading} viewPreferenceBusy={viewPreferenceBusy} viewPreferenceReadError={viewPreferenceReadError} onRetryViewPreferences={() => setPreferenceLoadAttempt((value) => value + 1)} motionPreference={motion.preference} onMotionPreferenceChange={motion.setPreference} logErr={logErr} onLogErr={setLogErr} onLogView={setLogView} logDir={logDir} modeErr={modeErr} onDone={() => setView("profiles")} appLockAvailable={appMode.appLockAvailable === true} appLockStatus={appLock.status} onAppLockStatusChange={appLock.setStatus} onboardingState={onboardingState} onReopenOnboarding={() => updateOnboardingState("open")} onDiagnosticsRun={() => setDiagnosticsRun(true)} />
               )}
             </ErrorBoundary>
           </div>
@@ -1240,6 +1346,8 @@ function App() {
         <ProfileCreateModal controller={createModal} appMode={appMode} existingGroups={existingGroups} windowChrome={windowChrome} editorScroll={editorScroll} />
         <ProfileEditModal controller={editModal} existingGroups={existingGroups} windowChrome={windowChrome} editorScroll={editorScroll} onFlash={flash} />
         <ProfileImportModal controller={importModal} existingGroups={existingGroups} />
+        <ProfilePackageExportModal open={packageExportOpen} selectedIds={[...selected]} onClose={() => setPackageExportOpen(false)} onExported={(summary) => flash(t("Exported {count} environments", { count: summary.profileCount }))} />
+        <ProfilePackageImportModal open={packageImportOpen} initialFile={packageImportFile} onClose={() => { setPackageImportOpen(false); setPackageImportFile(null); }} onImported={(result) => { void load(); flash(t("Import {count} environments", { count: result.importedCount + result.clonedCount + result.overwrittenCount })); }} />
         <ProfileFileUpdateDialog open={showUpdate} task={fileUpdate.task} onClose={() => setShowUpdate(false)} selectedCount={selected.size} onExport={exportSelected} onDownloadTemplate={() => downloadText("maobu-qianjing-update-template.csv", UPDATE_TEMPLATE_CSV, "text/csv")} />
         <ScriptRunPanel open={scriptRunOpen} selectedProfiles={scriptRunProfiles} onClose={() => setScriptRunOpen(false)} />
         <ResourceDashboardDrawer open={resourceDrawerOpen} onClose={() => setResourceDrawerOpen(false)} profiles={profiles} monitor={resourceMonitor} onRefreshRoster={load} onFlash={flash} />

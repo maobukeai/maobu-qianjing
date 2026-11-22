@@ -65,6 +65,7 @@ export async function handleSystemUiRoutes(
       localAnalytics: false,
       restartRequired: false,
       ...(options.events ? { eventsStream: true } : {}),
+      ...(options.appLock ? { appLockAvailable: true } : {}),
       ...(forcedRuntime ? { chromiumRuntime: forcedRuntime } : {}),
       ...(defaultRuntime ? { defaultChromiumRuntime: defaultRuntime } : {}),
       defaultEngine: defaultProfileEngine(),

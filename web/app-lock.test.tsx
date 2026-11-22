@@ -78,10 +78,12 @@ async function createHarness(fetchImpl: typeof fetch) {
 }
 
 function setInputValue(input: HTMLInputElement, value: string, dom: Window): void {
+  input.focus();
   const setter = Object.getOwnPropertyDescriptor(dom.HTMLInputElement.prototype, "value")?.set;
   setter?.call(input, value);
   input.dispatchEvent(new dom.Event("input", { bubbles: true }) as unknown as Event);
   input.dispatchEvent(new dom.Event("change", { bubbles: true }) as unknown as Event);
+  input.dispatchEvent(new dom.KeyboardEvent("keyup", { bubbles: true }) as unknown as Event);
 }
 
 let dispose: (() => Promise<void>) | null = null;

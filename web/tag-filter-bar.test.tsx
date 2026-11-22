@@ -27,6 +27,12 @@ afterEach(async () => {
 async function createDomHarness() {
   const dom = new Window({ url: "http://127.0.0.1/" });
   dom.localStorage.setItem("aliasmode.shell.language", "en-US");
+  // When another test file imports react-dom/client before a DOM exists, React caches
+  // isInputEventSupported=false and falls back to the legacy IE8 attachEvent/detachEvent
+  // focusin/focusout tracker. Provide safe no-ops on this test Window's HTMLElement prototype.
+  const elemProto = dom.HTMLElement.prototype as unknown as Record<string, unknown>;
+  if (typeof elemProto.attachEvent !== "function") elemProto.attachEvent = () => {};
+  if (typeof elemProto.detachEvent !== "function") elemProto.detachEvent = () => {};
   const prev = new Map<string, PropertyDescriptor | undefined>();
   const setGlobal = (key: string, value: unknown) => {
     prev.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
@@ -157,8 +163,11 @@ describe("TagFilterBar and inline profile editors", () => {
 
     const searchInput = h.container.querySelector<HappyInputElement>(".tag-filter-search")!;
     await act(async () => {
+      searchInput.focus();
       Object.getOwnPropertyDescriptor(h.dom.HTMLInputElement.prototype, "value")!.set!.call(searchInput, "vi");
       searchInput.dispatchEvent(new h.dom.Event("input", { bubbles: true }));
+      searchInput.dispatchEvent(new h.dom.Event("change", { bubbles: true }));
+      searchInput.dispatchEvent(new h.dom.KeyboardEvent("keyup", { bubbles: true }));
     });
     const visibleOptions = h.container.querySelectorAll(".tag-filter-option");
     expect(visibleOptions.length).toBe(1);
@@ -217,24 +226,34 @@ describe("TagFilterBar and inline profile editors", () => {
     expect(input).toBeTruthy();
 
     await act(async () => {
+      input.focus();
       Object.getOwnPropertyDescriptor(h.dom.HTMLInputElement.prototype, "value")!.set!.call(input, "中文名称");
       input.dispatchEvent(new h.dom.Event("input", { bubbles: true }));
+      input.dispatchEvent(new h.dom.Event("change", { bubbles: true }));
+      input.dispatchEvent(new h.dom.KeyboardEvent("keyup", { bubbles: true }));
     });
-
-    // IME Enter (keyCode === 229) MUST NOT commit yet!
-    const imeEnter = new h.dom.KeyboardEvent("keydown", { key: "Enter", keyCode: 229, bubbles: true });
-    Object.defineProperty(imeEnter, "keyCode", { value: 229 });
-    await act(async () => {
-      input.dispatchEvent(imeEnter);
-    });
-    expect(saved).toEqual([]);
-    expect(h.container.querySelector(".profile-inline-rename-input")).toBeTruthy();
 
     // Non-composing Enter commits cleanly!
     await act(async () => {
       input.dispatchEvent(new h.dom.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     });
     expect(saved).toEqual([{ id: "env_ime", name: "中文名称" }]);
+
+    // Re-activate via double-click and verify IME Enter (keyCode === 229) MUST NOT commit!
+    const reopenedBtn = h.container.querySelector<HappyButtonElement>(".profile-name-button")!;
+    await act(async () => {
+      reopenedBtn.dispatchEvent(new h.dom.MouseEvent("dblclick", { bubbles: true }));
+    });
+    const input2 = h.container.querySelector<HappyInputElement>(".profile-inline-rename-input")!;
+    expect(input2).toBeTruthy();
+
+    const imeEnter = new h.dom.KeyboardEvent("keydown", { key: "Enter", keyCode: 229, bubbles: true });
+    Object.defineProperty(imeEnter, "keyCode", { value: 229 });
+    await act(async () => {
+      input2.dispatchEvent(imeEnter);
+    });
+    expect(saved).toEqual([{ id: "env_ime", name: "中文名称" }]);
+    expect(h.container.querySelector(".profile-inline-rename-input")).toBeTruthy();
   });
 
   test("QuickProfileNotesEditor opens popover and saves on Ctrl+Enter", async () => {
@@ -264,11 +283,14 @@ describe("TagFilterBar and inline profile editors", () => {
     expect(textarea).toBeTruthy();
 
     await act(async () => {
+      textarea.focus();
       Object.getOwnPropertyDescriptor(h.dom.HTMLTextAreaElement.prototype, "value")!.set!.call(
         textarea,
         "Account warmup\r\nDay 3",
       );
       textarea.dispatchEvent(new h.dom.Event("input", { bubbles: true }));
+      textarea.dispatchEvent(new h.dom.Event("change", { bubbles: true }));
+      textarea.dispatchEvent(new h.dom.KeyboardEvent("keyup", { bubbles: true }));
     });
     await act(async () => {
       textarea.dispatchEvent(

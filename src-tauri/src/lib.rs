@@ -2,6 +2,7 @@ mod acceptance;
 mod browser;
 mod credentials;
 mod desktop_close;
+mod diagnostics;
 mod external_resources;
 mod runtime_descriptor;
 mod shutdown;
@@ -74,6 +75,7 @@ fn trusted_loopback_capability(port: u16) -> CapabilityBuilder {
         .permission("allow-desktop-close")
         .permission("allow-window-backdrop")
         .permission("allow-window-control")
+        .permission("allow-system-diagnostics")
         .permission("core:event:allow-listen")
         .permission("core:event:allow-unlisten");
     #[cfg(windows)]
@@ -444,6 +446,9 @@ mod tests {
         assert!(permissions
             .iter()
             .any(|permission| permission == "allow-window-control"));
+        assert!(permissions
+            .iter()
+            .any(|permission| permission == "allow-system-diagnostics"));
         assert!(!permissions.iter().any(|permission| permission
             .as_str()
             .is_some_and(|value| value.starts_with("shell:"))));
@@ -452,7 +457,7 @@ mod tests {
             .is_some_and(|value| value.starts_with("updater:"))));
         #[cfg(windows)]
         {
-            assert_eq!(permissions.len(), 17);
+            assert_eq!(permissions.len(), 18);
             for permission in [
                 "core:window:allow-is-maximized",
                 "core:window:allow-minimize",
@@ -467,7 +472,7 @@ mod tests {
             }
         }
         #[cfg(not(windows))]
-        assert_eq!(permissions.len(), 11);
+        assert_eq!(permissions.len(), 12);
         assert!(!permissions.iter().any(|permission| {
             permission.as_str().is_some_and(|permission| {
                 permission.ends_with(":default")
@@ -699,6 +704,7 @@ pub fn run() {
             win32_sync::sync_inject_texts,
             win32_sync::sync_status,
             win32_resources::system_trim_process_memory,
+            diagnostics::system_diagnostic_probe,
         ])
         .setup(move |app| {
             if !isolated_acceptance {
@@ -796,6 +802,7 @@ pub fn run() {
                 || !agent_root.join("mcp-scope.mjs").is_file()
                 || !agent_root.join("playwright-proxy.mjs").is_file()
                 || !agent_root.join("playwright-runner.mjs").is_file()
+                || !agent_root.join("script-recorder.mjs").is_file()
                 || !agent_root.join("runtime-client.mjs").is_file()
             {
                 return Err(boxed("packaged Playwright and MCP runtime is incomplete"));

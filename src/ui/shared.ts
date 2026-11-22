@@ -32,6 +32,8 @@ import type { ScriptLibrary, ScriptSupervisor } from "../../scripts.ts";
 import type { PythonRuntime } from "../../python-runtime.ts";
 import type { WorkspaceManagement } from "../../workspace-management.ts";
 import type { UiEventBus } from "./events-bus.ts";
+import type { AppLockService } from "../../app-lock.ts";
+import type { AssistantProposalRegistry, AssistantProxyVaultLookup } from "../../assistant-proposals.ts";
 import type { AppSettingsStore } from "../../app-settings.ts";
 import type { MetricsService } from "../metrics/metrics-service.ts";
 import type { ResourcePolicyStore } from "../metrics/resource-policy-store.ts";
@@ -116,9 +118,19 @@ export interface UiRuntimeOptions {
   setCookies?: (ws: string, cookies: CookieRecord[]) => Promise<void>;
   events?: UiEventBus;
   /** Optional SSE hook for Wave 4 companion services. */
-  emitEvent?: (type: string, payload: unknown) => void;
+  emitEvent?: (type: string, payload: Record<string, unknown>) => void;
   /** Optional preview store override for `.mqprofile` encrypted package routes. */
   packagePreviewStore?: ProfilePackagePreviewStore;
+  /** Optional local master password lock service. */
+  appLock?: AppLockService;
+  /** Optional Proxy Vault read-only lookup for AI Copilot proposals. */
+  proxyVault?: AssistantProxyVaultLookup;
+  /** Optional proposal registry override for AI Copilot routes. */
+  proposalRegistry?: AssistantProposalRegistry;
+  /** Optional global workspace home directory for diagnostics/app-lock. */
+  workspaceHome?: string;
+  /** Optional automation API port for diagnostics probing. */
+  automationPort?: number;
   metrics?: MetricsService;
   resourcePolicies?: ResourcePolicyStore;
   appSettings?: AppSettingsStore;

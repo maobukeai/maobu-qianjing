@@ -2138,3 +2138,111 @@ test("handleUiRequest routes Wave 3 proxy-vault, metrics, registered-launches, a
         s.close();
     }
 });
+
+test("handleUiRequest routes Wave 4 app-lock, diagnostics, assistant proposals, .mqprofile package, timeline, and appLockAvailable capability", async () => {
+    const { AppLockService } = await import("./app-lock.ts");
+    const s = store();
+    const home = mkdtempSync(join(tmpdir(), "maobu-w4-ui-wiring-"));
+    const appLock = new AppLockService({ home });
+    const assertSecurityHeaders = (res: Response) => {
+        expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+        expect(res.headers.get("x-frame-options")).toBe("DENY");
+        expect(res.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    };
+    try {
+        // 1. appLockAvailable is only advertised when appLock is wired
+        const modeWithoutLock = await handleUiRequest(new Request("http://127.0.0.1:50400/ui/api/app-mode"), {} as Launcher, s);
+        expect(modeWithoutLock!.status).toBe(200);
+        expect((await modeWithoutLock!.json() as { appLockAvailable?: boolean }).appLockAvailable).toBeUndefined();
+
+        const modeWithLock = await handleUiRequest(new Request("http://127.0.0.1:50400/ui/api/app-mode"), {} as Launcher, s, { appLock });
+        expect(modeWithLock!.status).toBe(200);
+        expect((await modeWithLock!.json() as { appLockAvailable?: boolean }).appLockAvailable).toBe(true);
+
+        // 2. App Lock route wired
+        const lockStatusRes = await handleUiRequest(
+            new Request("http://127.0.0.1:50400/ui/api/app-lock/status"),
+            {} as Launcher,
+            s,
+            { appLock },
+        );
+        expect(lockStatusRes!.status).toBe(200);
+        assertSecurityHeaders(lockStatusRes!);
+        expect((await lockStatusRes!.json() as { ok: boolean; status: { enabled: boolean; locked: boolean } }).status.locked).toBe(false);
+
+        // 3. Diagnostics route wired
+        const diagRes = await handleUiRequest(
+            new Request("http://127.0.0.1:50400/ui/api/diagnostics/run", {
+                method: "POST",
+                headers: { "content-type": "application/json", "X-Maobu-Settings": "1" },
+                body: JSON.stringify({ includeMcpProbe: false }),
+            }),
+            { dataDriveFreeBytes: () => 50 * 1024 ** 3 } as unknown as Launcher,
+            s,
+            { workspaceHome: home },
+        );
+        expect(diagRes!.status).toBe(200);
+        assertSecurityHeaders(diagRes!);
+        const diagBody = await diagRes!.json() as { ok: boolean; report: { checks: unknown[] } };
+        expect(diagBody.ok).toBe(true);
+        expect(diagBody.report.checks.length).toBe(6);
+
+        // 4. Assistant proposals route wired (unknown proposalId -> 404 from proposal route, not unknown ui route)
+        const propRes = await handleUiRequest(
+            new Request("http://127.0.0.1:50400/ui/api/assistant/proposals/prop_0000000000000000", {
+                headers: { "X-Maobu-Settings": "1" },
+            }),
+            {} as Launcher,
+            s,
+        );
+        expect(propRes!.status).toBe(404);
+        assertSecurityHeaders(propRes!);
+        expect((await propRes!.json() as { code?: string }).code).toBe("proposal_not_found");
+
+        // 5. Profile timeline & credential-free check-proxy routes precede handleProfilesUiRoutes
+        const tlRes = await handleUiRequest(
+            new Request("http://127.0.0.1:50400/ui/api/profiles/k1d0cd11/timeline"),
+            {} as Launcher,
+            s,
+        );
+        expect(tlRes!.status).toBe(200);
+        assertSecurityHeaders(tlRes!);
+        expect((await tlRes!.json() as { ok: boolean; events: unknown[] }).ok).toBe(true);
+
+        const proxyCheckRes = await handleUiRequest(
+            new Request("http://127.0.0.1:50400/ui/api/profiles/k1d0cd11/check-proxy", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: "{}",
+            }),
+            {} as Launcher,
+            s,
+            {
+                proxyCheck: async () => ({ status: "working", attempts: 1, successes: 1, ip: "203.0.113.9", country: "US" }),
+            },
+        );
+        expect(proxyCheckRes!.status).toBe(200);
+        assertSecurityHeaders(proxyCheckRes!);
+        const proxyCheckBody = await proxyCheckRes!.json() as { ok: boolean; status: string; ip?: string };
+        expect(proxyCheckBody.ok).toBe(true);
+        expect(proxyCheckBody.status).toBe("working");
+        expect(JSON.stringify(proxyCheckBody)).not.toContain("PROXYPASS");
+
+        // 6. Encrypted .mqprofile package export route precedes handleProfilesUiRoutes
+        const pkgRes = await handleUiRequest(
+            new Request("http://127.0.0.1:50400/ui/api/profiles/package/export", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ ids: ["k1d0cd11"], password: "correct-horse-battery", includeSecrets: false, includeSessions: false }),
+            }),
+            { captureLocalSession: async () => undefined } as unknown as Launcher,
+            s,
+        );
+        expect(pkgRes!.status).toBe(200);
+        assertSecurityHeaders(pkgRes!);
+        expect(pkgRes!.headers.get("content-disposition")).toContain(".mqprofile");
+    } finally {
+        s.close();
+        rmSync(home, { recursive: true, force: true });
+    }
+});

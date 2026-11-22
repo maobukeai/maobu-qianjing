@@ -19,9 +19,7 @@ pub(crate) fn is_valid_webview2_version(raw: &str) -> bool {
     if trimmed.is_empty() || trimmed == "0.0.0.0" || trimmed.len() > 64 {
         return false;
     }
-    trimmed
-        .bytes()
-        .all(|b| b.is_ascii_digit() || b == b'.')
+    trimmed.bytes().all(|b| b.is_ascii_digit() || b == b'.')
         && trimmed.split('.').all(|segment| !segment.is_empty())
 }
 
@@ -86,7 +84,14 @@ mod win32 {
         let mut kind = REG_VALUE_TYPE(0);
         let mut size = 0u32;
         let query_len = unsafe {
-            RegQueryValueExW(key, value_name, None, Some(&mut kind), None, Some(&mut size))
+            RegQueryValueExW(
+                key,
+                value_name,
+                None,
+                Some(&mut kind),
+                None,
+                Some(&mut size),
+            )
         };
         if query_len != ERROR_SUCCESS || kind != REG_SZ || size == 0 || size > MAX_REG_SZ_BYTES {
             unsafe {
@@ -155,7 +160,9 @@ mod win32 {
         let candidates: [(HKEY, PCWSTR, &'static str); 3] = [
             (
                 HKEY_LOCAL_MACHINE,
-                w!(r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"),
+                w!(
+                    r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+                ),
                 "machine-wow64",
             ),
             (

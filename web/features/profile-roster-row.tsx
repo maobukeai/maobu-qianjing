@@ -4,6 +4,7 @@ import { closeProfile, openProfile, raiseProfile, restartProfile, type UiProfile
 import type { InspectionEditField } from "../environment-inspection.tsx";
 import { FingerprintImportBadge } from "../fingerprint-import-badge.tsx";
 import type { ColumnKey } from "../hooks/use-roster-query.ts";
+import { InlineProfileNameEditor, QuickProfileNotesEditor } from "../inline-profile-editors.tsx";
 import { ProfileActionMenu } from "../profile-action-menu.tsx";
 import { AppIcon } from "../ui-primitives.tsx";
 import { browserLabel, launchRecovery, PlatformPill, StatusDot } from "./profile-form-helpers.tsx";
@@ -62,6 +63,14 @@ export interface ProfileRosterRowProps {
   onChangeInlineRename?: (value: string) => void;
   onCommitInlineRename?: (id: string) => void;
   onCancelInlineRename?: () => void;
+  /** Optional Wave 4 self-contained inline name & quick notes editors. */
+  onSaveInlineName?: (id: string, nextName: string) => Promise<void>;
+  onInlineNameSaved?: (id: string, nextName: string) => void;
+  onInlineNameEditingChange?: (id: string, editing: boolean) => void;
+  onSaveQuickNotes?: (id: string, nextNotes: string) => Promise<void>;
+  onQuickNotesSaved?: (id: string, nextNotes: string) => void;
+  onQuickNotesOpenChange?: (id: string, open: boolean) => void;
+  onInlineEditorError?: (message: string) => void;
 }
 
 export const ProfileRosterRow = React.memo(function ProfileRosterRow({
@@ -92,6 +101,13 @@ export const ProfileRosterRow = React.memo(function ProfileRosterRow({
   onChangeInlineRename,
   onCommitInlineRename,
   onCancelInlineRename,
+  onSaveInlineName,
+  onInlineNameSaved,
+  onInlineNameEditingChange,
+  onSaveQuickNotes,
+  onQuickNotesSaved,
+  onQuickNotesOpenChange,
+  onInlineEditorError,
 }: ProfileRosterRowProps) {
   const {
     openDetails,
@@ -155,7 +171,19 @@ export const ProfileRosterRow = React.memo(function ProfileRosterRow({
               >
                 <Icon name="star" />
               </button>
-              {editingName ? (
+              {onInlineNameSaved || onSaveInlineName ? (
+                <InlineProfileNameEditor
+                  profileId={p.id}
+                  name={p.name}
+                  disabled={isBusy}
+                  badge={<FingerprintImportBadge p={p} />}
+                  onOpenEdit={openEdit}
+                  onSaveName={onSaveInlineName}
+                  onSaved={onInlineNameSaved}
+                  onError={onInlineEditorError}
+                  onEditingChange={(editing) => onInlineNameEditingChange?.(p.id, editing)}
+                />
+              ) : editingName ? (
                 <input
                   type="text"
                   autoFocus
@@ -200,6 +228,19 @@ export const ProfileRosterRow = React.memo(function ProfileRosterRow({
                 {browserLabel(p.engine, p.chromiumRuntime)}
               </span>
               {resourceChips}
+              {(onQuickNotesSaved || onSaveQuickNotes) && (
+                <QuickProfileNotesEditor
+                  profileId={p.id}
+                  profileName={p.name}
+                  notes={p.notes ?? ""}
+                  disabled={isBusy}
+                  variant="inline"
+                  onSaveNotes={onSaveQuickNotes}
+                  onSaved={onQuickNotesSaved}
+                  onError={onInlineEditorError}
+                  onOpenChange={(open) => onQuickNotesOpenChange?.(p.id, open)}
+                />
+              )}
             </span>
             {p.tags.length > 0 && (
               <button type="button" className="profile-tags-preview" aria-label={t("Manage tags for {profile}", { profile: p.name })} disabled={isBusy} onClick={() => openProfileTags(p)}>

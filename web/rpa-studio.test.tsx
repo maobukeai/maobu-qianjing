@@ -419,11 +419,14 @@ test("ScriptsPage online source editor saves with expectedRevision and handles 4
     expect(textarea.value).toBe("export default async () => { /* v1 */ };");
 
     await act(async () => {
+      textarea.focus();
       Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, "value")!.set!.call(
         textarea,
         "export default async () => { /* local v3 */ };",
       );
       textarea.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+      textarea.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+      textarea.dispatchEvent(new dom.window.KeyboardEvent("keyup", { bubbles: true }));
     });
 
     // First save hits 409 conflict.

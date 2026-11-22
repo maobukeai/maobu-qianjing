@@ -506,12 +506,12 @@ test("sorting keeps running rows first without renumbering and paging clamps aft
 
 test("a filter reset wins over a simultaneous page clamp; deleting the last page only clamps", () => {
     const source = sourceBetween("useEffect(() => {\n    const previous = previousProfileFilters.current;", "const rangeViewKey =", appShell);
-    const original = { q: "", group: "all", pageSize: 20, profileStatus: "all" };
+    const original = { q: "", group: "all", pageSize: 20, profileStatus: "all", selectedTagsKey: "", tagMode: "any", locatedIdsKey: "" };
     const commit = (previous: typeof original, current: typeof original, page: number, visiblePage: number) => {
         const writes: number[] = [];
         const ref = { current: { ...previous } };
-        new Function("previousProfileFilters", "q", "group", "pageSize", "profileStatus", "profilePage", "visibleProfilePage", "setProfilePage", "useEffect", source)(
-            ref, current.q, current.group, current.pageSize, current.profileStatus, page, visiblePage,
+        new Function("previousProfileFilters", "q", "group", "pageSize", "profileStatus", "selectedTagsKey", "tagMode", "locatedIdsKey", "profilePage", "visibleProfilePage", "setProfilePage", "useEffect", source)(
+            ref, current.q, current.group, current.pageSize, current.profileStatus, current.selectedTagsKey, current.tagMode, current.locatedIdsKey, page, visiblePage,
             (next: number) => writes.push(next), (effect: () => void) => effect(),
         );
         expect(ref.current).toEqual(current);
@@ -519,7 +519,7 @@ test("a filter reset wins over a simultaneous page clamp; deleting the last page
     };
     // Starting at index 3, 30 search results have two pages: the clamp is index 1,
     // but a changed filter must reset to index 0 in this same commit.
-    for (const changed of [{ q: "192.0.2.12" }, { group: "A" }, { pageSize: 50 }, { profileStatus: "running" }]) {
+    for (const changed of [{ q: "192.0.2.12" }, { group: "A" }, { pageSize: 50 }, { profileStatus: "running" }, { selectedTagsKey: "vip" }, { tagMode: "all" }, { locatedIdsKey: "p1\0p2" }]) {
         expect(commit(original, { ...original, ...changed }, 3, 1)).toEqual([0]);
     }
     expect(commit(original, original, 3, 1)).toEqual([1]);

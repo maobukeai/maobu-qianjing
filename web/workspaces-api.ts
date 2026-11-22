@@ -9,7 +9,7 @@ export interface WorkspaceJob { id: string; kind: "backup" | "restore"; status: 
 export interface WorkspaceBackups { backups: WorkspaceBackup[]; jobs: WorkspaceJob[]; }
 export type WorkspaceMetadata = Pick<WorkspaceRecord, "name" | "color" | "icon">;
 export type WorkspaceLocation = "data" | "backups" | "logs";
-export const WORKSPACE_PREFERENCE_KEYS = ["aliasmode.roster.hiddenColumns", "aliasmode.roster.pageSize", "aliasmode.shell.sidebarCollapsed", "aliasmode.roster.groupDisclosure", "aliasmode.roster.favorites", "aliasmode.roster.savedViews", "aliasmode.roster.density"] as const;
+export const WORKSPACE_PREFERENCE_KEYS = ["aliasmode.roster.hiddenColumns", "aliasmode.roster.pageSize", "aliasmode.shell.sidebarCollapsed", "aliasmode.roster.groupDisclosure", "aliasmode.roster.favorites", "aliasmode.roster.savedViews", "aliasmode.roster.density", "aliasmode.onboarding.state"] as const;
 type DesktopInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 
 export const WORKSPACE_API_MESSAGES = [

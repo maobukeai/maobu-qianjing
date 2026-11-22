@@ -90,6 +90,12 @@ export interface ProfileRosterTableProps {
   onChangeInlineRename?: (value: string) => void;
   onCommitInlineRename?: (id: string) => void;
   onCancelInlineRename?: () => void;
+  /** Optional Wave 4 inline name & quick notes editors (auto-pinned while editing). */
+  onSaveInlineName?: (id: string, nextName: string) => Promise<void>;
+  onInlineNameSaved?: (id: string, nextName: string) => void;
+  onSaveQuickNotes?: (id: string, nextNotes: string) => Promise<void>;
+  onQuickNotesSaved?: (id: string, nextNotes: string) => void;
+  onInlineEditorError?: (message: string) => void;
   /** Extra pinned flat keys kept alive in the virtual window. */
   pinnedKeys?: ReadonlySet<string>;
   /** Override virtual threshold (defaults to 60). */
@@ -171,6 +177,11 @@ export function ProfileRosterTable({
   onChangeInlineRename,
   onCommitInlineRename,
   onCancelInlineRename,
+  onSaveInlineName,
+  onInlineNameSaved,
+  onSaveQuickNotes,
+  onQuickNotesSaved,
+  onInlineEditorError,
   pinnedKeys: externalPinnedKeys,
   virtualThreshold = DEFAULT_VIRTUAL_THRESHOLD,
   fallbackViewportHeight = DEFAULT_FALLBACK_VIEWPORT_HEIGHT,
@@ -193,6 +204,19 @@ export function ProfileRosterTable({
   );
   useFlipGroup(scrollContainerRef, resolvedDisclosureKey, flipMotionAllowed);
   const [focusedFlatKey, setFocusedFlatKey] = useState<string | null>(null);
+  const [inlineEditingCounts, setInlineEditingCounts] = useState<ReadonlyMap<string, number>>(() => new Map());
+  const updateInlineEditingPin = useCallback((id: string, active: boolean) => {
+    const key = `profile:${id}`;
+    setInlineEditingCounts((current) => {
+      const prev = current.get(key) ?? 0;
+      const nextCount = active ? prev + 1 : Math.max(0, prev - 1);
+      if (nextCount === prev) return current;
+      const next = new Map(current);
+      if (nextCount === 0) next.delete(key);
+      else next.set(key, nextCount);
+      return next;
+    });
+  }, []);
   const prevInlineRenameIdRef = useRef(inlineRenameId);
   if (prevInlineRenameIdRef.current !== inlineRenameId) {
     prevInlineRenameIdRef.current = inlineRenameId;
@@ -209,12 +233,13 @@ export function ProfileRosterTable({
 
   const mergedPinnedKeys = useMemo<ReadonlySet<string> | undefined>(() => {
     const renameKey = inlineRenameId ? `profile:${inlineRenameId}` : null;
-    if (!focusedFlatKey && !renameKey && (!externalPinnedKeys || externalPinnedKeys.size === 0)) return undefined;
+    if (!focusedFlatKey && !renameKey && inlineEditingCounts.size === 0 && (!externalPinnedKeys || externalPinnedKeys.size === 0)) return undefined;
     const set = new Set<string>(externalPinnedKeys);
     if (focusedFlatKey) set.add(focusedFlatKey);
     if (renameKey) set.add(renameKey);
+    for (const key of inlineEditingCounts.keys()) set.add(key);
     return set;
-  }, [focusedFlatKey, inlineRenameId, externalPinnedKeys]);
+  }, [focusedFlatKey, inlineRenameId, inlineEditingCounts, externalPinnedKeys]);
 
   const estimateItemHeight = useCallback(
     (item: FlatRosterItem) => estimateFlatRosterItemHeight(item, rosterDensity),
@@ -247,7 +272,7 @@ export function ProfileRosterTable({
 
   const handleFocusCapture = useCallback((event: FocusEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement | null;
-    if (!target || target.classList.contains("profile-inline-rename-input")) return;
+    if (!target || target.classList.contains("profile-inline-rename-input") || target.classList.contains("quick-notes-textarea")) return;
     const row = target.closest<HTMLTableRowElement>("tbody.profile-roster-body > tr[data-flat-key]");
     const key = row?.dataset.flatKey ?? null;
     if (key) setFocusedFlatKey((current) => (current === key ? current : key));
@@ -518,6 +543,13 @@ export function ProfileRosterTable({
                     onChangeInlineRename={onChangeInlineRename}
                     onCommitInlineRename={onCommitInlineRename}
                     onCancelInlineRename={onCancelInlineRename}
+                    onSaveInlineName={onSaveInlineName}
+                    onInlineNameSaved={onInlineNameSaved}
+                    onInlineNameEditingChange={updateInlineEditingPin}
+                    onSaveQuickNotes={onSaveQuickNotes}
+                    onQuickNotesSaved={onQuickNotesSaved}
+                    onQuickNotesOpenChange={updateInlineEditingPin}
+                    onInlineEditorError={onInlineEditorError}
                   />
                 );
               })}
