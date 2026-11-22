@@ -307,4 +307,53 @@ describe("ProxyVaultStore", () => {
       store.close();
     }
   });
+
+  test("refuses metadata-only update when stored auth cannot be decrypted instead of silently wiping credentials", () => {
+    const store = createTestStore();
+    try {
+      const vault = new ProxyVaultStore(store);
+      const created = vault.create({
+        name: "KeyLocked",
+        group: "US",
+        type: "http",
+        host: "198.51.100.40",
+        port: 8080,
+        user: "locked-user",
+        pass: "locked-pass",
+      });
+      // Corrupt/mismatched enc:v1 payload to simulate wrong local protection key.
+      const fakeCiphertext = `${ENCRYPTED_VALUE_PREFIX}${Buffer.alloc(48, 0xaa).toString("base64")}`;
+      store
+        .rawDatabase()
+        .query("UPDATE proxy_vault SET auth_encrypted = ? WHERE id = ?")
+        .run(fakeCiphertext, created.id);
+
+      let caught: unknown;
+      try {
+        vault.update(created.id, { name: "RenamedOnly" });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(ProxyVaultError);
+      expect((caught as ProxyVaultError).code).toBe("secret_unreadable");
+
+      // Stored encrypted auth stays untouched (never silently wiped).
+      const raw = store
+        .rawDatabase()
+        .query<{ auth_encrypted: string; has_auth: number }, [string]>(
+          "SELECT auth_encrypted, has_auth FROM proxy_vault WHERE id = ?",
+        )
+        .get(created.id)!;
+      expect(raw.auth_encrypted).toBe(fakeCiphertext);
+      expect(raw.has_auth).toBe(1);
+
+      // Explicit credential replacement or clearAuth still allows operator recovery.
+      const recovered = vault.update(created.id, { name: "Recovered", user: "new-user", pass: "new-pass" });
+      expect(recovered.item.name).toBe("Recovered");
+      expect(recovered.item.hasAuth).toBe(true);
+      expect(vault.getEditView(created.id)).toMatchObject({ user: "new-user", pass: "new-pass" });
+    } finally {
+      store.close();
+    }
+  });
 });

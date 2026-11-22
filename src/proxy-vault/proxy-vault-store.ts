@@ -912,6 +912,16 @@ export class ProxyVaultStore {
     if (typeof input.proxy === "string" && input.proxy.trim()) {
       nextProxy = resolveCreateProxySpec({ type: input.type ?? existing.type, proxy: input.proxy });
     } else {
+      const replacesAuthExplicitly =
+        input.clearAuth === true ||
+        (input.user !== undefined && (String(input.user).trim() === "" || input.pass !== undefined));
+      if (existing.has_auth === 1 && !existingAuth.readable && !replacesAuthExplicitly) {
+        throw new ProxyVaultError(
+          "Stored proxy credentials could not be decrypted with this local key. Clear or re-enter credentials to update.",
+          500,
+          "secret_unreadable",
+        );
+      }
       const hasAuthPatch =
         input.clearAuth === true || input.user !== undefined || input.pass !== undefined;
       let user = existingAuth.readable ? existingAuth.user : "";

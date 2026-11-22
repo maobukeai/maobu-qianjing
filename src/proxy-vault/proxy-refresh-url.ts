@@ -174,9 +174,9 @@ function parseIpv6BigInt(ip: string): bigint | null {
 function isBlockedIpv6BigInt(value: bigint): boolean {
   // ::/128, ::1/128, and deprecated IPv4-compatible ::/96
   if ((value >> 32n) === 0n) return true;
-  // ::ffff:0:0/96 (IPv4-mapped) and ::ffff:0:0:0/96 (IPv4-translated)
+  // ::ffff:0:0/96 (IPv4-mapped) and ::ffff:0:0:0/96 (IPv4-translated, RFC 2765)
   const upper96 = value >> 32n;
-  if (upper96 === 0xffffn || upper96 === 0xffff00000000n) {
+  if (upper96 === 0xffffn || upper96 === 0xffff0000n) {
     return isBlockedIpv4Uint32(Number(value & 0xffffffffn) >>> 0);
   }
   // NAT64 well-known prefix 64:ff9b::/96 -> inspect embedded IPv4
@@ -315,19 +315,29 @@ export function validateRefreshUrlSyntax(raw: unknown): ValidatedRefreshUrl {
   };
 }
 
+function abortErrorFromSignal(signal: AbortSignal): ProxyRefreshError {
+  return signal.reason instanceof ProxyRefreshError
+    ? signal.reason
+    : new ProxyRefreshError("Proxy IP refresh request was aborted.", "aborted", 499);
+}
+
 function defaultConnectTcp(ip: string, port: number, family: 4 | 6, signal: AbortSignal): Promise<Socket> {
-  signal.throwIfAborted();
+  if (signal.aborted) return Promise.reject(abortErrorFromSignal(signal));
   return new Promise((resolve, reject) => {
     const socket = createConnection({ host: ip, port, family });
     const onAbort = () => {
       cleanup();
       socket.destroy();
-      reject(new ProxyRefreshError("Proxy IP refresh request was aborted.", "aborted", 499));
+      reject(abortErrorFromSignal(signal));
     };
     const onError = () => {
       cleanup();
       socket.destroy();
-      reject(new ProxyRefreshError("Failed to connect to proxy IP refresh endpoint.", "request_failed", 502));
+      reject(
+        signal.aborted
+          ? abortErrorFromSignal(signal)
+          : new ProxyRefreshError("Failed to connect to proxy IP refresh endpoint.", "request_failed", 502),
+      );
     };
     const cleanup = () => {
       signal.removeEventListener("abort", onAbort);
@@ -431,12 +441,18 @@ async function sendPinnedRequest(
           finish(undefined, secure);
         });
         secure.once("error", () => {
-          finish(new ProxyRefreshError("TLS handshake failed for proxy IP refresh endpoint.", "request_failed", 502));
+          finish(
+            signal.aborted
+              ? abortErrorFromSignal(signal)
+              : new ProxyRefreshError("TLS handshake failed for proxy IP refresh endpoint.", "request_failed", 502),
+          );
         });
         secure.once("close", () => {
-          if (!secure.authorized && tlsOptions?.rejectUnauthorized !== false) {
-            finish(new ProxyRefreshError("TLS handshake closed for proxy IP refresh endpoint.", "request_failed", 502));
-          }
+          finish(
+            signal.aborted
+              ? abortErrorFromSignal(signal)
+              : new ProxyRefreshError("TLS handshake closed for proxy IP refresh endpoint.", "request_failed", 502),
+          );
         });
         secure.resume();
       });
@@ -509,10 +525,10 @@ export async function triggerProxyRefreshUrl(
           options.tlsOptions,
         );
       } catch (error) {
-        if (error instanceof ProxyRefreshError) throw error;
         if (timedOut) {
           throw new ProxyRefreshError("Proxy IP refresh request timed out.", "timeout", 504);
         }
+        if (error instanceof ProxyRefreshError) throw error;
         if (controller.signal.aborted) {
           throw new ProxyRefreshError("Proxy IP refresh request was aborted.", "aborted", 499);
         }

@@ -127,6 +127,9 @@ describe("validateRefreshUrlSyntax & isBlockedIp", () => {
       "::ffff:169.254.169.254",
       "::ffff:10.0.0.5",
       "::ffff:7f00:1",
+      "::ffff:0:127.0.0.1",
+      "::ffff:0:169.254.169.254",
+      "::ffff:0:10.0.0.1",
       "64:ff9b::127.0.0.1",
       "2002:7f00:0001::1",
       "not-an-ip",
@@ -149,6 +152,7 @@ describe("validateRefreshUrlSyntax & isBlockedIp", () => {
       "203.0.113.10",
       "2606:4700:4700::1111",
       "::ffff:93.184.216.34",
+      "::ffff:0:93.184.216.34",
     ];
     for (const ip of allowed) {
       expect(isBlockedIp(ip)).toBe(false);
@@ -347,6 +351,70 @@ describe("triggerProxyRefreshUrl SSRF & pinning behavior", () => {
     expect(downgradeErr).toBeInstanceOf(ProxyRefreshError);
     expect((downgradeErr as ProxyRefreshError).code).toBe("https_downgrade");
     expect((downgradeErr as Error).message).not.toContain("TLS_SECRET");
+  });
+
+  test("classifies TCP connect-phase and TLS handshake-phase timeouts as 504 timeout and caller aborts as 499 aborted", async () => {
+    const lookupFn: RefreshDnsLookup = async () => [{ address: "93.184.216.34", family: 4 }];
+    const secret = "HANDSHAKE_SECRET_999";
+
+    // 1. TCP connect hangs until timeout -> 504 timeout (not 499 aborted)
+    const connectTimeoutErr = await triggerProxyRefreshUrl(
+      `http://connect-slow.provider.example/rotate?token=${secret}`,
+      {
+        lookupFn,
+        timeoutMs: 60,
+        connectTcp: (_ip, _port, _family, signal) =>
+          new Promise((_resolve, reject) => {
+            signal.addEventListener("abort", () =>
+              reject(new ProxyRefreshError("aborted during connect", "aborted", 499)),
+            );
+          }),
+      },
+    ).catch((err) => err);
+    expect(connectTimeoutErr).toBeInstanceOf(ProxyRefreshError);
+    expect((connectTimeoutErr as ProxyRefreshError).code).toBe("timeout");
+    expect((connectTimeoutErr as ProxyRefreshError).status).toBe(504);
+    expect((connectTimeoutErr as Error).message).not.toContain(secret);
+
+    // 2. TCP connects immediately to a silent peer that never replies to TLS ClientHello -> 504 timeout
+    const silentTcp = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { data() {} },
+    });
+    cleanups.push(() => {
+      silentTcp.stop(true);
+    });
+
+    const tlsTimeoutErr = await triggerProxyRefreshUrl(
+      `https://maobu-egress.test/rotate?token=${secret}`,
+      {
+        lookupFn,
+        timeoutMs: 80,
+        connectTcp: async () => connectLoopback(silentTcp.port),
+      },
+    ).catch((err) => err);
+    expect(tlsTimeoutErr).toBeInstanceOf(ProxyRefreshError);
+    expect((tlsTimeoutErr as ProxyRefreshError).code).toBe("timeout");
+    expect((tlsTimeoutErr as ProxyRefreshError).status).toBe(504);
+    expect((tlsTimeoutErr as Error).message).not.toContain(secret);
+
+    // 3. External caller abort during TLS handshake -> 499 aborted (not 504 timeout)
+    const external = new AbortController();
+    setTimeout(() => external.abort(), 40);
+    const tlsAbortErr = await triggerProxyRefreshUrl(
+      `https://maobu-egress.test/rotate?token=${secret}`,
+      {
+        lookupFn,
+        timeoutMs: 5_000,
+        signal: external.signal,
+        connectTcp: async () => connectLoopback(silentTcp.port),
+      },
+    ).catch((err) => err);
+    expect(tlsAbortErr).toBeInstanceOf(ProxyRefreshError);
+    expect((tlsAbortErr as ProxyRefreshError).code).toBe("aborted");
+    expect((tlsAbortErr as ProxyRefreshError).status).toBe(499);
+    expect((tlsAbortErr as Error).message).not.toContain(secret);
   });
 
   test("ProxyRefreshCooldown enforces per-proxy 5s cooldown and in-flight exclusivity", () => {
