@@ -31,7 +31,8 @@ import { ProfileStore } from "../store.ts";
 import { ScriptLibrary } from "../scripts.ts";
 import type { Profile, ProxySpec } from "../types.ts";
 import { handleUiRequest, type UiRuntimeOptions } from "../ui.ts";
-import { serveDashboard } from "../web.ts";
+import { isStandaloneRequestAuthorized, serveDashboard, STANDALONE_SESSION_HEADER } from "../web.ts";
+import { rejectUntrustedLocalRequest } from "../server.ts";
 import { WorkspaceManagement } from "../workspace-management.ts";
 import { LocalAssistantService } from "../local-assistant.ts";
 
@@ -455,7 +456,18 @@ export async function createUiQaFixture(rows = 8, preview: { frameless?: boolean
     version: JSON.parse(readFileSync(join(projectRoot, "package.json"), "utf8")).version as string,
     root, instance: randomBytes(32).toString("hex"),
   };
-  const management = new WorkspaceManagement({ home: root, paths, store, launcher });
+  // Browser GET fetches omit Origin. Use the real session authorization hook,
+  // rather than treating an Origin/Referer as a credential or mocking the API.
+  // A unique cookie name avoids replacing other loopback apps' session cookies.
+  const workspaceSession = randomBytes(32).toString("hex");
+  const workspaceCookieName = `maobu_ui_qa_${randomBytes(8).toString("hex")}`;
+  const management = new WorkspaceManagement({ home: root, paths, store, launcher, authorizeSession(request) {
+    const prefix = `${workspaceCookieName}=`;
+    const supplied = request.headers.get("cookie")?.split(";").map(part => part.trim()).find(part => part.startsWith(prefix))?.slice(prefix.length);
+    const headers = new Headers();
+    if (supplied) headers.set(STANDALONE_SESSION_HEADER, supplied);
+    return isStandaloneRequestAuthorized(new Request(request.url, { headers }), workspaceSession);
+  } });
   const options: UiRuntimeOptions = {
     paths, appConfig, health, workspaceManagement: management,
     // The test UI never scans real listeners. Only these synthetic endpoints reply.
@@ -540,7 +552,9 @@ export async function createUiQaFixture(rows = 8, preview: { frameless?: boolean
     const sourceOrigin = `http://127.0.0.1:${production.port}`;
     server = Bun.serve({
       hostname: "127.0.0.1", port: 0, development: false,
-      async fetch(request) {
+      async fetch(request, runtime) {
+        const boundary = rejectUntrustedLocalRequest(request, { port: runtime.port, requireHost: true, clientAddress: runtime.requestIP(request)?.address });
+        if (boundary) return boundary;
         const url = new URL(request.url);
         const origin = request.headers.get("origin");
         if (origin && origin !== url.origin) return Response.json({ error: "Cross-origin fixture access is forbidden" }, { status: 403 });
@@ -595,12 +609,16 @@ export async function createUiQaFixture(rows = 8, preview: { frameless?: boolean
         // Only local production assets are forwarded; external URLs and the
         // compatibility API cannot cause an unexpected real browser operation.
         const response = await fetch(`${sourceOrigin}${url.pathname}${url.search}`, { signal: request.signal, redirect: "error" });
-        if (frameless && url.pathname === "/" && response.ok) {
+        if (url.pathname === "/" && response.ok) {
           const headers = new Headers(response.headers);
-          for (const name of ["Content-Length", "Content-Encoding", "ETag", "Last-Modified"]) headers.delete(name);
           headers.set("Cache-Control", "no-store");
-          headers.set("X-Maobu-Frameless-QA", "simulated-window-controls");
-          return new Response(framelessQaHtml(await response.text(), scriptCapability, preview.signedUpdate), { status: response.status, headers });
+          headers.append("Set-Cookie", `${workspaceCookieName}=${workspaceSession}; HttpOnly; SameSite=Strict; Path=/ui/api`);
+          if (frameless) {
+            for (const name of ["Content-Length", "Content-Encoding", "ETag", "Last-Modified"]) headers.delete(name);
+            headers.set("X-Maobu-Frameless-QA", "simulated-window-controls");
+            return new Response(framelessQaHtml(await response.text(), scriptCapability, preview.signedUpdate), { status: response.status, headers });
+          }
+          return new Response(response.body, { status: response.status, headers });
         }
         return response;
       },
@@ -614,9 +632,11 @@ export async function createUiQaFixture(rows = 8, preview: { frameless?: boolean
 
 async function smoke(fixture: Awaited<ReturnType<typeof createUiQaFixture>>) {
   let capability = "";
+  let sessionCookie = "";
   const request = (path: string, options?: RequestInit) => {
     const headers = new Headers(options?.headers);
-    if (capability) headers.set("X-Maobu-Workspace-Capability", capability);
+    if (sessionCookie && !headers.has("cookie")) headers.set("cookie", sessionCookie);
+    if (capability && !headers.has("X-Maobu-Workspace-Capability")) headers.set("X-Maobu-Workspace-Capability", capability);
     if (/^\/ui\/api\/settings(?:\/|$)/.test(path)) headers.set("X-Maobu-Settings", "1");
     return fetch(fixture.url + path, { ...options, headers, signal: AbortSignal.timeout(10_000) });
   };
@@ -648,8 +668,26 @@ async function smoke(fixture: Awaited<ReturnType<typeof createUiQaFixture>>) {
   const health = await read("/ui/api/health");
   assert.equal(health.root, fixture.root);
   assert.equal((await request("/ui/api/workspaces")).status, 401, "Workspace metadata requires a capability");
-  capability = (await read("/ui/api/workspace/capability")).token;
+  assert.equal((await request("/ui/api/workspace/capability")).status, 401, "Capability bootstrap requires a fixture session");
+  const browserContext = { referer: `${fixture.url}/`, "sec-fetch-site": "same-origin", accept: "application/json" };
+  assert.equal((await request("/ui/api/workspace/capability", { headers: browserContext })).status, 401, "Same-origin browser headers do not replace a session");
+  const bootstrap = await request("/");
+  assert.equal(bootstrap.status, 200);
+  const cookie = bootstrap.headers.get("set-cookie");
+  assert.match(cookie ?? "", /^maobu_ui_qa_[a-f0-9]{16}=[a-f0-9]{64}; HttpOnly; SameSite=Strict; Path=\/ui\/api$/);
+  sessionCookie = cookie!.split(";")[0]!;
+  await bootstrap.arrayBuffer();
+  const browserBootstrap = await request("/ui/api/workspace/capability", { headers: browserContext });
+  assert.equal(browserBootstrap.status, 200, "Browser GET without Origin must authorize its established session");
+  capability = (await browserBootstrap.json()).token;
   assert.match(capability, /^[a-f0-9]{64}$/);
+  assert.equal((await request("/ui/api/workspace/capability", { headers: { ...browserContext, cookie: "" } })).status, 401, "Missing session remains unauthorized");
+  assert.equal((await request("/ui/api/workspace/capability", { headers: { ...browserContext, cookie: sessionCookie.replace(/=[a-f0-9]+$/, "=" + "0".repeat(64)) } })).status, 401, "Incorrect session remains unauthorized");
+  const untrustedContexts: HeadersInit[] = [{ origin: "https://outside.invalid" }, { referer: "https://outside.invalid/" }, { referer: "invalid referer" }, { "sec-fetch-site": "cross-site" }];
+  for (const headers of untrustedContexts) {
+    assert.equal((await request("/ui/api/workspace/capability", { headers })).status, 403, "A valid session never bypasses the production request boundary");
+  }
+  assert.equal((await request("/ui/api/workspaces", { headers: { "X-Maobu-Workspace-Capability": "0".repeat(64) } })).status, 401, "A browser session does not replace the workspace capability");
   const catalog = await read("/ui/api/workspaces");
   assert.equal(catalog.currentId, "default");
   assert.equal(catalog.activeId, "default");
@@ -773,11 +811,13 @@ async function smoke(fixture: Awaited<ReturnType<typeof createUiQaFixture>>) {
     if (profile.running) await post(`/ui/api/profiles/${profile.id}/close`);
   }
   assert.equal((await read("/ui/api/workspace/overview")).runningCount, 0);
-  const backup = await waitJob((await post("/ui/api/workspace/backups", {}, 202)).job.id);
+  const backupPassword = "isolated-ui-qa-backup-password";
+  const backup = await waitJob((await post("/ui/api/workspace/backups", { password: backupPassword }, 202)).job.id);
   const records = (await read("/ui/api/workspace/backups")).backups;
   assert.equal(records.length, 1);
   assert.equal(records[0].path, undefined, "API must not expose arbitrary local backup paths");
   assert.equal(records[0].id, backup.result.backupId);
+  assert.equal(records[0].encrypted, true);
   const download = await request(`/ui/api/workspace/backups/${records[0].id}/download`);
   assert.equal(download.status, 200);
   const archive = Buffer.from(await download.arrayBuffer());
@@ -785,7 +825,7 @@ async function smoke(fixture: Awaited<ReturnType<typeof createUiQaFixture>>) {
   assert.equal(download.headers.get("X-Backup-SHA256"), sha256);
   assert.equal(records[0].sha256, sha256);
   assert.equal(Number(download.headers.get("Content-Length")), archive.length);
-  const restored = await waitJob((await post("/ui/api/workspace/restore", { backupId: records[0].id, name: "验收恢复副本" }, 202)).job.id);
+  const restored = await waitJob((await post("/ui/api/workspace/restore", { backupId: records[0].id, name: "验收恢复副本", password: backupPassword }, 202)).job.id);
   const restoredId = restored.result.workspaceId;
   assert.match(restoredId, /^ws_[a-f0-9]{32}$/);
   const restoredRoot = fixture.management.catalog.pathFor(restoredId);

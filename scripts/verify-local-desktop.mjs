@@ -376,9 +376,9 @@ async function verifyPackagedSettings(service, state, profile, prepared) {
   assert.equal(initial.updates.checkOnStartup, false);
   assert.equal(initial.sync.enabled, false);
   assert.deepEqual(initial.signedUpdates, { checkOnStartup: false }, "The trusted startup check must be opt-in");
-  assert.deepEqual(initial.network, { checkLocalProxyBeforeLaunch: false, chromiumPreloading: "browser-default" }, "Fresh workspaces must keep both network preferences at their defaults");
+  assert.deepEqual(initial.network, { checkLocalProxyBeforeLaunch: false, chromiumPreloading: "browser-default", chromiumMemorySaver: false }, "Fresh workspaces must keep network preferences at their defaults");
   const networkSaved = (await settingsRequest("", "PATCH", { network: { checkLocalProxyBeforeLaunch: true, chromiumPreloading: "disabled" } })).settings;
-  assert.deepEqual(networkSaved.network, { checkLocalProxyBeforeLaunch: true, chromiumPreloading: "disabled" });
+  assert.deepEqual(networkSaved.network, { checkLocalProxyBeforeLaunch: true, chromiumPreloading: "disabled", chromiumMemorySaver: false });
   assert.deepEqual(networkSaved.updates, initial.updates, "Network-only saves must preserve update settings");
   assert.deepEqual(networkSaved.sync, initial.sync, "Network-only saves must preserve sync settings");
   assert.equal((await settingsRequest()).settings.network.checkLocalProxyBeforeLaunch, true);
@@ -558,7 +558,7 @@ async function verifyLocalDesktop() {
     const independentSettingsRequest = packagedSettingsRequest(service);
     assert.deepEqual((await independentSettingsRequest("assistant/services")).catalog, { services: [], defaultId: null });
     const independentSettings = (await independentSettingsRequest()).settings;
-    assert.deepEqual(independentSettings.network, { checkLocalProxyBeforeLaunch: false, chromiumPreloading: "browser-default" }, "A separate workspace must not inherit the original network preferences");
+    assert.deepEqual(independentSettings.network, { checkLocalProxyBeforeLaunch: false, chromiumPreloading: "browser-default", chromiumMemorySaver: false }, "A separate workspace must not inherit the original network preferences");
     assert.deepEqual(independentSettings.signedUpdates, { checkOnStartup: false }, "A separate workspace must not inherit the signed startup check");
     assert.equal((await independentSettingsRequest("", "PATCH", { network: { checkLocalProxyBeforeLaunch: true } })).settings.network.checkLocalProxyBeforeLaunch, true);
     assert.equal((await independentSettingsRequest("", "PATCH", { network: { checkLocalProxyBeforeLaunch: false } })).settings.network.checkLocalProxyBeforeLaunch, false);
@@ -593,10 +593,10 @@ async function verifyLocalDesktop() {
     assert.equal(restoredSettings.sync.enabled, false);
     assert.equal(restoredSettings.sync.folder, join(state, "sync-fixture"));
     assert.deepEqual(restoredSettings.signedUpdates, { checkOnStartup: false }, "Restored workspaces must opt in again to startup checks");
-    assert.deepEqual(restoredSettings.network, { checkLocalProxyBeforeLaunch: true, chromiumPreloading: "disabled" }, "Full backups must preserve both saved network preferences");
+    assert.deepEqual(restoredSettings.network, { checkLocalProxyBeforeLaunch: true, chromiumPreloading: "disabled", chromiumMemorySaver: false }, "Full backups must preserve saved network preferences");
     const restoredSettingsRequest = packagedSettingsRequest(service);
     const changedRestoredSettings = (await restoredSettingsRequest("", "PATCH", { network: { checkLocalProxyBeforeLaunch: false, chromiumPreloading: "browser-default" } })).settings;
-    assert.deepEqual(changedRestoredSettings, { ...restoredSettings, network: { checkLocalProxyBeforeLaunch: false, chromiumPreloading: "browser-default" } }, "Changing restored network preferences must preserve all other restored settings");
+    assert.deepEqual(changedRestoredSettings, { ...restoredSettings, network: { checkLocalProxyBeforeLaunch: false, chromiumPreloading: "browser-default", chromiumMemorySaver: false } }, "Changing restored network preferences must preserve all other restored settings");
     assert.equal(JSON.parse(await readFile(join(state, "app-settings.json"), "utf8")).network.checkLocalProxyBeforeLaunch, true, "Restored workspace settings must not overwrite the original");
     assert.equal((await service.read("/ui/api/settings/templates", 200, { "X-Maobu-Settings": "1" })).catalog.templates[0].id, featureEvidence.templateId);
     assert.equal((await service.send("POST", "/ui/api/workspaces/default/activate")).restartRequired, true);
@@ -611,7 +611,7 @@ async function verifyLocalDesktop() {
     assert.equal(preserved[0].name, "Packaged synthetic environment");
     assert.equal((await service.read("/ui/api/workspace/backups")).backups[0].sha256, sha256);
     const originalSettings = (await packagedSettingsRequest(service)()).settings;
-    assert.deepEqual(originalSettings.network, { checkLocalProxyBeforeLaunch: true, chromiumPreloading: "disabled" }, "The original network preferences must survive all workspace switches");
+    assert.deepEqual(originalSettings.network, { checkLocalProxyBeforeLaunch: true, chromiumPreloading: "disabled", chromiumMemorySaver: false }, "The original network preferences must survive all workspace switches");
     assert.deepEqual(originalSettings.signedUpdates, { checkOnStartup: true }, "The original signed startup check must survive all workspace switches");
     for (const id of [independent.id, restored.result.workspaceId]) assert.equal(JSON.parse(await readFile(join(state, "workspaces", id, "app-settings.json"), "utf8")).network.checkLocalProxyBeforeLaunch, false, "Other workspaces must retain their independent network setting");
     assert.deepEqual((await service.read("/ui/api/runtime-downloads")).downloads, [], "Settings checks must not download a browser");

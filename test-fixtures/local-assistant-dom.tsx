@@ -65,6 +65,14 @@ async function run(scenario: string) {
     assert.equal(dom.container.querySelector<HTMLDivElement>(".assistant-connection")!.hidden, true);
     if (scenario === "settings-toggle") {
       await typeDraft("Keep my local draft.");
+      const guide = dom.container.querySelector("details.assistant-session-guide")!;
+      assert.equal(guide.hasAttribute("open"), false, "Session and workflow explanation should be collapsed initially");
+      assert.equal(progress().hasAttribute("hidden"), true, "Idle instructions should leave space for the conversation");
+      assert.ok(button("Model settings").classList.contains("primary"), "The unconnected state should have one clear model setup action");
+      await act(async () => guide.querySelector("summary")!.click());
+      assert.equal(guide.hasAttribute("open"), true);
+      assert.equal(calls.length, 0, "Expanding the conversation guide must not connect");
+      assert.equal(textarea().value, "Keep my local draft.");
       await click("Model settings");
       assert.equal(button("Model settings").getAttribute("aria-expanded"), "true");
       assert.equal(dom.container.querySelector<HTMLDivElement>(".assistant-connection")!.hidden, false);
@@ -77,6 +85,7 @@ async function run(scenario: string) {
       assert.equal(calls.length, 1);
       assert.equal(dom.container.querySelector<HTMLDivElement>(".assistant-connection")!.hidden, true);
       assert.ok(dom.container.querySelector(".assistant-model-summary")?.textContent?.includes("dom-fixture:latest"));
+      assert.equal(button("Model settings").classList.contains("primary"), false, "The connected conversation should give visual priority to sending");
       assert.equal(textarea().value, "Keep my local draft.");
       assert.equal(dom.window.document.activeElement, textarea());
       return;
@@ -98,6 +107,7 @@ async function run(scenario: string) {
       await connect();
       await click("Send message ↑");
       assert.ok(progress().classList.contains("waiting"));
+      assert.equal(progress().hasAttribute("hidden"), false, "Generation feedback must remain directly visible outside the collapsed guide");
       assert.ok(progress().textContent?.includes("Waiting for the local model"));
       assert.equal(calls[1]!.body.messages.at(-1).content, "An anonymous inspection summary.");
       assert.equal(JSON.stringify(calls).includes("PRIVATE_"), false, "Source labels are local display context, never model input");

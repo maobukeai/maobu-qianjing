@@ -407,7 +407,7 @@ async function run(scenario: string) {
       assert.equal(tab("account").getAttribute("aria-selected"), "true");
       assert.equal([...panel.querySelectorAll<HTMLElement>("h2")].find(node => !node.closest("[hidden], [inert]"))?.textContent, "Local workspace");
       assert.equal(creations.length, 0); assert.deepEqual(unexpected, []);
-      assert.equal(requests.filter(item => item.path === "/ui/api/settings").length, 2, "Startup proxy check and page preloading each read their settings once");
+      assert.equal(requests.filter(item => item.path === "/ui/api/settings").length, 3, "Startup proxy check, page preloading and memory saver each read their settings once");
       assert.equal(requests.filter(item => item.path === "/ui/api/settings/fingerprints").length, 1);
       assert.ok(requests.every(item => item.method === "GET"), "Navigating settings must not create profiles, scan ports, or write preferences");
       return;

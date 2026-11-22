@@ -166,6 +166,7 @@ function makeLauncher(
     autofill,
     ...(preferences ? { checkLocalProxyBeforeLaunch: createLocalProxyPreflight(() => preferences.read()) } : {}),
     ...(preferences ? { chromiumPreloading: () => preferences.read().network?.chromiumPreloading ?? "browser-default" } : {}),
+    ...(preferences ? { chromiumMemorySaver: () => preferences.read().network?.chromiumMemorySaver === true } : {}),
     dataRoot: defaultDataRoot,
     ...(chromiumRuntimeRoot ? { chromiumRuntimeRoot } : {}),
     headless: has(rest, "headless"),

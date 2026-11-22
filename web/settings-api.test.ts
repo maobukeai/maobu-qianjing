@@ -78,8 +78,8 @@ test("custom discovery sends the selected IPv6 target and rejects substituted ad
 
 test("old settings responses gain a disabled network preference and new network fields stay strict", async () => {
   const { network: _network, ...legacy } = defaultAppSettings();
-  response({ ok: true, settings: legacy }); expect((await api.fetchSettings()).network).toEqual({ checkLocalProxyBeforeLaunch: false, chromiumPreloading: "browser-default" });
-  response({ ok: true, settings: legacy }); expect((await api.patchSettings({ network: { checkLocalProxyBeforeLaunch: true } })).network).toEqual({ checkLocalProxyBeforeLaunch: false, chromiumPreloading: "browser-default" });
+  response({ ok: true, settings: legacy }); expect((await api.fetchSettings()).network).toEqual({ checkLocalProxyBeforeLaunch: false, chromiumPreloading: "browser-default", chromiumMemorySaver: false });
+  response({ ok: true, settings: legacy }); expect((await api.patchSettings({ network: { checkLocalProxyBeforeLaunch: true } })).network).toEqual({ checkLocalProxyBeforeLaunch: false, chromiumPreloading: "browser-default", chromiumMemorySaver: false });
   for (const network of [null, {}, { checkLocalProxyBeforeLaunch: "true" }, { checkLocalProxyBeforeLaunch: true, password: "forbidden" }]) {
     response({ ok: true, settings: { ...legacy, network } }); await expect(api.fetchSettings()).rejects.toThrow("incomplete");
   }
@@ -90,7 +90,7 @@ test("page preloading responses accept only the two supported intent values and 
   const settings = defaultAppSettings();
   for (const chromiumPreloading of ["browser-default", "disabled"] as const) {
     response({ ok: true, settings: { ...settings, network: { checkLocalProxyBeforeLaunch: true, chromiumPreloading } } });
-    expect((await api.fetchSettings()).network).toEqual({ checkLocalProxyBeforeLaunch: true, chromiumPreloading });
+    expect((await api.fetchSettings()).network).toEqual({ checkLocalProxyBeforeLaunch: true, chromiumPreloading, chromiumMemorySaver: false });
   }
   for (const chromiumPreloading of [null, 2, "off", true, {}, []]) {
     response({ ok: true, settings: { ...settings, network: { checkLocalProxyBeforeLaunch: false, chromiumPreloading } } });

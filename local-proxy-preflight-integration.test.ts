@@ -17,12 +17,12 @@ test("settings HTTP saves only the network preference and the fresh-launch callb
   const paths = statePaths(root), settings = new AppSettingsStore(join(root, "app-settings.json"));
   const store = new Proxy({} as ProfileStore, { get() { throw new Error("Network preferences must not access profiles"); } });
   const request = (method = "GET", value?: unknown, headers: Record<string, string> = {}) => new Request("http://127.0.0.1:50400/ui/api/settings", { method, headers: { "X-Maobu-Settings": "1", ...(method === "GET" ? {} : { "Content-Type": "application/json" }), ...headers }, ...(method === "GET" ? {} : { body: JSON.stringify(value) }) });
-  const initial = await handleFeatureSettingsRequest(request(), store, { paths }); expect((await initial!.json()).settings.network).toEqual({ checkLocalProxyBeforeLaunch: false, chromiumPreloading: "browser-default" }); expect(existsSync(settings.path)).toBe(false);
+  const initial = await handleFeatureSettingsRequest(request(), store, { paths }); expect((await initial!.json()).settings.network).toEqual({ checkLocalProxyBeforeLaunch: false, chromiumPreloading: "browser-default", chromiumMemorySaver: false }); expect(existsSync(settings.path)).toBe(false);
   settings.patch({ updates: { repository: "maobu/browser" }, sync: { folder: join(root, "snapshots"), retainSnapshots: 12 } });
   const before = settings.read(); let probes = 0; const check = createLocalProxyPreflight(() => settings.read(), { probe: async () => { probes++; } });
   await check({ type: "http", host: "127.0.0.1", port: "7890" }); expect(probes).toBe(0);
   const saved = await handleFeatureSettingsRequest(request("PATCH", { network: { checkLocalProxyBeforeLaunch: true } }), store, { paths }); expect(saved!.status).toBe(200);
-  expect(settings.read()).toEqual({ ...before, network: { checkLocalProxyBeforeLaunch: true, chromiumPreloading: "browser-default" } });
+  expect(settings.read()).toEqual({ ...before, network: { checkLocalProxyBeforeLaunch: true, chromiumPreloading: "browser-default", chromiumMemorySaver: false } });
   await check({ type: "http", host: "127.0.0.1", port: "7890" }); expect(probes).toBe(1);
   const original = readFileSync(settings.path);
   for (const network of [null, { checkLocalProxyBeforeLaunch: "true" }, { checkLocalProxyBeforeLaunch: true, password: "private-settings-marker" }]) {

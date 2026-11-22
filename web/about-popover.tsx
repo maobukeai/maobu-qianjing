@@ -76,16 +76,16 @@ export function AboutPopover({
 
   const panelRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
-  const checkSignedButtonRef = useRef<HTMLButtonElement>(null);
-  const installSignedButtonRef = useRef<HTMLButtonElement>(null);
+  const primaryActionButtonRef = useRef<HTMLButtonElement>(null);
   const signedErrorRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
 
-  const [position, setPosition] = useState<{ top: number; left: number }>({ top: 64, left: 16 });
+  const [position, setPosition] = useState<{ top: number; left: number }>({ top: 56, left: 16 });
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState<string | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [notesExpanded, setNotesExpanded] = useState(false);
 
   // Signed channel state
   const workspaceOperations = useOptionalWorkspaceOperations();
@@ -244,7 +244,7 @@ export function AboutPopover({
     const place = () => {
       const rect = anchorRef.current?.getBoundingClientRect();
       const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 1280;
-      const popoverWidth = Math.min(416, Math.max(260, viewportWidth - 24));
+      const popoverWidth = Math.min(432, Math.max(280, viewportWidth - 24));
       if (rect && (rect.width > 0 || rect.height > 0)) {
         const top = Math.max(8, Math.round(rect.bottom + 8));
         const left = Math.max(12, Math.min(Math.round(rect.left), Math.max(12, viewportWidth - popoverWidth - 12)));
@@ -321,7 +321,7 @@ export function AboutPopover({
   }
 
   async function handleCheckSigned() {
-    if (operationInFlight.current || installIntent.current || startupChecking) return;
+    if (!signedStatus?.configured || operationInFlight.current || installIntent.current || startupChecking) return;
     operationInFlight.current = true;
     statusRevision.current++;
     signedUpdateStartup?.beginManualOperation();
@@ -440,9 +440,8 @@ export function AboutPopover({
   }
 
   function returnDialogFocus() {
-    if (installSignedButtonRef.current && !installSignedButtonRef.current.disabled) return installSignedButtonRef.current;
+    if (primaryActionButtonRef.current && !primaryActionButtonRef.current.disabled) return primaryActionButtonRef.current;
     if (signedErrorRef.current) return signedErrorRef.current;
-    if (checkSignedButtonRef.current && !checkSignedButtonRef.current.disabled) return checkSignedButtonRef.current;
     return closeButtonRef.current;
   }
 
@@ -505,6 +504,13 @@ export function AboutPopover({
     }
   }
 
+  async function handleUnifiedCheck() {
+    const tasks: Array<Promise<unknown>> = [];
+    if (signedStatus?.configured) tasks.push(handleCheckSigned());
+    if (settings && !githubBusy) tasks.push(handleGithubCheck());
+    await Promise.allSettled(tasks);
+  }
+
   async function handleGithubStartupToggle(enabled: boolean) {
     if (!settings || githubBusy) return;
     setGithubBusy(true);
@@ -540,45 +546,10 @@ export function AboutPopover({
   }
 
   const displayVersion = appVersion || signedStatus?.currentVersion || "";
-  const signedStatusLabel = !signedStatus
-    ? signedError || startupError
-      ? "Status unavailable"
-      : "Loading…"
-    : installed
-      ? "Restart requested"
-      : signedOperation === "install" || signedStatus.status === "downloading" || signedStatus.status === "installing"
-        ? "Update in progress"
-        : signedOperation === "check" || startupChecking || signedStatus.status === "checking"
-          ? "Checking…"
-          : !signedStatus.configured
-            ? "Not enabled"
-            : signedError || startupError || signedStatus.status === "error"
-              ? "Check again"
-              : signedStatus.update
-                ? "Update available"
-                : signedStatus.status === "up-to-date"
-                  ? "Up to date"
-                  : "Ready to check";
-
-  const signedStatusPositive =
-    !signedError &&
-    !startupError &&
-    !signedBusy &&
-    !nativeBusy &&
-    !startupChecking &&
-    (installed || signedStatus?.status === "up-to-date" || !!signedStatus?.update);
-
   const matchingGithubResult =
     settings && githubResult && githubResult.repository === settings.updates.repository && githubResult.channel === settings.updates.channel
       ? githubResult
       : null;
-
-  const githubStatusLabels: Record<UpdateResult["status"], string> = {
-    "not-configured": "Choose a release repository",
-    "up-to-date": "No newer GitHub release",
-    available: "New GitHub release found",
-    error: "Could not read GitHub releases",
-  };
 
   const signedStartupChecked =
     signedUpdateStartup && desktopMode
@@ -594,7 +565,76 @@ export function AboutPopover({
         signedOperation === "install"
       : !desktopMode || !settings || signedPreferenceBusy || (!signedStatus?.configured && !settings?.signedUpdates.checkOnStartup);
 
-  const effectiveRepoLabel = settings?.updates.repository.trim() || "";
+  const effectiveRepoLabel = settings?.updates.repository.trim() || DEFAULT_GITHUB_REPOSITORY;
+
+  const isChecking = signedOperation === "check" || startupChecking || signedStatus?.status === "checking" || githubChecking;
+  const isInstalling = signedOperation === "install" || signedStatus?.status === "downloading" || signedStatus?.status === "installing";
+  const hasSignedUpdate = Boolean(signedStatus?.configured && signedStatus.update && !installed);
+  const hasGithubUpdate = Boolean(matchingGithubResult?.status === "available" && matchingGithubResult.latest);
+
+  let badgeLabel = "Ready to check";
+  let badgeTone: "neutral" | "positive" | "accent" = "neutral";
+  if (installed) {
+    badgeLabel = "Restart requested";
+    badgeTone = "positive";
+  } else if (isInstalling) {
+    badgeLabel = "Update in progress";
+    badgeTone = "accent";
+  } else if (isChecking) {
+    badgeLabel = "Checking…";
+  } else if (hasSignedUpdate || hasGithubUpdate) {
+    badgeLabel = "Update available";
+    badgeTone = "accent";
+  } else if (signedStatus?.status === "up-to-date" || matchingGithubResult?.status === "up-to-date") {
+    badgeLabel = "Up to date";
+    badgeTone = "positive";
+  } else if (signedStatus && !signedStatus.configured) {
+    badgeLabel = "Local build";
+  }
+
+  let capsuleTitle = t("Check for a newer version");
+  if (installed) {
+    capsuleTitle = t("Update installed. Restart requested.");
+  } else if (isInstalling) {
+    capsuleTitle = t("Installing signed update…");
+  } else if (hasSignedUpdate && signedStatus?.update) {
+    capsuleTitle = `${t("Update available")}: ${signedStatus.currentVersion || displayVersion} → ${signedStatus.update.version}`;
+  } else if (hasGithubUpdate && matchingGithubResult?.latest) {
+    capsuleTitle = `${t("New GitHub release")}: ${matchingGithubResult.currentVersion} → ${matchingGithubResult.latest.version}`;
+  } else if (signedStatus?.status === "up-to-date" || matchingGithubResult?.status === "up-to-date") {
+    capsuleTitle = displayVersion
+      ? t("v{version} is up to date", { version: displayVersion })
+      : t("You are running the latest version");
+  } else if (signedStatus && !signedStatus.configured) {
+    capsuleTitle = t("Community local build");
+  } else if (signedError || startupError) {
+    capsuleTitle = t("Check again");
+  }
+
+  let capsuleDetail = t("Signed desktop channel + GitHub Releases.");
+  if (isInstalling) {
+    capsuleDetail = t("Keep the app open until installation finishes.");
+  } else if (hasSignedUpdate) {
+    capsuleDetail = t("Saves and closes open browser sessions before restarting.");
+  } else if (hasGithubUpdate && matchingGithubResult?.latest) {
+    capsuleDetail = t("View release notes below or download from GitHub.");
+  } else if (signedStatus && !signedStatus.configured && matchingGithubResult?.status === "up-to-date") {
+    capsuleDetail = t("Synced with GitHub Releases · auto-install off.");
+  } else if (signedStatus && !signedStatus.configured) {
+    capsuleDetail = t("Tracks GitHub Releases · signed auto-install off.");
+  } else if (signedStatus?.configured && signedStatus.message) {
+    capsuleDetail = t(signedStatus.message);
+  }
+
+  const releaseNotesText =
+    signedStatus?.update?.notes ||
+    matchingGithubResult?.latest?.notes ||
+    (signedStatus?.configured && signedStatus.status === "up-to-date"
+      ? t("No newer release notes on the signed channel.")
+      : t("Check for updates to load the latest release notes."));
+
+  const combinedError = signedError || startupError || settingsError || githubError || matchingGithubResult?.error || null;
+  const showNotesLink = matchingGithubResult?.latest?.url ?? null;
 
   function closeFromButton() {
     onClose();
@@ -614,9 +654,12 @@ export function AboutPopover({
           style={{ top: position.top, left: position.left }}
           onMouseDown={(event) => event.stopPropagation()}
         >
+          {/* 顶部品牌头 */}
           <header className="about-popover-head">
             <div className="about-brand-identity">
-              <img className="about-brand-mark" src={maobuMarkUrl} width={36} height={36} alt="" aria-hidden="true" />
+              <div className="about-brand-icon-box" aria-hidden="true">
+                <img className="about-brand-mark" src={maobuMarkUrl} width={30} height={30} alt="" />
+              </div>
               <div className="about-brand-copy">
                 <div className="about-brand-title-row">
                   <h2 id={headingId}>猫步·千境</h2>
@@ -624,7 +667,7 @@ export function AboutPopover({
                 </div>
                 <div className="about-version-row">
                   <span className="about-version-value mono" title={displayVersion || undefined}>
-                    {displayVersion || "—"}
+                    {displayVersion ? `v${displayVersion}` : "—"}
                   </span>
                   <button
                     type="button"
@@ -651,248 +694,200 @@ export function AboutPopover({
             </button>
           </header>
 
-          <div className="about-popover-body">
-            <section className="about-section" aria-label={t("App updates")}>
-              <div className="about-section-head">
-                <h3>{t("App updates")}</h3>
+          {/* 更新胶囊与开关区 */}
+          <div className="about-section-block">
+            <div className="about-update-capsule">
+              <div className="about-capsule-top">
+                <span className={`about-status-badge is-${badgeTone}${isChecking ? " is-checking" : ""}`}>
+                  {isChecking && <span className="about-badge-spinner" aria-hidden="true" />}
+                  {!isChecking && (hasSignedUpdate || hasGithubUpdate || badgeTone === "positive") && (
+                    <span className="about-badge-dot" aria-hidden="true" />
+                  )}
+                  <span>{t(badgeLabel)}</span>
+                </span>
+                <select
+                  className="select about-channel-select"
+                  aria-label={t("Release channel")}
+                  value={settings?.updates.channel ?? "stable"}
+                  disabled={!settings || githubBusy || settingsLoading || isInstalling}
+                  onChange={(event) => void handleChannelChange(event.target.value as "stable" | "beta")}
+                >
+                  <option value="stable">{t("Stable releases")}</option>
+                  <option value="beta">{t("Include prereleases")}</option>
+                </select>
+              </div>
+
+              <div className="about-capsule-copy">
+                <div className="about-update-title">{capsuleTitle}</div>
+                <p className="about-update-subtitle">{capsuleDetail}</p>
+              </div>
+
+              {progress && <SignedUpdateProgressView progress={progress} />}
+              {installationBlock && hasSignedUpdate && (
+                <p className="about-note" role="status">{t(installationBlock)}</p>
+              )}
+
+              {combinedError && (
+                <div className="about-alert" role="alert" ref={signedErrorRef} tabIndex={-1}>
+                  <span>{t(combinedError)}</span>
+                  {!signedStatus && (
+                    <button
+                      type="button"
+                      className="btn xs"
+                      disabled={signedLoading}
+                      onClick={() => {
+                        setSignedError("");
+                        void loadSignedStatus(true);
+                      }}
+                    >
+                      {t("Try again")}
+                    </button>
+                  )}
+                </div>
+              )}
+
+              <div className="about-capsule-actions">
+                {hasSignedUpdate ? (
+                  <button
+                    ref={primaryActionButtonRef}
+                    type="button"
+                    className="btn sm primary about-primary-cta"
+                    disabled={signedBusy || nativeBusy || startupChecking || !!installationBlock}
+                    onClick={requestInstall}
+                  >
+                    {t("Install verified update")}
+                  </button>
+                ) : (
+                  <button
+                    ref={primaryActionButtonRef}
+                    type="button"
+                    className="btn sm primary about-primary-cta"
+                    disabled={isChecking || isInstalling || (!signedStatus?.configured && (!settings || githubBusy || settingsLoading))}
+                    onClick={() => void handleUnifiedCheck()}
+                  >
+                    {t(isChecking ? "Checking…" : "Check for updates")}
+                  </button>
+                )}
                 <button
                   type="button"
-                  className="btn xs ghost about-settings-shortcut"
-                  onClick={() => {
-                    onClose();
-                    onOpenUpdateSettings();
-                  }}
+                  className={`btn sm about-notes-toggle${notesExpanded ? " is-open" : ""}`}
+                  aria-expanded={notesExpanded}
+                  onClick={() => setNotesExpanded((previous) => !previous)}
                 >
-                  {t("Open full update settings")}
+                  <span>{t(notesExpanded ? "Hide release notes" : "Release notes")}</span>
+                  <svg className="about-chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
                 </button>
               </div>
 
-              <div className="about-update-card">
-                <div className="about-card-row">
-                  <strong>{t("Signed update channel")}</strong>
-                  <span className={`about-status-badge${signedStatusPositive ? " is-positive" : ""}`}>
-                    {t(signedStatusLabel)}
-                  </span>
+              <div
+                className={`about-notes-accordion${notesExpanded ? " is-open" : ""}`}
+                data-open={notesExpanded ? "true" : "false"}
+                aria-hidden={!notesExpanded}
+              >
+                <div className="about-notes-accordion-inner">
+                  <div className="about-notes-drawer">
+                    <pre className="release-notes">{releaseNotesText}</pre>
+                    {showNotesLink && (
+                      <a
+                        className="about-link"
+                        href={showNotesLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        tabIndex={notesExpanded ? undefined : -1}
+                      >
+                        {t("View release on GitHub")} ↗
+                      </a>
+                    )}
+                  </div>
                 </div>
-
-                {(signedError || startupError) && (
-                  <div className="about-alert" role="alert" ref={signedErrorRef} tabIndex={-1}>
-                    <span>{t(signedError || startupError || "")}</span>
-                    {!signedStatus && (
-                      <button
-                        type="button"
-                        className="btn xs"
-                        disabled={signedLoading}
-                        onClick={() => {
-                          setSignedError("");
-                          void loadSignedStatus(true);
-                        }}
-                      >
-                        {t("Try again")}
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {!signedStatus && !signedError && !startupError && (
-                  <p className="about-muted" role="status">{t("Loading…")}</p>
-                )}
-
-                {signedStatus && !signedStatus.configured && (
-                  <p className="about-note">
-                    {t("Signed auto-install channel is not enabled in this build. You can still check GitHub Releases below.")}
-                  </p>
-                )}
-
-                {signedStatus?.configured && (
-                  <>
-                    {signedStatus.update ? (
-                      <div className="about-release-box">
-                        <div className="about-release-version">
-                          <strong>{(signedStatus.currentVersion || displayVersion) + " → " + signedStatus.update.version}</strong>
-                        </div>
-                        {signedStatus.update.notes && (
-                          <details className="about-release-notes">
-                            <summary>{t("Release notes")}</summary>
-                            <pre className="release-notes">{signedStatus.update.notes}</pre>
-                          </details>
-                        )}
-                        <p className="about-muted">{t("Installation saves and closes browser sessions before replacing the app.")}</p>
-                      </div>
-                    ) : signedStatus.status === "up-to-date" ? (
-                      <p className="about-muted">{t("You are on the latest signed release.")}</p>
-                    ) : (
-                      <p className="about-muted">{t(signedStatus.message)}</p>
-                    )}
-
-                    <div className="about-actions">
-                      <button
-                        ref={checkSignedButtonRef}
-                        type="button"
-                        className="btn sm"
-                        disabled={signedBusy || nativeBusy || startupChecking || !signedStatus.configured || installed}
-                        onClick={() => void handleCheckSigned()}
-                      >
-                        {t(signedOperation === "check" || startupChecking ? "Checking…" : "Check trusted channel")}
-                      </button>
-                      {signedStatus.update && (
-                        <button
-                          ref={installSignedButtonRef}
-                          type="button"
-                          className="btn sm primary"
-                          disabled={signedBusy || nativeBusy || startupChecking || !signedStatus.configured || !!installationBlock}
-                          onClick={requestInstall}
-                        >
-                          {t("Install verified update")}
-                        </button>
-                      )}
-                    </div>
-                    {installationBlock && !signedBusy && (
-                      <p className="about-note" role="status">{t(installationBlock)}</p>
-                    )}
-                  </>
-                )}
-
-                {(signedOperation === "install" || signedStatus?.status === "downloading" || signedStatus?.status === "installing") && (
-                  <p className="about-note" role="status">
-                    {t("Keep the app open while the update downloads and installs. Closing and restarting are blocked until it finishes.")}
-                  </p>
-                )}
-                {progress && <SignedUpdateProgressView progress={progress} />}
-                {installed && <p className="about-success" role="status">{t("Update installed. Restart requested.")}</p>}
-
-                <label className="about-switch">
-                  <span>{t("Check signed updates on startup")}</span>
-                  <input
-                    type="checkbox"
-                    role="switch"
-                    checked={signedStartupChecked}
-                    disabled={signedStartupDisabled}
-                    onChange={(event) => void handleSignedStartupToggle(event.target.checked)}
-                  />
-                </label>
-                {signedUpdateStartup?.preferenceError && (
-                  <div className="about-alert" role="alert">
-                    <span>{t(signedUpdateStartup.preferenceError)}</span>
-                    {signedUpdateStartup.preference === null && (
-                      <button
-                        type="button"
-                        className="btn xs"
-                        disabled={signedUpdateStartup.preferenceBusy}
-                        onClick={signedUpdateStartup.retryPreference}
-                      >
-                        {t("Try again")}
-                      </button>
-                    )}
-                  </div>
-                )}
               </div>
+            </div>
 
-              <div className="about-update-card">
-                <div className="about-card-row">
-                  <strong>GitHub Releases</strong>
-                  <select
-                    className="select about-channel-select"
-                    aria-label={t("Release channel")}
-                    value={settings?.updates.channel ?? "stable"}
-                    disabled={!settings || githubBusy || settingsLoading}
-                    onChange={(event) => void handleChannelChange(event.target.value as "stable" | "beta")}
-                  >
-                    <option value="stable">{t("Stable releases")}</option>
-                    <option value="beta">{t("Include prereleases")}</option>
-                  </select>
-                </div>
+            <div className="about-switch-card">
+              <label className={`about-switch-row${signedStartupDisabled ? " is-disabled" : ""}`}>
+                <span className="about-switch-copy">
+                  <strong>{t("Auto-check on startup")}</strong>
+                  <small>{t("Signed desktop channel")}</small>
+                </span>
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={signedStartupChecked}
+                  disabled={signedStartupDisabled}
+                  onChange={(event) => void handleSignedStartupToggle(event.target.checked)}
+                />
+              </label>
 
-                <div className="about-github-actions">
+              <label className="about-switch-row">
+                <span className="about-switch-copy">
+                  <strong>{t("Track GitHub Releases")}</strong>
+                  <small className="mono">{effectiveRepoLabel}</small>
+                </span>
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={settings?.updates.checkOnStartup ?? false}
+                  disabled={!settings || githubBusy || settingsLoading}
+                  onChange={(event) => void handleGithubStartupToggle(event.target.checked)}
+                />
+              </label>
+            </div>
+
+            {signedUpdateStartup?.preferenceError && (
+              <div className="about-alert" role="alert">
+                <span>{t(signedUpdateStartup.preferenceError)}</span>
+                {signedUpdateStartup.preference === null && (
                   <button
                     type="button"
-                    className="btn sm primary"
-                    disabled={!settings || githubBusy || settingsLoading}
-                    onClick={() => void handleGithubCheck()}
+                    className="btn xs"
+                    disabled={signedUpdateStartup.preferenceBusy}
+                    onClick={signedUpdateStartup.retryPreference}
                   >
-                    {t(githubChecking ? "Checking…" : "Check for updates")}
+                    {t("Try again")}
                   </button>
-                  <span className="about-repo-hint mono">
-                    {effectiveRepoLabel || t("Default repository: {repo}", { repo: DEFAULT_GITHUB_REPOSITORY })}
-                  </span>
-                </div>
-
-                {(settingsError || githubError) && (
-                  <div className="about-alert" role="alert">
-                    <span>{t(settingsError || githubError || "")}</span>
-                  </div>
                 )}
-
-                {matchingGithubResult && (
-                  <div className="about-github-result" aria-live="polite">
-                    <div className="about-card-row">
-                      <span
-                        className={`about-status-badge${
-                          matchingGithubResult.status === "available" || matchingGithubResult.status === "up-to-date"
-                            ? " is-positive"
-                            : ""
-                        }`}
-                      >
-                        {t(githubStatusLabels[matchingGithubResult.status])}
-                      </span>
-                      <span className="about-version-compare mono">
-                        {matchingGithubResult.currentVersion}
-                        {matchingGithubResult.latest ? ` → ${matchingGithubResult.latest.version}` : ""}
-                      </span>
-                    </div>
-                    {matchingGithubResult.error && (
-                      <p className="about-inline-error" role="alert">{t(matchingGithubResult.error)}</p>
-                    )}
-                    {matchingGithubResult.latest && (
-                      <div className="about-release-box">
-                        <details className="about-release-notes">
-                          <summary>{t("Release notes")}</summary>
-                          <pre className="release-notes">
-                            {matchingGithubResult.latest.notes || t("No release notes provided.")}
-                          </pre>
-                        </details>
-                        <a
-                          className="about-link"
-                          href={matchingGithubResult.latest.url}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {t("View release on GitHub")} ↗
-                        </a>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <label className="about-switch">
-                  <span>{t("Check GitHub Releases on startup")}</span>
-                  <input
-                    type="checkbox"
-                    role="switch"
-                    checked={settings?.updates.checkOnStartup ?? false}
-                    disabled={!settings || githubBusy || settingsLoading}
-                    onChange={(event) => void handleGithubStartupToggle(event.target.checked)}
-                  />
-                </label>
               </div>
-            </section>
-
-            <section className="about-section about-intro">
-              <h3>{t("Local-first isolated browser workbench")}</h3>
-              <ul className="about-feature-list">
-                <li>{t("On-demand Chromium 155, Firefox 156, and CloakBrowser engines.")}</li>
-                <li>{t("Encrypted .mqsync and .mqbackup snapshots stay under your control.")}</li>
-                <li>{t("Built-in local AI and MCP workbench with zero cloud dependency.")}</li>
-              </ul>
-            </section>
+            )}
           </div>
 
-          <footer className="about-popover-foot">
-            <span>{t("Original author Xreacher (AliasMode) · 猫步·千境 contributors")}</span>
-            <a className="about-link" href={GITHUB_REPO_URL} target="_blank" rel="noreferrer">
-              GitHub · maobukeai/maobu-qianjing ↗
-            </a>
-          </footer>
+          {/* 精简简介与作者致谢 */}
+          <div className="about-intro-block">
+            <div className="about-intro-head">
+              <h3>{t("About 猫步·千境")}</h3>
+              <button
+                type="button"
+                className="btn xs ghost about-settings-shortcut"
+                onClick={() => {
+                  onClose();
+                  onOpenUpdateSettings();
+                }}
+              >
+                <span>{t("Update settings")}</span>
+                <span className="about-arrow-nudge" aria-hidden="true">→</span>
+              </button>
+            </div>
+            <p className="about-intro-copy">
+              {t("Local-first isolated browser where profiles, proxies, and encrypted snapshots stay on your device.")}
+            </p>
+            <div className="about-chip-row" aria-label={t("Core capabilities")}>
+              <span className="about-chip">Chromium 155</span>
+              <span className="about-chip">Firefox 156</span>
+              <span className="about-chip">CloakBrowser</span>
+              <span className="about-chip">{t("AI / MCP")}</span>
+            </div>
+            <div className="about-author-card">
+              <div className="about-author-copy">
+                <strong>{t("Open-source credits")}</strong>
+                <span>Xreacher (AliasMode) · 猫步·千境</span>
+              </div>
+              <a className="about-github-pill" href={GITHUB_REPO_URL} target="_blank" rel="noreferrer">
+                <span>GitHub</span>
+                <span className="about-arrow-diagonal" aria-hidden="true">↗</span>
+              </a>
+            </div>
+          </div>
 
           <SignedUpdateDraftDialog
             confirmation={confirmation}

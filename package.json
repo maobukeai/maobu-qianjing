@@ -11,6 +11,7 @@
     "serve": "bun cli.ts serve",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
+    "ui:qa": "bun --no-env-file scripts/qa-ui-upgrade.ts",
     "docs:public": "bun scripts/generate-public-docs.mjs",
     "docs:public:check": "bun scripts/generate-public-docs.mjs --check",
     "desktop:prepare": "bun scripts/prepare-windows-bundle.ts",

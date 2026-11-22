@@ -7,6 +7,19 @@
 .workspace.proxy-page[hidden] { display: none; }
 .workspace.proxy-page > * { flex: 0 0 auto; min-width: 0; }
 .workspace.proxy-manager > * { width: 100%; max-width: 1320px; margin-inline: auto; }
+.proxy-workflow-navigation { position: sticky; top: 0; z-index: var(--z-sticky, 20); padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--sh-xs); }
+.proxy-workflow-scope { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; padding: 0 4px 8px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.proxy-workflow-scope-label { flex-shrink: 0; }
+.proxy-workflow-scope > strong { min-width: 0; color: var(--ink-soft); font-size: 12px; font-weight: 550; overflow-wrap: anywhere; }
+.proxy-workflow-count { margin-inline-start: auto; font-variant-numeric: tabular-nums; }
+.proxy-workflow-navigation ol { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; list-style: none; margin: 0; padding: 0; }
+.proxy-workflow-navigation li { min-width: 0; }
+.proxy-workflow-navigation button { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 34px; padding: 5px 7px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--ink-soft); font: 12px/1.5 var(--font); text-align: start; cursor: pointer; }
+.proxy-workflow-navigation button > span { display: grid; place-items: center; width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%; background: var(--surface-sunken); color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.proxy-workflow-navigation button:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent-ink); }
+.proxy-workflow-navigation button:disabled { color: var(--muted); opacity: .55; cursor: default; }
+.proxy-workflow-target { scroll-margin-top: 118px; }
+.proxy-workflow-target:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 .proxy-manager .tools-intro h1 { margin: 0 0 8px; color: var(--ink); font-size: 24px; font-weight: 550; line-height: 1.25; letter-spacing: -.035em; }
 .proxy-page h2, .proxy-page h3, .proxy-page p { margin: 0; }
 .proxy-page h3 { font-size: 13px; font-weight: 500; }
@@ -171,6 +184,9 @@
 }
 @media (max-width: 800px) {
   .workspace.proxy-page { gap: 17px; }
+  .proxy-workflow-navigation { padding: 9px 10px; }
+  .proxy-workflow-navigation ol { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .proxy-workflow-target { scroll-margin-top: 165px; }
   .trash-layout { grid-template-columns: minmax(0, 1fr); }
   .trash-folder-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .tools-panel-head { flex-wrap: wrap; padding: 16px; }
@@ -183,6 +199,8 @@
   .proxy-actions { gap: 8px; }
 }
 @media (max-width: 480px) {
+  .proxy-workflow-count { flex-basis: 100%; margin-inline-start: 0; }
+  .proxy-workflow-target { scroll-margin-top: 195px; }
   .tools-intro { align-items: flex-start; }
   .tools-intro h2 { font-size: 23px; }
   .tools-tabs { gap: 20px; }
@@ -204,6 +222,7 @@
   .tools-stats > div { padding: 13px 14px; }
 }
 @media (pointer: coarse) {
+  .proxy-workflow-navigation button { min-height: 44px; }
   .proxy-page :is(.btn, .folder-all, .folder-choice, .folder-chip) { min-height: 44px; }
   .proxy-page .tools-tabs button { min-height: 48px; }
   .proxy-page :is(.fld input, .fld select, .fld textarea, .trash-search input) { font-size: 16px; }

@@ -137,7 +137,7 @@ function AssignmentTask({ snapshot, headingRef, onStop, onReconcile, onRefresh }
     : !latest && displayedReceipt ? "Most recent completed proxy replacement" : "Proxy replacement results";
   return <section className="tools-panel proxy-task-card" aria-labelledby="proxy-task-title">
     <div className="tools-panel-head">
-      <div><h3 id="proxy-task-title" data-proxy-task-title tabIndex={-1} ref={headingRef}>{t(title)}</h3>
+      <div><h3 id="proxy-task-title" className="proxy-workflow-target" data-proxy-task-title tabIndex={-1} ref={headingRef}>{t(title)}</h3>
         {reported && <p>{t(busy ? "{updated} reported updated · {total} rows in this batch" : "{updated} updated · {total} rows in this batch", { updated: reported.updated.toLocaleString(language), total: reported.total.toLocaleString(language) })}</p>}
       </div>
       {phase === "applying" && !snapshot.receivingStopped && <button type="button" className="btn" onClick={onStop}>{t("Stop receiving")}</button>}
@@ -361,9 +361,11 @@ export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = 
   const [focusReview, setFocusReview] = useState(false);
   const controller = useRef<AbortController | null>(null);
   const validationId = useId();
+  const workflowId = useId();
   const summaryText = useRef<HTMLTextAreaElement>(null);
   const copyRevision = useRef(0);
   const reviewHeading = useRef<HTMLHeadingElement>(null);
+  const scopeHeading = useRef<HTMLHeadingElement>(null), inputHeading = useRef<HTMLHeadingElement>(null);
   const taskHeading = useRef<HTMLHeadingElement>(null), pageHeading = useRef<HTMLHeadingElement>(null);
   const repairHeading = useRef<HTMLHeadingElement>(null), checkHeading = useRef<HTMLHeadingElement>(null);
   const repairSourceId = useRef<string | null>(null);
@@ -663,6 +665,21 @@ export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = 
     } catch { if (controller.current === current) setError(t("The selected file could not be read.")); }
     finally { finish(current); }
   };
+  const navigateReplacement = (target: RefObject<HTMLHeadingElement | null>) => {
+    if (!active || !target.current) return;
+    target.current.focus({ preventScroll: true });
+    target.current.scrollIntoView?.({ block: "start" });
+  };
+  const localReview = !!(hasPreview && review?.localEndpoint);
+  const workflowOverview = useMemo(() => localReview && review && profiles && !loadingProfiles ? proxyScopeOverview(profiles, review.scope) : overview,
+    [localReview, review, profiles, loadingProfiles, overview]);
+  const replacementSteps = [
+    { key: "scope", label: localReview || targetedReplacement ? "Selected environments" : "Choose folders", target: localReview ? reviewHeading : targetedReplacement ? repairHeading : scopeHeading, controls: `${workflowId}-${localReview ? "review" : "scope"}`, available: true },
+    { key: "input", label: "Add replacement proxies", target: inputHeading, controls: `${workflowId}-input`, available: !repairCompleted },
+    { key: "review", label: "Review changes", target: reviewHeading, controls: `${workflowId}-review`, available: !!hasPreview },
+    { key: "receipt", label: "Proxy replacement results", target: taskHeading, controls: "proxy-task-title", available: !!(assignment.busy || assignment.notice || assignment.latest || assignment.history.length) },
+  ];
+  const scopeLabel = localReview ? t("Local proxy assignment · {endpoint}", { endpoint: review!.localEndpoint! }) : targetedReplacement ? t("Environments from the check result") : all ? t("All folders") : selectedGroups.map(name => name || t("Ungrouped")).join(", ") || t("Select at least one folder to continue.");
   const tools = <>
     <div className="tools-tabs" aria-label={t("Proxy tools")}>
       <button type="button" className={task === "check" ? "selected" : ""} aria-pressed={task === "check"} disabled={!!busy} onClick={() => changeTask("check")}>{t("Check proxies")} <small>{t("Find connection problems")}</small></button>
@@ -670,13 +687,13 @@ export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = 
     </div>
     {checkReplacement && task === "check" && <div className="tools-notice proxy-repair-return"><span>{t(repairCompleted ? "A replacement receipt for {count} environments is open." : "A replacement draft for {count} environments is open.", { count: checkReplacement.ids.length })}</span><button type="button" className="btn xs" disabled={!!busy} onClick={() => { focusRepair.current = "draft"; changeTask("replace"); }}>{t(repairCompleted ? "Return to replacement receipt" : "Return to replacement draft")}</button></div>}
     {targetedReplacement ? <section className="tools-panel proxy-repair-scope">
-      <div className="tools-panel-head"><div><h3 ref={repairHeading} tabIndex={-1}>{!repairCompleted && <span className="tools-step" aria-hidden="true">1</span>}{t(repairCompleted ? "Environments from the check result" : "Replace proxies for this check result")}</h3><p>{t(repairCompleted ? "The receipt below shows the result for each environment." : "Only the listed environments are included. Running environments will be skipped.")}</p></div><button type="button" className="btn" disabled={!!busy} onClick={discardCheckReplacement}>{t(repairCompleted ? "Back to proxy checks" : "Discard replacement draft")}</button></div>
+      <div className="tools-panel-head"><div><h3 id={`${workflowId}-scope`} className="proxy-workflow-target" ref={repairHeading} tabIndex={-1}>{!repairCompleted && <span className="tools-step" aria-hidden="true">1</span>}{t(repairCompleted ? "Environments from the check result" : "Replace proxies for this check result")}</h3><p>{t(repairCompleted ? "The receipt below shows the result for each environment." : "Only the listed environments are included. Running environments will be skipped.")}</p></div><button type="button" className="btn" disabled={!!busy} onClick={discardCheckReplacement}>{t(repairCompleted ? "Back to proxy checks" : "Discard replacement draft")}</button></div>
       <div className="tools-panel-body"><AffectedProfiles profiles={targetedReplacement.profiles} />
         {!repairCompleted && loadingProfiles && <p className="tools-hint" role="status">{t("Loading saved environments before selecting a scope…")}</p>}
         {!repairCompleted && !loadingProfiles && !scopeReady && <p className="tools-alert" role="alert">{t("Some environments from this check are unavailable. Run the check again to prepare a new draft.")}</p>}
       </div>
     </section> : <section className="tools-panel proxy-scope">
-      <div className="tools-panel-head"><div><h3>{task === "replace" && <span className="tools-step">1</span>}{t("Choose folders")}</h3><p>{t("Includes every profile in these folders, across all pages.")}</p></div><span className="tools-folder-tag">{all ? t("All folders") : t("{count} selected", { count: selectedGroups.length })}</span></div>
+      <div className="tools-panel-head"><div><h3 id={`${workflowId}-scope`} className="proxy-workflow-target" ref={scopeHeading} tabIndex={-1}>{task === "replace" && <span className="tools-step" aria-hidden="true">1</span>}{t("Choose folders")}</h3><p>{t("Includes every profile in these folders, across all pages.")}</p></div><span className="tools-folder-tag">{all ? t("All folders") : t("{count} selected", { count: selectedGroups.length })}</span></div>
       {loadingProfiles && <p className="tools-hint proxy-scope-loading" role="status">{t("Loading saved environments before selecting a scope…")}</p>}
       {overview && <div className="proxy-scope-summary" aria-label={t("Selected environments overview")}>
         <div><strong>{overview.total.toLocaleString()}</strong><span>{t("Selected environments")}</span></div>
@@ -747,7 +764,7 @@ export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = 
       <p className="tools-footnote">{t("Supports HTTP and SOCKS5. HTTPS checks are not supported. Not verified means a result could not be confirmed.")}</p>
     </> : <>
       {!repairCompleted && <section className="tools-panel proxy-input-panel">
-        <div className="tools-panel-head"><div><h3><span className="tools-step">2</span>{t("Add replacement proxies")}</h3><p>{t("Nothing changes until you review and apply the assignments.")}</p></div></div>
+        <div className="tools-panel-head"><div><h3 id={`${workflowId}-input`} className="proxy-workflow-target" ref={inputHeading} tabIndex={-1}><span className="tools-step" aria-hidden="true">2</span>{t("Add replacement proxies")}</h3><p>{t("Nothing changes until you review and apply the assignments.")}</p></div></div>
         <div className="tools-panel-body">
           {!targetedReplacement && <label className="fld"><span>{t("Assignment method")}</span><select value={mode} disabled={!!busy} onChange={(event) => { setMode(event.target.value as ProxyReplacementMode); invalidatePreview(); }}>
             <option value="list">{t("Paste a proxy list")}</option><option value="profileId">{t("Match specific profile IDs — CSV")}</option><option value="oldProxy">{t("Replace matching old proxies — CSV")}</option>
@@ -771,7 +788,7 @@ export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = 
         </div>
       </section>}
       <section className="tools-panel">
-        <div className="tools-panel-head"><div><h3 ref={reviewHeading} tabIndex={-1} data-proxy-review-title>{!repairCompleted && <span className="tools-step">3</span>}{t(repairCompleted && assignment.phase !== "review" ? "Proxy replacement receipt" : "Review changes")}</h3><p>{t(repairCompleted && assignment.phase !== "review" ? "Review the confirmed results or preview failed rows again." : "Check the old and new proxy for each profile. Open profiles are skipped.")}</p></div>
+        <div className="tools-panel-head"><div><h3 id={`${workflowId}-review`} className="proxy-workflow-target" ref={reviewHeading} tabIndex={-1} data-proxy-review-title>{!repairCompleted && <span className="tools-step" aria-hidden="true">3</span>}{t(repairCompleted && assignment.phase !== "review" ? "Proxy replacement receipt" : "Review changes")}</h3><p>{t(repairCompleted && assignment.phase !== "review" ? "Review the confirmed results or preview failed rows again." : "Check the old and new proxy for each profile. Open profiles are skipped.")}</p></div>
           {reviewBelongsHere && assignment.phase === "review" && <div className="proxy-actions">
             {!repairCompleted && <button type="button" className="btn" disabled={!!busy} onClick={() => { clearReview(); setFocusReview(true); }}>{t(review?.localEndpoint ? "Discard local review" : "Discard review")}</button>}
             <button type="button" className="btn primary" disabled={!!busy || blocked || !ready || previewStale || !reviewScopeReady} onClick={apply}>{t("Apply {count} changes", { count: ready.toLocaleString() })}</button>
@@ -809,6 +826,13 @@ export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = 
 
   return <div className="workspace proxy-page proxy-manager" hidden={!active} aria-labelledby="proxy-page-title" aria-busy={!!localBusy}>
     <header className="tools-intro page-heading"><div><h1 id="proxy-page-title" ref={pageHeading} tabIndex={-1}>{t("Proxies")}</h1><p className="page-subtitle">{t("Check saved connections or replace proxies across entire folders.")}</p></div></header>
+    {task === "replace" && <nav className="proxy-workflow-navigation" aria-label={t("Replacement workflow")}>
+      <div className="proxy-workflow-scope" aria-label={t("Current replacement scope")}>
+        <span className="proxy-workflow-scope-label">{t("Current replacement scope")}</span><strong>{scopeLabel}</strong>
+        {loadingProfiles ? <span role="status">{t("Loading profiles")}</span> : workflowOverview && <span className="proxy-workflow-count">{t("{count} environments", { count: workflowOverview.total })}<span aria-hidden="true"> · </span>{t("{count} running", { count: workflowOverview.running })}</span>}
+      </div>
+      <ol>{replacementSteps.map((step, index) => <li key={step.key}><button type="button" data-proxy-workflow-step={step.key} aria-controls={step.available ? step.controls : undefined} disabled={!step.available} onClick={() => navigateReplacement(step.target)}><span aria-hidden="true">{index + 1}</span>{t(step.label)}</button></li>)}</ol>
+    </nav>}
     <AssignmentTask snapshot={assignment} headingRef={taskHeading} onStop={() => assignmentOwner.stopReceiving()} onReconcile={() => assignmentOwner.reconcileNow()} onRefresh={() => void assignmentOwner.refreshResult()} />
     {localIntent && checkReplacement && <p className="tools-notice" role="status">{t(repairCompleted ? "Return to proxy checks from the replacement receipt before preparing a local proxy review." : "Finish or discard the replacement draft from check results before preparing a local proxy review.")}</p>}
     {localIntent && <LocalProxyAssignmentDraft key={localIntent.requestId} candidate={localIntent.candidate} active={active} profiles={localRoster}

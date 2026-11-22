@@ -23,9 +23,9 @@ describe("independent application preferences", () => {
   test("legacy settings default the local proxy gate off without rewriting the file", () => {
     const { store } = fixture(), { network: _network, ...legacy } = defaultAppSettings();
     const original = JSON.stringify(legacy); writeFileSync(store.path, original);
-    expect(store.read().network).toEqual({ checkLocalProxyBeforeLaunch: false, chromiumPreloading: "browser-default" }); expect(readFileSync(store.path, "utf8")).toBe(original);
+    expect(store.read().network).toEqual({ checkLocalProxyBeforeLaunch: false, chromiumPreloading: "browser-default", chromiumMemorySaver: false }); expect(readFileSync(store.path, "utf8")).toBe(original);
     const updated = store.patch({ network: { checkLocalProxyBeforeLaunch: true } });
-    expect(updated.network).toEqual({ checkLocalProxyBeforeLaunch: true, chromiumPreloading: "browser-default" }); expect(updated.updates).toEqual(legacy.updates); expect(updated.sync).toEqual(legacy.sync);
+    expect(updated.network).toEqual({ checkLocalProxyBeforeLaunch: true, chromiumPreloading: "browser-default", chromiumMemorySaver: false }); expect(updated.updates).toEqual(legacy.updates); expect(updated.sync).toEqual(legacy.sync);
     expect(new AppSettingsStore(store.path).read()).toEqual(updated);
     expect(store.patch({ updates: { repository: "maobu/browser" } }).network).toEqual(updated.network);
   });
@@ -58,7 +58,7 @@ describe("independent application preferences", () => {
   test("page preloading is workspace-local, opt-in and strictly enum-validated", () => {
     const { store } = fixture(), other = fixture().store;
     const disabled = store.patch({ network: { chromiumPreloading: "disabled" } });
-    expect(disabled.network).toEqual({ checkLocalProxyBeforeLaunch: false, chromiumPreloading: "disabled" });
+    expect(disabled.network).toEqual({ checkLocalProxyBeforeLaunch: false, chromiumPreloading: "disabled", chromiumMemorySaver: false });
     expect(other.read().network?.chromiumPreloading).toBe("browser-default");
     expect(store.patch({ network: { checkLocalProxyBeforeLaunch: true } }).network?.chromiumPreloading).toBe("disabled");
     const original = readFileSync(store.path, "utf8");
@@ -67,7 +67,7 @@ describe("independent application preferences", () => {
       expect(readFileSync(store.path, "utf8")).toBe(original);
     }
     expect(new AppSettingsStore(store.path).read().network?.chromiumPreloading).toBe("disabled");
-    expect(store.patch({ network: { chromiumPreloading: "browser-default" } }).network).toEqual({ checkLocalProxyBeforeLaunch: true, chromiumPreloading: "browser-default" });
+    expect(store.patch({ network: { chromiumPreloading: "browser-default" } }).network).toEqual({ checkLocalProxyBeforeLaunch: true, chromiumPreloading: "browser-default", chromiumMemorySaver: false });
   });
   test("bad patches cannot overwrite previously valid settings", () => {
     const { store } = fixture(); const before = store.patch({ updates: { repository: "maobu/browser" } });

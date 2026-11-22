@@ -1,7 +1,7 @@
 /** A verified Firefox installation created only when a local profile is opened. */
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { firefoxBuildForHost, installFirefox, type FirefoxRuntimeBuild } from "./firefox-install.ts";
+import { firefoxBuildForHost, firefoxInstallDirectoryPrefix, installFirefox, type FirefoxRuntimeBuild } from "./firefox-install.ts";
 import { sha256File } from "./browser-install.ts";
 
 const installations = new Map<string, Promise<string>>();
@@ -63,4 +63,52 @@ export async function ensureManagedFirefox(
   installations.set(key, installation);
   try { return await installation; }
   finally { installations.delete(key); }
+}
+
+/**
+ * Remove Firefox installs left by earlier pinned builds. Each install gets its own folder under
+ * `<managed>/browser/`, so upgrades otherwise keep every old copy. The folder named by
+ * installed.json stays, as does any folder holding one of `inUse` (a live browser's executable)
+ * and any install still running. Without a readable record nothing is removed.
+ */
+export function pruneManagedFirefoxRuntimes(
+  runtimeRoot: string,
+  inUse: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): void {
+  if (installations.size > 0) return;
+  let canonicalRoot: string;
+  let saved: { path?: unknown };
+  try {
+    canonicalRoot = realpathSync(resolve(runtimeRoot, firefoxManagedDirectory(platform, arch)));
+    saved = JSON.parse(readFileSync(join(canonicalRoot, FIREFOX_MANAGED_RECORD), "utf8"));
+  } catch {
+    return;
+  }
+  if (typeof saved.path !== "string" || isAbsolute(saved.path)) return;
+  const current = resolve(canonicalRoot, saved.path);
+  if (!contained(canonicalRoot, current)) return;
+  let cache: string;
+  try { cache = realpathSync(join(canonicalRoot, "browser")); } catch { return; }
+  if (!contained(canonicalRoot, cache)) return;
+  let entries: string[];
+  try { entries = readdirSync(cache); } catch { return; }
+  const liveTargets = inUse.map((executable) => {
+    const resolved = resolve(executable);
+    try { return realpathSync(resolved); } catch { return resolved; }
+  });
+  const prefix = firefoxInstallDirectoryPrefix(platform, arch);
+  for (const entry of entries) {
+    if (!entry.startsWith(prefix)) continue;
+    const path = join(cache, entry);
+    try {
+      if (lstatSync(path).isSymbolicLink()) continue;
+    } catch {
+      continue;
+    }
+    if (contained(path, current)) continue;
+    if (liveTargets.some((executable) => contained(path, executable))) continue;
+    try { rmSync(path, { recursive: true, force: true }); } catch {}
+  }
 }

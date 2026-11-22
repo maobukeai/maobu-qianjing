@@ -403,6 +403,7 @@ async function run(scenario: string) {
         assert.equal(input().value, "The newer draft must survive."); assert.ok(!dom.container.textContent?.includes("STALE_CANCELLED_RESPONSE"));
       } else {
         assert.equal(progress().dataset.cancellation, "unconfirmed"); assert.ok(progress().textContent?.includes("could not be confirmed"));
+        assert.equal(progress().hidden, false, "Unconfirmed cancellation must stay visible outside the guide");
         assert.ok(!dom.container.textContent?.includes("PRIVATE_CANCEL_ERROR"));
         cancellationResult = true; await click("Retry cancellation", true); assert.equal(cancellations.length, 2);
         assert.equal(cancellations[1]!.call.body.requestId, old.call.body.requestId); assert.equal(chats.length, 1);

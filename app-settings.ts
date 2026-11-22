@@ -16,7 +16,7 @@ export interface SyncSettings {
   folder: string;
   retainSnapshots: number;
 }
-export interface NetworkSettings { checkLocalProxyBeforeLaunch: boolean; chromiumPreloading?: ChromiumPreloadingMode }
+export interface NetworkSettings { checkLocalProxyBeforeLaunch: boolean; chromiumPreloading?: ChromiumPreloadingMode; chromiumMemorySaver?: boolean }
 export interface SignedUpdateSettings { checkOnStartup: boolean }
 export interface AppSettings { version: 1; updates: UpdateSettings; sync: SyncSettings; network?: NetworkSettings; signedUpdates?: SignedUpdateSettings }
 
@@ -25,7 +25,7 @@ export function defaultAppSettings(): AppSettings {
     version: 1,
     updates: { repository: "", channel: "stable", checkOnStartup: false },
     sync: { enabled: false, folder: "", retainSnapshots: 10 },
-    network: { checkLocalProxyBeforeLaunch: false, chromiumPreloading: "browser-default" },
+    network: { checkLocalProxyBeforeLaunch: false, chromiumPreloading: "browser-default", chromiumMemorySaver: false },
     signedUpdates: { checkOnStartup: false },
   };
 }
@@ -61,8 +61,9 @@ export function parseAppSettings(value: unknown): AppSettings {
   if (folder && !(sync.enabled ? isAbsolute(folder) : posix.isAbsolute(folder) || win32.isAbsolute(folder))) throw new Error("Sync folder must be an absolute path");
   if (sync.enabled && !folder) throw new Error("Choose a sync folder before enabling sync");
   const network = raw.network === undefined ? { checkLocalProxyBeforeLaunch: false } : object(raw.network, "Network settings");
-  keys(network, ["checkLocalProxyBeforeLaunch", "chromiumPreloading"], "network");
-  if (typeof network.checkLocalProxyBeforeLaunch !== "boolean" || network.chromiumPreloading !== undefined && !["browser-default", "disabled"].includes(network.chromiumPreloading as string)) throw new Error("Invalid network settings");
+  keys(network, ["checkLocalProxyBeforeLaunch", "chromiumPreloading", "chromiumMemorySaver"], "network");
+  if (typeof network.checkLocalProxyBeforeLaunch !== "boolean" || network.chromiumPreloading !== undefined && !["browser-default", "disabled"].includes(network.chromiumPreloading as string)
+    || network.chromiumMemorySaver !== undefined && typeof network.chromiumMemorySaver !== "boolean") throw new Error("Invalid network settings");
   const signedUpdates = raw.signedUpdates === undefined ? { checkOnStartup: false } : object(raw.signedUpdates, "Signed update settings");
   keys(signedUpdates, ["checkOnStartup"], "signed update");
   if (typeof signedUpdates.checkOnStartup !== "boolean") throw new Error("Invalid signed update settings");
@@ -70,7 +71,7 @@ export function parseAppSettings(value: unknown): AppSettings {
     version: 1,
     updates: { repository: normalizeUpdateRepository(updates.repository), channel: updates.channel as UpdateChannel, checkOnStartup: updates.checkOnStartup },
     sync: { enabled: sync.enabled, folder, retainSnapshots: sync.retainSnapshots as number },
-    network: { checkLocalProxyBeforeLaunch: network.checkLocalProxyBeforeLaunch, chromiumPreloading: network.chromiumPreloading as ChromiumPreloadingMode ?? "browser-default" },
+    network: { checkLocalProxyBeforeLaunch: network.checkLocalProxyBeforeLaunch, chromiumPreloading: network.chromiumPreloading as ChromiumPreloadingMode ?? "browser-default", chromiumMemorySaver: network.chromiumMemorySaver === true },
     signedUpdates: { checkOnStartup: signedUpdates.checkOnStartup },
   };
 }

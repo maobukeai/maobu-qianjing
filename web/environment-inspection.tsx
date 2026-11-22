@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { checkProxy, fetchProfileEdit, ProxyCheckError, type ProxyCheckResult, type UiProfile } from "./api.ts";
 import { fetchFingerprintReports, measureFingerprint, type FingerprintReport } from "./settings-api.ts";
 import { presentFingerprintCheck, type FingerprintCheckStatus, type FingerprintTranslator } from "../fingerprint-check-presentation.ts";
@@ -61,6 +61,53 @@ export function inspectionMeasurementCoverage(report: Pick<FingerprintReport, "c
   const timestampAvailable = validDate(report.measuredAt) !== null;
   return { sampleAvailable, timestampAvailable, linkedCurrentSample: sampleAvailable && timestampAvailable
     && ["capture_source", "runtime_config", "sample_freshness", "sample_coverage"].every(id => status(id) === "pass") };
+}
+type InspectionNextStep = "review" | "findings" | "browser" | "network";
+export function inspectionOverview(report: FingerprintReport | null, options: { proxyConfigured?: boolean; proxyStatus?: ProxyCheckResult["status"] | null; proxyError?: boolean; configurationChanged?: boolean } = {}) {
+  const counts = { pass: 0, warn: 0, fail: 0, unknown: 0 };
+  for (const check of report?.checks ?? []) if (Object.hasOwn(counts, check.status)) counts[check.status]++;
+  const coverage = report ? inspectionMeasurementCoverage(report) : null;
+  let headline = "More evidence is needed", tone: "unknown" | "issue" | "review" | "consistent" = "unknown", next: InspectionNextStep = "browser";
+  if (!report) { headline = "Saved review unavailable"; next = "review"; }
+  else if (counts.fail) { headline = "Resolve {count} issues first"; tone = "issue"; next = "findings"; }
+  else if (options.proxyError || options.proxyStatus === "failed" || options.proxyStatus === "unstable") {
+    headline = "Review the network connection first"; tone = options.proxyStatus === "failed" ? "issue" : "review"; next = "network";
+  }
+  else if (counts.warn) { headline = "Review {count} warnings next"; tone = "review"; next = "findings"; }
+  else if (counts.unknown) next = "findings";
+  else if (options.configurationChanged || !coverage?.linkedCurrentSample) next = "browser";
+  else if (options.proxyConfigured && options.proxyStatus !== "working") next = "network";
+  else { headline = "Stored checks have no reported issues"; tone = "consistent"; next = "findings"; }
+  return { counts, coverage, headline, tone, next };
+}
+
+function InspectionEvidenceFact({ source, title, status, timeLabel, timestamp, empty, note, formatDate }: {
+  source: string; title: string; status: string; timeLabel: string; timestamp?: number | string | null;
+  empty: string; note: string; formatDate: (value: number | string) => string;
+}) {
+  const canonicalTime = validDate(timestamp);
+  return <div className="inspection-evidence-fact" data-evidence-fact={source}>
+    <strong>{title}</strong><span className="inspection-evidence-state">{status}</span>
+    <dl className="inspection-evidence-time"><div><dt>{timeLabel}</dt><dd>{canonicalTime
+      ? <time dateTime={canonicalTime}>{formatDate(timestamp!)}</time> : empty}</dd></div></dl>
+    <p>{note}</p>
+  </div>;
+}
+
+function InspectionOverview({ headline, tone, nextLabel, action, children }: {
+  headline: string; tone: ReturnType<typeof inspectionOverview>["tone"]; nextLabel: string; action: ReactNode; children: ReactNode;
+}) {
+  const { t } = useTranslation();
+  return <section className={`inspection-overview is-${tone}`} aria-labelledby="inspection-overview-title" data-inspection-tone={tone}>
+    <div className="inspection-overview-heading">
+      <div className="inspection-conclusion"><span className="inspection-step-label">{t("Current inspection")}</span>
+        <h2 id="inspection-overview-title">{headline}</h2>
+        <p>{t("Configuration checks, stored browser samples and explicit network observations establish different facts.")}</p>
+      </div>
+      <div className="inspection-overview-next"><span className="inspection-step-label">{t("Next step")}</span><strong>{nextLabel}</strong>{action}</div>
+    </div>
+    <div className="inspection-evidence-sources" aria-label={t("Evidence overview")}>{children}</div>
+  </section>;
 }
 /** Anonymous clipboard projection: fixed vocabulary, counts and canonical dates only. No raw report text or network observation enters it. */
 export function buildInspectionDiagnosticSummary(report: FingerprintReport, options: { reviewedAt?: number | null; proxyStatus?: ProxyCheckResult["status"] | null; configurationChanged?: boolean } = {}, t: FingerprintTranslator = (value, values) => value.replace(/\{(\w+)\}/g, (match, key: string) => values?.[key] === undefined ? match : String(values[key]))) {
@@ -206,8 +253,8 @@ export function EnvironmentInspectionPage({ active, profile, refreshVersion = 0,
   const checks = presented.filter(item => (showPassed || item.check.status !== "pass") && (sourceFilter === "all" || item.source === sourceFilter)
     && (!query || [item.view.label, item.view.detail, item.view.recommendation, t(SOURCE_LABELS[item.source]), ...item.view.evidenceRows.flatMap(row => [row.label, row.value])]
       .filter(Boolean).join(" ").toLocaleLowerCase(language).includes(query)));
-  const counts = { pass: 0, warn: 0, fail: 0, unknown: 0 }; for (const item of presented) counts[item.check.status]++;
-  const coverage = report ? inspectionMeasurementCoverage(report) : null;
+  const overview = inspectionOverview(report, { proxyConfigured: !!profile?.proxy, proxyStatus: exit?.result.status, proxyError: !!proxyError, configurationChanged });
+  const { counts, coverage } = overview;
   const reportLabel = !report ? "Not checked" : counts.fail ? REPORT_LABELS.issues : !coverage?.sampleAvailable ? "Measurement missing"
     : counts.warn || counts.unknown ? REPORT_LABELS.review : coverage.linkedCurrentSample ? "Stored checks consistent" : "Sample source or freshness needs review";
   const safeSummary = useMemo(() => report ? buildInspectionDiagnosticSummary(report, { reviewedAt, proxyStatus: exit?.result.status, configurationChanged }, t) : "", [report, reviewedAt, exit?.result.status, configurationChanged, t]);
@@ -219,9 +266,20 @@ export function EnvironmentInspectionPage({ active, profile, refreshVersion = 0,
     finally { copying.current = false; }
   }
   function showAttention() { setShowPassed(false); setSourceFilter("all"); setSearch(""); findingsHeading.current?.focus({ preventScroll: true }); findingsHeading.current?.scrollIntoView({ block: "nearest", behavior: "auto" }); }
+  function showEvidence(section: "browser" | "network") {
+    const target = heading.current?.closest(".inspection-workspace")?.querySelector<HTMLHeadingElement>(section === "browser" ? "#inspection-fingerprint-title" : "#inspection-route-title");
+    target?.focus({ preventScroll: true }); target?.scrollIntoView({ block: "nearest", behavior: "auto" });
+  }
   const note = exit ? proxyCheckNote(exit.result) : null;
   function edit(field?: InspectionEditField, trigger?: HTMLButtonElement) { if (active && profile && !ownership.current.busy) onEditProfile(id, field, trigger); }
   function explain() { if (active && report && !ownership.current.busy) onExplainFingerprint(report); }
+  const nextLabel = overview.next === "review" ? "Refresh review" : overview.next === "findings" ? "View checks needing review"
+    : overview.next === "network" ? "Check saved proxy" : measurable ? "Collect a new browser measurement" : "Return to environments to reopen or inspect";
+  const nextAction = overview.next === "review"
+    ? <button className="btn" type="button" disabled={!!busy} onClick={() => void review()}>{t("Refresh review")}</button>
+    : overview.next === "findings"
+      ? <button className="btn" type="button" disabled={!!busy} onClick={showAttention}>{t("View checks needing review")}</button>
+      : <button className="btn" type="button" disabled={!!busy} onClick={() => showEvidence(overview.next as "browser" | "network")}>{t(overview.next === "browser" ? "Review browser evidence" : "Review network evidence")}</button>;
   return <div className="workspace inspection-workspace" hidden={!active} aria-labelledby="inspection-page-title">
     <header className="page-heading inspection-heading">
       <div><button className="btn xs ghost inspection-back" type="button" onClick={onBack}>← {t("Back to environments")}</button>
@@ -230,23 +288,24 @@ export function EnvironmentInspectionPage({ active, profile, refreshVersion = 0,
       {profile && <div className="inspection-profile"><strong>{profile.name || id}</strong><span>{profile.engine === "firefox" ? "Firefox" : "Chromium"} · {t(profile.running ? "Running" : "Stopped")}</span></div>}
     </header>
     {profile && <div className="inspection-scroll">
-      <ol className="inspection-steps" aria-label={t("Inspection workflow")}>
-        <li><span>1</span><div><strong>{t("Check saved route")}</strong><small>{t(exit ? EXIT_LABELS[exit.result.status] : profile.proxy ? "Not checked" : "No proxy configured")}</small></div></li>
-        <li><span>2</span><div><strong>{t("Review fingerprint")}</strong><small>{t(reportLabel)}</small></div></li>
-        <li><span>3</span><div><strong>{t("Resolve and recheck")}</strong><small>{t("Edit configuration or prepare an AI explanation")}</small></div></li>
-      </ol>
       {configurationChanged && <p className="inspection-change" role="status">{t("Saved configuration changed. Check the exit again and collect a new browser measurement after reopening the environment.")}</p>}
-      {report && <section className="inspection-overview" aria-labelledby="inspection-overview-title">
-        <div className="inspection-overview-heading"><div><span className="inspection-step-label">{t("Evidence overview")}</span><h2 id="inspection-overview-title">{t(counts.fail ? "Resolve {count} issues first" : counts.warn ? "Review {count} warnings next" : counts.unknown || !coverage?.linkedCurrentSample ? "More evidence is needed" : "Stored checks have no reported issues", { count: counts.fail || counts.warn })}</h2><p>{t("Configuration checks, stored browser samples and explicit network observations establish different facts.")}</p></div><button className="btn xs" type="button" onClick={showAttention}>{t("View checks needing review")}</button></div>
-        <div className="inspection-evidence-sources">
-          <div><strong>{t("Saved configuration")}</strong><span>{t("{count} local checks", { count: presented.filter(item => item.source === "configuration" || item.source === "route").length })}</span><p>{t("Local settings only. These passes do not prove what a browser reports.")}</p></div>
-          <div className={!coverage?.sampleAvailable ? "needs-evidence" : ""}><strong>{t("Stored browser measurement")}</strong><span>{t(!coverage?.sampleAvailable ? "No usable sample confirmed" : coverage.linkedCurrentSample ? "Source and freshness reported consistent" : "Sample source or freshness needs review")}</span><p>{coverage?.sampleAvailable && !coverage.timestampAvailable ? t("The stored sample has no usable capture time.") : t("Loading a report does not collect a new browser measurement.")}</p></div>
-          <div><strong>{t("Explicit proxy check")}</strong><span>{t(exit ? EXIT_LABELS[exit.result.status] : "Not checked")}</span><p>{t("A separate on-demand observation. It is not part of fingerprint pass counts.")}</p></div>
-        </div>
-      </section>}
+      <InspectionOverview headline={t(busy === "review" ? "Loading the saved review…" : overview.headline, { count: counts.fail || counts.warn })}
+        tone={overview.tone} nextLabel={t(nextLabel)} action={nextAction}>
+        <InspectionEvidenceFact source="configuration" title={t("Saved configuration")}
+          status={report ? t("{count} local checks", { count: presented.filter(item => item.source === "configuration" || item.source === "route").length }) : t("Not checked")}
+          timeLabel={t("Configuration reviewed")} timestamp={reviewedAt} empty={t("Not available")} formatDate={formatDate}
+          note={t("Local settings only. These passes do not prove what a browser reports.")} />
+        <InspectionEvidenceFact source="browser" title={t("Stored browser measurement")}
+          status={t(!coverage?.sampleAvailable ? "No usable sample confirmed" : coverage.linkedCurrentSample ? "Source and freshness reported consistent" : "Sample source or freshness needs review")}
+          timeLabel={t("Last browser measurement")} timestamp={report?.measuredAt} empty={t(report?.measuredAt ? "Not available" : "No runtime measurement yet")} formatDate={formatDate}
+          note={t(coverage?.sampleAvailable && !coverage.timestampAvailable ? "The stored sample has no usable capture time." : "Loading a report does not collect a new browser measurement.")} />
+        <InspectionEvidenceFact source="network" title={t("Explicit proxy check")} status={t(exit ? EXIT_LABELS[exit.result.status] : profile.proxy ? "Not checked" : "No proxy configured")}
+          timeLabel={t("Last proxy check")} timestamp={exit?.checkedAt} empty={t("Not checked")} formatDate={formatDate}
+          note={t("A separate on-demand observation. It is not part of fingerprint pass counts.")} />
+      </InspectionOverview>
       <div className="inspection-grid">
         <section className="inspection-card inspection-network" aria-labelledby="inspection-route-title">
-          <div className="inspection-card-heading"><div><span className="inspection-step-label">{t("Step {step}", { step: 1 })}</span><h2 id="inspection-route-title">{t("Network exit")}</h2></div><span className="feature-badge">{t(profile.proxy ? "Saved proxy configuration" : "Direct connection")}</span></div>
+          <div className="inspection-card-heading"><h2 id="inspection-route-title" tabIndex={-1}>{t("Network exit")}</h2><span className="feature-badge">{t(profile.proxy ? "Saved proxy configuration" : "Direct connection")}</span></div>
           <p>{t(profile.proxy ? "Check the saved proxy on demand. Authentication details are never shown or added to AI drafts." : "No proxy is saved for this environment. A direct connection is not a verified proxy exit.")}</p>
           <button className="btn" type="button" disabled={!!busy || !profile.proxy} aria-busy={busy === "proxy"} onClick={() => void inspectExit()}>{t(busy === "proxy" ? "Checking saved proxy…" : "Check saved proxy")}</button>
           {proxyError && <p className="inspection-error" role="alert">{t(proxyError)}</p>}
@@ -257,17 +316,20 @@ export function EnvironmentInspectionPage({ active, profile, refreshVersion = 0,
           {!exit && !proxyError && <p className="inspection-note">{t("Reachability, a separate exit IP, IP reputation and browser leaks are different checks.")}</p>}
         </section>
         <section className="inspection-card inspection-fingerprint" aria-labelledby="inspection-fingerprint-title" aria-busy={busy === "review" || busy === "measure"}>
-          <div className="inspection-card-heading"><div><span className="inspection-step-label">{t("Step {step}", { step: 2 })}</span><h2 id="inspection-fingerprint-title">{t("Fingerprint review")}</h2></div>{report && <span className={`feature-badge ${!counts.fail && !counts.warn && !counts.unknown && coverage?.linkedCurrentSample ? "positive" : ""}`}>{t(reportLabel)}</span>}</div>
+          <div className="inspection-card-heading"><h2 id="inspection-fingerprint-title" tabIndex={-1}>{t("Fingerprint review")}</h2>{report && <span className={`feature-badge ${!counts.fail && !counts.warn && !counts.unknown && coverage?.linkedCurrentSample ? "positive" : ""}`}>{t(reportLabel)}</span>}</div>
           <p>{t("The configuration review reads local evidence. A browser measurement runs only when you request it.")}</p>
-          <div className="inspection-buttons"><button className="btn" type="button" disabled={!!busy} onClick={() => void review()}>{t(busy === "review" ? "Checking…" : "Refresh review")}</button><button className="btn primary" type="button" disabled={!!busy || !measurable} aria-busy={busy === "measure"} onClick={() => void measure()}>{t(busy === "measure" ? "Measuring fingerprint…" : "Measure running browser")}</button></div>
+          <div className="inspection-buttons">
+            <div className="inspection-action-kind"><span>{t("Local report read")}</span><button className="btn" type="button" disabled={!!busy} onClick={() => void review()}>{t(busy === "review" ? "Checking…" : "Refresh review")}</button></div>
+            <div className="inspection-action-kind"><span>{t("Explicit browser measurement")}</span><button className="btn primary" type="button" disabled={!!busy || !measurable} aria-busy={busy === "measure"} onClick={() => void measure()}>{t(busy === "measure" ? "Measuring fingerprint…" : "Measure running browser")}</button></div>
+          </div>
           <p className="inspection-note">{t(profile.restartPending ? "The running browser uses an older saved configuration. Reopen it before measuring again." : profile.engine === "firefox" ? "Runtime measurement here requires a running Chromium environment. Saved Firefox configuration can still be reviewed." : !profile.running ? "Open this environment yourself, then refresh the review to enable a browser measurement." : "The measurement uses an isolated local probe page in the already running browser.")}</p>
           {reviewError && <p className="inspection-error" role="alert">{t(reviewError)}</p>}
           {measurementError && <p className="inspection-error" role="alert">{t(measurementError)}</p>}
-          {report && <><dl className="inspection-report-meta"><div><dt>{t("Configuration reviewed")}</dt><dd>{reviewedAt ? formatDate(reviewedAt) : t("Not available")}</dd></div><div><dt>{t("Last browser measurement")}</dt><dd>{report.measuredAt ? formatDate(report.measuredAt) : t("No runtime measurement yet")}</dd></div></dl><div className="inspection-counts" aria-label={t("Stored report check counts")}><span>{t("{count} passed", { count: counts.pass })}</span><span>{t("{count} warnings", { count: counts.warn })}</span><span>{t("{count} failed", { count: counts.fail })}</span><span>{t("{count} unknown", { count: counts.unknown })}</span></div><p className="inspection-note">{t("Counts describe the checks in this stored report, not an anonymity score or a completed browser acceptance test.")}</p></>}
+          {report && <><div className="inspection-counts" aria-label={t("Stored report check counts")}><span>{t("{count} passed", { count: counts.pass })}</span><span className={counts.warn ? "has-warnings" : undefined}>{t("{count} warnings", { count: counts.warn })}</span><span className={counts.fail ? "has-issues" : undefined}>{t("{count} failed", { count: counts.fail })}</span><span className={counts.unknown ? "has-unknowns" : undefined}>{t("{count} unknown", { count: counts.unknown })}</span></div><p className="inspection-note">{t("Counts describe the checks in this stored report, not an anonymity score or a completed browser acceptance test.")}</p></>}
         </section>
       </div>
       <section className="inspection-card inspection-findings" aria-labelledby="inspection-findings-title">
-        <div className="inspection-card-heading"><div><span className="inspection-step-label">{t("Step {step}", { step: 3 })}</span><h2 id="inspection-findings-title" ref={findingsHeading} tabIndex={-1}>{t("Findings and next steps")}</h2></div>{report && <label className="inspection-filter"><input type="checkbox" checked={!showPassed} onChange={event => setShowPassed(!event.target.checked)} />{t("Only checks needing review")}</label>}</div>
+        <div className="inspection-card-heading"><h2 id="inspection-findings-title" ref={findingsHeading} tabIndex={-1}>{t("Findings and next steps")}</h2>{report && <label className="inspection-filter"><input type="checkbox" checked={!showPassed} onChange={event => setShowPassed(!event.target.checked)} />{t("Only checks needing review")}</label>}</div>
         {report && <div className="inspection-report-tools"><label className="inspection-search"><span>{t("Search report")}</span><input type="search" value={search} placeholder={t("Search checks, guidance or evidence")} onChange={event => setSearch(event.target.value)} /></label><label className="inspection-source-filter"><span>{t("Evidence source")}</span><select value={sourceFilter} onChange={event => setSourceFilter(event.target.value as InspectionEvidenceSource | "all")}><option value="all">{t("All evidence sources")}</option>{(Object.keys(SOURCE_LABELS) as InspectionEvidenceSource[]).map(source => <option key={source} value={source}>{t(SOURCE_LABELS[source])} ({presented.filter(item => item.source === source).length})</option>)}</select></label><button className="btn xs ghost" type="button" disabled={!search && sourceFilter === "all" && !showPassed} onClick={() => { setSearch(""); setSourceFilter("all"); setShowPassed(false); }}>{t("Reset report filters")}</button><p role="status">{t("Showing {shown} of {total} checks · issues, warnings and unknowns first", { shown: checks.length, total: presented.length })}</p></div>}
         {!report ? <p className="inspection-note">{t(busy === "review" ? "Loading the saved review…" : "Refresh the review to inspect this environment.")}</p> : <div className="inspection-checks">
           {checks.map(({ view, source, index }) => {

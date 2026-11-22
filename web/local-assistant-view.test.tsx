@@ -46,7 +46,10 @@ describe("local assistant initial view", () => {
     const buttons = elements.filter(element => element.tag === "button");
     expect(buttons.every(element => element.attrs.type === "button")).toBe(true);
     expect(buttons.filter(element => Object.hasOwn(element.attrs, "disabled"))).toHaveLength(1);
-    expect(buttons.find(element => element.attrs.class?.includes("primary"))?.attrs.disabled).toBeDefined();
+    const settings = (await elementsIn(html, '.assistant-tools-actions button[aria-expanded]'))[0]!;
+    expect(settings.attrs.class?.split(" ")).toContain("primary");
+    expect(settings.attrs.disabled).toBeUndefined();
+    expect((await elementsIn(html, '.assistant-composer .btn.primary'))[0]!.attrs.disabled).toBeDefined();
     expect(elements.some(element => element.tag === "select")).toBe(false);
   });
 
@@ -59,6 +62,12 @@ describe("local assistant initial view", () => {
     expect(log.attrs.tabindex).toBe("0");
     expect(log.attrs["aria-label"]?.trim().length).toBeGreaterThan(0);
     expect(await elementsIn(render(), '.assistant-task-progress [role="status"]')).toHaveLength(1);
+    const progress = (await elementsIn(render(), '.assistant-task-progress'))[0]!;
+    expect(Object.hasOwn(progress.attrs, "hidden")).toBe(true);
+    const explanation = (await elementsIn(render(), 'details.assistant-session-guide'))[0]!;
+    expect(Object.hasOwn(explanation.attrs, "open")).toBe(false);
+    expect(await elementsIn(render(), '.assistant-session-guide .assistant-session-caption')).toHaveLength(1);
+    expect(await elementsIn(render(), '.assistant-session-guide .assistant-workflow-steps li')).toHaveLength(3);
     const guide = elements.find(element => element.tag === "a")!;
     expect(guide.attrs.href).toBe("https://docs.ollama.com/faq");
     expect(guide.attrs.target).toBe("_blank");

@@ -69,6 +69,8 @@ async function run(scenario: string) {
       initial = { ...initial, name: "PRIVATE_ACCOUNT_NAME", measuredAt: "2026-11-09T10:00:00.000Z", checks: [...initial.checks, { id: "timezone_measurement", label: "PRIVATE_COOKIE_VALUE", status: "warn", detail: "http://user:PRIVATE_PROXY_PASS@proxy.invalid 203.0.113.44", recommendation: "PRIVATE_COOKIE_VALUE", evidence: { kind: "timezone", expected: "UTC", actual: "Europe/London" } }] };
     }
     if (scenario === "no-measurement-claim") initial = { ...initial, status: "consistent", summary: { pass: 500, warn: 0, fail: 0, unknown: 0 }, measuredAt: "2026-11-09T10:00:00.000Z", checks: [{ id: "identity_seed", label: "Fixed identity seed", status: "pass", detail: "The saved identity seed is stable." }] };
+    if (scenario === "overview-time-and-actions") initial = { ...initial, status: "consistent", measuredAt: "2026-11-09T10:00:00.000Z", checks: ["browser_sample", "capture_source", "runtime_config", "sample_coverage", "sample_freshness"].map(id => ({ id, label: id, detail: "Stored historical evidence", status: "pass" })) };
+    if (scenario === "overview-browser-action") initial = { ...initial, status: "consistent", checks: [{ id: "identity_seed", label: "Fixed identity seed", status: "pass", detail: "The saved seed is stable." }] };
     await read(0, [initial]);
     if (scenario === "explicit-network") {
       await act(async () => { button("Check saved proxy").click(); button("Check saved proxy").click(); });
@@ -145,6 +147,33 @@ async function run(scenario: string) {
       assert.ok(text().includes("Measurement missing")); assert.ok(text().includes("More evidence is needed")); assert.ok(text().includes("No usable sample confirmed")); assert.ok(!dom.container.querySelector('.inspection-fingerprint .feature-badge')?.classList.contains("positive"));
       assert.ok(text().includes("No stored checks need review here. Browser measurement and network coverage are listed separately above."));
       assert.ok(!dom.container.querySelector('.inspection-counts')?.textContent?.includes("500")); assert.equal(measurements.length, 0); assert.equal(probes.length, 0);
+    } else if (scenario === "overview-time-and-actions") {
+      const overview = () => dom.container.querySelector(".inspection-overview")!;
+      const evidence = (source: string) => overview().querySelector(`[data-evidence-fact="${source}"]`)!;
+      assert.equal(overview().getAttribute("data-inspection-tone"), "unknown", "A consistent fingerprint report must not manufacture an unrequested network check");
+      assert.ok(evidence("configuration").querySelector("time")?.getAttribute("datetime"));
+      assert.equal(evidence("browser").querySelector("time")?.getAttribute("datetime"), "2026-11-09T10:00:00.000Z");
+      assert.equal(evidence("network").querySelector("time"), null);
+      const before = [...paths];
+      await click("Review network evidence");
+      assert.equal(dom.window.document.activeElement?.id, "inspection-route-title");
+      assert.deepEqual(paths, before, "The overview's next-step navigation must not run a proxy or browser probe");
+      await click("Check saved proxy"); await replyProxy();
+      assert.ok(evidence("network").querySelector("time")?.getAttribute("datetime"));
+      const sampleTime = evidence("browser").querySelector("time")!.getAttribute("datetime");
+      const readTime = evidence("configuration").querySelector("time")!.getAttribute("datetime");
+      await click("Refresh review");
+      await read(1, [initial]);
+      assert.equal(evidence("browser").querySelector("time")!.getAttribute("datetime"), sampleTime, "Refreshing a local report must retain the historical browser capture time");
+      assert.ok(Date.parse(evidence("configuration").querySelector("time")!.getAttribute("datetime")!) >= Date.parse(readTime!));
+      assert.equal(measurements.length, 0); assert.equal(probes.length, 1);
+    } else if (scenario === "overview-browser-action") {
+      const before = [...paths];
+      await click("Review browser evidence");
+      assert.equal(dom.window.document.activeElement?.id, "inspection-fingerprint-title");
+      assert.deepEqual(paths, before); assert.equal(probes.length, 0); assert.equal(measurements.length, 0);
+      assert.equal(dom.container.querySelector(".inspection-overview")?.getAttribute("data-inspection-tone"), "unknown");
+      assert.ok(dom.container.querySelector(".inspection-overview-next")?.textContent?.includes("Collect a new browser measurement"));
     } else if (scenario === "retry-and-close") {
       await click("Check saved proxy");
       await act(async () => { probes[0]!.response.resolve(Response.json({ ok: false, error: "PRIVATE_BACKEND_ERROR" }, { status: 503 })); });

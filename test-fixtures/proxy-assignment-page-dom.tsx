@@ -110,6 +110,12 @@ async function run(scenario: string) {
     assert.ok(reviewRows().every(row => row.includes("new.invalid:8080") && !row.includes("PRIVATE_PROXY_SECRET")));
     await act(async () => { const apply = button("Apply 2 changes"); apply.click(); apply.click(); });
     await dom.flush();
+    const receiptStep = dom.container.querySelector<HTMLButtonElement>('[data-proxy-workflow-step="receipt"]')!;
+    assert.equal(receiptStep.disabled, false, "Available operation results should have a reachable receipt destination");
+    const requestsBeforeNavigation = calls.length;
+    await act(async () => receiptStep.click());
+    assert.equal(dom.window.document.activeElement?.id, "proxy-task-title");
+    assert.equal(calls.length, requestsBeforeNavigation, "Viewing a receipt must never repeat a proxy operation");
 
     if (scenario === "unsupported-service") {
       assert.equal(applied.size, 0);

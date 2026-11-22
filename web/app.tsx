@@ -62,6 +62,11 @@ import { copyPlainText, CopyField } from "./features/copy-field.tsx";
 import { LogModal } from "./features/log-modal.tsx";
 import { MoveFolderModal } from "./features/move-folder-modal.tsx";
 import { SettingsPanel } from "./features/settings-panel.tsx";
+import { WorkbenchSidebar } from "./features/workbench-sidebar.tsx";
+import { RosterNavigation } from "./features/roster-navigation.tsx";
+import { ProfileEditorLayout, ProfileEditorSection } from "./features/profile-editor-layout.tsx";
+import { ProfileDetailsPanel } from "./features/profile-details.tsx";
+import "./workbench-layout.css";
 import { localeTimezoneMismatch } from "../profile-locale.ts";
 import { folderTree, folderScope, type FolderInfo } from "../folders.ts";
 import { GROUP_DISCLOSURE_KEY, profileGroupCollapsed, profileGroupSections, readGroupDisclosure, serializeGroupDisclosure, toggleProfileSelection } from "../profile-group-state.ts";
@@ -149,7 +154,7 @@ const COLUMNS = [
   { key: "proxy", label: "Proxy", sort: true, width: 150 },
   { key: "status", label: "Status", sort: false, width: 90 },
   /* The launch action stays visible; the labeled menu holds secondary actions. */
-  { key: "action", label: "Action", sort: false, width: 132 },
+  { key: "action", label: "Action", sort: false, width: 164 },
 ] as const;
 /** Width of the always-present select-all checkbox column. */
 const CHECKBOX_COLUMN_WIDTH = 36;
@@ -196,7 +201,7 @@ function readSidebarCollapsed(): boolean {
     const stored = localStorage.getItem(SIDEBAR_KEY);
     if (stored === "0") return false;
     if (stored === "1") return true;
-    return typeof window !== "undefined" ? window.innerWidth < 1200 : true;
+    return false;
   } catch { return true; }
 }
 function readPageSize(): number {
@@ -677,6 +682,7 @@ function ProxyCheckFeedback({ hasProxy, state }: {
     </>);
 }
 interface ProfileRosterRowHandlers {
+    openDetails: (id: string, trigger: HTMLButtonElement) => void;
     openEdit: (id: string, field?: InspectionEditField, trigger?: HTMLButtonElement) => void;
     openPendingCookies: (profile: UiProfile) => Promise<void>;
     openCookie: (targets: UiProfile[]) => void;
@@ -732,6 +738,7 @@ const ProfileRosterRow = React.memo(function ProfileRosterRow({
     t,
 }: ProfileRosterRowProps) {
     const {
+        openDetails,
         openEdit,
         openPendingCookies,
         openCookie,
@@ -812,6 +819,7 @@ const ProfileRosterRow = React.memo(function ProfileRosterRow({
         </td>)}
       {columnVisible("status") && <td className="col-status"><span className={`profile-status${p.running ? " running" : ""}`}><StatusDot running={p.running} />{p.running ? t("Running") : t("Stopped")}</span></td>}
       {columnVisible("action") && (<td className="col-action"><span className="rowactions">
+        <button type="button" className="iconbtn profile-details-trigger" aria-label={t("View details for {profile}", { profile: p.name })} title={t("Environment details")} onClick={event => openDetails(p.id, event.currentTarget)}><Icon name="window" className="sm" /></button>
         {p.running ? <button className="btn sm row-stop" aria-label={t("Stop {profile}", { profile: p.name })} disabled={isBusy} onClick={() => act(p.id, closeProfile)}><Icon name="power" className="sm" />{t("Stop")}</button>
           : p.mobilePersona ? <button className="btn sm warn" disabled={isBusy} title={t("Convert this mobile persona to a desktop device")} onClick={() => openEdit(p.id)}><Icon name="laptop" className="sm" />{t("Convert")}</button>
           : <button className="btn sm primary row-start"
@@ -855,7 +863,7 @@ function App() {
     }, [language]);
     const { requestConfirm, confirmDialogNode, isConfirmOpen } = useConfirmDialog();
     const windowChrome = useWindowChrome();
-    const { currentName: savedWorkspaceName, catalog, error: workspaceCatalogError } = useWorkspaceCatalog();
+    const { currentName: savedWorkspaceName, catalog, error: workspaceCatalogError, refresh: refreshWorkspaceCatalog } = useWorkspaceCatalog();
     const { coordinator: workspaceCoordinator, snapshot: workspaceOperationState } = useWorkspaceOperations();
     const signedUpdateStartup = useSignedUpdateStartup(catalog?.currentId);
     const currentName = savedWorkspaceName || t("Local workspace");
@@ -905,9 +913,27 @@ function App() {
     // Management sections share the main content area. Focused profile forms
     // keep their own centred editor while the underlying roster stays mounted.
     const [view, setView] = useState<"profiles" | "inspection" | "scripts" | "settings" | "extensions" | "proxies" | "trash" | "workspaces" | "assistant">("profiles");
+    const [detailsTarget, setDetailsTarget] = useState<{ id: string; workspaceId: string | null } | null>(null);
+    const detailsHeading = useRef<HTMLHeadingElement>(null);
+    const detailsTrigger = useRef<HTMLButtonElement | null>(null);
+    const focusDetailsOnOpen = useRef(false);
     const settingsVisited = useRef(false);
     if (view === "settings") settingsVisited.current = true;
     const currentWorkspaceId = catalog?.currentId ?? null;
+    const detailsProfile = detailsTarget?.workspaceId === currentWorkspaceId ? profiles.find(profile => profile.id === detailsTarget.id) ?? null : null;
+    useLayoutEffect(() => {
+      if (!detailsProfile || view !== "profiles" || !focusDetailsOnOpen.current) return;
+      focusDetailsOnOpen.current = false;
+      detailsHeading.current?.focus({ preventScroll: true });
+    }, [detailsProfile?.id, view]);
+    useEffect(() => { setDetailsTarget(null); detailsTrigger.current = null; focusDetailsOnOpen.current = false; }, [currentWorkspaceId]);
+    const closeDetails = () => {
+      setDetailsTarget(null);
+      const target = detailsTrigger.current;
+      if (target?.isConnected && !target.disabled) target.focus({ preventScroll: true });
+      else document.getElementById("profiles-page-title")?.focus({ preventScroll: true });
+      detailsTrigger.current = null;
+    };
     const scriptsVisit = useRef({ workspaceId: currentWorkspaceId, visited: false });
     if (scriptsVisit.current.workspaceId !== currentWorkspaceId) scriptsVisit.current = { workspaceId: currentWorkspaceId, visited: false };
     if (view === "scripts") scriptsVisit.current.visited = true;
@@ -2824,6 +2850,7 @@ function App() {
     useDesktopCloseDraft("workspace-task", { dirty: false, busy: (!!workspaceOperationState.operation && !proxyReceiptUnavailable) || !!workspaceOperationState.workspaceJob || workspaceOperationState.nativeUpdateBusy });
     const rowHandlersRef = useRef<ProfileRosterRowHandlers | null>(null);
     const stableRowHandlers = useMemo<ProfileRosterRowHandlers>(() => ({
+        openDetails: (...args) => rowHandlersRef.current!.openDetails(...args),
         openEdit: (...args) => rowHandlersRef.current!.openEdit(...args),
         openPendingCookies: (...args) => rowHandlersRef.current!.openPendingCookies(...args),
         openCookie: (...args) => rowHandlersRef.current!.openCookie(...args),
@@ -3004,6 +3031,7 @@ function App() {
       state: bulkTaskActive || bulkTaskRefreshing ? "running" : bulkTaskSnapshot.summary.failed ? "attention" : "complete",
       progress: { done: bulkTaskSnapshot.summary.settled, total: bulkTaskSnapshot.summary.total }, onView: showBulkTask });
     rowHandlersRef.current = {
+        openDetails: (id, trigger) => { detailsTrigger.current = trigger; focusDetailsOnOpen.current = true; setDetailsTarget({ id, workspaceId: currentWorkspaceId }); if (detailsProfile?.id === id) { detailsHeading.current?.focus({ preventScroll: true }); focusDetailsOnOpen.current = false; } },
         openEdit,
         openPendingCookies,
         openCookie,
@@ -3077,62 +3105,28 @@ function App() {
           <span>{t("Drop TXT, CSV, JSON, or XLSX profile exports to import")}</span>
         </div>)}
 
-      <aside className={`sidebar${sidebarIsCompact ? " collapsed" : ""}`}>
-        <div className="rail-heading">
-          <span className="rail-section-label" aria-hidden="true">{t("Workspaces")}</span>
-          {!railForced && <button type="button" className="rail-toggle" data-tip={sidebarCollapsed ? t("Expand sidebar") : t("Collapse sidebar")} aria-label={sidebarCollapsed ? t("Expand sidebar") : t("Collapse sidebar")} title={sidebarCollapsed ? t("Expand sidebar") : t("Collapse sidebar")} aria-controls="workspace-navigation" aria-expanded={!sidebarCollapsed} onClick={toggleSidebar}>
-            <Icon name={sidebarCollapsed ? "expandRail" : "collapseRail"} />
-          </button>}
-        </div>
-        <WorkspaceSwitcher
-          variant="rail"
-          compact={sidebarIsCompact}
-          profileCount={profiles.length}
-          runningCount={runningCount}
-          connection={loaded && !connErr}
-          onShowRunning={showRunningProfiles}
-          onOpenManagement={openWorkspaceManagement}
-          onShowBatchTask={showBulkTask}
-          managementActive={view === "workspaces"}
-        />
-        <nav id="workspace-navigation" className="sidenav" ref={navigationMotion.navRef} aria-label={t("Workspace navigation")}>
-          <span className="rail-active-marker" aria-hidden="true" />
-          <div className="rail-nav-group" role="group" aria-label={t("Workspace")}>
-            <button type="button" className={`navitem${view === "profiles" || view === "inspection" ? " active" : ""}`} aria-current={view === "profiles" || view === "inspection" ? "page" : undefined} aria-label={t("All profiles")} data-tip={t("All profiles")} title={t("All profiles")} onClick={() => { chooseRosterScope("all"); selectFolder("all"); }}>
-              <Icon name="profiles" /><span className="navlabel">{t("All profiles")}</span>
-              {loaded && profiles.length > 0 && <span className="cnt" aria-hidden="true">{profiles.length}</span>}
-            </button>
-            <button type="button" className={`navitem${view === "proxies" ? " active" : ""}`} aria-current={view === "proxies" ? "page" : undefined} aria-label={t("Proxies")} data-tip={t("Proxies")} title={t("Proxies")} onClick={() => setView("proxies")}>
-              <Icon name="activity" /><span className="navlabel">{t("Proxies")}</span>
-            </button>
-          </div>
-          <div className="rail-nav-group rail-nav-tools" role="group" aria-label={t("Tools")}>
-            <span className="rail-section-label" aria-hidden="true">{t("Tools")}</span>
-            <button type="button" className={`navitem${view === "scripts" ? " active" : ""}`} aria-current={view === "scripts" ? "page" : undefined} aria-label={t("Scripts")} data-tip={t("Scripts")} title={t("Scripts")} onClick={() => setView("scripts")}>
-              <Icon name="file" /><span className="navlabel">{t("Scripts")}</span>
-            </button>
-            <button type="button" className={`navitem${view === "assistant" ? " active" : ""}`} aria-current={view === "assistant" ? "page" : undefined} aria-label={t("AI workspace")} data-tip={t("AI workspace")} title={t("AI workspace")} onClick={() => setView("assistant")}>
-              <Icon name="bot" /><span className="navlabel">{t("AI workspace")}</span>
-            </button>
-            <button type="button" className={`navitem${view === "extensions" ? " active" : ""}`} aria-current={view === "extensions" ? "page" : undefined} aria-label={t("Manage extensions")} data-tip={t("Manage extensions")} title={t("Manage extensions")} onClick={openExtensions}>
-              <Icon name="puzzle" /><span className="navlabel">{t("Manage extensions")}</span>
-              {extensions.length > 0 && <span className="cnt" aria-hidden="true">{extensions.length}</span>}
-            </button>
-          </div>
-        </nav>
-        <div className="sidefoot">
-          <div className="rail-utilities" role="group" aria-label={t("Management")}>
-            <button type="button" className={`navitem${view === "trash" ? " active" : ""}`} aria-current={view === "trash" ? "page" : undefined} aria-label={t("Trash")} data-tip={t("Trash")} title={t("Trash")} onClick={() => setView("trash")}>
-              <Icon name="trash" /><span className="navlabel">{t("Trash")}</span>
-            </button>
-            <button type="button" className={`navitem${view === "settings" ? " active" : ""}`} aria-current={view === "settings" ? "page" : undefined} aria-label={t("Settings")} data-tip={t("Settings")} title={t("Settings")} onClick={openSettings}>
-              <Icon name="settings" /><span className="navlabel">{t("Settings")}</span>
-            </button>
-          </div>
-          <DevicePanel variant="rail" runningCount={runningCount} downloads={runtimeDownloads} downloadStatusUnavailable={runtimeDownloadsStale} connection={loaded && !connErr} connectionLoading={!loaded} version={appVersion ?? ""} theme={theme} chooseTheme={chooseTheme} language={language} setLanguage={setLanguage} onShowRunning={showRunningProfiles} onSettings={(section) => { setSettingsTab(section === "advanced" ? "advanced" : "account"); setView("settings"); }} onViewLogs={() => { setLogErr(null); fetchLogs().then(setLogView).catch((error) => setLogErr(error instanceof Error ? error.message : String(error))); }} onRetryConnection={refreshRoster} />
-        </div>
-        {modeErr && <div className="mode-error" role="alert">{modeErr}</div>}
-      </aside>
+      <WorkbenchSidebar compact={sidebarIsCompact} collapsed={sidebarCollapsed} forced={railForced} view={view}
+        profileCount={profiles.length} extensionCount={extensions.length} loaded={loaded} onToggle={toggleSidebar}
+        onNavigate={setView} onProfiles={() => { chooseRosterScope("all"); selectFolder("all"); }} onExtensions={openExtensions} onSettings={openSettings}
+        navigationRef={navigationMotion.navRef} error={modeErr}
+        switcher={<WorkspaceSwitcher variant="rail" compact={sidebarIsCompact} profileCount={profiles.length} runningCount={runningCount}
+          connection={loaded && !connErr} onShowRunning={showRunningProfiles} onOpenManagement={openWorkspaceManagement}
+          onShowBatchTask={showBulkTask} managementActive={view === "workspaces"} />}
+        device={<DevicePanel variant="rail" runningCount={runningCount} downloads={runtimeDownloads} downloadStatusUnavailable={runtimeDownloadsStale}
+          connection={loaded && !connErr} connectionLoading={!loaded} version={appVersion ?? ""} theme={theme} chooseTheme={chooseTheme}
+          language={language} setLanguage={setLanguage} onShowRunning={showRunningProfiles}
+          onSettings={section => { setSettingsTab(section === "advanced" ? "advanced" : "account"); setView("settings"); }}
+          onViewLogs={() => { setLogErr(null); fetchLogs().then(setLogView).catch(error => setLogErr(error instanceof Error ? error.message : String(error))); }}
+          onRetryConnection={refreshRoster} />}>
+        <RosterNavigation compact={sidebarIsCompact} active={view === "profiles"} group={group} total={profiles.length} ungrouped={countFor("")}
+          groups={tree.map(folder => ({ name: folder.name, label: folder.label ?? folderLabel(folder.name), depth: folder.depth, count: countFor(folder.name) }))}
+          onGroup={selectFolder}>
+          <RosterViews current={{ scope: rosterScope, query: q, group, status: profileStatus, sort, hiddenColumns: [...hiddenCols], pageSize }}
+            views={viewPreferencesReady ? savedProfileViews : []} counts={rosterViewCounts}
+            ready={viewPreferencesReady} loading={!workspaceCatalogError && viewPreferencesLoading} readError={viewPreferenceReadError || workspaceCatalogError} busy={viewPreferenceBusy}
+            onRetry={() => { if (workspaceCatalogError) void refreshWorkspaceCatalog(); else setPreferenceLoadAttempt(value => value + 1); }} onScope={chooseRosterScope} onApply={applyProfileView} onSave={saveProfileView} onRemove={removeProfileView} />
+        </RosterNavigation>
+      </WorkbenchSidebar>
 
       <div className="main">
       <header className="workspace-header" onMouseDown={windowChrome.onMouseDown}>
@@ -3237,19 +3231,15 @@ function App() {
         </div>}
         <div className="page-heading">
           <div className="profile-heading-copy"><h1 id="profiles-page-title" tabIndex={-1}>{t("Environments")}</h1><span className="profile-total">{t("{count} environments", { count: profiles.length })}</span></div>
-          <div className="searchfield heading-search"><Icon name="search" className="sm" /><input className="input search" placeholder={t("Search name, No., tag or proxy…")} aria-label={t("Search profiles")} value={q} onChange={(e) => setQ(e.target.value)} />{q && <button type="button" className="clear" aria-label={t("Clear search")} onClick={() => setQ("")}><Icon name="close" className="sm" /></button>}</div>
           <div className="page-actions">
           <button className="btn" title={t("Import profiles from AdsPower, GoLogin, Multilogin, Donut, and other readable exports")} onClick={openBulk}><Icon name="fileImport" className="sm" />{t("Import profiles")}</button>
           <button className="btn primary" onClick={openCreate}><Icon name="plus" className="sm" />{t("New Profile")}</button>
         </div>
         </div>
-        <RosterViews current={{ scope: rosterScope, query: q, group, status: profileStatus, sort, hiddenColumns: [...hiddenCols], pageSize }}
-          views={viewPreferencesReady ? savedProfileViews : []} counts={rosterViewCounts}
-          ready={viewPreferencesReady} loading={viewPreferencesLoading} readError={viewPreferenceReadError} busy={viewPreferenceBusy} onRetry={() => setPreferenceLoadAttempt(value => value + 1)}
-          onScope={chooseRosterScope} onApply={applyProfileView} onSave={saveProfileView} onRemove={removeProfileView} />
         {!!breadcrumb?.ancestors.length && <nav className="folder-breadcrumb" aria-label={t("Folder path")}><button className="btn ghost xs" onClick={() => selectFolder("all")}>{t("All profiles")}</button>{breadcrumb.ancestors.map(name => <span key={name}> / <button className="btn ghost xs" onClick={() => selectFolder(name)}>{folderLabel(name)}</button></span>)}<span aria-current="location"> / {folderLabel(group)}</span></nav>}
         <div className="profile-filter-row">
-          <select className="select group-filter" aria-label={t("Group filter")} value={group} onChange={event => selectFolder(event.target.value)}>
+          <div className="searchfield heading-search"><Icon name="search" className="sm" /><input className="input search" placeholder={t("Search name, No., tag or proxy…")} aria-label={t("Search profiles")} value={q} onChange={(e) => setQ(e.target.value)} />{q && <button type="button" className="clear" aria-label={t("Clear search")} onClick={() => setQ("")}><Icon name="close" className="sm" /></button>}</div>
+          <select className="select group-filter" aria-label={t("Group filter")} hidden={!sidebarIsCompact} value={group} onChange={event => selectFolder(event.target.value)}>
             <option value="all">{t("All groups")} · {profiles.length}</option>
             <option value="">{t("Ungrouped")} · {countFor("")}</option>
             {missingRosterGroup && <option value={missingRosterGroup}>{t("Unavailable · {group}", { group: missingRosterGroup })}</option>}
@@ -3262,7 +3252,6 @@ function App() {
         </div></div>
           <div className="profile-view-tools">
             <div className="headactions">
-          <RosterDensityControl value={rosterDensity} onChange={value => void chooseRosterDensity(value)} disabled={!viewPreferencesReady} busy={viewPreferenceBusy} />
           <button
             type="button"
             className="iconbtn tip"
@@ -3275,11 +3264,14 @@ function App() {
             <button
               type="button"
               className={`iconbtn tip${colsOpen ? " on" : ""}`}
-              data-tip={t("Columns")}
+              data-tip={t("Display settings")}
               aria-label={t("Choose visible columns")}
+              aria-expanded={colsOpen}
               onClick={() => setColsOpen((o) => !o)}
             ><Icon name="columns" /></button>
             {colsOpen && (<div className="popover below-right">
+                <div className="pop-head">{t("Display settings")}</div>
+                <RosterDensityControl value={rosterDensity} onChange={value => void chooseRosterDensity(value)} disabled={!viewPreferencesReady} busy={viewPreferenceBusy} />
                 <div className="pop-head">{t("Visible columns")}</div>
                 {COLUMNS.map((column) => (<label className="pop-item" key={column.key}>
                     <input type="checkbox" checked={columnVisible(column.key)} onChange={() => toggleColumn(column.key)} />
@@ -3390,6 +3382,7 @@ function App() {
           </div>
         </div>)}
 
+        <div className={`profile-browser${detailsProfile ? " has-details" : ""}`}>
         <div className={`tablewrap${tableScrolled ? " scrolled" : ""}`} onScroll={(event) => setTableScrolled(event.currentTarget.scrollLeft > 0)}>
           <span id="profile-range-selection-hint" className="sr-only">{t("Hold Shift while changing a checkbox to select or clear a visible range on this page. Shift+Space also works.")}</span>
           <table className="profile-table" aria-busy={!loaded} style={{ minWidth: tableMinWidth }}>
@@ -3483,11 +3476,13 @@ function App() {
           </table>
         </div>
 
+        <ProfileDetailsPanel profile={detailsProfile} headingRef={detailsHeading} onClose={closeDetails}
+          onEdit={id => openEdit(id, undefined, detailsTrigger.current ?? undefined)} onInspect={openInspection} />
+        </div>
         {showDiag && diag && (<div className="diagpanel">
             <div className="when">{t("Last diagnose: {when}", { when: diagWhen ?? "" })}</div>
             {diag.analysis.verdicts.map((v, i) => (<div className="v" key={i}>{v}</div>))}
           </div>)}
-
         <footer className="statusbar">
           <span className="stat"><b>{profiles.length}</b> {t("profiles")}</span>
           <span className="stat"><StatusDot running={runningCount > 0} /><b>{runningCount}</b> {t("running")}</span>
@@ -3646,6 +3641,8 @@ function App() {
                   {createReuseSource.engine === "chromium" && form.engine === "chromium" && appMode?.chromiumRuntime && createReuseSource.chromiumRuntime !== appMode.chromiumRuntime && <span>{t("This computer requires {runtime}. The source uses {source}; the new environment will use {runtime}.", { runtime: "AliasMode Chromium", source: "CloakBrowser" })}</span>}
                 </div>
               </div>}
+              <ProfileEditorLayout label={t("Environment sections")} sections={[{ id: "basic", label: t("Basic information") }, { id: "proxy", label: t("Network & proxy") }, { id: "fingerprint", label: t("Fingerprint settings") }]} scrollBehavior={editorScroll}>
+              <ProfileEditorSection sectionId="basic">
               <ProfileTemplates disabled={creating} draft={{
                 engine: form.engine,
                 chromiumRuntime: profileCreationRuntime(form.engine, form.chromiumRuntime) ?? "",
@@ -3721,6 +3718,8 @@ function App() {
                     ? t(CLOAKBROWSER_NOTE)
                     : t("Downloads once (about 190 MB) on each computer that opens it.")}</small>
                 </label>)}
+              </ProfileEditorSection>
+              <ProfileEditorSection sectionId="proxy">
               <details className="fingerprint-settings" open={createProxyOpen} onToggle={(event) => setCreateProxyOpen(event.currentTarget.open)}>
                 <summary>
                   <span>{t("Proxy")}</span>
@@ -3774,7 +3773,11 @@ function App() {
                 </div>
               </details>
               <ProxyCheckFeedback hasProxy={createHasProxy} state={createProxyCheck} />
+              </ProfileEditorSection>
+              <ProfileEditorSection sectionId="fingerprint">
               <FingerprintSettings engine={form.engine} chromiumRuntime={createFingerprintRuntime} screen={form.screen} onScreenChange={(value) => setF("screen", value)} platformOs={form.platformOs} onPlatformOsChange={(value) => setF("platformOs", value)}/>
+              </ProfileEditorSection>
+              </ProfileEditorLayout>
               </fieldset>
             </div>
             <div className="modal-foot profile-editor-status-footer">
@@ -3816,6 +3819,12 @@ function App() {
                         {editSaving ? t("Converting…") : `Convert to ${editMobile.platform === "macos" ? "macOS" : "Windows"} desktop`}
                       </button>
                     </div>)}
+                  <ProfileEditorLayout label={t("Environment sections")} sessionKey={editId} scrollBehavior={editorScroll} sections={[
+                    { id: "basic", label: t("Basic information") }, { id: "proxy", label: t("Network & proxy") },
+                    { id: "account", label: t("Account data") }, { id: "fingerprint", label: t("Fingerprint settings") },
+                    ...(editEngine === "chromium" && editExtensionChoices.length > 0 ? [{ id: "extensions", label: t("Extensions") }] : []),
+                  ]}>
+                  <ProfileEditorSection sectionId="basic">
                   <div className="fld-row">
                     <label className="fld grow">
                       <span>{t("Name")}</span>
@@ -3857,6 +3866,8 @@ function App() {
                     <span>{t("Tags")} <span className="muted">{t("(comma-separated)")}</span></span>
                     <input {...editorFieldAttributes(editFieldFeedback("tags"))} value={editForm.tags ?? ""} placeholder="warmup, us, priority" onChange={(e) => setEF("tags", e.target.value)} />
                   </label>
+                  </ProfileEditorSection>
+                  <ProfileEditorSection sectionId="proxy">
                   <div className="fld-row">
                     <label className="fld type">
                       <span>{t("Proxy type")}</span>
@@ -3891,6 +3902,8 @@ function App() {
                         : t("This action saves the timezone immediately. It applies the next time this profile opens.")}</p>
                     </>)}
                   {editForm.locale && localeTimezoneMismatch(editForm.locale, editForm.timezone ?? "") && (<p className="hint">{t("This language does not match the timezone's country. Use “Set timezone and language from proxy” to match them.")}</p>)}
+                  </ProfileEditorSection>
+                  <ProfileEditorSection sectionId="account">
                   <div className="fld-row">
                     <CopyField label={t("Username")} value={editForm.username ?? ""} onChange={(value) => setEF("username", value)} />
                     <CopyField label={t("Password")} value={editForm.password ?? ""} onChange={(value) => setEF("password", value)} />
@@ -3912,6 +3925,8 @@ function App() {
                         <Icon name="copy" className="sm" />{t("Copy")}
                       </button>
                     </div>)}
+                  </ProfileEditorSection>
+                  <ProfileEditorSection sectionId="fingerprint">
                   {editEngine && <FingerprintSettings
                     allowAutomaticScreen={false}
                     feedback={editFieldFeedback}
@@ -3925,7 +3940,8 @@ function App() {
                     onUndo={() => setEditForm((form) => ({ ...form, ...editInitialFingerprint }))}
                     hardware={editHardware}
                   />}
-                  {editEngine === "chromium" && editExtensionChoices.length > 0 && (<div className="fld">
+                  </ProfileEditorSection>
+                  {editEngine === "chromium" && editExtensionChoices.length > 0 && (<ProfileEditorSection sectionId="extensions"><div className="fld">
                       <span>{t("Extensions")}</span>
                       <div className="extassign">
                         {editExtensionChoices.map((x) => (<label key={x.id} className="extchk">
@@ -3933,7 +3949,8 @@ function App() {
                             <span>{x.name}{x.missing && <span className="muted">{t(" · Not installed on this device")}</span>}</span>
                           </label>))}
                       </div>
-                    </div>)}
+                    </div></ProfileEditorSection>)}
+                  </ProfileEditorLayout>
                   <p className="formnote">
                     {t("Cookies and locked fingerprint values are preserved. Only editable fields change.")}
                     {editEngine === "chromium" && t(" Extensions load when the browser opens.")}

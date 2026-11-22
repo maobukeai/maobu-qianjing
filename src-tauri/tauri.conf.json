@@ -27,11 +27,11 @@
     },
     "windows": {
       "webviewInstallMode": {
-        "type": "offlineInstaller",
+        "type": "embedBootstrapper",
         "silent": true
       },
       "nsis": {
-        "compression": "zlib",
+        "compression": "lzma",
         "languages": ["English", "SimpChinese"],
         "template": "windows/installer.nsi",
         "installMode": "currentUser",

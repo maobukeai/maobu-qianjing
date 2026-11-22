@@ -27,7 +27,8 @@ function settings(value: unknown): boolean {
   return object(value) && value.version === 1 && object(value.updates) && object(value.sync)
     && text(value.updates.repository) && ["stable", "beta"].includes(value.updates.channel) && typeof value.updates.checkOnStartup === "boolean"
     && typeof value.sync.enabled === "boolean" && text(value.sync.folder) && count(value.sync.retainSnapshots) && value.sync.retainSnapshots >= 1 && value.sync.retainSnapshots <= 100
-    && (value.network === undefined || object(value.network) && Object.keys(value.network).every(key => ["checkLocalProxyBeforeLaunch", "chromiumPreloading"].includes(key)) && typeof value.network.checkLocalProxyBeforeLaunch === "boolean" && (value.network.chromiumPreloading === undefined || ["browser-default", "disabled"].includes(value.network.chromiumPreloading)))
+    && (value.network === undefined || object(value.network) && Object.keys(value.network).every(key => ["checkLocalProxyBeforeLaunch", "chromiumPreloading", "chromiumMemorySaver"].includes(key)) && typeof value.network.checkLocalProxyBeforeLaunch === "boolean" && (value.network.chromiumPreloading === undefined || ["browser-default", "disabled"].includes(value.network.chromiumPreloading))
+      && (value.network.chromiumMemorySaver === undefined || typeof value.network.chromiumMemorySaver === "boolean"))
     && (value.signedUpdates === undefined || object(value.signedUpdates) && Object.keys(value.signedUpdates).every(key => key === "checkOnStartup") && typeof value.signedUpdates.checkOnStartup === "boolean");
 }
 function report(value: unknown): boolean {
@@ -105,7 +106,7 @@ async function request<T>(path: string, method = "GET", value?: unknown, signal?
 }
 function resolvedSettings(value: unknown): ResolvedAppSettings {
   const result = read<AppSettings>(value, settings);
-  return { ...result, network: { checkLocalProxyBeforeLaunch: false, chromiumPreloading: "browser-default", ...result.network }, signedUpdates: result.signedUpdates ?? { checkOnStartup: false } };
+  return { ...result, network: { checkLocalProxyBeforeLaunch: false, chromiumPreloading: "browser-default", chromiumMemorySaver: false, ...result.network }, signedUpdates: result.signedUpdates ?? { checkOnStartup: false } };
 }
 export async function fetchSettings(signal?: AbortSignal): Promise<ResolvedAppSettings> { return resolvedSettings((await request<any>("", "GET", undefined, signal)).settings); }
 export async function patchSettings(value: unknown): Promise<ResolvedAppSettings> { return resolvedSettings((await request<any>("", "PATCH", value)).settings); }

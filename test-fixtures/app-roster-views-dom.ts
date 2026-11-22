@@ -75,6 +75,8 @@ async function run(scenario: string) {
   }, { preconnect: globalThis.fetch.preconnect });
   const dom = await createWebDomHarness({ fetch: fakeFetch }); dom.container.id = "root";
   if (heldLoad) { dom.window.localStorage.setItem(FAVORITE_PROFILES_KEY, JSON.stringify([profiles[0]!.id])); dom.window.localStorage.setItem(SAVED_PROFILE_VIEWS_KEY, "[]"); }
+  // These cases exercise an explicit compact preference; the new first-run layout is expanded.
+  if (heldCatalog || scenario === "group-filter-hierarchy") dom.window.localStorage.setItem(SIDEBAR_KEY, "1");
   if (paletteScenario) dom.window.localStorage.setItem(SAVED_PROFILE_VIEWS_KEY, JSON.stringify([{ ...saved, name: "Stale cached view" }]));
   const previousGlobals = new Map<string, PropertyDescriptor | undefined>();
   for (const [name, value] of Object.entries({ requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window), cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window), getComputedStyle: dom.window.getComputedStyle.bind(dom.window) })) { previousGlobals.set(name, Object.getOwnPropertyDescriptor(globalThis, name)); Object.defineProperty(globalThis, name, { configurable: true, value }); }

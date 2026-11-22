@@ -10,15 +10,26 @@ import { inProfileScope, type RosterScope } from "./profile-view-state.ts";
 import { createBulkProfileTask } from "./web/bulk-profile-task.ts";
 import { BulkProfileTaskPanel } from "./web/bulk-profile-task-panel.tsx";
 import { PROFILE_EDIT_FORM_FIELDS } from "./web/profile-edit-patch.ts";
+import { WorkbenchSidebar } from "./web/features/workbench-sidebar.tsx";
 const app = readFileSync(join(import.meta.dir, "web", "app.tsx"), "utf8").replaceAll("\r\n", "\n");
 const extensionPage = readFileSync(join(import.meta.dir, "web", "extensions-page.tsx"), "utf8");
-const styles = readFileSync(join(import.meta.dir, "web", "styles.css"), "utf8").replaceAll("\r\n", "\n");
+const baseStyles = readFileSync(join(import.meta.dir, "web", "styles.css"), "utf8").replaceAll("\r\n", "\n");
+const workbenchStyles = readFileSync(join(import.meta.dir, "web", "workbench-layout.css"), "utf8").replaceAll("\r\n", "\n");
+const styles = `${baseStyles}\n${workbenchStyles}`;
+const rosterNavigationStyles = readFileSync(join(import.meta.dir, "web", "features", "roster-navigation.css"), "utf8").replaceAll("\r\n", "\n");
 const logo = readFileSync(join(import.meta.dir, "web", "maobu-mark.png"));
 const notice = readFileSync(join(import.meta.dir, "NOTICE"), "utf8");
 const actionMenu = readFileSync(join(import.meta.dir, "web", "profile-action-menu.tsx"), "utf8").replaceAll("\r\n", "\n");
 const cookieImportUi = readFileSync(join(import.meta.dir, "web", "cookie-import-task-panel.tsx"), "utf8");
 const fileUpdateUi = readFileSync(join(import.meta.dir, "web", "profile-file-update-panel.tsx"), "utf8");
 const defaultPageSize = Number(app.match(/const PROFILE_PAGE_SIZE = (\d+);/)?.[1]);
+
+function sidebarMarkup(overrides: Partial<Parameters<typeof WorkbenchSidebar>[0]> = {}) {
+    return renderToStaticMarkup(createElement(I18nProvider, { children: createElement(WorkbenchSidebar, {
+        compact: false, collapsed: false, forced: false, view: "profiles", profileCount: 3, extensionCount: 2, loaded: true,
+        onToggle() {}, onNavigate() {}, onProfiles() {}, onExtensions() {}, onSettings() {}, switcher: null, device: null, ...overrides,
+    }) }));
+}
 
 /** Execute production selectors, rather than maintaining a second filter in tests. */
 function sourceBetween(start: string, end: string): string {
@@ -550,8 +561,9 @@ test("header controls stay reachable and dismissable", () => {
     expect(app).toContain('document.addEventListener("mousedown", onDown);');
     expect(app).toContain('if (event.key === "Escape") onClose.current();');
     expect(app).toContain('aria-label={t("Refresh profiles")}');
-    expect(app).toContain('title={t("Settings")} onClick={openSettings}');
-    expect(app).toContain('<Icon name="settings" /><span className="navlabel">{t("Settings")}</span>');
+    expect(app).toContain('aria-label={t("Settings")} onClick={openSettings}');
+    expect(app).toContain("onSettings={openSettings}");
+    expect(sidebarMarkup()).toContain('<span class="navlabel">Settings</span>');
 });
 test("the dashboard typeface is bundled, never fetched at runtime", () => {
     // AliasMode is local-first and must render correctly with no network, so the
@@ -633,25 +645,38 @@ test("the sidebar collapses to an icon rail and remembers it", () => {
     expect(app).toContain('const SIDEBAR_KEY = "aliasmode.shell.sidebarCollapsed";');
     expect(app).toContain("function readSidebarCollapsed(): boolean {");
     expect(app).toContain('writeSetting(SIDEBAR_KEY, collapsed ? "0" : "1")');
-    expect(app).toContain('aria-expanded={!sidebarCollapsed}');
-    expect(app).toContain('data-tip={sidebarCollapsed ? t("Expand sidebar") : t("Collapse sidebar")}');
+    expect(app).toContain('<WorkbenchSidebar compact={sidebarIsCompact} collapsed={sidebarCollapsed} forced={railForced}');
+    expect(app).toContain('onToggle={toggleSidebar}');
+    const expanded = sidebarMarkup(), compact = sidebarMarkup({ compact: true, collapsed: true });
+    expect(expanded).toContain('aria-label="Collapse sidebar"');
+    expect(expanded).toContain('aria-expanded="true"');
+    expect(compact).toContain('class="sidebar collapsed"');
+    expect(compact).toContain('aria-label="Expand sidebar"');
+    expect(compact).toContain('aria-expanded="false"');
     // Labels must be elements, not bare text, or they cannot be hidden on the rail.
-    expect(app).toContain('<Icon name="profiles" /><span className="navlabel">{t("All profiles")}</span>');
+    expect(compact).toContain('<span class="navlabel">All profiles</span>');
+    expect(app).toContain('import "./workbench-layout.css";');
     expect(styles).toContain(".sidebar.collapsed");
     expect(styles).toContain(".rail-toggle");
     // Every rail item needs a hover label once its text is gone.
-    expect(app).toContain('data-tip={t("All profiles")}');
-    expect(app).toContain('data-tip={t("Settings")}');
+    expect(compact).toContain('data-tip="All profiles"');
+    expect(compact).toContain('data-tip="Settings"');
 });
 test("short sidebars keep folder space and let navigation scroll without clipping rail tooltips", () => {
-    const navigation = styles.match(/\n\.sidenav \{([^}]+)\}/)?.[1] ?? "";
+    const navigation = baseStyles.match(/\n\.sidenav \{([^}]+)\}/)?.[1] ?? "";
     expect(navigation).toContain("min-height: 0");
-    expect(navigation).toContain("overflow-y: auto");
-    expect(styles.includes(".sidebar.collapsed .sidenav { overflow: visible; }")).toBe(true);
-    expect(styles.includes(".sidesection:has(.folders) { min-height: 140px; }")).toBe(true);
-    const compact = styles.slice(styles.indexOf("@media (max-height: 720px)"), styles.indexOf("@media (max-width: 920px)"));
+    const shellNavigation = workbenchStyles.match(/\.folded-workbench \.sidenav \{([^}]+)\}/)?.[1] ?? "";
+    expect(shellNavigation).toContain("overflow: visible");
+    const collections = rosterNavigationStyles.match(/^\.roster-navigation \{([^}]+)\}/)?.[1] ?? "";
+    expect(collections).toContain("min-height: 0");
+    expect(collections).toContain("flex: 1 1 auto");
+    expect(collections).toContain("overflow: auto");
+    expect(rosterNavigationStyles).toContain(".roster-navigation.is-compact { overflow: visible;");
+    expect(rosterNavigationStyles).toMatch(/\.roster-navigation\.is-compact \.roster-navigation-panel\s*\{[^}]*position:\s*fixed[^}]*max-height:\s*calc\(100dvh - 140px\)[^}]*overflow-y:\s*auto/);
+    const compact = workbenchStyles.slice(workbenchStyles.indexOf("@media (max-height: 580px)"), workbenchStyles.indexOf("@media (pointer: coarse)"));
     expect(styles).not.toContain(".sidecredit");
-    expect(compact).toContain(".sidebar .navitem { padding-top: 6px; padding-bottom: 6px; }");
+    expect(compact).toContain(".folded-workbench > .sidebar { overflow-y: auto; overflow-x: hidden; }");
+    expect(compact).toMatch(/\.sidebar\.collapsed \.navitem\[data-tip\]::after\s*\{[^}]*position:\s*fixed/);
     expect(compact).not.toMatch(/\.sidefoot\s*\{[^}]*display:\s*none/);
 });
 test("roster columns declare their own width and never collapse", () => {
@@ -768,7 +793,8 @@ test("Extensions is a page, consistent with the rest of the shell", () => {
     expect(app).toContain('setView("extensions")');
     expect(app).not.toContain("showExts");
     expect(app).toContain('view === "extensions" ? (');
-    expect(app).toContain('className={`navitem${view === "extensions" ? " active" : ""}`}');
+    expect(app).toContain("onExtensions={openExtensions}");
+    expect(sidebarMarkup({ view: "extensions" })).toMatch(/<button[^>]*aria-current="page"[^>]*aria-label="Manage extensions"/);
     expect(app).toContain('extensions: "Extensions",');
 });
 test("the dark theme is a token swap, and native controls follow it", () => {
@@ -794,7 +820,7 @@ test("the dark theme is a token swap, and native controls follow it", () => {
     expect(app).toContain('media.addEventListener("change", apply)');
 });
 test("sidebar keeps local extension management without original-author support links", () => {
-    expect(app).toContain('<Icon name="puzzle" /><span className="navlabel">{t("Manage extensions")}</span>');
+    expect(sidebarMarkup()).toContain('<span class="navlabel">Manage extensions</span>');
     expect(app).not.toContain('href="https://aliasmode.com/support/"');
     expect(app).not.toContain("PROJECT_LINKS");
     expect(app).toContain("fetchExtensions()");

@@ -12,7 +12,7 @@ async function run(scenario: string) {
   dom.window.happyDOM.settings.navigator.maxTouchPoints = coarse ? 1 : 0;
   dom.window.happyDOM.settings.device.prefersReducedMotion = scenario === "reduced-motion" ? "reduce" : "no-preference";
   const styles = dom.window.document.createElement("style");
-  styles.textContent = `${await Bun.file(new URL("../web/styles.css", import.meta.url)).text()}\n${await Bun.file(new URL("../web/roster-views.css", import.meta.url)).text()}\n${await Bun.file(new URL("../web/roster-density.css", import.meta.url)).text()}`;
+  styles.textContent = `${await Bun.file(new URL("../web/styles.css", import.meta.url)).text()}\n${await Bun.file(new URL("../web/workbench-layout.css", import.meta.url)).text()}\n${await Bun.file(new URL("../web/roster-views.css", import.meta.url)).text()}\n${await Bun.file(new URL("../web/roster-density.css", import.meta.url)).text()}`;
   dom.window.document.head.append(styles);
   let setDensity!: (value: RosterDensity) => void;
   function Harness({ busy = false, disabled = false }: { busy?: boolean; disabled?: boolean }) {
@@ -21,10 +21,10 @@ async function run(scenario: string) {
     return <div className="app folded-workbench" data-roster-density={density}>
       <RosterDensityControl value={density} onChange={choose} busy={busy} disabled={disabled} />
       <RosterDensityControl value={density} onChange={choose} variant="settings" busy={busy} disabled={disabled} />
-      <div className="profiles-workspace"><div className="tablewrap"><table className="profile-table"><thead><tr><th className="chk" style={{ width: 36 }}><input type="checkbox" aria-label="Select all rows" /></th><th>Name</th><th>Actions</th></tr></thead>
+      <div className="profiles-workspace"><div className="profile-browser"><div className="tablewrap"><table className="profile-table"><thead><tr><th className="chk" style={{ width: 36 }}><input type="checkbox" aria-label="Select all rows" /></th><th>Name</th><th>Actions</th></tr></thead>
         <tbody className="profile-group-header"><tr className="profile-group-row"><td colSpan={3}><div className="profile-group-heading"><input type="checkbox" className="profile-group-check" aria-label="Select group" /><button className="profile-group-toggle">Group · 1 environment</button><button className="profile-group-create">+</button><button className="profile-menu-trigger">More</button></div></td></tr></tbody>
         <tbody className="profile-group-body"><tr data-profile-id="fixture"><td className="chk"><input type="checkbox" aria-label="Select environment" /></td><td className="col-name"><span className="name-cell"><span className="profile-name-line"><button className="profile-favorite">Star</button><button className="profile-name-button">Readable name</button></span><span className="sub">fixture ID</span><button className="profile-tags-preview">Important tag</button><span className="status"><button className="status-chip">Restart to apply</button></span></span></td><td className="col-action"><span className="rowactions"><button className="btn row-start">Start</button><button className="btn profile-menu-trigger">Actions</button></span></td></tr></tbody>
-      </table></div><section role="dialog"><div className="tablewrap"><table className="profile-table"><tbody><tr data-profile-id="dialog"><td>Dialog row</td></tr></tbody></table></div></section></div>
+      </table></div></div><section role="dialog"><div className="tablewrap"><table className="profile-table"><tbody><tr data-profile-id="dialog"><td>Dialog row</td></tr></tbody></table></div></section></div>
       <div className="other-workspace"><div className="tablewrap"><table className="profile-table"><tbody><tr data-profile-id="other"><td>Other page row</td></tr></tbody></table></div></div>
     </div>;
   }
@@ -68,7 +68,11 @@ async function run(scenario: string) {
     } else if (scenario === "coarse-targets") {
       assert.equal(dom.window.matchMedia("(pointer: coarse)").matches, true); await click(radio("Compact"));
       const targetSelectors = [".rowactions > .btn", ".profile-name-button", ".profile-tags-preview", ".status-chip", ".profile-group-toggle", ".profile-group-create"];
-      for (const selector of targetSelectors) for (const target of dom.container.querySelectorAll<DomElement>(`.profiles-workspace > .tablewrap ${selector}`)) assert.ok(parseFloat(style(target).minHeight) >= 44, `${selector} must keep a 44px touch target`);
+      for (const selector of targetSelectors) {
+        const targets = dom.container.querySelectorAll<DomElement>(`.profiles-workspace > .profile-browser > .tablewrap ${selector}`);
+        assert.ok(targets.length > 0, `${selector} must resolve to a real roster control`);
+        for (const target of targets) assert.ok(parseFloat(style(target).minHeight) >= 44, `${selector} must keep a 44px touch target`);
+      }
       for (const target of groups()[0]!.querySelectorAll<DomButton>("button")) assert.equal(style(target).minHeight, "44px");
       const check = dom.container.querySelector<DomInput>('input[aria-label="Select environment"]')!;
       assert.equal(style(check).width, "44px"); assert.equal(style(check).height, "44px");

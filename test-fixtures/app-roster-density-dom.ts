@@ -45,7 +45,7 @@ async function run(scenario: string) {
   const client = await import("react-dom/client"), originalCreate = client.createRoot;
   mock.module("react-dom/client", () => ({ ...client, createRoot(...args: Parameters<typeof originalCreate>) { const created = originalCreate(...args); root = created; return created; } }));
   const visible = <T extends HTMLElement>(selector: string, scope: HTMLElement = dom.container): T[] => [...scope.querySelectorAll<T>(selector)].filter(item => !item.closest('[hidden], [inert], [aria-hidden="true"]'));
-  const control = () => { const found = visible<HTMLElement>('.roster-density-options[role="radiogroup"]')[0]; assert.ok(found, "The active page must expose its density control"); return found; };
+  const control = () => { const found = visible<HTMLElement>('.roster-density-options[role="radiogroup"]')[0]; assert.ok(found, "The active settings page or open display settings popover must expose its density control"); return found; };
   const radio = (label: string) => { const found = [...control().querySelectorAll<HTMLButtonElement>('[role="radio"]')].find(item => item.textContent === label); assert.ok(found, label); return found; };
   const selected = () => control().querySelector('[aria-checked="true"]')?.textContent;
   const density = () => dom.container.querySelector<HTMLElement>('[data-roster-density]')?.dataset.rosterDensity;
@@ -53,12 +53,19 @@ async function run(scenario: string) {
   const click = async (target: HTMLButtonElement, twice = false) => act(async () => { target.click(); if (twice) target.click(); });
   const waitFor = async (test: () => boolean, why: string) => { const until = Date.now() + 2500; while (!test() && Date.now() < until) await dom.flush(); assert.ok(test(), why); };
   const resolveWrite = async (index: number, ok = true) => act(async () => { const write = densityWrites()[index]!; assert.ok(write); if (ok) preferences[write.key] = write.value; write.response.resolve(json(ok ? { ok: true } : { ok: false, error: "Inert density save failure" }, ok ? 200 : 503)); });
+  const openDisplaySettings = async () => {
+    const trigger = button("Choose visible columns");
+    if (trigger.getAttribute("aria-expanded") !== "true") await click(trigger);
+    assert.equal(trigger.getAttribute("aria-expanded"), "true");
+    assert.ok(control().closest(".popover"), "Roster density is available through the display settings popover");
+  };
   const openSettings = async () => { await click(button("Settings")); assert.ok(control().closest(".is-settings")); };
-  const openRoster = async () => { await click(button("All profiles")); assert.ok(control().closest(".is-toolbar")); };
+  const openRoster = async () => { await click(button("All profiles")); await openDisplaySettings(); assert.ok(control().closest(".is-toolbar")); };
   try {
     await act(async () => { await import("../web/app.tsx"); });
     await waitFor(() => visible<HTMLElement>('tr[data-profile-id="density_fixture"]').length === 1 && reads.length === 1, "Actual App must bootstrap its roster and authoritative preference read");
     assert.ok(root); assert.deepEqual(unexpected, []);
+    await openDisplaySettings();
     if (held) {
       assert.equal(density(), "compact"); assert.ok(radio("Comfortable").disabled); await click(radio("Comfortable"), true); assert.equal(densityWrites().length, 0);
       if (scenario === "late-layout-edit") { const page = dom.container.querySelector<HTMLSelectElement>('select[aria-label="Rows per page"]')!; await act(async () => { page.value = "50"; page.dispatchEvent(new dom.window.Event("change", { bubbles: true })); }); await waitFor(() => writes.some(write => write.key === "aliasmode.roster.pageSize"), "A separate allowed layout change must be saved while density is loading"); }

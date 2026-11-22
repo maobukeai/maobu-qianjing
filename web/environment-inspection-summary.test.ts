@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { buildInspectionDiagnosticSummary, inspectionEvidenceSource, inspectionMeasurementCoverage } from "./environment-inspection.tsx";
+import { buildInspectionDiagnosticSummary, inspectionEvidenceSource, inspectionMeasurementCoverage, inspectionOverview } from "./environment-inspection.tsx";
 import type { FingerprintReport } from "./settings-api.ts";
 import { assessFingerprintQuality } from "../fingerprint-quality.ts";
 import { parseExport } from "../parse.ts";
@@ -41,4 +41,25 @@ test("clipboard projection rejects unrecognized statuses and never echoes unpars
   const unknownStatus = { ...check("screen_config"), status: "PRIVATE_BAD_STATUS" } as unknown as FingerprintReport["checks"][number];
   const summary = buildInspectionDiagnosticSummary(report([unknownStatus, check("locale_config", "unknown")], "PRIVATE_DATE"), { reviewedAt: Number.NaN, proxyStatus: "PRIVATE_IP" as "working", configurationChanged: true });
   expect(summary).toContain("Recognized checks: 1"); expect(summary).toContain("Explicit proxy check: Not checked"); expect(summary).toContain("Configuration changed during this inspection"); expect(summary).not.toContain("PRIVATE");
+});
+
+test("the inspection conclusion requires sample evidence and never promotes unknowns or aggregate pass counts", () => {
+  const onlyConfiguration = report([check("identity_seed")], "2026-11-09T10:00:00Z");
+  expect(inspectionOverview(onlyConfiguration)).toMatchObject({ headline: "More evidence is needed", tone: "unknown", next: "browser", counts: { pass: 1, warn: 0, fail: 0, unknown: 0 } });
+  const linked = ["browser_sample", "capture_source", "runtime_config", "sample_coverage", "sample_freshness"].map(id => check(id));
+  const measured = report(linked, "2026-11-09T10:00:00Z");
+  expect(inspectionOverview(measured)).toMatchObject({ tone: "consistent", headline: "Stored checks have no reported issues" });
+  expect(inspectionOverview(report([...linked, check("screen_measurement", "unknown")], measured.measuredAt))).toMatchObject({ tone: "unknown", next: "findings" });
+  expect(inspectionOverview(measured, { configurationChanged: true })).toMatchObject({ tone: "unknown", next: "browser" });
+  expect(inspectionOverview(null)).toMatchObject({ headline: "Saved review unavailable", tone: "unknown", next: "review" });
+});
+
+test("network observations stay independent of fingerprint counts and drive the next step only with their own evidence", () => {
+  const linked = ["browser_sample", "capture_source", "runtime_config", "sample_coverage", "sample_freshness"].map(id => check(id));
+  const measured = report(linked, "2026-11-09T10:00:00Z");
+  expect(inspectionOverview(measured, { proxyConfigured: true })).toMatchObject({ tone: "unknown", next: "network" });
+  expect(inspectionOverview(measured, { proxyConfigured: true, proxyStatus: "failed" })).toMatchObject({ headline: "Review the network connection first", tone: "issue", next: "network", counts: { pass: 5, fail: 0 } });
+  expect(inspectionOverview(measured, { proxyConfigured: true, proxyStatus: "unavailable" })).toMatchObject({ tone: "unknown", next: "network" });
+  expect(inspectionOverview(measured, { proxyConfigured: true, proxyStatus: "working" })).toMatchObject({ headline: "Stored checks have no reported issues", counts: { pass: 5, fail: 0 } });
+  expect(inspectionOverview(report([...linked, check("screen_config", "fail")], measured.measuredAt), { proxyStatus: "working" })).toMatchObject({ tone: "issue", next: "findings", counts: { pass: 5, fail: 1 } });
 });

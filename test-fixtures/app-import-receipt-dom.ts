@@ -89,8 +89,9 @@ async function run(scenario: string) {
       }
     } else {
       if (scenario === "group-context-defaults") {
-        const groupFilter = visible<HTMLSelectElement>('select[aria-label="Group filter"]')[0]!;
-        await act(async () => { groupFilter.value = "Override team"; groupFilter.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
+        const groupLink = visible<HTMLButtonElement>('.roster-group-link').find(node => node.title === "Override team");
+        assert.ok(groupLink, "The sidebar exposes the current group context");
+        await act(async () => { groupLink.click(); });
         assert.equal(tableIds().length, 0);
       }
       await click(button("Import profiles", visible<HTMLElement>(".profiles-workspace")[0]!)); assert.ok(dialog());

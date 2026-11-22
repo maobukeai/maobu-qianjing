@@ -164,7 +164,7 @@ async function run(scenario: string) {
       await click(button("AI workspace", dom.container)); await requestClose(); assertLabels(["Network settings"]); await keep();
       await click(button("Settings", dom.container)); await click(tab("network"));
       assert.equal(startupCheck(), checkbox); assert.equal(checkbox.checked, true); assert.equal(select.value, "browser-default");
-      assert.equal(requests.filter(item => item.path === "/ui/api/settings" && item.method === "GET").length, 2, "Returning to Network must preserve both owners without reloading their drafts");
+      assert.equal(requests.filter(item => item.path === "/ui/api/settings" && item.method === "GET").length, 3, "Returning to Network must preserve all network owners without reloading their drafts");
       assert.equal(writesBesidesPreferences().length, 0, "Editing network preferences must not scan, save, check proxies or launch anything"); return;
     }
     await click(button("Manage extensions", dom.container));

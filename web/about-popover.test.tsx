@@ -265,8 +265,8 @@ describe("AboutPopover", () => {
     expect(dialog).toBeTruthy();
     expect(dialog.textContent).toContain("猫步·千境");
     expect(dialog.textContent).toContain("Local edition");
-    expect(dialog.textContent).toContain("0.1.0-local.1");
-    expect(dialog.textContent).toContain("Signed auto-install channel is not enabled in this build.");
+    expect(dialog.textContent).toContain("v0.1.0-local.1");
+    expect(dialog.textContent).toContain("Community local build");
     expect(dialog.textContent).toContain("Xreacher (AliasMode)");
 
     // Copy version
@@ -296,10 +296,24 @@ describe("AboutPopover", () => {
     });
     await flush();
     expect(settings.updates.repository).toBe(DEFAULT_GITHUB_REPOSITORY);
-    expect(dialog.textContent).toContain("New GitHub release found");
+    expect(dialog.textContent).toContain("New GitHub release");
     expect(dialog.textContent).toContain("0.1.0-local.1 → 0.2.0");
-    expect(dialog.textContent).toContain("Added local workbench improvements.");
     expect(githubResults.at(-1)?.status).toBe("available");
+
+    // Expand collapsed release notes drawer
+    const notesToggle = dialog.querySelector(".about-notes-toggle") as HTMLButtonElement;
+    const notesAccordion = dialog.querySelector(".about-notes-accordion") as HTMLElement;
+    expect(notesToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(notesAccordion.getAttribute("data-open")).toBe("false");
+    expect(notesAccordion.getAttribute("aria-hidden")).toBe("true");
+    await act(async () => {
+      notesToggle.click();
+    });
+    await flush();
+    expect(notesToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(notesAccordion.getAttribute("data-open")).toBe("true");
+    expect(notesAccordion.getAttribute("aria-hidden")).toBe("false");
+    expect(notesAccordion.textContent).toContain("Added local workbench improvements.");
 
     const releaseLink = Array.from(dialog.querySelectorAll("a")).find((anchor) =>
       anchor.textContent?.includes("View release on GitHub"),
@@ -332,9 +346,8 @@ describe("AboutPopover", () => {
       trigger.click();
     });
     await flush();
-    const shortcutBtn = Array.from(mounted.container.querySelectorAll("button")).find((btn) =>
-      btn.textContent?.includes("Open full update settings"),
-    ) as HTMLButtonElement;
+    const shortcutBtn = mounted.container.querySelector('[role="dialog"] .about-settings-shortcut') as HTMLButtonElement;
+    expect(shortcutBtn.textContent).toContain("Update settings");
     await act(async () => {
       shortcutBtn.click();
     });
@@ -375,7 +388,18 @@ describe("AboutPopover", () => {
         const method = init?.method ?? "GET";
         if (path === "/ui/api/shell-language") return Response.json({ ok: true, language: "en-US" });
         if (path === "/ui/api/settings" && method === "GET") return Response.json({ ok: true, settings });
-        if (path === "/ui/api/settings/updates" && method === "GET") return Response.json({ ok: true, update: null });
+        if (path === "/ui/api/settings/updates") {
+          return Response.json({
+            ok: true,
+            update: {
+              checkedAt: "2026-11-14T00:00:00.000Z",
+              repository: DEFAULT_GITHUB_REPOSITORY,
+              channel: "stable",
+              currentVersion: "1.0.0",
+              status: "up-to-date",
+            },
+          });
+        }
         throw new Error(`Unexpected request: ${method} ${path}`);
       },
     });
@@ -443,7 +467,7 @@ describe("AboutPopover", () => {
     const dialog = mounted.container.querySelector("#about-popover-dialog") as HTMLElement;
     expect(dialog).toBeTruthy();
     expect(dialog.textContent).toContain("Up to date");
-    expect(dialog.textContent).toContain("You are on the latest signed release.");
+    expect(dialog.textContent).toContain("v1.0.0 is up to date");
 
     // Toggle signed startup check (a)
     const signedSwitch = dialog.querySelectorAll('input[type="checkbox"][role="switch"]')[0] as HTMLInputElement;
@@ -456,17 +480,22 @@ describe("AboutPopover", () => {
     expect(savedPrefs).toEqual([true]);
     expect(signedSwitch.checked).toBe(true);
 
-    // Check trusted channel -> discovers 1.2.3
-    const checkSignedBtn = Array.from(dialog.querySelectorAll("button")).find((btn) =>
-      btn.textContent?.includes("Check trusted channel"),
-    ) as HTMLButtonElement;
+    // Check updates via unified CTA -> discovers signed 1.2.3
+    const checkUpdatesBtn = dialog.querySelector(".about-primary-cta") as HTMLButtonElement;
+    expect(checkUpdatesBtn.textContent).toContain("Check for updates");
     await act(async () => {
-      checkSignedBtn.click();
+      checkUpdatesBtn.click();
     });
     await flush();
     expect(checkCount).toBe(1);
     expect(dialog.textContent).toContain("Update available");
     expect(dialog.textContent).toContain("1.0.0 → 1.2.3");
+
+    const notesToggle = dialog.querySelector(".about-notes-toggle") as HTMLButtonElement;
+    await act(async () => {
+      notesToggle.click();
+    });
+    await flush();
     expect(dialog.textContent).toContain("Security & engine updates.");
 
     // Install verified update -> opens SignedUpdateDraftDialog because of dirty draft

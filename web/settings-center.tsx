@@ -5,6 +5,7 @@ import { checkProxy, type ProxyCheckResult, type RuntimeDownload } from "./api.t
 import { proxyCheckNote } from "./proxy-check-presentation.ts";
 import { LocalProxyPreflightSettings } from "./local-proxy-preflight-settings.tsx";
 import { ChromiumPreloadingSettings } from "./chromium-preloading-settings.tsx";
+import { ChromiumMemorySaverSettings } from "./chromium-memory-saver-settings.tsx";
 import { presentFingerprintCheck } from "../fingerprint-check-presentation.ts";
 import type { LocalProxyDiscoveryRequest, LocalProxyHost } from "../network-diagnostics.ts";
 import { checkForUpdate, createSyncFile, discoverProxies, fetchFingerprintReports, fetchIntegrationInfo, fetchLastUpdate, fetchSettings, fetchSyncFiles, importSyncFile, measureFingerprint, patchSettings, previewSyncFile, type AppSettings, type FingerprintReport, type IntegrationInfo, type LocalDiscovery, type SyncFileRecord, type SyncPreview, type UpdateResult } from "./settings-api.ts";
@@ -150,6 +151,7 @@ function NetworkPanel({ onCreateWithLocalProxy, onAssignLocalProxy, onResumeLoca
     <Heading kind="network" title="Network & proxies" description="Connect your desktop proxy, then verify the actual exit connection." />
     <LocalProxyPreflightSettings />
     <ChromiumPreloadingSettings />
+    <ChromiumMemorySaverSettings />
     <section className="feature-card">
       <div className="feature-card-title"><div><h3>{t("Desktop proxy discovery")}</h3><p>{t("Find local listeners used by Clash, Mihomo, v2rayN and other desktop clients.")}</p></div></div>
       <form onSubmit={event => { event.preventDefault(); void scan(); }}>

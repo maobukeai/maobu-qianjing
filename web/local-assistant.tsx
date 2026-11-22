@@ -371,6 +371,7 @@ function LocalAssistantSession({ active, onOpenMcp, onOpenModelServices, draftSu
   const copyFeedback = conversationCopy && conversationCopy.replyId === latestReplyId ? conversationCopy.status : null;
   const selected = catalog?.models.find(item => item.name === model);
   const cancelling = cancellation?.status === "pending";
+  const connectionNeeded = !selectedModel || needsKey;
   const evidenceStatus = missingKey ? "API key required for this session" : keyRejected ? "Model connection needs attention"
     : selectedModel && modelEvidence === "reply" ? "Model replied" : modelEvidence === "list" ? "Model list loaded." : "";
   const statusTone = needsKey ? "attention" : selectedModel && modelEvidence === "reply" ? "connected" : "";
@@ -383,11 +384,11 @@ function LocalAssistantSession({ active, onOpenMcp, onOpenModelServices, draftSu
   }[phase];
   return <div className="workspace assistant-workspace" hidden={!active}>
     <div className="page-heading"><div><h1>{t("AI workspace")}</h1><p className="page-subtitle">{t(onOpenModelServices ? "Ask questions, plan browser workflows and draft scripts with your selected model." : "Ask questions, plan browser workflows and draft scripts with a model service on this computer.")}</p></div></div>
-    <div className="assistant-tools">
+    <div className={`assistant-tools${connectionNeeded ? " needs-connection" : ""}`}>
       <div className="assistant-model-summary"><span className={`assistant-status-dot ${statusTone}`} aria-hidden="true" /><div><strong>{loading ? t("Loading models…") : selectedModel || t(catalog ? "No local models found" : "Model not connected")}</strong>{activeService ? <span>{t("Selected service · {service}", { service: activeService.name })}</span> : !catalog && <span>{t(onOpenModelServices ? "Choose a model when you are ready to send." : "Connect a local model when you are ready to send.")}</span>}{evidenceStatus && <span className="assistant-model-evidence" data-tone={statusTone} role="status">{t(evidenceStatus)}</span>}</div></div>
       <div className="assistant-tools-actions">
-        {needsKey && activeService && !settingsOpen && <button className="btn xs" type="button" aria-controls={connectionId} disabled={workspaceBlocked || loading || sending || cancelling} onClick={() => openApiKeyEditor(activeService.id)}>{t("Update API key")}</button>}
-        <button className="btn xs ghost" type="button" aria-controls={connectionId} aria-expanded={settingsOpen} onClick={() => setSettingsOpen(value => !value)}>{t("Model settings")}</button>
+        {needsKey && activeService && !settingsOpen && <button className="btn primary xs" type="button" aria-controls={connectionId} disabled={workspaceBlocked || loading || sending || cancelling} onClick={() => openApiKeyEditor(activeService.id)}>{t("Update API key")}</button>}
+        <button className={`btn xs ${connectionNeeded && !settingsOpen && !needsKey ? "primary" : "ghost"}`} type="button" aria-controls={connectionId} aria-expanded={settingsOpen} onClick={() => setSettingsOpen(value => !value)}>{t("Model settings")}</button>
       </div>
     </div>
     {connectionError && !settingsOpen && <div className="assistant-connection-recovery" role="alert"><div><strong>{t("Model connection needs attention")}</strong><p>{t(connectionError)}</p></div><button className="btn xs" type="button" disabled={loading || sending || cancelling} onClick={() => void connect()}>{t("Retry connection")}</button></div>}
@@ -408,7 +409,6 @@ function LocalAssistantSession({ active, onOpenMcp, onOpenModelServices, draftSu
       {onOpenModelServices && <div className="assistant-api-actions assistant-service-shortcuts"><button className="btn xs" type="button" disabled={workspaceBlocked || loading || sending || cancelling} onClick={() => void useDefaultService()}>{t("Use default model")}</button><button className="btn xs ghost" type="button" disabled={sending} onClick={onOpenModelServices}>{t("Manage model services")}</button></div>}
       {defaultError && <p className="feature-alert assistant-connection-error" role="alert">{t(defaultError)}</p>}
       <div className="assistant-privacy"><strong>{t("Choose the context you share")}</strong><label><input type="checkbox" checked={overview} disabled={sending} onChange={event => setOverview(event.target.checked)} /><span>{t("Include an anonymous workspace overview")}</span></label><p>{t("Adds counts of profiles, groups, engines and proxy configuration. Account details and session data are excluded.")}</p></div>
-      <div className="assistant-session-info"><strong>{t("Session memory")}</strong><p>{t("Your conversation stays in this app session. Restarting the app clears it.")}</p><p>{t("Changing workspaces clears this conversation and draft.")}</p></div>
       {onOpenMcp && <div className="assistant-session-info"><strong>{t("Browser tools")}</strong><p>{t("Connect your MCP client to run browser workflows alongside these plans and drafts.")}</p><button className="btn xs" type="button" onClick={onOpenMcp}>{t("Configure MCP connection")}</button></div>}
     </aside><section className="assistant-chat" aria-label={t("AI conversation")}>
       <div className="assistant-chat-header">
@@ -446,10 +446,18 @@ function LocalAssistantSession({ active, onOpenMcp, onOpenModelServices, draftSu
       </div>}
       {copyFeedback === "copied" && <p className="assistant-copy-feedback" role="status">{t("Conversation copied.")}</p>}
       {copyFeedback === "failed" && <p className="assistant-copy-feedback feature-alert" role="alert">{t("Could not copy the conversation. Select and copy the messages.")}</p>}
-      <p className="assistant-session-caption">{t("Draft and conversation are kept while you navigate within this workspace.")}</p>
+      <details className="assistant-session-guide">
+        <summary>{t("Conversation guide")}</summary>
+        <div className="assistant-session-guide-content">
+          <strong>{t("Session memory")}</strong>
+          <p className="assistant-session-caption">{t("Draft and conversation are kept while you navigate within this workspace.")}</p>
+          <p>{t("Your conversation stays in this app session. Restarting the app clears it.")}</p>
+          <p>{t("Changing workspaces clears this conversation and draft.")}</p>
+          <ol className="assistant-workflow-steps"><li><span>1</span>{t("Prepare draft")}</li><li><span>2</span>{t("Generate suggestions")}</li><li><span>3</span>{t("Review and verify")}</li></ol>
+        </div>
+      </details>
       {taskSource && <section className="assistant-task-source" aria-label={t("Current task")}><div><span>{t("Current task")}</span><strong>{taskSource.title}</strong>{taskSource.description && <p>{taskSource.description}</p>}</div>{onReturnToTask && <button type="button" className="btn xs" onClick={() => onReturnToTask(taskSource)}>{t("Return to inspection")}</button>}</section>}
-      <div className={`assistant-task-progress ${phase}`} data-cancellation={cancellation?.status} aria-label={t("Assistant task progress")}>
-        <ol><li data-current={phase === "draft" || undefined}><span>1</span>{t("Prepare draft")}</li><li data-current={phase === "waiting" || cancelling || undefined}><span>2</span>{t("Generate suggestions")}</li><li data-current={phase === "complete" || undefined}><span>3</span>{t("Review and verify")}</li></ol>
+      <div className={`assistant-task-progress ${phase}`} hidden={phase === "draft" && !cancellation} data-cancellation={cancellation?.status} aria-label={t("Assistant task progress")}>
         <p role="status">{t(phaseMessage)}</p>
         {sending && <><p className="assistant-waiting-clock" aria-live="off">{t("Local waiting time: {seconds}s", { seconds: waitedSeconds })}</p><p className="assistant-waiting-policy">{t("Leaving this page stops waiting and attempts to cancel this generation.")}</p></>}
         {cancellation?.status === "unconfirmed" && <><p>{t("The response will be ignored. Your draft is ready to edit.")}</p><button className="btn xs" type="button" onClick={retryCancellation}>{t("Retry cancellation")}</button></>}

@@ -98,6 +98,39 @@ async function run(scenario: string) {
   try {
     await render();
     assert.equal(calls.length, 0, "Opening a proxy workspace must not start checks");
+    if (scenario === "workflow-navigation") {
+      assert.equal(dom.container.querySelector('.proxy-workflow-navigation'), null, "Replacement steps belong to the replacement workflow only");
+      await act(async () => tab("Replace proxies").click());
+      const navigation = dom.container.querySelector('.proxy-workflow-navigation')!;
+      const step = (key: string) => navigation.querySelector<HTMLButtonElement>(`[data-proxy-workflow-step="${key}"]`)!;
+      assert.equal(navigation.querySelectorAll('button').length, 4);
+      assert.equal(step("review").disabled, true, "A review destination requires an actual preview");
+      assert.equal(step("receipt").disabled, true, "A receipt destination requires an actual operation result");
+      assert.ok(navigation.querySelector('.proxy-workflow-count')?.textContent?.includes("3 environments"));
+      const draft = "new.example:8080:fixture:PRIVATE_NAVIGATION_SECRET";
+      await setValue(input(), draft);
+      await act(async () => step("input").click());
+      assert.equal(dom.window.document.activeElement?.id, step("input").getAttribute('aria-controls'));
+      assert.equal(input().value, draft);
+      await act(async () => step("scope").click());
+      assert.equal(dom.window.document.activeElement?.id, step("scope").getAttribute('aria-controls'));
+      assert.equal(calls.length, 0, "Step navigation must never preview, check or apply proxies");
+      await click("Preview changes");
+      assert.equal(step("review").disabled, false);
+      await act(async () => step("review").click());
+      assert.equal(dom.window.document.activeElement?.id, step("review").getAttribute('aria-controls'));
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0]!.path, "/ui/api/proxies/preview");
+      assert.ok(!navigation.textContent?.includes("PRIVATE_NAVIGATION_SECRET"), "The persistent summary must not repeat proxy credentials");
+      await click("Discard review");
+      assert.equal(step("review").disabled, true);
+      assert.equal(step("receipt").disabled, true);
+      assert.equal(input().value, draft, "Discarding review must leave the input owner intact");
+      await render(false); await render();
+      assert.equal(input().value, draft);
+      assert.equal(calls.length, 1, "Returning to the page does not issue another request");
+      return;
+    }
     if (scenario === "loading-scope") {
       assert.equal(button("Check proxies").disabled, true);
       assert.equal(dom.container.querySelector(".proxy-scope-summary"), null);

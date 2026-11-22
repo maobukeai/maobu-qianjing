@@ -30,6 +30,7 @@ cloud-cache/
 logs/
 inbox/*.txt
 reports/
+backups/
 *.export.txt
 *adspower-export*.txt
 extensions/

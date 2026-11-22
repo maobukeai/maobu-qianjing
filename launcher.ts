@@ -61,7 +61,7 @@ import {
   type FirefoxFontPack,
 } from "./firefox-fonts.ts";
 import { FIREFOX_RUNTIME_BUILDS } from "./firefox-install.ts";
-import { ensureManagedFirefox } from "./firefox-managed.ts";
+import { ensureManagedFirefox, pruneManagedFirefoxRuntimes } from "./firefox-managed.ts";
 import type { RuntimeInventoryDeployment } from "./runtime-inventory.ts";
 import {
   ALIASMODE_CHROMIUM_EXECUTABLE_SHA256,
@@ -457,6 +457,8 @@ export interface LauncherOptions {
   checkLocalProxyBeforeLaunch?: (endpoint: LocalProxyEndpoint) => Promise<void>;
   /** Workspace preference, read only on a fresh verified managed Chromium155 launch. */
   chromiumPreloading?: () => ChromiumPreloadingMode;
+  /** Workspace preference: cap Chromium renderer processes to lower memory use. */
+  chromiumMemorySaver?: () => boolean;
   readSession?: typeof readSessionInSubprocess;
   applySession?: typeof applySessionToEndpoint;
   /** Budget for the graceful close above before falling through to the force-kill. */
@@ -522,6 +524,9 @@ type LinuxTerminationProof =
   | { kind: "group"; rootPid: number; rootStartTime: string }
   | { kind: "tree"; rootPid: number; rootStartTime: string; members: Array<{ pid: number; startTime: string; depth: number }> };
 
+/** Renderer process cap used when the workspace memory saver is on. */
+export const CHROMIUM_MEMORY_SAVER_RENDERER_LIMIT = 4;
+
 export class Launcher {
   readonly browserRuntimeDeployment: RuntimeInventoryDeployment;
   private store: ProfileStore;
@@ -571,6 +576,7 @@ export class Launcher {
   private lookupExitLocationFn?: (proxy: ProxySpec) => Promise<ExitLocation | null>;
   private checkLocalProxyBeforeLaunchFn?: (endpoint: LocalProxyEndpoint) => Promise<void>;
   private chromiumPreloadingFn?: () => ChromiumPreloadingMode;
+  private chromiumMemorySaverFn?: () => boolean;
   private readSessionFn: typeof readSessionInSubprocess;
   private applySessionFn: typeof applySessionToEndpoint;
   private navigateFn: LaunchNavigator;
@@ -700,6 +706,7 @@ export class Launcher {
     this.lookupExitLocationFn = opts.lookupExitLocation ?? (this.unsafeDisableIdentityGates ? undefined : (proxy) => lookupProxyExitLocation(proxy));
     this.checkLocalProxyBeforeLaunchFn = opts.checkLocalProxyBeforeLaunch;
     this.chromiumPreloadingFn = opts.chromiumPreloading;
+    this.chromiumMemorySaverFn = opts.chromiumMemorySaver;
     this.readSessionFn = opts.readSession ?? readSessionInSubprocess;
     this.applySessionFn = opts.applySession ?? applySessionToEndpoint;
     this.navigateFn = opts.navigate ?? defaultNavigate;
@@ -828,6 +835,8 @@ export class Launcher {
       this.runtimesPruned = true;
       const inUse = this.store.listLaunches().flatMap((launch) => launch.binaryPath ? [launch.binaryPath] : []);
       pruneBrowserRuntimes(this.chromiumRuntimeRoot, inUse, this.hostPlatform, this.hostArch);
+      try { pruneManagedFirefoxRuntimes(this.chromiumRuntimeRoot, inUse, this.hostPlatform, this.hostArch); }
+      catch (error) { this.log(`old Firefox runtime cleanup failed: ${error instanceof Error ? error.message : String(error)}`); }
     }
     const chromium = profiles.filter((profile) => (profile.engine ?? "chromium") === "chromium");
     if (chromium.some((profile) => !profile.chromiumRuntime) && this.downloadsCloakBrowser()) {
@@ -1209,6 +1218,14 @@ export class Launcher {
       const features = ["DeviceBoundSessions", "EnableBoundSessionCredentials"];
       for (const arg of forwardedArgs) if (arg.startsWith(disableFeatures)) features.push(arg.slice(disableFeatures.length));
       args.push(`${disableFeatures}${features.join(",")}`);
+    }
+    // Opt-in memory saver: tabs share at most a few renderer processes. It changes process
+    // layout only, not what a page reads; a forwarded limit from automation still wins.
+    let memorySaver = false;
+    try { memorySaver = this.chromiumMemorySaverFn?.() === true; }
+    catch (error) { this.log(`chromium memory saver setting unavailable: ${error instanceof Error ? error.message : String(error)}`); }
+    if (memorySaver && !forwardedArgs.some((arg) => arg.startsWith("--renderer-process-limit="))) {
+      args.push(`--renderer-process-limit=${CHROMIUM_MEMORY_SAVER_RENDERER_LIMIT}`);
     }
     args.push(...this.baseArgs, ...forwardedArgs.filter((arg) => !profile.chromiumRuntime || !arg.startsWith(disableFeatures)));
     return args;

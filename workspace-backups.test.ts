@@ -65,7 +65,7 @@ test("full backups preserve preferences and require renewed sync and both startu
   const restored = await completed(f.service, f.service.startRestore({ backupId: created.backupId! }).id);
   const root = f.catalog.pathFor(restored.restoredWorkspaceId!);
   expect(new AppSettingsStore(join(root, "app-settings.json")).read()).toEqual({ ...saved, updates: { ...saved.updates, checkOnStartup: false }, sync: { ...saved.sync, enabled: false }, signedUpdates: { checkOnStartup: false } });
-  expect(new AppSettingsStore(join(root, "app-settings.json")).read().network).toEqual({ checkLocalProxyBeforeLaunch: true, chromiumPreloading: "browser-default" });
+  expect(new AppSettingsStore(join(root, "app-settings.json")).read().network).toEqual({ checkLocalProxyBeforeLaunch: true, chromiumPreloading: "browser-default", chromiumMemorySaver: false });
   expect(readFileSync(settings.path, "utf8")).toBe(source); expect(readFileSync(archivePath)).toEqual(archive);
   expect(existsSync(saved.sync.folder)).toBe(false);
 });

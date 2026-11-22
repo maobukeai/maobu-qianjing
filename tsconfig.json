@@ -26,5 +26,5 @@
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false
   },
-  "exclude": ["node_modules", "src-tauri/target", "src-tauri/resources", "src-tauri/generated", "dist"]
+  "exclude": ["node_modules", "src-tauri/target", "src-tauri/resources", "src-tauri/generated", "dist", "backups"]
 }
