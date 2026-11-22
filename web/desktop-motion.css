@@ -1,26 +1,79 @@
-/* Interface motion is shared by DOM surfaces, never by native OS windows. */
+/* Interface motion is shared by DOM surfaces, never by native OS windows.
+   Hard performance discipline: animate only GPU-composited transform & opacity. */
 :root[data-desktop-motion="full"] {
-  --desktop-motion-control: 120ms;
-  --desktop-motion-enter: 180ms;
+  --desktop-motion-control: 110ms;
+  --desktop-motion-press: 90ms;
+  --desktop-motion-enter: 190ms;
   --desktop-motion-exit: 120ms;
-  --desktop-motion-ease: cubic-bezier(.22,.72,.25,1);
+  --desktop-motion-indicator: 220ms;
+  --desktop-motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --desktop-motion-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --desktop-motion-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 :root[data-desktop-motion="full"] :is(.btn, .iconbtn, .rail-toggle, .command-palette-trigger) {
   transition-duration: var(--desktop-motion-control);
 }
-:root[data-desktop-motion="full"] :is(.btn, .iconbtn):active:not(:disabled) { transform: translateY(1px) scale(.985); }
+:root[data-desktop-motion="full"] :is(.btn, .iconbtn, .rail-toggle, .command-palette-trigger):active:not(:disabled) {
+  transform: scale(0.98);
+  transition-duration: var(--desktop-motion-press);
+}
+
+/* Tactile checkbox & favorite star spring bounce (pure transform, zero reflow). */
+@keyframes desktop-motion-check-pop {
+  0% { transform: scale(0.88); }
+  58% { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+:root[data-desktop-motion="full"] :is(
+  input[type="checkbox"]:checked,
+  .profile-favorite[aria-pressed="true"],
+  .profile-favorite.is-favorite
+) {
+  animation: desktop-motion-check-pop 190ms var(--desktop-motion-ease);
+}
+
 :root[data-desktop-motion="full"] :is(.modal-backdrop, .extensions-confirm-backdrop, .wm-confirm-backdrop, .command-palette-backdrop) {
   animation: desktop-motion-fade var(--desktop-motion-enter) ease-out;
 }
 :root[data-desktop-motion="full"] :is(.modal, .extensions-confirm, .wm-confirm, .command-palette) {
-  animation: desktop-motion-dialog var(--desktop-motion-enter) var(--desktop-motion-ease);
+  animation: desktop-motion-dialog var(--desktop-motion-enter) var(--desktop-motion-spring);
 }
 :root[data-desktop-motion="full"] :is(.popover, .wm-switcher-popover, .wm-device-popover) {
-  animation: desktop-motion-menu var(--desktop-motion-enter) var(--desktop-motion-ease);
+  animation: desktop-motion-menu var(--desktop-motion-enter) var(--desktop-motion-spring);
 }
 @keyframes desktop-motion-fade { from { opacity: 0; } to { opacity: 1; } }
-@keyframes desktop-motion-dialog { from { transform: translateY(8px) scale(.992); } to { transform: none; } }
-@keyframes desktop-motion-menu { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@keyframes desktop-motion-dialog { from { transform: translateY(8px) scale(.985); } to { transform: none; } }
+@keyframes desktop-motion-menu { from { opacity: 0; transform: translateY(-4px) scale(.985); } to { opacity: 1; transform: none; } }
+
+/* Shared GPU-composited sliding indicator (tabs underline & status pills). */
+.sliding-indicator-host { position: relative; }
+.sliding-indicator {
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  width: 1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0;
+  pointer-events: none;
+  transform-origin: left center;
+  will-change: transform, opacity;
+  transition:
+    transform var(--desktop-motion-indicator, 220ms) var(--desktop-motion-ease, cubic-bezier(0.22, 1, 0.36, 1)),
+    opacity 120ms ease;
+}
+[data-indicator-visible] > .sliding-indicator { opacity: 1; }
+.tabs[data-indicator-visible] > .tab.active::after { opacity: 0; }
+.profile-status-tabs > .sliding-indicator {
+  top: 2px;
+  bottom: 2px;
+  height: auto;
+  border-radius: var(--r-pill);
+  background: var(--surface-active);
+  z-index: 0;
+}
+.profile-status-tabs[data-indicator-visible] > button { position: relative; z-index: 1; }
 
 .desktop-motion-presence { display: contents; }
 /* Presence owns its surfaces: suppress their older entrance keyframes so an
@@ -32,16 +85,30 @@
 }
 :root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="dialog"] > * > :is(.modal, .extensions-confirm, .wm-confirm, .command-palette) {
   transform: none;
-  transition: transform var(--desktop-motion-enter) var(--desktop-motion-ease);
+  transition: transform var(--desktop-motion-enter) var(--desktop-motion-spring);
 }
 :root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="popover"] > * {
   transform: none;
-  transition: opacity var(--desktop-motion-enter) ease, transform var(--desktop-motion-enter) var(--desktop-motion-ease);
+  transition: opacity var(--desktop-motion-enter) ease, transform var(--desktop-motion-enter) var(--desktop-motion-spring);
+}
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="panel"] > :not(.notice) {
+  transform: none;
+  transition:
+    opacity var(--desktop-motion-enter) var(--desktop-motion-spring),
+    transform var(--desktop-motion-enter) var(--desktop-motion-spring);
+}
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="panel"] > .notice {
+  transform: translate3d(-50%, 0, 0) scale(1);
+  transition:
+    opacity var(--desktop-motion-enter) var(--desktop-motion-spring),
+    transform var(--desktop-motion-enter) var(--desktop-motion-spring);
 }
 :root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-phase="entering"] > *,
 :root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-phase="exiting"] > * { opacity: 0; }
-:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="dialog"]:is([data-motion-phase="entering"], [data-motion-phase="exiting"]) > * > :is(.modal, .extensions-confirm, .wm-confirm, .command-palette) { transform: translateY(8px) scale(.992); }
-:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="popover"]:is([data-motion-phase="entering"], [data-motion-phase="exiting"]) > * { transform: translateY(-4px); }
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="dialog"]:is([data-motion-phase="entering"], [data-motion-phase="exiting"]) > * > :is(.modal, .extensions-confirm, .wm-confirm, .command-palette) { transform: translateY(8px) scale(.985); }
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="popover"]:is([data-motion-phase="entering"], [data-motion-phase="exiting"]) > * { transform: translateY(-4px) scale(.985); }
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="panel"]:is([data-motion-phase="entering"], [data-motion-phase="exiting"]) > :not(.notice) { transform: translateY(8px) scale(.98); }
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="panel"]:is([data-motion-phase="entering"], [data-motion-phase="exiting"]) > .notice { transform: translate3d(-50%, 10px, 0) scale(.96); }
 :root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-phase="exiting"] > *,
 :root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-phase="exiting"] > * > :is(.modal, .extensions-confirm, .wm-confirm, .command-palette) { transition-duration: var(--desktop-motion-exit); }
 .desktop-motion-presence[aria-hidden="true"] > * { pointer-events: none; }

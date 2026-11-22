@@ -1,6 +1,8 @@
-import { useCallback, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useTranslation } from "./i18n.tsx";
 import "./desktop-motion.css";
+
+const useIsomorphicLayoutEffect = typeof document !== "undefined" ? useLayoutEffect : useEffect;
 
 export const DESKTOP_MOTION_KEY = "aliasmode.shell.motion";
 export const DESKTOP_MOTION_EVENT = "maobu:desktop-motion-change";
@@ -38,12 +40,22 @@ function readPreference(): DesktopMotionPreference {
 function systemReducedMotion(): boolean {
   try { return window.matchMedia(REDUCED_MEDIA).matches; } catch { return false; }
 }
-function readEffectiveMotion(): EffectiveDesktopMotion {
+export function readEffectiveDesktopMotion(): EffectiveDesktopMotion {
+  if (systemReducedMotion()) return "reduced";
   try {
     const applied = document.documentElement.dataset.desktopMotion;
     if (applied === "reduced" || applied === "full") return applied;
   } catch { /* First render also works without a document. */ }
-  return resolveDesktopMotion(readPreference(), systemReducedMotion());
+  return resolveDesktopMotion(readPreference(), false);
+}
+
+/** Check whether JS-driven animations (WAAPI / FLIP / retargeted indicators) may run. */
+export function isMotionAllowed(motionAllowed = true): boolean {
+  return motionAllowed && readEffectiveDesktopMotion() === "full";
+}
+
+function readEffectiveMotion(): EffectiveDesktopMotion {
+  return readEffectiveDesktopMotion();
 }
 
 /** Mount once in the shell. The cookie survives the desktop's random HTTP port. */
@@ -51,13 +63,13 @@ export function useDesktopMotion() {
   const [preference, setPreferenceState] = useState<DesktopMotionPreference>(readPreference);
   const [systemReduced, setSystemReduced] = useState(systemReducedMotion);
   const effective = resolveDesktopMotion(preference, systemReduced);
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const media = window.matchMedia(REDUCED_MEDIA);
     const change = () => setSystemReduced(media.matches);
     change(); media.addEventListener("change", change);
     return () => media.removeEventListener("change", change);
   }, []);
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const root = document.documentElement;
     root.dataset.desktopMotion = effective;
     root.dataset.desktopMotionPreference = preference;
@@ -75,7 +87,7 @@ export function useDesktopMotion() {
 /** Read the shell's applied mode without mounting another preference owner. */
 export function useEffectiveDesktopMotion(): EffectiveDesktopMotion {
   const [effective, setEffective] = useState(readEffectiveMotion);
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const media = window.matchMedia(REDUCED_MEDIA);
     const change = () => setEffective(media.matches ? "reduced" : readEffectiveMotion());
     change();
@@ -114,6 +126,8 @@ export function DesktopMotionSettings({ value, onChange }: {
 export interface MotionPresenceProps {
   present: boolean;
   kind?: "dialog" | "popover" | "panel";
+  /** Skip the 120ms exit retention when a surface has no active CSS exit host. */
+  immediateExit?: boolean;
   children: ReactNode | (() => ReactNode);
 }
 /**
@@ -122,7 +136,7 @@ export interface MotionPresenceProps {
  * assistive technology, and captured events cannot submit retained controls.
  * For portals, mount this component inside the portal, around its surface.
  */
-export function MotionPresence({ present, kind = "dialog", children }: MotionPresenceProps) {
+export function MotionPresence({ present, kind = "dialog", immediateExit = false, children }: MotionPresenceProps) {
   const effective = useEffectiveDesktopMotion();
   const [retained, setRetained] = useState(present);
   const [phase, setPhase] = useState<"entering" | "present" | "exiting">(present ? "entering" : "exiting");
@@ -130,7 +144,7 @@ export function MotionPresence({ present, kind = "dialog", children }: MotionPre
   const visible = useRef(false);
   const content = useRef<ReactNode>(null);
   if (present) content.current = typeof children === "function" ? children() : children;
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     let frame: number | undefined, timer: ReturnType<typeof setTimeout> | undefined;
     if (present) {
       const newSurface = !visible.current;
@@ -144,11 +158,11 @@ export function MotionPresence({ present, kind = "dialog", children }: MotionPre
       }
     } else if (visible.current) {
       setPhase("exiting");
-      if (effective === "reduced") { visible.current = false; setRetained(false); content.current = null; }
+      if (effective === "reduced" || immediateExit) { visible.current = false; setRetained(false); content.current = null; }
       else timer = setTimeout(() => { visible.current = false; setRetained(false); content.current = null; }, EXIT_MS);
     }
     return () => { if (frame !== undefined) window.cancelAnimationFrame(frame); if (timer !== undefined) clearTimeout(timer); };
-  }, [present, effective]);
+  }, [present, effective, immediateExit]);
   if (!present && !retained) return null;
   const block = (event: { preventDefault(): void; stopPropagation(): void }) => { if (!present) { event.preventDefault(); event.stopPropagation(); } };
   return <div ref={host} className="desktop-motion-presence" data-motion-kind={kind} data-motion-phase={phase}
@@ -161,7 +175,7 @@ export function usePanelMotion<T extends HTMLElement>(key: string, enabled = tru
   const ownRef = useRef<T>(null), previous = useRef(key);
   const ref = target ?? ownRef;
   const effective = useEffectiveDesktopMotion();
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const changed = key !== previous.current;
     previous.current = key;
     if (!enabled || !changed || effective === "reduced" || !ref.current?.animate) return;

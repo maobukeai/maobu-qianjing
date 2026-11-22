@@ -1,0 +1,108 @@
+/* Column-aligned roster loading skeleton.
+   Shimmer runs exclusively on a GPU-composited pseudo-element (`transform: translateX`). */
+.roster-skeleton-row > td.roster-skeleton-cell {
+  height: 52px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line-soft);
+  vertical-align: middle;
+  pointer-events: none;
+}
+.roster-skeleton-row[data-skeleton-density="standard"] > td.roster-skeleton-cell {
+  height: 48px;
+}
+.roster-skeleton-row[data-skeleton-density="compact"] > td.roster-skeleton-cell {
+  height: 44px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+.roster-skeleton-row:hover > td.roster-skeleton-cell {
+  background: transparent;
+}
+.roster-skeleton-row:hover > td.roster-skeleton-cell.col-action {
+  background: var(--table-surface);
+}
+
+.roster-skeleton-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+.roster-skeleton-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 100%;
+}
+
+.roster-skeleton-bar {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: var(--r-xs);
+  background: var(--surface-sunken);
+}
+:root[data-theme="dark"] .roster-skeleton-bar {
+  background: rgba(255, 255, 255, 0.06);
+}
+.roster-skeleton-bar.is-checkbox {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+}
+.roster-skeleton-bar.is-title {
+  height: 12px;
+  max-width: 220px;
+}
+.roster-skeleton-bar.is-sub {
+  height: 9px;
+  max-width: 150px;
+  opacity: 0.78;
+}
+.roster-skeleton-bar.is-text {
+  height: 11px;
+  max-width: 140px;
+}
+.roster-skeleton-bar.is-action-pill {
+  width: 64px;
+  height: 26px;
+  border-radius: var(--r-sm);
+}
+
+.roster-skeleton-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--skeleton-shimmer, rgba(255, 255, 255, 0.65)) 50%,
+    transparent 100%
+  );
+  transform: translateX(-100%);
+  will-change: transform;
+  animation: roster-skeleton-shimmer 1.3s linear infinite;
+}
+
+@keyframes roster-skeleton-shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* Reduced motion: calm static gray blocks with zero shimmer sweep. */
+:root[data-desktop-motion="reduced"] .roster-skeleton-bar::after {
+  display: none;
+  animation: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .roster-skeleton-bar::after {
+    display: none;
+    animation: none !important;
+  }
+}

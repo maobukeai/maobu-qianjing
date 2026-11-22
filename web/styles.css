@@ -41,68 +41,86 @@
 :root {
   color-scheme: light;
 
-  /* Quiet neutral surfaces keep the environment list and its groups primary.
-     Shared tokens carry the same treatment through every real application page. */
-  --bg: #ffffff;
-  --sidebar-bg: #fafafa;
-  --header-bg: #ffffff;
-  --nav-active: #eeedf1;
+  /* Four-tier Linear / Arc neutral surface hierarchy.
+     L0 canvas (--bg) -> L0.5 chrome (--sidebar-bg/--header-bg) -> L1 elevated
+     workspace island (--surface) -> L2 sunken/hover/active controls. */
+  --bg: #f8f9fb;
+  --sidebar-bg: #f3f4f7;
+  --header-bg: #f3f4f7;
+  --nav-active: #e9ebf2;
   --surface: #ffffff;
-  --surface-sunken: #f7f7f8;
-  --surface-hover: #f5f4f7;
-  --surface-active: #eeedf1;
+  --surface-sunken: #f3f4f6;
+  --surface-hover: #eef0f4;
+  --surface-active: #e6e9f0;
 
-  /* Ink, from headings down to placeholder text. Warm near-black, not navy. */
-  --ink: #29272e;
-  --ink-soft: #4c4854;
-  --muted: #706b78;
-  --faint: #89828f;
+  /* Opaque composite fills for sticky table columns so horizontal scroll never bleeds. */
+  --table-surface: #ffffff;
+  --table-row-hover: #f3f4f8;
+  --table-row-selected: #eceefa;
+  --table-row-selected-hover: #e3e6f6;
 
-  /* Hairlines. --line separates regions, --line-soft separates list rows. */
-  --line: #e9e7ed;
-  --line-soft: #f0eef3;
-  --line-strong: #d6d1dc;
+  /* Ink scale: body > 16:1 against L1 surface, secondary > 5.3:1 AA across all tiers. */
+  --ink: #17181c;
+  --ink-soft: #383b45;
+  --muted: #5f6473;
+  --faint: #6f7585;
 
-  --accent: #7a649f;
-  --accent-hover: #6a558e;
-  --accent-press: #5e497f;
-  --accent-soft: #f0edf6;
-  --accent-soft-hover: #e9e4f0;
-  --accent-line: #ddd5e9;
-  --accent-ink: #6e598e;
-  --accent-fill: #2d2b31;
-  --accent-fill-hover: #414046;
-  --accent-fill-press: #222126;
+  /* Crisp 1px structural hairlines. */
+  --line: rgba(23, 24, 28, 0.08);
+  --line-soft: rgba(23, 24, 28, 0.05);
+  --line-strong: rgba(23, 24, 28, 0.14);
+
+  /* Brand accent: Linear Indigo — clear, restrained, high-contrast. */
+  --accent: #5e6ad2;
+  --accent-hover: #4e5bc4;
+  --accent-press: #424eb3;
+  --accent-soft: rgba(94, 106, 210, 0.10);
+  --accent-soft-hover: rgba(94, 106, 210, 0.16);
+  --accent-line: rgba(94, 106, 210, 0.24);
+  --accent-ink: #4652b8;
+  --accent-fill: #17181c;
+  --accent-fill-hover: #2a2c35;
+  --accent-fill-press: #101114;
   --on-primary: #ffffff;
   --on-fill: #ffffff;
   --glow: none;
   --glow-strong: none;
 
-  --accent-2: #96909f;
-  --accent-2-hover: #7d7589;
-  --accent-2-soft: #f4f2f6;
-  --accent-2-line: #e3dee9;
-  --accent-2-ink: #72677f;
+  --accent-2: #767d92;
+  --accent-2-hover: #5f667a;
+  --accent-2-soft: rgba(118, 125, 146, 0.10);
+  --accent-2-line: rgba(118, 125, 146, 0.22);
+  --accent-2-ink: #545b6e;
 
-  --success: #83a58f;
-  --success-soft: #edf4ef;
-  --success-line: #d6e5db;
-  --success-ink: #61876e;
+  --success: #16a34a;
+  --success-glow: rgba(22, 163, 74, 0.38);
+  --success-soft: rgba(22, 163, 74, 0.10);
+  --success-line: rgba(22, 163, 74, 0.24);
+  --success-ink: #15803d;
 
-  --danger: #dc3b32;
-  --danger-hover: #bd2a22;
+  --danger: #dc3535;
+  --danger-hover: #c02626;
   /* Filled-control red, theme-stable for the same reason as --accent-fill. */
-  --danger-fill: #dc3b32;
-  --danger-fill-hover: #bd2a22;
-  --danger-soft: #fdf3f2;
-  --danger-line: #f7cbc7;
-  --danger-ink: #b32620;
-  --danger-lift: #e5544b;
+  --danger-fill: #dc3535;
+  --danger-fill-hover: #c02626;
+  --danger-soft: rgba(220, 53, 53, 0.09);
+  --danger-line: rgba(220, 53, 53, 0.24);
+  --danger-ink: #b91c1c;
+  --danger-lift: #e5484d;
 
-  --warn: #d98324;
-  --warn-soft: #fdf7ec;
-  --warn-line: #f2ddb5;
-  --warn-ink: #a3611a;
+  --warn: #d97706;
+  --warn-soft: rgba(217, 119, 6, 0.10);
+  --warn-line: rgba(217, 119, 6, 0.26);
+  --warn-ink: #a15206;
+
+  /* Native material & glass tokens (Mica active state & solid fallback). */
+  --surface-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  --chrome-mica-bg: rgba(248, 249, 252, 0.52);
+  --workspace-surface: rgba(255, 255, 255, 0.88);
+  --glass-surface: rgba(255, 255, 255, 0.84);
+  --glass-border: rgba(23, 24, 28, 0.10);
+  --glass-blur: blur(16px) saturate(140%);
+  --skeleton-shimmer: rgba(255, 255, 255, 0.68);
 
   --r-xs: 4px;
   --r-sm: 6px;
@@ -111,44 +129,39 @@
   --r-xl: 12px;
   --r-pill: 999px;
 
-  /* Raised-control fill. On light this is a near-white gradient; the dark theme
-     swaps it for a lifted grey, which is how dark UIs express elevation. */
+  /* Raised-control fill. */
   --ctl: var(--surface);
   --ctl-hover: var(--surface-hover);
   --ctl-border: var(--line);
-  /* Everything painted on top of a filled surface: button labels, chip counts
-     inside an active nav item. Flips to the dark surface in dark mode. */
   --on-accent: #ffffff;
   --raised: #ffffff;
 
-  /* Shadow ink. Dark themes get almost nothing from drop shadows, so the dark
-     block dials these down and leans on borders and --raised instead. */
-  --shadow-rgb: 35, 31, 42;
+  /* Shadow ink calibrated to cool graphite rather than muddy purple-grey. */
+  --shadow-rgb: 15, 17, 26;
   --shadow-a1: 0.04;
   --shadow-a2: 0.07;
-  --shadow-a3: 0.10;
+  --shadow-a3: 0.11;
   --shadow-a4: 0.16;
 
-  /* Control shadow: a 1px hairline plus a soft drop, so a raised control reads
-     as a physical surface instead of an outlined rectangle. */
+  /* Control shadow: 1px hairline + tight contact drop for tactile physical lift. */
   --sh-ctl: 0 1px 1px rgba(var(--shadow-rgb), var(--shadow-a1)), 0 1px 2px rgba(var(--shadow-rgb), 0.05);
   --sh-ctl-hover: 0 1px 2px rgba(var(--shadow-rgb), 0.05), 0 3px 6px rgba(var(--shadow-rgb), var(--shadow-a2));
   --sh-xs: 0 1px 2px rgba(var(--shadow-rgb), 0.05);
   --sh-sm: 0 1px 2px rgba(var(--shadow-rgb), var(--shadow-a1)), 0 6px 16px rgba(var(--shadow-rgb), 0.05);
   --sh-md: 0 4px 14px rgba(var(--shadow-rgb), var(--shadow-a2)), 0 1px 3px rgba(var(--shadow-rgb), 0.05);
   --sh-pop: 0 14px 36px rgba(var(--shadow-rgb), var(--shadow-a3)), 0 2px 6px rgba(var(--shadow-rgb), 0.06);
-  --sh-modal: 0 30px 74px rgba(var(--shadow-rgb), var(--shadow-a4)), 0 4px 12px rgba(var(--shadow-rgb), 0.10);
+  --sh-modal: 0 28px 68px rgba(var(--shadow-rgb), var(--shadow-a4)), 0 4px 12px rgba(var(--shadow-rgb), 0.09);
   --sh-field: 0 0 0 0 transparent;
-  --scroll-thumb: #dcd8e1;
-  --scroll-thumb-hover: #bbb4c3;
-  --backdrop: rgba(35, 30, 43, .24);
+  --scroll-thumb: rgba(23, 24, 28, 0.15);
+  --scroll-thumb-hover: rgba(23, 24, 28, 0.28);
+  --backdrop: rgba(15, 17, 26, .24);
   /* The select chevron is a data URI, so its colour cannot be a var — the dark
      block swaps the whole image instead. */
-  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2384768f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236f7585' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
 
-  --ring: 0 0 0 3px rgba(122, 100, 159, 0.15);
-  --ring-danger: 0 0 0 3px rgba(220, 59, 50, 0.15);
-  --ease: cubic-bezier(.2, .8, .3, 1);
+  --ring: 0 0 0 3px rgba(94, 106, 210, 0.18);
+  --ring-danger: 0 0 0 3px rgba(220, 53, 53, 0.18);
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
 
   --sidebar-w: 196px;
   --font: "Inter", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC",
@@ -875,17 +888,46 @@ button.newgroup:disabled { color: var(--faint); border-color: var(--line); backg
    stray ellipsis next to the checkbox cell. */
 td.col-no, td.col-name, td.col-group, td.col-tags, td.col-proxy { overflow: hidden; text-overflow: ellipsis; }
 .profile-table tbody tr { transition: background .1s ease; }
-.profile-table tbody tr:hover td { background: var(--surface-sunken); }
-.profile-table tbody tr.selected td { background: var(--accent-soft); }
-.profile-table tbody tr.selected:hover td { background: var(--accent-soft-hover); }
+.profile-table tbody tr:hover td { background: var(--table-row-hover); }
+.profile-table tbody tr.selected td { background: var(--table-row-selected); }
+.profile-table tbody tr.selected:hover td { background: var(--table-row-selected-hover); }
 /* An open browser gets a green rail; a selected row gets a blue one. */
 .profile-table tbody tr.running td:first-child { box-shadow: none; }
 .profile-table tbody tr.selected td:first-child { box-shadow: inset 3px 0 0 0 var(--accent); }
 .col-status { text-align: left; }
-.profile-status { display: inline-flex; align-items: center; gap: 5px; padding: 3px 6px; border-radius: var(--r-xs); color: var(--muted); background: var(--surface-hover); font-size: 11px; line-height: 1.35; white-space: nowrap; }
-.profile-status::before { content: ""; width: 4px; height: 4px; border-radius: 50%; background: var(--faint); }
-.profile-status.running { color: var(--success-ink); background: var(--success-soft); }
+.profile-status {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 8px 3px 18px; border-radius: var(--r-pill);
+  color: var(--muted); background: var(--surface-sunken);
+  border: 1px solid var(--line-soft);
+  font-size: 11.5px; font-weight: 500; line-height: 1.35; white-space: nowrap;
+}
+.profile-status::before {
+  content: "";
+  position: absolute; left: 7px; top: 50%; width: 6px; height: 6px; margin-top: -3px;
+  border-radius: 50%; background: var(--faint);
+}
+.profile-status.running {
+  color: var(--success-ink); background: var(--success-soft); border-color: var(--success-line);
+}
 .profile-status.running::before { background: var(--success); }
+.profile-status.running::after {
+  content: "";
+  position: absolute; left: 7px; top: 50%; width: 6px; height: 6px; margin-top: -3px;
+  border-radius: 50%; background: var(--success-glow);
+  pointer-events: none;
+  will-change: transform, opacity;
+  animation: status-breathe 2.2s ease-out infinite;
+}
+@keyframes status-breathe {
+  0% { transform: scale(1); opacity: 0.55; }
+  70%, 100% { transform: scale(2.2); opacity: 0; }
+}
+:root[data-desktop-motion="reduced"] .profile-status.running::after { opacity: 0; animation: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .profile-status.running::after { opacity: 0; animation: none !important; }
+}
 .profile-status .dot { display: none; }
 
 th.chk, td.chk { width: 44px; padding-left: 14px; padding-right: 0; }
@@ -937,12 +979,12 @@ td.col-no .no-text.custom { color: var(--accent-2-ink); }
    each row state repaints its own background or scrolled content shows through. */
 th.col-action, td.col-action {
   position: sticky; right: 0; z-index: 1; text-align: right;
-  background: var(--surface);
+  background: var(--table-surface);
 }
 .profile-table thead th.col-action { z-index: 3; background: var(--surface-sunken); }
-.profile-table tbody tr:hover td.col-action { background: var(--surface-sunken); z-index: 2; }
-.profile-table tbody tr.selected td.col-action { background: var(--accent-soft); }
-.profile-table tbody tr.selected:hover td.col-action { background: var(--accent-soft-hover); }
+.profile-table tbody tr:hover td.col-action { background: var(--table-row-hover); z-index: 2; }
+.profile-table tbody tr.selected td.col-action { background: var(--table-row-selected); }
+.profile-table tbody tr.selected:hover td.col-action { background: var(--table-row-selected-hover); }
 /* Only cast the edge shadow while there is something scrolled underneath. */
 .tablewrap.scrolled th.col-action::before,
 .tablewrap.scrolled td.col-action::before {
@@ -1599,90 +1641,167 @@ button[aria-busy="true"] > .icon { animation: busy-turn 1.2s linear infinite; }
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  /* Neutral charcoal, not a tinted navy. Pushing the brand blue into the
-     surfaces would make every panel look faintly blue and muddy the accent it
-     is meant to echo — on a neutral ground the blue actually reads as blue.
-     The canvas sits two steps below the cards: dark mode needs the same
-     "cards floating on a canvas" hierarchy the light theme gets from stone
-     vs. white, or every region melts into one dark field. */
-  --bg: #1c1b1f;
-  --sidebar-bg: #19191c;
-  --header-bg: #1c1b1f;
-  --nav-active: #2b2830;
-  --surface: #1f1e23;
-  --surface-sunken: #242228;
-  --surface-hover: #2b2830;
-  --surface-active: #333039;
+  /* Linear / Arc pure deep graphite — neutral charcoal, zero muddy navy cast.
+     L0 canvas (#0f1014) -> L0.5 rail (#131419) -> L1 elevated surface (#17181e
+     with 1px top inner highlight). */
+  --bg: #0f1014;
+  --sidebar-bg: #131419;
+  --header-bg: #131419;
+  --nav-active: rgba(255, 255, 255, 0.075);
+  --surface: #17181e;
+  --surface-sunken: #121318;
+  --surface-hover: rgba(255, 255, 255, 0.045);
+  --surface-active: rgba(255, 255, 255, 0.08);
 
-  --ink: #ece9f0;
-  --ink-soft: #d5d0dd;
-  --muted: #b2aaba;
-  --faint: #a299ad;
+  /* Opaque composite fills for sticky table columns in dark mode. */
+  --table-surface: #17181e;
+  --table-row-hover: #1f2129;
+  --table-row-selected: #232534;
+  --table-row-selected-hover: #292c3e;
 
-  --line: #35313c;
-  --line-soft: #2d2933;
-  --line-strong: #504956;
+  /* Ink scale: body > 16:1 against #17181e, muted > 5.6:1 AA. */
+  --ink: #f2f3f7;
+  --ink-soft: #c9cdd8;
+  --muted: #8b91a2;
+  --faint: #7c8294;
 
-  /* The accent lifts on dark: #3366e6 is too dense against a near-black ground
-     to read as the same colour the light theme uses. */
-  --accent: #bca4d7;
-  --accent-hover: #cbb6e2;
-  --accent-press: #ae96ca;
-  --accent-fill: #e9e5ee;
-  --accent-fill-hover: #faf7ff;
-  --accent-fill-press: #d4ccdf;
-  --on-primary: #27232d;
-  --accent-soft: #302a38;
-  --accent-soft-hover: #393041;
-  --accent-line: #51435f;
-  --accent-ink: #d4c1e7;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-soft: rgba(255, 255, 255, 0.05);
+  --line-strong: rgba(255, 255, 255, 0.16);
+
+  /* Lifted Linear Indigo for dark surfaces. */
+  --accent: #7c87f2;
+  --accent-hover: #909af6;
+  --accent-press: #6b76e6;
+  --accent-fill: #eceef4;
+  --accent-fill-hover: #ffffff;
+  --accent-fill-press: #d5d9e4;
+  --on-primary: #111217;
+  --accent-soft: rgba(124, 135, 242, 0.14);
+  --accent-soft-hover: rgba(124, 135, 242, 0.21);
+  --accent-line: rgba(124, 135, 242, 0.30);
+  --accent-ink: #b8c0ff;
   --glow: none;
   --glow-strong: none;
 
-  --accent-2: #a89eb5;
-  --accent-2-hover: #c0b4ce;
-  --accent-2-soft: #2b2731;
-  --accent-2-line: #484050;
-  --accent-2-ink: #bdb1ca;
+  --accent-2: #9ba2b8;
+  --accent-2-hover: #b6bcd0;
+  --accent-2-soft: rgba(155, 162, 184, 0.12);
+  --accent-2-line: rgba(155, 162, 184, 0.24);
+  --accent-2-ink: #bcc2d6;
 
-  --success: #9bbca7;
-  --success-soft: #26382e;
-  --success-line: #395344;
-  --success-ink: #b2d1be;
+  --success: #34d399;
+  --success-glow: rgba(52, 211, 153, 0.42);
+  --success-soft: rgba(52, 211, 153, 0.13);
+  --success-line: rgba(52, 211, 153, 0.28);
+  --success-ink: #6ee7b7;
 
-  --danger: #f0584d;
-  --danger-hover: #d94439;
-  --danger-lift: #ff6d63;
-  --danger-soft: #2a1615;
-  --danger-line: #542825;
-  --danger-ink: #ff9a92;
+  --danger: #f05a54;
+  --danger-hover: #dc4640;
+  --danger-lift: #ff736d;
+  --danger-soft: rgba(240, 90, 84, 0.13);
+  --danger-line: rgba(240, 90, 84, 0.30);
+  --danger-ink: #fca5a5;
 
-  --warn: #e59a3d;
-  --warn-soft: #2a1f10;
-  --warn-line: #543d1c;
-  --warn-ink: #f3c07a;
+  --warn: #f59e0b;
+  --warn-soft: rgba(245, 158, 11, 0.13);
+  --warn-line: rgba(245, 158, 11, 0.28);
+  --warn-ink: #fcd34d;
 
-  /* Elevation without drop shadows: a raised control is simply lighter. The
-     gradient and border stay close in value — a high-contrast rim made every
-     dark button read as a harsh outlined box. */
+  /* Dark native material & subtle 1px top highlight. */
+  --surface-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --chrome-mica-bg: rgba(18, 19, 24, 0.58);
+  --workspace-surface: rgba(22, 23, 29, 0.86);
+  --glass-surface: rgba(24, 25, 32, 0.82);
+  --glass-border: rgba(255, 255, 255, 0.11);
+  --glass-blur: blur(16px) saturate(140%);
+  --skeleton-shimmer: rgba(255, 255, 255, 0.065);
+
   --ctl: var(--surface);
-  --ctl-hover: var(--surface-hover);
+  --ctl-hover: #21232b;
   --ctl-border: var(--line);
-  --on-accent: #f6eefb;
-  --raised: #333039;
+  --on-accent: #f5f6fb;
+  --raised: #22242d;
 
   --shadow-rgb: 0, 0, 0;
-  --shadow-a1: 0.22;
-  --shadow-a2: 0.34;
-  --shadow-a3: 0.52;
-  --shadow-a4: 0.66;
-  --sh-field: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-a1: 0.24;
+  --shadow-a2: 0.36;
+  --shadow-a3: 0.54;
+  --shadow-a4: 0.68;
+  --sh-field: inset 0 1px 2px rgba(0, 0, 0, 0.28);
 
-  --scroll-thumb: #514957;
-  --scroll-thumb-hover: #6b6173;
-  --backdrop: rgba(12, 10, 16, .56);
-  --ring: 0 0 0 3px rgba(188, 164, 215, .22);
-  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23ada0b9' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  --scroll-thumb: rgba(255, 255, 255, 0.16);
+  --scroll-thumb-hover: rgba(255, 255, 255, 0.28);
+  --backdrop: rgba(8, 9, 13, .60);
+  --ring: 0 0 0 3px rgba(124, 135, 242, .24);
+  --ring-danger: 0 0 0 3px rgba(240, 90, 84, .24);
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238b91a2' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+}
+
+/* Dark theme micro top inner highlight on elevated surfaces. */
+:root[data-theme="dark"] :is(.settings-card, .modal, .popover, .profile-actions-menu, .about-popover, .command-palette) {
+  box-shadow: var(--surface-highlight), var(--sh-pop);
+}
+:root[data-theme="dark"] .modal {
+  box-shadow: var(--surface-highlight), var(--sh-modal);
+}
+:root[data-theme="dark"] .settings-card {
+  box-shadow: var(--surface-highlight);
+}
+
+/* ============================================================================
+   Win11 Mica / Mica Alt backdrop material layer + reduced-transparency fallback
+   ========================================================================== */
+
+:root[data-window-backdrop="mica"],
+:root[data-window-backdrop="mica-alt"],
+:root[data-window-backdrop="mica"] body,
+:root[data-window-backdrop="mica-alt"] body,
+:root[data-window-backdrop="mica"] .app.folded-workbench,
+:root[data-window-backdrop="mica-alt"] .app.folded-workbench,
+:root[data-window-backdrop="mica"] .desktop-loading-shell,
+:root[data-window-backdrop="mica-alt"] .desktop-loading-shell {
+  background: transparent;
+}
+:root[data-window-backdrop="mica"] .desktop-startup-titlebar,
+:root[data-window-backdrop="mica-alt"] .desktop-startup-titlebar {
+  background: var(--chrome-mica-bg);
+}
+:root[data-window-backdrop="mica"] :is(.popover, .profile-actions-menu, .about-popover, .command-palette, .notice),
+:root[data-window-backdrop="mica-alt"] :is(.popover, .profile-actions-menu, .about-popover, .command-palette, .notice) {
+  background: var(--glass-surface);
+  border-color: var(--glass-border);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root,
+  :root[data-theme="dark"],
+  :root[data-window-backdrop="mica"],
+  :root[data-window-backdrop="mica-alt"] {
+    --chrome-mica-bg: var(--sidebar-bg);
+    --workspace-surface: var(--surface);
+    --glass-surface: var(--surface);
+    --glass-border: var(--line-strong);
+    --glass-blur: none;
+  }
+  :root[data-window-backdrop="mica"],
+  :root[data-window-backdrop="mica-alt"],
+  :root[data-window-backdrop="mica"] body,
+  :root[data-window-backdrop="mica-alt"] body,
+  :root[data-window-backdrop="mica"] .app.folded-workbench,
+  :root[data-window-backdrop="mica-alt"] .app.folded-workbench,
+  :root[data-window-backdrop="mica"] .desktop-loading-shell,
+  :root[data-window-backdrop="mica-alt"] .desktop-loading-shell {
+    background: var(--bg);
+  }
+  :root[data-window-backdrop="mica"] :is(.popover, .profile-actions-menu, .about-popover, .command-palette, .notice),
+  :root[data-window-backdrop="mica-alt"] :is(.popover, .profile-actions-menu, .about-popover, .command-palette, .notice) {
+    background: var(--surface);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 }
 
 
@@ -1715,11 +1834,11 @@ button[aria-busy="true"] > .icon { animation: busy-turn 1.2s linear infinite; }
   opacity: .58; color: var(--on-accent); background: var(--danger); border-color: var(--danger);
 }
 
-/* The tooltip is ink-on-surface; inverted it would be invisible. */
-:root[data-theme="dark"] .tip::after { background: var(--surface-active); color: var(--ink); }
-:root[data-theme="dark"] .tip::before { border-bottom-color: var(--surface-active); }
+/* The tooltip is ink-on-surface; inverted it uses the opaque raised surface. */
+:root[data-theme="dark"] .tip::after { background: var(--raised); color: var(--ink); border: 1px solid var(--line-strong); }
+:root[data-theme="dark"] .tip::before { border-bottom-color: var(--raised); }
 :root[data-theme="dark"] .sidebar.collapsed .navitem[data-tip]::after {
-  background: var(--surface-active); color: var(--ink);
+  background: var(--raised); color: var(--ink); border: 1px solid var(--line-strong);
 }
 
 :root[data-theme="dark"] .dropzone { background: color-mix(in srgb, var(--accent) 12%, transparent); }

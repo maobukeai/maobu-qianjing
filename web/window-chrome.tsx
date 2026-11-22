@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useRef, useState, type MouseEventHandler, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEventHandler, type ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTranslation } from "./i18n.tsx";
 
+const useIsomorphicLayoutEffect = typeof document !== "undefined" ? useLayoutEffect : useEffect;
 const ACTION_ERROR = "Window action could not be completed. Please try again.";
 const NO_DRAG_SELECTOR = 'button, a, input, select, textarea, summary, [role="button"], [role="tab"], [contenteditable]:not([contenteditable="false"]), [data-no-drag]';
 
+export type WindowBackdropKind = "mica-alt" | "mica" | "none";
+export type WindowThemeChoice = "light" | "dark" | "system";
 export type WindowChromeStatus = { maximized: boolean; focused: boolean; busy: boolean; error: string | null };
 export type WindowChrome = WindowChromeStatus & {
   enabled: boolean;
@@ -21,6 +24,76 @@ export function isWindowChromeEnabled(candidate: unknown): boolean {
   if (!candidate || typeof candidate !== "object") return false;
   const host = candidate as { __MAOBU_FRAMELESS__?: unknown; __TAURI_INTERNALS__?: { invoke?: unknown } };
   return host.__MAOBU_FRAMELESS__ === true && typeof host.__TAURI_INTERNALS__?.invoke === "function";
+}
+
+/** Read the Rust-probed native backdrop kind (`window.__MAOBU_BACKDROP__`) with strict allowlist validation. */
+export function readWindowBackdrop(candidate?: unknown): WindowBackdropKind {
+  const host = candidate !== undefined ? candidate : (typeof window !== "undefined" ? window : undefined);
+  if (!host || typeof host !== "object") return "none";
+  const value = (host as { __MAOBU_BACKDROP__?: unknown }).__MAOBU_BACKDROP__;
+  return value === "mica-alt" || value === "mica" || value === "none" ? value : "none";
+}
+
+function isValidWindowTheme(theme: unknown): theme is WindowThemeChoice {
+  return theme === "light" || theme === "dark" || theme === "system";
+}
+
+/**
+ * Synchronize the application theme with Tauri's native window (DWM dark mode & backdrop tint).
+ * Silently downgrades outside Tauri or when the host rejects `set_window_theme`.
+ */
+export async function syncWindowTheme(theme: WindowThemeChoice, candidate?: unknown): Promise<boolean> {
+  if (!isValidWindowTheme(theme)) return false;
+  const host = candidate !== undefined ? candidate : (typeof window !== "undefined" ? window : undefined);
+  if (!host || typeof host !== "object") return false;
+  const internals = (host as { __TAURI_INTERNALS__?: { invoke?: unknown } }).__TAURI_INTERNALS__;
+  if (!internals || typeof internals.invoke !== "function") return false;
+  try {
+    await (internals.invoke as (command: string, args: { theme: WindowThemeChoice }) => Promise<unknown>)(
+      "set_window_theme",
+      { theme },
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Bind Win11 Mica backdrop availability (`window.__MAOBU_BACKDROP__`) to
+ * `document.documentElement.dataset.windowBackdrop` and keep native DWM theme in sync.
+ */
+export function useWindowBackdrop(theme: WindowThemeChoice): WindowBackdropKind {
+  const [backdrop] = useState<WindowBackdropKind>(() => readWindowBackdrop());
+
+  useIsomorphicLayoutEffect(() => {
+    if (typeof document === "undefined") return;
+    const root = document.documentElement;
+    root.dataset.windowBackdrop = backdrop;
+    return () => {
+      if (root.dataset.windowBackdrop === backdrop) {
+        delete root.dataset.windowBackdrop;
+      }
+    };
+  }, [backdrop]);
+
+  useEffect(() => {
+    void syncWindowTheme(theme);
+    if (theme !== "system" || typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+    let media: MediaQueryList;
+    try {
+      media = window.matchMedia("(prefers-color-scheme: dark)");
+    } catch {
+      return;
+    }
+    const handleChange = () => { void syncWindowTheme("system"); };
+    media.addEventListener("change", handleChange);
+    return () => media.removeEventListener("change", handleChange);
+  }, [theme]);
+
+  return backdrop;
 }
 
 /** A nested icon inherits its interactive ancestor's no-drag boundary. */

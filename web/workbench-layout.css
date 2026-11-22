@@ -19,7 +19,7 @@
   width: auto; min-width: 0; flex: none;
   padding: 12px 8px 12px;
   background: var(--sidebar-bg);
-  border-right: 1px solid var(--line);
+  border-right: 0;
   transition: none;
 }
 .folded-workbench > .sidebar.collapsed { --sidebar-w: inherit; padding-left: 8px; padding-right: 8px; }
@@ -52,7 +52,8 @@
   position: absolute; top: 0; left: 0; z-index: 1;
   width: 3px; height: 18px; border-radius: 3px;
   background: var(--accent); opacity: 0; pointer-events: none;
-  transition: transform 245ms cubic-bezier(.22,.72,.25,1), opacity 120ms ease;
+  will-change: transform, opacity;
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 120ms ease;
 }
 .folded-workbench .sidenav[data-marker-visible] > .rail-active-marker { opacity: 1; }
 .folded-workbench .rail-nav-group { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
@@ -109,7 +110,7 @@
   display: flex; align-items: center; gap: 20px;
   height: 56px; min-height: 56px;
   padding: 0 0 0 18px;
-  background: var(--header-bg); border-bottom: 1px solid var(--line);
+  background: var(--header-bg); border-bottom: 0;
 }
 .folded-workbench .desktop-brand {
   display: inline-flex; align-items: center; gap: 9px;
@@ -154,11 +155,18 @@
   min-width: 0; min-height: 0;
   width: 100%; max-width: none; align-self: stretch;
   padding: 24px 24px 0;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+  border-top-left-radius: 12px;
+  box-shadow: var(--surface-highlight);
 }
 .folded-workbench .workspace-footer {
   grid-column: 2; grid-row: 3;
   width: 100%; max-width: none; min-width: 0; min-height: 34px;
   align-self: stretch; padding: 7px 24px 10px;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
   color: var(--faint); font-size: 11px;
 }
 .folded-workbench .settings-workspace > .page-heading,
@@ -207,40 +215,40 @@
 .folded-workbench .bulk-advanced .extctl-lbl { color: var(--muted); font-weight: 400; }
 
 /* A single real table keeps sorting, optional columns and sticky row actions. */
-.folded-workbench .profiles-workspace .tablewrap { min-height: 0; overflow: auto; border: 0; border-radius: 0; background: var(--bg); }
-.folded-workbench .profile-table thead th { height: 32px; padding-left: 10px; padding-right: 10px; color: var(--muted); background: var(--bg); font-size: 12px; font-weight: 400; }
-.folded-workbench .profile-table thead th.col-action { background: var(--bg); }
+.folded-workbench .profiles-workspace .tablewrap { min-height: 0; overflow: auto; border: 0; border-radius: 0; background: var(--table-surface); }
+.folded-workbench .profile-table thead th { height: 32px; padding-left: 10px; padding-right: 10px; color: var(--muted); background: var(--table-surface); font-size: 12px; font-weight: 450; }
+.folded-workbench .profile-table thead th.col-action { background: var(--table-surface); }
 .folded-workbench .profile-table tbody td { height: 52px; padding: 5px 10px; border-bottom-color: var(--line-soft); font-size: 14px; }
 .folded-workbench .profile-table .profile-group-body[hidden] { display: none !important; }
-.folded-workbench .profile-table tbody tr:hover td { background: var(--surface-hover); }
-.folded-workbench .profile-table tbody tr.selected td { background: var(--surface-active); }
-.folded-workbench .profile-table tbody tr.selected:hover td { background: var(--surface-active); }
-.folded-workbench .profile-table tbody tr.selected td:first-child { box-shadow: none; }
+.folded-workbench .profile-table tbody tr:hover td { background: var(--table-row-hover); }
+.folded-workbench .profile-table tbody tr.selected td { background: var(--table-row-selected); }
+.folded-workbench .profile-table tbody tr.selected:hover td { background: var(--table-row-selected-hover); }
+.folded-workbench .profile-table tbody tr.selected td:first-child { box-shadow: inset 2px 0 0 0 var(--accent); }
 .folded-workbench .profile-table th.chk, .folded-workbench .profile-table td.chk { padding-left: 1px; padding-right: 8px; }
 .folded-workbench .profile-table .name-cell { gap: 3px; }
 .folded-workbench .profile-table .name-cell .n, .folded-workbench .profile-name-button { font-size: 14px; font-weight: 500; color: var(--ink); }
 .folded-workbench .profile-table .name-cell .sub { flex-wrap: wrap; gap: 3px 8px; font-size: 12px; line-height: 1.4; color: var(--muted); }
 .folded-workbench .profile-table .name-cell .sub > span { font-family: var(--font); }
 .folded-workbench .profile-table .proxy-cell, .folded-workbench .profile-table .no-text { font-size: 12px; font-weight: 400; }
-.folded-workbench .profile-table .profile-status { padding: 4px 7px; background: var(--surface-sunken); color: var(--muted); font-size: 12px; }
-.folded-workbench .profile-table .profile-status.running { color: color-mix(in srgb, var(--success-ink) 70%, var(--ink)); background: var(--success-soft); }
-.folded-workbench .profile-table .profile-status.running::before { background: currentColor; }
+.folded-workbench .profile-table .profile-status { padding: 4px 8px 4px 18px; background: var(--surface-sunken); color: var(--muted); font-size: 12px; }
+.folded-workbench .profile-table .profile-status.running { color: var(--success-ink); background: var(--success-soft); }
+.folded-workbench .profile-table .profile-status.running::before { background: var(--success); }
 .folded-workbench .profile-table .rowactions { gap: 5px; }
 .folded-workbench .profile-table .rowactions .btn { min-height: 30px; height: auto; font-size: 12px; }
 .folded-workbench .profile-table .rowactions .btn.primary,
 .folded-workbench .profile-table .rowactions .btn.row-stop { color: var(--ink); background: transparent; border-color: transparent; box-shadow: none; }
 .folded-workbench .profile-table .rowactions .btn.primary:hover:not(:disabled),
 .folded-workbench .profile-table .rowactions .btn.row-stop:hover:not(:disabled) { color: var(--ink); background: var(--surface-active); border-color: transparent; box-shadow: none; }
-.folded-workbench .profile-table td.col-action { background: var(--bg); }
-.folded-workbench .profile-table tbody tr:hover td.col-action { background: var(--surface-hover); }
-.folded-workbench .profile-table tbody tr.selected td.col-action,
-.folded-workbench .profile-table tbody tr.selected:hover td.col-action { background: var(--surface-active); }
+.folded-workbench .profile-table td.col-action { background: var(--table-surface); }
+.folded-workbench .profile-table tbody tr:hover td.col-action { background: var(--table-row-hover); }
+.folded-workbench .profile-table tbody tr.selected td.col-action { background: var(--table-row-selected); }
+.folded-workbench .profile-table tbody tr.selected:hover td.col-action { background: var(--table-row-selected-hover); }
 
 /* Checkbox, fold and create actions are distinct targets in every group head. */
-.folded-workbench .profile-table .profile-group-row > td { height: auto; padding: 5px 0 0; border-bottom: 1px solid var(--line); background: var(--bg); }
-.folded-workbench .profile-table .profile-group-row:hover > td { background: var(--bg); }
+.folded-workbench .profile-table .profile-group-row > td { height: auto; padding: 5px 0 0; border-bottom: 1px solid var(--line); background: var(--table-surface); }
+.folded-workbench .profile-table .profile-group-row:hover > td { background: var(--table-surface); }
 .folded-workbench .profile-group-heading { position: sticky; left: 0; width: min(100%, calc(100vw - var(--sidebar-w, 0px) - 24px)); width: min(100%, 100cqi); box-sizing: border-box; display: flex; align-items: center; gap: 10px; min-height: 38px; min-width: 0; }
-.folded-workbench .profile-group-check { flex: 0 0 auto; width: 14px; height: 14px; margin: 0 9px 0 1px; accent-color: var(--ink); cursor: pointer; }
+.folded-workbench .profile-group-check { flex: 0 0 auto; width: 14px; height: 14px; margin: 0 9px 0 1px; accent-color: var(--accent); cursor: pointer; }
 .folded-workbench .profile-group-toggle { display: flex; align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: 3px 9px; flex: 1 1 0; min-width: 0; min-height: 36px; padding: 6px 0; border: 0; border-radius: 0; color: var(--ink); background: transparent; font-size: 12px; font-weight: 500; text-align: left; overflow: hidden; }
 .folded-workbench .profile-group-toggle > .icon { flex: 0 0 auto; width: 13px; height: 13px; color: var(--muted); }
 .folded-workbench .profile-group-toggle:hover:not(:disabled) { color: var(--accent-ink); }
@@ -249,10 +257,10 @@
 .folded-workbench .profile-group-name { min-width: 0; flex: 0 1 auto; max-width: min(280px, 100%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }
 .folded-workbench .profile-group-count, .folded-workbench .profile-group-running { flex: 0 1 auto; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 12px; font-weight: 400; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .folded-workbench .profile-group-page-hint { color: var(--faint); font-size: 12px; font-weight: 400; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.folded-workbench .profile-group-create { position: sticky; right: 34px; flex: 0 0 auto; min-width: 29px; min-height: 29px; padding: 5px; border: 0; border-radius: var(--r-sm); background: var(--bg); color: var(--muted); box-shadow: none; }
+.folded-workbench .profile-group-create { position: sticky; right: 34px; flex: 0 0 auto; min-width: 29px; min-height: 29px; padding: 5px; border: 0; border-radius: var(--r-sm); background: var(--table-surface); color: var(--muted); box-shadow: none; }
 .folded-workbench .profile-group-create:hover:not(:disabled) { color: var(--ink); background: var(--surface-hover); }
 .folded-workbench .profile-group-create > .icon { width: 14px; height: 14px; }
-.folded-workbench .profile-group-heading > .profile-menu-trigger { position: sticky; right: 0; flex: 0 0 30px; width: 30px; height: 29px; color: var(--muted); background: var(--bg); border-color: transparent; }
+.folded-workbench .profile-group-heading > .profile-menu-trigger { position: sticky; right: 0; flex: 0 0 30px; width: 30px; height: 29px; color: var(--muted); background: var(--table-surface); border-color: transparent; }
 .folded-workbench .profile-group-heading > .profile-menu-trigger:hover, .folded-workbench .profile-group-heading > .profile-menu-trigger[aria-expanded="true"] { color: var(--ink); background: var(--surface-hover); }
 .folded-workbench .profile-group-manager { flex: 0 0 auto; }
 .folded-workbench .group-manager-panel { min-width: 270px; max-width: min(380px, calc(100vw - 24px)); max-height: min(540px, 70dvh); overflow: auto; }
@@ -333,17 +341,52 @@
 .folded-workbench .rail-heading { min-height: 25px; margin-bottom: 4px; }
 .folded-workbench .navitem, .folded-workbench .sidebar.collapsed .navitem { min-height: 34px; }
 .folded-workbench .sidefoot { flex-shrink: 0; }
-.folded-workbench .profiles-workspace { container: roster-browser / inline-size; }
+.folded-workbench .profiles-workspace { position: relative; container: roster-browser / inline-size; }
 .folded-workbench .profile-filter-row > [hidden] { display: none; }
 .folded-workbench .profile-view-tools .popover { min-width: 228px; padding-block: 8px; }
 .folded-workbench .profile-view-tools .roster-density-control { padding: 8px 12px 12px; margin-bottom: 5px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-.folded-workbench .profile-browser { display: grid; grid-template-columns: minmax(0, 1fr); flex: 1 1 auto; min-height: 0; min-width: 0; }
+.folded-workbench .profile-browser { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); flex: 1 1 auto; min-height: 0; min-width: 0; }
 .folded-workbench .profile-browser.has-details { grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; }
 .folded-workbench .profile-browser > .tablewrap { min-height: 0; min-width: 0; }
-.folded-workbench .profile-browser > .profile-details-panel { min-height: 0; max-height: 100%; overflow: hidden; }
+.folded-workbench .profile-browser .profile-details-panel { min-height: 0; max-height: 100%; overflow: hidden; }
 .folded-workbench .profile-details-trigger { opacity: .72; }
 .folded-workbench .profile-details-trigger:hover, .folded-workbench .profile-details-trigger:focus-visible { opacity: 1; color: var(--accent-ink); }
 @container roster-browser (max-width: 960px) {
   .folded-workbench .profile-browser.has-details { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(120px, 1fr) minmax(120px, .85fr); gap: 12px; }
-  .folded-workbench .profile-browser > .profile-details-panel { width: 100%; border-inline-start: 0; border-top: 1px solid var(--line); }
+  .folded-workbench .profile-browser .profile-details-panel { width: 100%; border-inline-start: 0; border-top: 1px solid var(--line); }
+}
+
+/* Win11 Mica / Mica Alt translucent chrome + Arc floating-island workspace surface. */
+:root[data-window-backdrop="mica"] .folded-workbench > .sidebar,
+:root[data-window-backdrop="mica-alt"] .folded-workbench > .sidebar,
+:root[data-window-backdrop="mica"] .folded-workbench .workspace-header,
+:root[data-window-backdrop="mica-alt"] .folded-workbench .workspace-header {
+  background: var(--chrome-mica-bg);
+}
+:root[data-window-backdrop="mica"] .folded-workbench .workspace-content,
+:root[data-window-backdrop="mica-alt"] .folded-workbench .workspace-content {
+  background: var(--workspace-surface);
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+  border-top-left-radius: 12px;
+  box-shadow: var(--surface-highlight);
+}
+:root[data-window-backdrop="mica"] .folded-workbench .workspace-footer,
+:root[data-window-backdrop="mica-alt"] .folded-workbench .workspace-footer {
+  background: var(--workspace-surface);
+  border-left: 1px solid var(--line);
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-window-backdrop="mica"] .folded-workbench > .sidebar,
+  :root[data-window-backdrop="mica-alt"] .folded-workbench > .sidebar,
+  :root[data-window-backdrop="mica"] .folded-workbench .workspace-header,
+  :root[data-window-backdrop="mica-alt"] .folded-workbench .workspace-header {
+    background: var(--sidebar-bg);
+  }
+  :root[data-window-backdrop="mica"] .folded-workbench .workspace-content,
+  :root[data-window-backdrop="mica-alt"] .folded-workbench .workspace-content,
+  :root[data-window-backdrop="mica"] .folded-workbench .workspace-footer,
+  :root[data-window-backdrop="mica-alt"] .folded-workbench .workspace-footer {
+    background: var(--surface);
+  }
 }

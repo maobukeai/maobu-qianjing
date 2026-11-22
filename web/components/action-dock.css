@@ -1,0 +1,174 @@
+/* Floating bottom-centered bulk Action Dock.
+   Floats above the roster without squeezing table viewport height. */
+.action-dock-layer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 48px;
+  z-index: var(--z-popover, 45);
+  display: flex;
+  justify-content: center;
+  padding: 0 16px;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+.profiles-workspace .action-dock-layer {
+  position: absolute;
+  bottom: 46px;
+}
+
+.action-dock {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: fit-content;
+  max-width: min(920px, 100%);
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--sh-pop);
+  overflow: visible;
+}
+:root[data-theme="dark"] .action-dock {
+  box-shadow: var(--surface-highlight), var(--sh-pop);
+}
+
+/* Mica / Mica Alt glassmorphic elevation with reduced-transparency solid fallback. */
+:root[data-window-backdrop="mica"] .action-dock,
+:root[data-window-backdrop="mica-alt"] .action-dock {
+  background: var(--glass-surface);
+  border-color: var(--glass-border);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-window-backdrop="mica"] .action-dock,
+  :root[data-window-backdrop="mica-alt"] .action-dock {
+    background: var(--surface);
+    border-color: var(--line-strong);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+.action-dock-scope {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.action-dock-scope-btn {
+  color: var(--accent-ink);
+  font-weight: 550;
+}
+.action-dock-scope-btn:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.action-dock-bar.toolbar.active {
+  margin: 0;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  box-shadow: none;
+  animation: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.action-dock-bar .selcount,
+.action-dock-bar .selcount-exiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  margin-right: 2px;
+  padding: 0 10px;
+  border-radius: var(--r-pill);
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.action-dock-bar .bulk-tools-toggle {
+  margin-left: auto;
+}
+
+.action-dock-tray.bulk-advanced {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border-top: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-sunken);
+  border-radius: 13px 13px 0 0;
+}
+.action-dock-tray.bulk-advanced[hidden] {
+  display: none !important;
+}
+
+/* Tooltips on dock buttons open upward so they never clip against the bottom edge. */
+.action-dock-bar .tip::after {
+  top: auto;
+  bottom: calc(100% + 8px);
+  transform: translate(-50%, 3px);
+}
+.action-dock-bar .tip::before {
+  top: auto;
+  bottom: calc(100% + 3px);
+  border-bottom-width: 0;
+  border-top: 5px solid var(--ink);
+  transform: translate(-50%, 3px);
+}
+:root[data-theme="dark"] .action-dock-bar .tip::before {
+  border-top-color: var(--raised);
+}
+.action-dock-bar .tip:hover:not(:disabled):not(:active):not([aria-expanded="true"])::after,
+.action-dock-bar .tip:hover:not(:disabled):not(:active):not([aria-expanded="true"])::before {
+  transform: translate(-50%, 0);
+}
+
+/* GPU-composited spring entrance & crisp exit governed by desktop-motion. */
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="panel"] > .action-dock-layer {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity 210ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 210ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="panel"][data-motion-phase="entering"] > .action-dock-layer {
+  opacity: 0;
+  transform: translateY(16px) scale(0.97);
+}
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="panel"][data-motion-phase="exiting"] > .action-dock-layer {
+  opacity: 0;
+  transform: translateY(12px) scale(0.975);
+  transition-duration: var(--desktop-motion-exit, 120ms);
+}
+
+@media (max-width: 760px) {
+  .action-dock-layer {
+    bottom: 36px;
+    padding: 0 10px;
+  }
+  .action-dock {
+    width: 100%;
+  }
+  .action-dock-bar .bulk-tools-toggle {
+    margin-left: 0;
+  }
+}
