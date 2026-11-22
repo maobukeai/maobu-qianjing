@@ -29,6 +29,7 @@ import { firefoxGraphicsRenderer, setFirefoxScreen, syncFirefoxTimezone } from "
 import type { ScriptLibrary, ScriptSupervisor } from "../../scripts.ts";
 import type { PythonRuntime } from "../../python-runtime.ts";
 import type { WorkspaceManagement } from "../../workspace-management.ts";
+import type { UiEventBus } from "./events-bus.ts";
 import { buildFingerprintImportComparison, type FingerprintImportComparison } from "../../fingerprint-import-comparison.ts";
 import type { ImportOverrides } from "../../inbox.ts";
 
@@ -104,6 +105,7 @@ export interface UiRuntimeOptions {
   proxyCheck?: (proxy: ProxySpec) => Promise<ProxyCheckResult>;
   extensionFetch?: ExtensionFetch;
   setCookies?: (ws: string, cookies: CookieRecord[]) => Promise<void>;
+  events?: UiEventBus;
 }
 
 /**

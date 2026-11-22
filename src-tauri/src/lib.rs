@@ -7,6 +7,7 @@ mod runtime_descriptor;
 mod shutdown;
 mod sidecar;
 mod signed_updates;
+mod window_backdrop;
 mod workspaces;
 
 use credentials::CredentialOrigin;
@@ -67,6 +68,7 @@ fn trusted_loopback_capability(port: u16) -> CapabilityBuilder {
         .permission("allow-external-resources");
     let capability = capability
         .permission("allow-desktop-close")
+        .permission("allow-window-backdrop")
         .permission("core:event:allow-listen")
         .permission("core:event:allow-unlisten");
     #[cfg(windows)]
@@ -431,6 +433,9 @@ mod tests {
         assert!(permissions
             .iter()
             .any(|permission| permission == "allow-desktop-close"));
+        assert!(permissions
+            .iter()
+            .any(|permission| permission == "allow-window-backdrop"));
         assert!(!permissions.iter().any(|permission| permission
             .as_str()
             .is_some_and(|value| value.starts_with("shell:"))));
@@ -439,7 +444,7 @@ mod tests {
             .is_some_and(|value| value.starts_with("updater:"))));
         #[cfg(windows)]
         {
-            assert_eq!(permissions.len(), 15);
+            assert_eq!(permissions.len(), 16);
             for permission in [
                 "core:window:allow-is-maximized",
                 "core:window:allow-minimize",
@@ -454,7 +459,7 @@ mod tests {
             }
         }
         #[cfg(not(windows))]
-        assert_eq!(permissions.len(), 9);
+        assert_eq!(permissions.len(), 10);
         assert!(!permissions.iter().any(|permission| {
             permission.as_str().is_some_and(|permission| {
                 permission.ends_with(":default")
@@ -673,6 +678,7 @@ pub fn run() {
             signed_updates::signed_update_check,
             signed_updates::signed_update_install,
             external_resources::open_external_resource,
+            window_backdrop::set_window_theme,
         ])
         .setup(move |app| {
             if !isolated_acceptance {
@@ -851,8 +857,11 @@ pub fn run() {
             let url = format!("{origin}/")
                 .parse()
                 .map_err(|error| boxed(format!("invalid sidecar URL: {error}")))?;
+            let backdrop = window_backdrop::probe_windows_backdrop(isolated_acceptance);
+            let initial_dark = window_backdrop::initial_dark_mode();
             let webview_builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
                 .initialization_script(dashboard_script)
+                .initialization_script(backdrop.init_script())
                 .title(if isolated_acceptance {
                     "猫步·千境 · 隔离验收"
                 } else {
@@ -901,6 +910,14 @@ pub fn run() {
                 // Appended to Tauri's existing document-start initialization.
                 .initialization_script("window.__MAOBU_FRAMELESS__ = true;");
             #[cfg(windows)]
+            let webview_builder = if backdrop != window_backdrop::BackdropKind::None {
+                // Keep transparent(false) so tao/wry never fall back to CPU softbuffer;
+                // only make WebView2's DefaultBackgroundColor transparent for DWM Mica.
+                webview_builder.background_color(tauri::window::Color(0, 0, 0, 0))
+            } else {
+                webview_builder
+            };
+            #[cfg(windows)]
             let webview_builder = if isolated_acceptance {
                 webview_builder
             } else if let Some(args) = windows_acceptance_browser_args(
@@ -931,6 +948,9 @@ pub fn run() {
                 Ok(window) => window,
                 Err(error) => return Err(error.into()),
             };
+            if backdrop != window_backdrop::BackdropKind::None {
+                window_backdrop::apply_backdrop(&window, backdrop, initial_dark);
+            }
 
             shutdown::install_close_handler(app.handle().clone(), window.clone(), sidecar, origin);
             if app.state::<RevealRequested>().0.load(Ordering::Acquire) {

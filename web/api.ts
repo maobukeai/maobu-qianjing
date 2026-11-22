@@ -92,6 +92,8 @@ export interface AppModeConfig {
     defaultChromiumRuntime?: "aliasmode";
 
     defaultEngine?: "chromium" | "firefox";
+    /** Advertised by servers that expose the authenticated `GET /ui/api/events` SSE stream. */
+    eventsStream?: boolean;
 }
 export class UnauthorizedError extends Error {
     readonly status = 401;
@@ -931,4 +933,185 @@ export async function fetchScriptLog(runId: string, offset: number): Promise<{
     if (typeof body.text !== "string" || !Number.isFinite(body.nextOffset))
         throw new Error("Script log returned invalid data");
     return { text: body.text, nextOffset: body.nextOffset };
+}
+// ---- Real-time SSE event stream (fetch + ReadableStream; never EventSource) -
+export type UiStreamEventType =
+    | "connected"
+    | "roster.changed"
+    | "profile.lifecycle"
+    | "downloads.updated"
+    | "script.run"
+    | "task.updated"
+    | "metrics.snapshot";
+export interface ProfileLifecycleEvent {
+    profileId: string;
+    running: boolean;
+    startedAt?: number;
+    debugPort?: number;
+}
+export interface RosterChangedEvent {
+    reasons?: string[];
+    profileIds?: string[];
+    full?: boolean;
+    resync?: boolean;
+}
+export interface UiStreamEvent {
+    id: number | null;
+    type: UiStreamEventType | string;
+    data: unknown;
+}
+export interface OpenUiEventStreamOptions {
+    lastEventId?: number | null;
+    signal: AbortSignal;
+    onOpen?: () => void;
+    onEvent: (event: UiStreamEvent) => void;
+}
+export interface SseStreamParser {
+    push(chunk: Uint8Array): void;
+    finish(): void;
+}
+/** Incremental SSE frame parser handling UTF-8 chunk boundaries, comments, and CRLF/LF/CR endings. */
+export function createSseParser(onEvent: (event: UiStreamEvent) => void): SseStreamParser {
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+    let skipLeadingLf = false;
+    let currentId: number | null = null;
+    let currentEvent = "";
+    let dataLines: string[] = [];
+
+    const dispatch = () => {
+        if (dataLines.length === 0) {
+            currentEvent = "";
+            return;
+        }
+        const raw = dataLines.join("\n");
+        const eventType = currentEvent || "message";
+        const eventId = currentId;
+        currentEvent = "";
+        dataLines = [];
+        let parsed: unknown = raw;
+        if (raw.length > 0) {
+            try {
+                parsed = JSON.parse(raw);
+            } catch {
+                parsed = raw;
+            }
+        }
+        onEvent({ id: eventId, type: eventType, data: parsed });
+    };
+
+    const processLine = (line: string) => {
+        if (line === "") {
+            dispatch();
+            return;
+        }
+        if (line.startsWith(":")) return;
+        const colon = line.indexOf(":");
+        const field = colon === -1 ? line : line.slice(0, colon);
+        let value = colon === -1 ? "" : line.slice(colon + 1);
+        if (value.startsWith(" ")) value = value.slice(1);
+        if (field === "event") {
+            currentEvent = value;
+        } else if (field === "data") {
+            dataLines.push(value);
+        } else if (field === "id") {
+            if (/^\d+$/.test(value)) {
+                const numeric = Number(value);
+                if (Number.isSafeInteger(numeric) && numeric >= 0) currentId = numeric;
+            }
+        }
+    };
+
+    const drainText = (text: string) => {
+        if (!text) return;
+        let input = text;
+        if (skipLeadingLf) {
+            skipLeadingLf = false;
+            if (input.startsWith("\n")) input = input.slice(1);
+        }
+        buffer += input;
+        let lineStart = 0;
+        for (let i = 0; i < buffer.length; i++) {
+            const ch = buffer.charCodeAt(i);
+            if (ch === 10 /* \n */) {
+                processLine(buffer.slice(lineStart, i));
+                lineStart = i + 1;
+            } else if (ch === 13 /* \r */) {
+                processLine(buffer.slice(lineStart, i));
+                if (i + 1 < buffer.length) {
+                    if (buffer.charCodeAt(i + 1) === 10) i += 1;
+                } else {
+                    skipLeadingLf = true;
+                }
+                lineStart = i + 1;
+            }
+        }
+        buffer = buffer.slice(lineStart);
+    };
+
+    return {
+        push(chunk: Uint8Array) {
+            drainText(decoder.decode(chunk, { stream: true }));
+        },
+        finish() {
+            drainText(decoder.decode());
+            if (buffer.length > 0) {
+                processLine(buffer);
+                buffer = "";
+            }
+        },
+    };
+}
+/**
+ * Opens an authenticated `GET /ui/api/events` SSE stream via `fetch()` + `ReadableStream`
+ * so desktop `X-Maobu-Desktop-Session` and standalone `X-Maobu-Session` headers work
+ * without ever placing session tokens in URL query parameters.
+ */
+export async function openUiEventStream(options: OpenUiEventStreamOptions): Promise<void> {
+    const path = "/ui/api/events";
+    const headers: Record<string, string> = { Accept: "text/event-stream" };
+    if (options.lastEventId != null && Number.isSafeInteger(options.lastEventId) && options.lastEventId > 0) {
+        headers["Last-Event-ID"] = String(options.lastEventId);
+    }
+    const response = await apiFetch(path, {
+        method: "GET",
+        headers,
+        credentials: "same-origin",
+        cache: "no-store",
+        redirect: "error",
+        signal: options.signal,
+    });
+    if (response.status === 401) {
+        await apiJson(response, path);
+        return;
+    }
+    if (!response.ok) {
+        let message = `Event stream failed (${response.status})`;
+        try {
+            const body = await apiJson(response, path);
+            if (typeof body?.error === "string" && body.error.trim()) message = body.error.trim();
+        } catch (error) {
+            if (isUnauthorizedError(error)) throw error;
+        }
+        throw new Error(message);
+    }
+    const contentType = (response.headers.get("content-type") ?? "").toLowerCase();
+    if (!response.body || !contentType.includes("text/event-stream")) {
+        try { void response.body?.cancel().catch(() => {}); } catch {}
+        throw new Error(`Event stream returned unexpected content type (${contentType || "unknown"})`);
+    }
+    options.onOpen?.();
+    const reader = response.body.getReader();
+    const parser = createSseParser(options.onEvent);
+    try {
+        while (!options.signal.aborted) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            if (value && value.byteLength > 0) parser.push(value);
+        }
+        if (!options.signal.aborted) parser.finish();
+    } finally {
+        try { await reader.cancel().catch(() => {}); } catch {}
+        try { reader.releaseLock(); } catch {}
+    }
 }

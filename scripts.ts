@@ -295,6 +295,8 @@ export class ScriptSupervisor {
         maxConcurrentRuns?: number;
         /** Maximum number of completed/active runs whose metadata & logs are retained (default 20). */
         maxRunHistory?: number;
+        /** Called whenever a run transitions phase or a profile item updates status. */
+        onRunChanged?: (run: ScriptRun) => void;
     }) {
         const concurrent = options.maxConcurrentRuns ?? DEFAULT_MAX_CONCURRENT_RUNS;
         const history = options.maxRunHistory ?? DEFAULT_MAX_RUN_HISTORY;
@@ -320,6 +322,16 @@ export class ScriptSupervisor {
     }
     listRuns(): ScriptRun[] {
         return [...this.runs.values()].reverse().map((entry) => structuredClone(entry.view));
+    }
+    private emitRunChanged(run: ActiveRun): void {
+        if (!this.options.onRunChanged)
+            return;
+        try {
+            this.options.onRunChanged(structuredClone(run.view));
+        }
+        catch (error) {
+            this.options.log?.(`script run listener failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
     }
     private pruneHistory(): void {
         if (this.runs.size < this.maxRunHistory)
@@ -365,6 +377,7 @@ export class ScriptSupervisor {
             this.lockedProfiles.set(profileId, runId);
         this.runs.set(runId, run);
         this.latestRunId = runId;
+        this.emitRunChanged(run);
         run.done = this.run(run, { ...request, concurrency });
         return structuredClone(run.view);
     }
@@ -375,6 +388,7 @@ export class ScriptSupervisor {
                 return null;
             if (run.view.status !== "finished") {
                 run.view.status = "stopping";
+                this.emitRunChanged(run);
                 run.abort.abort();
                 await run.done;
             }
@@ -383,6 +397,7 @@ export class ScriptSupervisor {
         const active = [...this.runs.values()].filter((run) => run.view.status !== "finished");
         await Promise.all(active.map(async (run) => {
             run.view.status = "stopping";
+            this.emitRunChanged(run);
             run.abort.abort();
             await run.done;
         }));
@@ -482,6 +497,7 @@ export class ScriptSupervisor {
         try {
             const script = await this.options.library.get(request.scriptId);
             run.view.scriptName = script.name;
+            this.emitRunChanged(run);
             const python = script.language === "python" ? await this.preparePython(fd, signal) : undefined;
             if (!this.options.execute)
                 await verifyScriptRuntime(script.language, { python });
@@ -490,6 +506,7 @@ export class ScriptSupervisor {
             const runProfile = async (item: ScriptRun["profiles"][number]) => {
                 if (signal.aborted) {
                     item.status = "cancelled";
+                    this.emitRunChanged(run);
                     return;
                 }
                 const session = new AgentControlSession(this.options, signal);
@@ -510,6 +527,7 @@ export class ScriptSupervisor {
                 try {
                     signal.throwIfAborted();
                     item.status = "running";
+                    this.emitRunChanged(run);
                     const opened = await call("browser.open") as {
                         ws?: string;
                         engine?: string;
@@ -522,6 +540,7 @@ export class ScriptSupervisor {
                     if (!profile)
                         throw new ScriptError("Profile not found", 404);
                     item.name = profile.name;
+                    this.emitRunChanged(run);
                     writeFileSync(fd, `\n--- ${profile.name || item.id} ---\n`);
                     const input = {
                         profile: { id: item.id, name: profile.name, group: profile.group, platform: profile.platform ?? "" },
@@ -551,11 +570,13 @@ export class ScriptSupervisor {
                         });
                     }
                     item.status = signal.aborted ? "cancelled" : "succeeded";
+                    this.emitRunChanged(run);
                 }
                 catch (error) {
                     item.status = signal.aborted ? "cancelled" : "failed";
                     if (!signal.aborted)
                         item.error = error instanceof Error ? error.message : "Script failed";
+                    this.emitRunChanged(run);
                 }
                 finally {
                     if (owned) {
@@ -564,6 +585,7 @@ export class ScriptSupervisor {
                         }
                         catch (error) {
                             item.warning = error instanceof Error ? error.message : "Browser cleanup was not confirmed";
+                            this.emitRunChanged(run);
                             // Durable browser ownership remains with the launcher; do not retry against a replacement browser.
                             await call("browser.detach").catch(() => { });
                         }
@@ -583,6 +605,7 @@ export class ScriptSupervisor {
                 if (!signal.aborted)
                     item.error = error instanceof Error ? error.message : "Script could not start";
             }
+            this.emitRunChanged(run);
         }
         finally {
             closeSync(fd);
@@ -591,6 +614,7 @@ export class ScriptSupervisor {
                 if (this.lockedProfiles.get(item.id) === run.view.id)
                     this.lockedProfiles.delete(item.id);
             }
+            this.emitRunChanged(run);
         }
     }
 }

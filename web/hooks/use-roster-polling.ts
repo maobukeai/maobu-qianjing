@@ -5,6 +5,8 @@ export interface UseRosterPollingOptions {
   enabled: boolean;
   intervalMs: number;
   maxBackoffMs?: number;
+  /** Suspends the interval timer (e.g. while an active SSE stream is delivering updates). */
+  pausePolling?: boolean;
   bulkOwnerActiveRef: React.RefObject<boolean>;
   onRoster: (roster: UiRoster) => void;
 }
@@ -32,6 +34,7 @@ export function useRosterPolling({
   enabled,
   intervalMs,
   maxBackoffMs = 30_000,
+  pausePolling = false,
   bulkOwnerActiveRef,
   onRoster,
 }: UseRosterPollingOptions): UseRosterPollingResult {
@@ -117,7 +120,7 @@ export function useRosterPolling({
   }, [load]);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || pausePolling) return;
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -170,7 +173,7 @@ export function useRosterPolling({
         document.removeEventListener("visibilitychange", onVisibilityChange);
       }
     };
-  }, [enabled, intervalMs, maxBackoffMs, pollRoster, connErr]);
+  }, [enabled, pausePolling, intervalMs, maxBackoffMs, pollRoster, connErr]);
 
   return {
     loaded,

@@ -14,6 +14,7 @@ import type { Launcher } from "./launcher.ts";
 import type { ProfileStore } from "./store.ts";
 import { handleFeatureSettingsRequest } from "./feature-settings.ts";
 import { API_SECURITY_HEADERS } from "./server.ts";
+import { handleEventsUiRoutes } from "./src/ui/events-routes.ts";
 import { handleGroupsAndExtensionsUiRoutes } from "./src/ui/groups-extensions-routes.ts";
 import { handleProfilesUiRoutes } from "./src/ui/profiles-routes.ts";
 import { handleScriptsUiRoutes } from "./src/ui/scripts-routes.ts";
@@ -99,6 +100,7 @@ export async function handleUiRequest(
   }
 
   const handled =
+    handleEventsUiRoutes(req, pathname, options) ??
     (await handleScriptsUiRoutes(req, pathname, options)) ??
     (await handleSystemUiRoutes(req, pathname, launcher, store, options)) ??
     (await handleGroupsAndExtensionsUiRoutes(req, pathname, store, options)) ??

@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-window-backdrop"
+description = "Allows the trusted main window to synchronize its native light or dark window theme."
+commands.allow = ["set_window_theme"]

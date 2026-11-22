@@ -38,12 +38,19 @@ export interface ProfileStoreOptions {
   protection?: LocalProtectionOptions;
 }
 
+export type StoreMutationEvent =
+  | { kind: "roster"; reason: string; profileIds?: string[] }
+  | { kind: "lifecycle"; profileId: string; running: boolean; startedAt?: number; debugPort?: number };
+
 export class ProfileStore {
   private db: Database;
   private readonly protector: LocalSecretProtector;
   private readonly extensionGroupReviewScope = randomUUID();
+  private pendingMutations: StoreMutationEvent[] | null = null;
   /** Called after each profile save, so the app can start the downloads that profile needs. */
   onProfileSaved?: (profile: Profile) => void;
+  /** Called after committed store mutations so live UI streams can broadcast changes. */
+  onMutation?: (event: StoreMutationEvent) => void;
 
   constructor(path = "profiles.sqlite", options: ProfileStoreOptions = {}) {
     this.db = new Database(path, { create: true });
@@ -91,15 +98,41 @@ export class ProfileStore {
    * after close() and Windows refuses to delete or rename it. Nested calls
    * become savepoints, as they do there.
    */
+  private dispatchMutation(event: StoreMutationEvent): void {
+    if (!this.onMutation) return;
+    try {
+      this.onMutation(event);
+    } catch (error) {
+      console.error("[store] onMutation listener failed:", error);
+    }
+  }
+
+  private notifyMutation(event: StoreMutationEvent): void {
+    if (this.db.inTransaction && this.pendingMutations !== null) {
+      this.pendingMutations.push(event);
+      return;
+    }
+    this.dispatchMutation(event);
+  }
+
   private transaction<A extends unknown[], T>(fn: (...args: A) => T, mode: "deferred" | "immediate" = "deferred"): (...args: A) => T {
     return (...args) => {
       const nested = this.db.inTransaction;
+      if (!nested) this.pendingMutations = [];
       this.db.exec(nested ? "SAVEPOINT store_tx" : mode === "immediate" ? "BEGIN IMMEDIATE" : "BEGIN");
       try {
         const result = fn(...args);
         this.db.exec(nested ? "RELEASE store_tx" : "COMMIT");
+        if (!nested) {
+          const queued = this.pendingMutations;
+          this.pendingMutations = null;
+          if (queued) {
+            for (const event of queued) this.dispatchMutation(event);
+          }
+        }
         return result;
       } catch (error) {
+        if (!nested) this.pendingMutations = null;
         // SQLite has already ended the transaction after some errors.
         if (this.db.inTransaction) this.db.exec(nested ? "ROLLBACK TO store_tx; RELEASE store_tx" : "ROLLBACK");
         throw error;
@@ -243,6 +276,7 @@ export class ProfileStore {
     if (p.displayScale !== undefined) this.setDisplayScale(p.id, p.displayScale);
     if (p.group) this.registerGroup(p.group);
     this.onProfileSaved?.(p);
+    this.notifyMutation({ kind: "roster", reason: "upsertProfile", profileIds: [p.id] });
   }
 
   /** Pins the display scale a Chromium 155 profile's pages draw at. */
@@ -252,12 +286,14 @@ export class ProfileStore {
 
   /** Explicit edits and authoritative restores may clear stored hardware; the engine then chooses. */
   setHardware(id: string, hardware: Profile["hardware"]): void {
-    this.db.query("UPDATE profiles SET hardware_json = ? WHERE id = ?").run(hardware ? JSON.stringify(hardware) : "", id);
+    const res = this.db.query("UPDATE profiles SET hardware_json = ? WHERE id = ?").run(hardware ? JSON.stringify(hardware) : "", id);
+    if (Number(res.changes) > 0) this.notifyMutation({ kind: "roster", reason: "setHardware", profileIds: [id] });
   }
 
   /** Explicit edits and authoritative restores may clear a saved timezone. */
   setTimezone(id: string, timezone: string): void {
-    this.db.query("UPDATE profiles SET timezone = ? WHERE id = ?").run(timezone, id);
+    const res = this.db.query("UPDATE profiles SET timezone = ? WHERE id = ?").run(timezone, id);
+    if (Number(res.changes) > 0) this.notifyMutation({ kind: "roster", reason: "setTimezone", profileIds: [id] });
   }
 
   /** Apply a prevalidated profile batch atomically (all rows or none). */
@@ -359,7 +395,10 @@ export class ProfileStore {
   trashProfile(id: string): boolean {
     return this.transaction(() => {
       const changed = this.db.query(`UPDATE profiles SET trashed_at = ? WHERE id = ? AND trashed_at = 0`).run(Date.now(), id);
-      if (changed.changes) this.clearAgentTemporary(id);
+      if (changed.changes) {
+        this.clearAgentTemporary(id);
+        this.notifyMutation({ kind: "roster", reason: "trashProfile", profileIds: [id] });
+      }
       return changed.changes > 0;
     })();
   }
@@ -372,6 +411,7 @@ export class ProfileStore {
       if (!row) return false;
       this.db.query(`UPDATE profiles SET trashed_at = 0 WHERE id = ?`).run(id);
       this.registerGroup(row.group);
+      this.notifyMutation({ kind: "roster", reason: "restoreProfile", profileIds: [id] });
       return true;
     })();
   }
@@ -387,6 +427,7 @@ export class ProfileStore {
       const merged = mergeCookies(safeParse<CookieRecord[]>(existingRaw, []), cookies);
       const stored = merged.length > 0 ? this.protector.encrypt(JSON.stringify(merged)) : "[]";
       this.db.query(`UPDATE profiles SET pending_cookies_json = ? WHERE id = ?`).run(stored, id);
+      this.notifyMutation({ kind: "roster", reason: "addPendingCookies", profileIds: [id] });
       return merged.length;
     })();
   }
@@ -407,6 +448,7 @@ export class ProfileStore {
       const left = this.getPendingCookies(id).filter((cookie) => !done.has(JSON.stringify(cookie)));
       const stored = left.length > 0 ? this.protector.encrypt(JSON.stringify(left)) : "[]";
       this.db.query(`UPDATE profiles SET pending_cookies_json = ? WHERE id = ?`).run(stored, id);
+      this.notifyMutation({ kind: "roster", reason: "clearPendingCookies", profileIds: [id] });
     })();
   }
 
@@ -457,6 +499,7 @@ export class ProfileStore {
       return Number(result.changes) > 0;
     };
     const changed = provenance ? this.transaction(save)() : save();
+    if (changed) this.notifyMutation({ kind: "roster", reason: "saveObservedFingerprint", profileIds: [profileId] });
     if (expectedIncarnation !== undefined || arguments.length >= 5) return changed;
   }
 
@@ -471,7 +514,9 @@ export class ProfileStore {
     this.db.query(`DELETE FROM launches WHERE profile_id = ?`).run(id);
     this.db.query(`DELETE FROM agent_temporary_profiles WHERE profile_id = ?`).run(id);
     const res = this.db.query(`DELETE FROM profiles WHERE id = ?`).run(id);
-    return Number(res.changes) > 0;
+    const deleted = Number(res.changes) > 0;
+    if (deleted) this.notifyMutation({ kind: "roster", reason: "deleteProfile", profileIds: [id] });
+    return deleted;
   }
 
   markAgentTemporary(profileId: string): void {
@@ -520,7 +565,9 @@ export class ProfileStore {
   /** Register a group so it persists (and stays listed) with zero profiles. */
   registerGroup(name: string): void {
     const n = name.trim();
-    if (n) this.db.query(`INSERT OR IGNORE INTO groups (name) VALUES (?)`).run(n);
+    if (!n) return;
+    const res = this.db.query(`INSERT OR IGNORE INTO groups (name) VALUES (?)`).run(n);
+    if (Number(res.changes) > 0) this.notifyMutation({ kind: "roster", reason: "registerGroup" });
   }
 
   listFolders(): Array<{ name: string; parentName: string | null; label: string }> {
@@ -538,7 +585,10 @@ export class ProfileStore {
       const name = parentName === null ? value : `${parentName}/${value}`;
       const existing = folders.find((folder) => folder.name === name);
       if (existing && (existing.parentName !== parentName || existing.label !== value)) throw new Error("folder already exists");
-      if (!existing) this.db.query(`INSERT INTO groups (name, parent_name, label) VALUES (?, ?, ?)`).run(name, parentName, value);
+      if (!existing) {
+        this.db.query(`INSERT INTO groups (name, parent_name, label) VALUES (?, ?, ?)`).run(name, parentName, value);
+        this.notifyMutation({ kind: "roster", reason: "createGroup" });
+      }
       return { name, parentName, label: value };
     })();
   }
@@ -578,6 +628,7 @@ export class ProfileStore {
         this.db.query(`UPDATE groups SET parent_name = ? WHERE parent_name = ?`).run(name, temp);
         this.db.query(`UPDATE profiles SET "group" = ? WHERE "group" = ?`).run(name, temp);
       }
+      this.notifyMutation({ kind: "roster", reason: parentName === undefined ? "renameGroup" : "moveGroup" });
       return { moved, name: names.get(from)! };
     })();
   }
@@ -645,6 +696,7 @@ export class ProfileStore {
       if (!reviewed || !sameStrings(canonicalExtensionSelection(this.getGroupExtensionDefaults(group)), defaultExtensions)) {
         this.db.query(`UPDATE groups SET extension_defaults_json = ? WHERE name = ?`)
           .run(JSON.stringify(defaultExtensions), group);
+        this.notifyMutation({ kind: "roster", reason: "setGroupExtensionDefaults" });
       }
       let changed = 0;
       for (const profile of this.listProfiles()) {
@@ -697,6 +749,7 @@ export class ProfileStore {
       const res = this.db.query(`UPDATE profiles SET "group" = ? WHERE "group" = ? AND trashed_at = 0`)
         .run(destination, source);
       this.db.query(`DELETE FROM groups WHERE name = ?`).run(source);
+      this.notifyMutation({ kind: "roster", reason: "renameGroup" });
       return Number(res.changes);
     });
     return rename();
@@ -711,7 +764,10 @@ export class ProfileStore {
     const remove = this.transaction(() => {
       if (this.db.query(`SELECT 1 FROM groups WHERE parent_name = ?`).get(n)) throw new Error("Move or delete subfolders first.");
       const res = this.db.query(`UPDATE profiles SET "group" = '' WHERE "group" = ? AND trashed_at = 0`).run(n);
-      this.db.query(`DELETE FROM groups WHERE name = ?`).run(n);
+      const removedGroup = this.db.query(`DELETE FROM groups WHERE name = ?`).run(n);
+      if (Number(res.changes) > 0 || Number(removedGroup.changes) > 0) {
+        this.notifyMutation({ kind: "roster", reason: "deleteGroup" });
+      }
       return Number(res.changes);
     });
     return remove();
@@ -731,7 +787,8 @@ export class ProfileStore {
 
   /** Set a profile's display name (AdsPower user/update). No-op for unknown ids. */
   rename(id: string, name: string): void {
-    this.db.query(`UPDATE profiles SET name = ? WHERE id = ? AND trashed_at = 0`).run(name, id);
+    const res = this.db.query(`UPDATE profiles SET name = ? WHERE id = ? AND trashed_at = 0`).run(name, id);
+    if (Number(res.changes) > 0) this.notifyMutation({ kind: "roster", reason: "rename", profileIds: [id] });
   }
 
   // --- Extensions ----------------------------------------------------------
@@ -744,6 +801,7 @@ export class ProfileStore {
          ON CONFLICT(id) DO UPDATE SET name=excluded.name, load_dir=excluded.load_dir`,
       )
       .run(ext.id, ext.name, ext.loadDir, Date.now());
+    this.notifyMutation({ kind: "roster", reason: "addExtension" });
   }
 
   listExtensions(): Array<{ id: string; name: string; loadDir: string }> {
@@ -765,7 +823,8 @@ export class ProfileStore {
   }
 
   deleteExtension(id: string): void {
-    this.db.query(`DELETE FROM extensions WHERE id = ?`).run(id);
+    const res = this.db.query(`DELETE FROM extensions WHERE id = ?`).run(id);
+    if (Number(res.changes) > 0) this.notifyMutation({ kind: "roster", reason: "deleteExtension" });
   }
 
   /** Remove an extension id from every profile and group default that contains it. */
@@ -912,6 +971,13 @@ export class ProfileStore {
     // Mirror the launch time onto the profile so the AdsPower user/list facade
     // can report last_open_time (the launches row is deleted on stop).
     this.db.query(`UPDATE profiles SET last_open_at = ? WHERE id = ?`).run(info.startedAt, info.profileId);
+    this.notifyMutation({
+      kind: "lifecycle",
+      profileId: info.profileId,
+      running: true,
+      startedAt: info.startedAt,
+      ...(firefox.engine === "firefox" ? {} : { debugPort: info.debugPort }),
+    });
   }
 
   /** Record the launch identity of a launch made before it was stored. */
@@ -933,8 +999,11 @@ export class ProfileStore {
 
   clearLaunch(profileId: string): void {
     this.transaction(() => {
-      this.db.query(`DELETE FROM launches WHERE profile_id = ?`).run(profileId);
+      const res = this.db.query(`DELETE FROM launches WHERE profile_id = ?`).run(profileId);
       this.completeClosedFingerprints(profileId);
+      if (Number(res.changes) > 0) {
+        this.notifyMutation({ kind: "lifecycle", profileId, running: false });
+      }
     })();
   }
 }

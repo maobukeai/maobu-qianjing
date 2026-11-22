@@ -130,6 +130,7 @@ async function receive(
         written += bytes;
         controller.signal.throwIfAborted();
         progress(written);
+        if (activeDownloads.has(partial)) notifyRuntimeDownloadsThrottled();
       });
     }
   } catch (error) {
@@ -201,6 +202,54 @@ export interface RuntimeDownload {
 }
 
 const activeDownloads = new Map<string, Omit<RuntimeDownload, "receivedBytes">>();
+const DOWNLOAD_NOTIFY_THROTTLE_MS = 250;
+const downloadListeners = new Set<(downloads: RuntimeDownload[]) => void>();
+let lastDownloadNotifyAt = 0;
+let downloadNotifyTimer: ReturnType<typeof setTimeout> | undefined;
+
+function emitRuntimeDownloadsNow(): void {
+  if (downloadNotifyTimer !== undefined) {
+    clearTimeout(downloadNotifyTimer);
+    downloadNotifyTimer = undefined;
+  }
+  if (downloadListeners.size === 0) return;
+  lastDownloadNotifyAt = Date.now();
+  const snapshot = runtimeDownloads();
+  for (const listener of [...downloadListeners]) {
+    try {
+      listener(snapshot);
+    } catch (error) {
+      console.error("[runtime-download] subscriber failed:", error);
+    }
+  }
+}
+
+function notifyRuntimeDownloadsThrottled(): void {
+  if (downloadListeners.size === 0) return;
+  const elapsed = Date.now() - lastDownloadNotifyAt;
+  if (elapsed >= DOWNLOAD_NOTIFY_THROTTLE_MS) {
+    emitRuntimeDownloadsNow();
+    return;
+  }
+  if (downloadNotifyTimer === undefined) {
+    downloadNotifyTimer = setTimeout(() => {
+      downloadNotifyTimer = undefined;
+      emitRuntimeDownloadsNow();
+    }, DOWNLOAD_NOTIFY_THROTTLE_MS - elapsed);
+  }
+}
+
+/** Subscribe to active runtime download snapshots (throttled to <= 4 Hz during chunk writes). */
+export function subscribeRuntimeDownloads(listener: (downloads: RuntimeDownload[]) => void): () => void {
+  downloadListeners.add(listener);
+  return () => {
+    downloadListeners.delete(listener);
+    if (downloadListeners.size === 0 && downloadNotifyTimer !== undefined) {
+      clearTimeout(downloadNotifyTimer);
+      downloadNotifyTimer = undefined;
+    }
+  };
+}
 
 /**
  * Report the download into `partial` as in progress until `download` settles. Its
@@ -213,10 +262,12 @@ export async function trackRuntimeDownload<T>(
   download: () => Promise<T>,
 ): Promise<T> {
   activeDownloads.set(partial, { runtime, totalBytes });
+  emitRuntimeDownloadsNow();
   try {
     return await download();
   } finally {
     activeDownloads.delete(partial);
+    emitRuntimeDownloadsNow();
   }
 }
 
