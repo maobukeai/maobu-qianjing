@@ -37,7 +37,7 @@ export function validProfileViewFilters(value: unknown): value is ProfileViewFil
     && COLUMNS.includes(value.sort.key as any) && (value.sort.dir === 1 || value.sort.dir === -1)
     && Array.isArray(value.hiddenColumns) && value.hiddenColumns.length <= COLUMNS.length
     && value.hiddenColumns.every(key => COLUMNS.includes(key)) && new Set(value.hiddenColumns).size === value.hiddenColumns.length
-    && [20, 25, 50, 100, 200].includes(value.pageSize as number);
+    && [20, 25, 50, 100, 200, 0].includes(value.pageSize as number);
 }
 export function parseSavedProfileViews(value: unknown): SavedProfileView[] | null {
   const list = parsed(value);

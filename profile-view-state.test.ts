@@ -4,6 +4,9 @@ import { inProfileScope, parseFavoriteProfiles, parseSavedProfileViews, serializ
 const saved: SavedProfileView = { id: `view_${"a".repeat(32)}`, name: "Overseas · running", filters: { scope: "favorites", query: "Research", group: "海外业务", status: "running", sort: { key: "name", dir: -1 }, hiddenColumns: ["no", "tags"], pageSize: 50 } };
 test("a saved view round-trips its actual filter and table layout without copying profile data", () => {
   expect(parseSavedProfileViews(serializeSavedProfileViews([saved]))).toEqual([saved]);
+  const virtualAll: SavedProfileView = { ...saved, id: `view_${"b".repeat(32)}`, name: "All virtualized", filters: { ...saved.filters, pageSize: 0 } };
+  expect(parseSavedProfileViews(serializeSavedProfileViews([saved, virtualAll]))).toEqual([saved, virtualAll]);
+  expect(parseSavedProfileViews(JSON.stringify([{ ...saved, filters: { ...saved.filters, pageSize: -1 } }]))).toBeNull();
   expect(sameProfileView(saved.filters, { ...saved.filters, hiddenColumns: ["tags", "no"] })).toBe(true);
   expect(sameProfileView(saved.filters, { ...saved.filters, query: "Other" })).toBe(false);
 });

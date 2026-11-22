@@ -11,7 +11,28 @@ import { createBulkProfileTask } from "./web/bulk-profile-task.ts";
 import { BulkProfileTaskPanel } from "./web/bulk-profile-task-panel.tsx";
 import { PROFILE_EDIT_FORM_FIELDS } from "./web/profile-edit-patch.ts";
 import { WorkbenchSidebar } from "./web/features/workbench-sidebar.tsx";
-const app = readFileSync(join(import.meta.dir, "web", "app.tsx"), "utf8").replaceAll("\r\n", "\n");
+import { COLUMNS, computeRosterPipeline, paginateRoster } from "./web/hooks/use-roster-query.ts";
+const readWebSource = (...segments: string[]) => readFileSync(join(import.meta.dir, "web", ...segments), "utf8").replaceAll("\r\n", "\n");
+const appShell = readWebSource("app.tsx");
+const rosterQuerySource = readWebSource("hooks", "use-roster-query.ts");
+const virtualListSource = readWebSource("hooks", "use-virtual-list.ts");
+const formHelpersSource = readWebSource("features", "profile-form-helpers.tsx");
+const rosterRowSource = readWebSource("features", "profile-roster-row.tsx");
+const rosterTableSource = readWebSource("features", "profile-roster-table.tsx");
+const createModalSource = readWebSource("features", "profile-create-modal.tsx");
+const editModalSource = readWebSource("features", "profile-edit-modal.tsx");
+const importModalSource = readWebSource("features", "profile-import-modal.tsx");
+const app = [
+    appShell,
+    rosterQuerySource,
+    virtualListSource,
+    formHelpersSource,
+    rosterRowSource,
+    rosterTableSource,
+    createModalSource,
+    editModalSource,
+    importModalSource,
+].join("\n");
 const extensionPage = readFileSync(join(import.meta.dir, "web", "extensions-page.tsx"), "utf8");
 const baseStyles = readFileSync(join(import.meta.dir, "web", "styles.css"), "utf8").replaceAll("\r\n", "\n");
 const workbenchStyles = readFileSync(join(import.meta.dir, "web", "workbench-layout.css"), "utf8").replaceAll("\r\n", "\n");
@@ -22,7 +43,7 @@ const notice = readFileSync(join(import.meta.dir, "NOTICE"), "utf8");
 const actionMenu = readFileSync(join(import.meta.dir, "web", "profile-action-menu.tsx"), "utf8").replaceAll("\r\n", "\n");
 const cookieImportUi = readFileSync(join(import.meta.dir, "web", "cookie-import-task-panel.tsx"), "utf8");
 const fileUpdateUi = readFileSync(join(import.meta.dir, "web", "profile-file-update-panel.tsx"), "utf8");
-const defaultPageSize = Number(app.match(/const PROFILE_PAGE_SIZE = (\d+);/)?.[1]);
+const defaultPageSize = Number(rosterQuerySource.match(/export const PROFILE_PAGE_SIZE = (\d+);/)?.[1]);
 
 function sidebarMarkup(overrides: Partial<Parameters<typeof WorkbenchSidebar>[0]> = {}) {
     return renderToStaticMarkup(createElement(I18nProvider, { children: createElement(WorkbenchSidebar, {
@@ -32,16 +53,15 @@ function sidebarMarkup(overrides: Partial<Parameters<typeof WorkbenchSidebar>[0]
 }
 
 /** Execute production selectors, rather than maintaining a second filter in tests. */
-function sourceBetween(start: string, end: string): string {
-    const from = app.indexOf(start);
-    const to = app.indexOf(end, from + start.length);
+function sourceBetween(start: string, end: string, sourceText = app): string {
+    const from = sourceText.indexOf(start);
+    const to = sourceText.indexOf(end, from + start.length);
     expect(from).toBeGreaterThanOrEqual(0);
     expect(to).toBeGreaterThan(from);
-    return app.slice(from, to);
+    return sourceText.slice(from, to);
 }
 function rosterColumns(): Array<{ key: string; label: string; width: number; sort: boolean }> {
-    const source = new Bun.Transpiler({ loader: "ts" }).transformSync(sourceBetween("const COLUMNS =", "/** Width of the always-present"));
-    return new Function(`${source}\nreturn COLUMNS;`)();
+    return [...COLUMNS];
 }
 type RosterProfile = { id: string; name: string; group: string; running: boolean; proxy?: string | null; tags?: string[]; platform?: string; lastOpenAt?: number; proxyError?: string };
 function rosterPipeline(profiles: RosterProfile[], options: {
@@ -50,14 +70,19 @@ function rosterPipeline(profiles: RosterProfile[], options: {
     numbering?: Map<string, { value: string }>;
     quickScope?: RosterScope; favorites?: string[];
 } = {}) {
-    const source = new Bun.Transpiler({ loader: "ts" }).transformSync(sourceBetween("const sortField =", "const previousProfileFilters ="));
-    return new Function("profiles", "group", "selectedScope", "q", "numbering", "profileStatus", "sort", "pageSize", "profilePage", "useMemo", "useEffect", "setProfilePage", "useRef", "rosterScope", "favoriteProfileIds", "inProfileScope", `${source}\nreturn { matchingProfiles, matchingRunningCount, filtered, profilePageCount, visibleProfilePage, visibleProfiles };`)(
-        profiles, options.group ?? "all", options.scope ?? new Set([options.group ?? "all"]), options.q ?? "",
-        options.numbering ?? new Map(profiles.map((profile, index) => [profile.id, { value: String(index + 1) }])),
-        options.status ?? "all", options.sort ?? { key: "no", dir: 1 }, options.pageSize ?? defaultPageSize, options.page ?? 0,
-        (factory: () => unknown) => factory(), () => {}, () => {}, (value: unknown) => ({ current: value }),
-        options.quickScope ?? "all", new Set(options.favorites ?? []), inProfileScope,
-    ) as { matchingProfiles: RosterProfile[]; matchingRunningCount: number; filtered: RosterProfile[]; profilePageCount: number; visibleProfilePage: number; visibleProfiles: RosterProfile[] };
+    return computeRosterPipeline({
+        profiles,
+        group: options.group ?? "all",
+        selectedScope: options.scope ?? new Set([options.group ?? "all"]),
+        q: options.q ?? "",
+        numbering: options.numbering ?? new Map(profiles.map((profile, index) => [profile.id, { value: String(index + 1) }])),
+        profileStatus: options.status ?? "all",
+        sort: (options.sort as { key: any; dir: 1 | -1 }) ?? { key: "no", dir: 1 },
+        pageSize: options.pageSize ?? defaultPageSize,
+        profilePage: options.page ?? 0,
+        rosterScope: options.quickScope ?? "all",
+        favoriteProfileIds: new Set(options.favorites ?? []),
+    });
 }
 test("dashboard renders the local brand image from its bundled asset", () => {
     expect(app).toContain("function MaobuMark(");
@@ -124,8 +149,8 @@ test("dashboard lists the supported profile platforms", () => {
     }
 });
 test("New and Edit profile dialogs keep proxy validation without provider promotions", () => {
-    const create = app.slice(app.indexOf("<MotionPresence present={showCreate}>"), app.indexOf("<MotionPresence present={!!editId}>"));
-    const edit = app.slice(app.indexOf("<MotionPresence present={!!editId}>"), app.indexOf("<MotionPresence present={showBulk}>"));
+    const create = createModalSource.slice(createModalSource.indexOf("<MotionPresence present={showCreate}>"));
+    const edit = editModalSource.slice(editModalSource.indexOf("<MotionPresence present={!!editId}>"));
     for (const modal of [create, edit]) {
         expect(modal).toContain("Check proxy");
         expect(modal).toContain("<ProxyCheckFeedback");
@@ -140,8 +165,8 @@ test("New and Edit profile dialogs keep proxy validation without provider promot
         expect(styles).toContain(`<TONE>`.replace("<TONE>", ".proxy-check-result." + tone));
 });
 test("dashboard selects browser for new profiles", () => {
-    const createModal = app.slice(app.indexOf("<MotionPresence present={showCreate}>"), app.indexOf("<MotionPresence present={!!editId}>"));
-    const editModal = app.slice(app.indexOf("<MotionPresence present={!!editId}>"), app.indexOf("<MotionPresence present={showBulk}>"));
+    const createModal = createModalSource.slice(createModalSource.indexOf("<MotionPresence present={showCreate}>"));
+    const editModal = editModalSource.slice(editModalSource.indexOf("<MotionPresence present={!!editId}>"));
     expect(createModal).toContain('className="browser-options"');
     expect(createModal).toContain('engine: "chromium", label: "Chrome"');
     expect(createModal).toContain('engine: "firefox", label: "Firefox"');
@@ -170,15 +195,17 @@ test("dashboard selects browser for new profiles", () => {
     // Firefox on macOS and Linux. Chromium 155 is AliasMode Chromium on every computer.
     expect(app).toContain('return chromiumRuntime ? "Chromium" : "CloakBrowser";');
     expect(app).not.toContain("155 beta");
-    const beginCreate = sourceBetween("const beginCreate =", "const reuseProfileConfiguration =");
-    expect(beginCreate).toContain('const draft: typeof BLANK_FORM = { ...BLANK_FORM, engine: appMode?.defaultEngine ?? "chromium", chromiumRuntime: appMode?.defaultChromiumRuntime ?? "", group:');
-    expect(beginCreate.indexOf("const draft:")).toBeLessThan(beginCreate.indexOf("if (reuse) Object.assign(draft,"));
+    const beginCreate = sourceBetween("const beginCreate =", "const reuseProfileConfiguration =", createModalSource);
+    expect(beginCreate).toContain("const draft: typeof BLANK_FORM = {");
+    expect(beginCreate).toContain('engine: appMode?.defaultEngine ?? "chromium"');
+    expect(beginCreate).toContain('chromiumRuntime: appMode?.defaultChromiumRuntime ?? ""');
+    expect(beginCreate.indexOf("const draft:")).toBeLessThan(beginCreate.indexOf("if (reuse)"));
     expect(beginCreate).toContain("setForm(draft);");
     // Execute the real draft initialization, including the safe reuse overlay.
     // Mounted success/late/failure/host-override flows also run in web/app-create.test.ts.
-    const draftSource = new Bun.Transpiler({ loader: "ts" }).transformSync(`${sourceBetween("const BLANK_FORM =", "type ProxyCheckUiState =")}\n${beginCreate}`);
+    const draftSource = new Bun.Transpiler({ loader: "ts" }).transformSync(`${sourceBetween("export const BLANK_FORM =", "export type CreateProfileForm =", formHelpersSource).replace("export const BLANK_FORM", "const BLANK_FORM")}\n${beginCreate}`);
     const prepareDraft = new Function("appMode", "group", "reuse", "t", `
-      const showCreate = false, createInFlight = { current: false }, editSessionRef = { current: null }, createReturnFocus = { current: null }, profiles = [];
+      const showCreate = false, createInFlight = { current: false }, isEditSessionOpen = () => false, createReturnFocus = { current: null }, profiles = [];
       const createCloseGuard = { reset() {} }, initialCreateForm = { current: null };
       const cancelReuseRead = () => {}, resetCreateProxyCheck = () => {}, noop = () => {};
       const setCreateReuseSource = noop, setCreateProxySource = noop, setProxyPaste = noop, setProxyPasteOk = noop, setProxyPasteInvalid = noop, setCreateErr = noop, setCreateProxyOpen = noop, setShowCreate = noop;
@@ -202,13 +229,14 @@ test("dashboard selects browser for new profiles", () => {
     expect(createModal).toContain('<option value="auto">{t("Device default")}</option>');
     // A CloakBrowser choice or profile shows the linkability note, in every bundled language.
     const note = "CloakBrowser profiles on one computer can be linked to each other. Use Chromium or Firefox for separate identities.";
-    expect(app).toContain(`const CLOAKBROWSER_NOTE = "${note}";`);
+    expect(app).toContain(`export const CLOAKBROWSER_NOTE = "${note}";`);
     expect(createModal).toMatch(/!form\.chromiumRuntime\s+\? t\(CLOAKBROWSER_NOTE\)/);
     expect(editModal).toContain('{editEngine === "chromium" && !editChromiumRuntime && <small>{t(CLOAKBROWSER_NOTE)}</small>}');
     // The browser stays unknown until the profile loads, so a failed load never claims CloakBrowser.
     expect(app).toContain('useState<"chromium" | "firefox" | null>(null)');
     expect(app).not.toContain('setEditEngine("chromium")');
-    expect(editModal).toContain("{editEngine && <FingerprintSettings");
+    expect(editModal).toContain("{editEngine && (");
+    expect(editModal).toContain("<FingerprintSettings");
     // The fingerprint hints hold for every engine, so they name none.
     const hints = [
         "The browser keeps the locked values coordinated. Screen and operating system are the only fingerprint settings you can override.",
@@ -230,7 +258,7 @@ test("dashboard selects browser for new profiles", () => {
     expect(app).toContain('selectedProfilesSupportChromeExtensions');
 });
 test("both engines offer OS choices at creation and only Chromium allows later OS edits", () => {
-    const settings = app.slice(app.indexOf("function FingerprintSettings("), app.indexOf("function FingerprintSettings(") + 3300);
+    const settings = formHelpersSource.slice(formHelpersSource.indexOf("export function FingerprintSettings("), formHelpersSource.indexOf("export function FingerprintSettings(") + 4200);
     expect(settings).not.toMatch(/\{engine === "chromium" && \(\s*<label className="fld">\s*<span>Operating system/);
     for (const os of ["windows", "macos", "linux"])
         expect(settings).toContain(`<option value="${os}">`);
@@ -292,7 +320,7 @@ test("sidebar manages persistent local groups without workspace roles", () => {
 test("the roster numbers every profile and prefers a custom NO. over the serial", () => {
     // Mirrors profileDisplayNo in launcher.ts so the row, the browser window title
     // and the identity bookmark all show the same number.
-    expect(app).toContain("function displayNo(profile: UiProfile, fallbackIndex: number)");
+    expect(app).toContain("export function displayNo(");
     expect(app).toContain('const custom = (profile.customNo ?? "").trim();');
     expect(app).toContain("if (custom) return { value: custom, custom: true };");
     expect(app).toContain("if (profile.serial != null) return { value: String(profile.serial), custom: false };");
@@ -304,7 +332,7 @@ test("the roster numbers every profile and prefers a custom NO. over the serial"
     expect(styles).not.toContain(".no-avatar");
 });
 test("the custom NO. editor is Local-only and digits-only", () => {
-    expect(app).toContain("const MAX_CUSTOM_NO = 12;"); // matches MAX_CUSTOM_NO_LENGTH in parse.ts
+    expect(app).toContain("export const MAX_CUSTOM_NO = 12;"); // matches MAX_CUSTOM_NO_LENGTH in parse.ts
     expect(app).toContain("<span>{t(\"Custom NO.\")}</span>");
     expect(app).toContain("<small>{t(\"Digits only · blank uses the serial\")}</small>");
     // The placeholder shows the serial that would be used instead, so an empty
@@ -323,12 +351,12 @@ test("the roster is sortable, pageable and its columns are selectable", () => {
     expect(app).toContain('aria-sort={sort.key === key ? (sort.dir === 1 ? "ascending" : "descending") : "none"}');
     expect(app).toContain('aria-label={t("Choose visible columns")}');
     expect(app).toContain('aria-label={t("Rows per page")}');
-    expect(app).toContain('<button type="button" className="th-inner" onClick={() => toggleSort(key)}>');
+    expect(app).toContain('<button type="button" className="th-inner" onClick={() => onToggleSort(key)}>');
     expect(defaultPageSize).toBe(20);
-    expect(app).toContain("const PAGE_SIZES = [20, 25, 50, 100, 200];");
-    expect(app).toContain('const DEFAULT_HIDDEN_COLUMNS: ColumnKey[] = ["no", "group", "platform", "tags"];');
+    expect(app).toContain("export const PAGE_SIZES = [20, 25, 50, 100, 200, 0];");
+    expect(app).toContain('export const DEFAULT_HIDDEN_COLUMNS: ColumnKey[] = ["no", "group", "platform", "tags"];');
     // Layout preferences are a convenience; disabled storage must not break the roster.
-    expect(app).toContain("catch { return new Set(DEFAULT_HIDDEN_COLUMNS); }");
+    expect(app).toContain("return new Set(DEFAULT_HIDDEN_COLUMNS);");
     expect(app).toContain("catch { /* private mode / disabled storage */ }");
 });
 test("search matches tags, proxy, group, number, name and ID within the chosen folder and status", () => {
@@ -369,21 +397,20 @@ test("search matches tags, proxy, group, number, name and ID within the chosen f
     expect(legacyPage.selected().size).toBe(10);
 });
 test("profile heading and empty state expose import without cloud permissions", () => {
-    const heading = sourceBetween('className="page-heading"', 'className="profile-status-tabs"');
-    const empty = app.slice(app.indexOf('className="empty-actions"'), app.indexOf('className="empty-actions"') + 450);
-    for (const entry of [heading, empty]) {
-        expect(entry).toContain("onClick={openBulk}");
-        expect(entry).not.toContain("canEditCloud");
-    }
+    const heading = sourceBetween('className="page-heading"', 'className="profile-status-tabs"', appShell);
+    const empty = rosterTableSource.slice(rosterTableSource.indexOf('className="empty-actions"'), rosterTableSource.indexOf('className="empty-actions"') + 450);
+    expect(heading).toContain("onClick={importModal.openBulk}");
+    expect(heading).not.toContain("canEditCloud");
+    expect(empty).toContain("onClick={onOpenBulk}");
+    expect(empty).not.toContain("canEditCloud");
     expect(heading).toContain('{t("Import profiles")}');
-    expect(heading).toContain("onClick={openCreate}");
+    expect(heading).toContain("onClick={createModal.openCreate}");
 });
 function rosterSelection(filtered: {
     id: string;
 }[], selected = new Set<string>(), group = "all", q = "", page = 0, pageSize = defaultPageSize) {
-    const pagination = sourceBetween("const profilePageCount =", "const previousProfileFilters =");
-    const visible = new Function("filtered", "pageSize", "profilePage", `${pagination}\nreturn visibleProfiles;`)(filtered, pageSize, page);
-    const source = sourceBetween("const allVisibleSelected =", "const completeMove =");
+    const visible = paginateRoster(filtered, pageSize, page).visibleProfiles;
+    const source = sourceBetween("const allVisibleSelected =", "const completeMove =", appShell);
     const controls = new Function("selectableProfiles", "filtered", "selected", "group", "q", "setSelected", "t", `${source}
     return { toggleAll, selectAllFiltered, allFilteredSelected, selectedOutsideFilter, selectionScope };`)(visible, filtered, selected, group, q, (next: Set<string> | ((current: Set<string>) => Set<string>)) => {
         selected = typeof next === "function" ? next(selected) : next;
@@ -472,7 +499,7 @@ test("sorting keeps running rows first without renumbering and paging clamps aft
 });
 
 test("a filter reset wins over a simultaneous page clamp; deleting the last page only clamps", () => {
-    const source = sourceBetween("useEffect(() => {\n    const previous = previousProfileFilters.current;", "const runningCount =");
+    const source = sourceBetween("useEffect(() => {\n    const previous = previousProfileFilters.current;", "const rangeViewKey =", appShell);
     const original = { q: "", group: "all", pageSize: 20, profileStatus: "all" };
     const commit = (previous: typeof original, current: typeof original, page: number, visiblePage: number) => {
         const writes: number[] = [];
@@ -494,13 +521,14 @@ test("a filter reset wins over a simultaneous page clamp; deleting the last page
 });
 
 test("the 20-row default preserves valid saved page sizes and survives unavailable storage", () => {
-    const source = new Bun.Transpiler({ loader: "ts" }).transformSync(sourceBetween("function readPageSize()", "function writeSetting("));
-    const sizes = JSON.parse(app.match(/const PAGE_SIZES = (\[[^\]]+\]);/)![1]!);
-    const key = app.match(/const PAGE_SIZE_KEY = "([^"]+)";/)![1]!;
+    const source = new Bun.Transpiler({ loader: "ts" }).transformSync(sourceBetween("export function readPageSize()", "/**\n * The number an operator sees", rosterQuerySource).replace("export function readPageSize", "function readPageSize"));
+    const sizes = JSON.parse(rosterQuerySource.match(/export const PAGE_SIZES = (\[[^\]]+\]);/)![1]!);
+    const key = rosterQuerySource.match(/export const PAGE_SIZE_KEY = "([^"]+)";/)![1]!;
     const read = (getItem: () => string | null) => new Function("localStorage", "PAGE_SIZES", "PROFILE_PAGE_SIZE", "PAGE_SIZE_KEY", `${source}\nreturn readPageSize();`)({ getItem }, sizes, defaultPageSize, key);
     expect(read(() => null)).toBe(20);
     expect(read(() => "50")).toBe(50);
     expect(read(() => "200")).toBe(200);
+    expect(read(() => "0")).toBe(0);
     expect(read(() => "3")).toBe(20);
     expect(read(() => "invalid")).toBe(20);
     expect(read(() => { throw new Error("Storage unavailable"); })).toBe(20);
@@ -516,8 +544,8 @@ test("selection controls expose scope selection and clearing without changing ex
     expect(app).toContain("await exportProfiles(ids, format, (progress) => setExportProgress(progress));");
 });
 test("export shows live progress, blocks duplicate exports, and always clears busy state", async () => {
-    const source = app
-        .slice(app.indexOf("const exportSelected = async"), app.indexOf("// ---- Transient success banner"))
+    const source = appShell
+        .slice(appShell.indexOf("const exportSelected = async"), appShell.indexOf("// ---- File-based bulk update"))
         .replace("(format: ExportFormat)", "(format)"); // strip the one TS annotation for plain-JS evaluation
     expect(source).toContain("exportProfiles(ids, format, (progress) => setExportProgress(progress))");
     const makeExportSelected = new Function("selected", "exportProgress", "exportProfiles", "setExportOpen", "setActionErr", "setExportProgress", "flash", `${source}\nreturn (format) => exportSelected(format);`);
@@ -597,15 +625,17 @@ test("New and Edit open accessible centred editors; management sections remain p
     expect(app).toContain("const [showCreate, setShowCreate] = useState(false);");
     expect(app).toContain('aria-labelledby="create-profile-title"');
     expect(app).toContain('aria-labelledby="edit-profile-title"');
-    const create = sourceBetween("<MotionPresence present={showCreate}>", "<MotionPresence present={!!editId}>");
-    const edit = sourceBetween("<MotionPresence present={!!editId}>", "<MotionPresence present={showBulk}>");
+    const create = createModalSource.slice(createModalSource.indexOf("<MotionPresence present={showCreate}>"));
+    const edit = editModalSource.slice(editModalSource.indexOf("<MotionPresence present={!!editId}>"));
     for (const editor of [create, edit]) {
         expect(editor).toContain('className="modal-backdrop profile-editor-backdrop"');
-        expect(editor).toContain('className="modal profile-editor" role="dialog" aria-modal="true"');
+        expect(editor).toContain('className="modal profile-editor"');
+        expect(editor).toContain('role="dialog"');
+        expect(editor).toContain('aria-modal="true"');
     }
     expect(styles).toMatch(/\.profile-editor-backdrop\s*\{[^}]*justify-content:\s*center[^}]*align-items:\s*center/);
     expect(styles).toMatch(/\.modal\.profile-editor\s*\{[^}]*max-height:\s*calc\(100dvh - 64px\)/);
-    const closeCreate = sourceBetween("const finishCloseCreate =", "const closeCreate =");
+    const closeCreate = sourceBetween("const finishCloseCreate =", "const closeCreate =", createModalSource);
     expect(closeCreate.indexOf("if (createInFlight.current) return;")).toBeLessThan(closeCreate.indexOf("cancelReuseRead();"));
     expect(closeCreate.indexOf("cancelReuseRead();")).toBeLessThan(closeCreate.indexOf("setShowCreate(false);"));
     expect(closeCreate).toContain("resetCreateProxyCheck();");
@@ -629,7 +659,7 @@ test("a running row with saved proxy or fingerprint changes offers a restart", (
     expect(app).toContain("{p.restartPending && (");
     expect(app).toContain('{t("Applies at next start")}');
     expect(app).toContain("onClick={() => act(p.id, restartProfile)}");
-    expect(app).toContain("if (r.restartRequired) flash(");
+    expect(app).toContain("if (r.restartRequired) onFlash(");
     // The restart is the status chip on its own line in the name cell, so the row actions keep their width.
     expect(app).toContain('className="status-chip warn tip"');
     expect(app).not.toContain('{t("Restart now")}');
@@ -745,7 +775,7 @@ test("the Action column stays reachable while the roster scrolls sideways", () =
     // Hover labels must paint above the next row's sticky Action cell.
     expect(styles).toContain(".profile-table tbody tr:hover td.col-action { background: var(--surface-sunken); z-index: 2; }");
     // The edge shadow only appears once there is content underneath it.
-    expect(app).toContain("onScroll={(event) => setTableScrolled(event.currentTarget.scrollLeft > 0)}");
+    expect(app).toContain("onTableScrolledChange(event.currentTarget.scrollLeft > 0)");
     expect(styles).toContain(".tablewrap.scrolled td.col-action::before");
 });
 test("small windows keep navigation and dialogs keep typed input", () => {
@@ -771,7 +801,7 @@ test("import offers one source at a time and counts what was pasted", () => {
     expect(app).toContain('onClick={() => { if (importInFlight.current) return; setBulkSource("file"); setBulkText(""); }}');
     expect(app).toContain('onClick={() => { if (importInFlight.current) return; setBulkSource("paste"); setBulkFiles([]); }}');
     // Every AdsPower record opens with its own id= line, so this count is exact.
-    expect(app).toContain("function countPastedRecords(text: string): number {");
+    expect(app).toContain("export function countPastedRecords(text: string): number {");
     expect(app).toContain('return (text.match(/^id=/gm) ?? []).length;');
     expect(app).toContain('t("1 record detected — each one starts with its own id= line.")');
     expect(app).toContain('t("{count} records detected — each one starts with its own id= line.", { count: pastedRecordCount })');
@@ -811,7 +841,7 @@ test("the dark theme is a token swap, and native controls follow it", () => {
     expect(styles).toContain(':root[data-theme="dark"] .platform-pill .glyph.pm-x');
     // Light is the out-of-the-box default; Dark and follow-the-OS System are
     // opt-in from Settings. A host-only cookie survives the desktop app's changing port.
-    expect(app).toContain('import { THEME_KEY, readThemeChoice, themeCookie, type ThemeChoice } from "./theme.ts";');
+    expect(app).toContain('from "./theme.ts";');
     expect(app).toContain("return readThemeChoice(cookies, stored);");
     expect(app).toContain("document.cookie = themeCookie(choice);");
     // The app resolves "system" itself rather than duplicating the palette.
@@ -844,7 +874,7 @@ test("the existing Extensions page installs from a Web Store URL and keeps archi
     expect(app.match(/setView\("extensions"\)/g)).toHaveLength(1);
 });
 test("Firefox shows its screen, editable at creation and when editing", () => {
-    const settings = app.slice(app.indexOf("function FingerprintSettings("), app.indexOf("function FingerprintSettings(") + 3600);
+    const settings = formHelpersSource.slice(formHelpersSource.indexOf("export function FingerprintSettings("), formHelpersSource.indexOf("export function FingerprintSettings(") + 4200);
     expect(settings).not.toMatch(/\{engine === "chromium" && \(\s*<label className="fld">\s*<span>Screen/);
     expect(settings).toContain("onChange={(event) => onScreenChange(event.target.value)}");
     expect(app).not.toContain("screenReadOnly");

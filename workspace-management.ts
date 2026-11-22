@@ -152,7 +152,7 @@ export class WorkspaceManagement {
 
   private validatePreference(key: unknown, value: unknown): void {
     if (typeof value !== "string" || value.length > 4096) throw new Error("Invalid workspace display preference");
-    if (key === "aliasmode.roster.pageSize" && ["20", "25", "50", "100", "200"].includes(value)) return;
+    if (key === "aliasmode.roster.pageSize" && ["20", "25", "50", "100", "200", "0"].includes(value)) return;
     if (key === "aliasmode.shell.sidebarCollapsed" && ["0", "1"].includes(value)) return;
     if (key === GROUP_DISCLOSURE_KEY && isGroupDisclosureValue(value)) return;
     if (key === FAVORITE_PROFILES_KEY && parseFavoriteProfiles(value) !== null) return;

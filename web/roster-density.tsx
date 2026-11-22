@@ -2,7 +2,7 @@ import { useId, useRef, type KeyboardEvent } from "react";
 import { useTranslation } from "./i18n.tsx";
 import { parseRosterDensity, type RosterDensity } from "../roster-density-state.ts";
 import "./roster-density.css";
-export { ROSTER_DENSITY_KEY, isRosterDensity, parseRosterDensity, type RosterDensity } from "../roster-density-state.ts";
+export { ROSTER_DENSITY_KEY, ROSTER_DENSITY_ROW_HEIGHT, isRosterDensity, parseRosterDensity, type RosterDensity } from "../roster-density-state.ts";
 
 export interface RosterDensityControlProps {
   value: RosterDensity;
@@ -12,7 +12,12 @@ export interface RosterDensityControlProps {
   busy?: boolean;
   className?: string;
 }
-const options = ["comfortable", "compact"] as const;
+const options = ["comfortable", "standard", "compact"] as const;
+const OPTION_META: Record<RosterDensity, { label: string; path: string }> = {
+  comfortable: { label: "Comfortable", path: "M4 4h12M4 10h12M4 16h12" },
+  standard: { label: "Standard", path: "M4 5h12M4 10h12M4 15h12" },
+  compact: { label: "Compact", path: "M4 6h12M4 10h12M4 14h12" },
+};
 
 /** Controlled by the workspace preference owner; this control never writes global storage. */
 export function RosterDensityControl({ value, onChange, variant = "toolbar", disabled = false, busy = false, className = "" }: RosterDensityControlProps) {
@@ -35,7 +40,7 @@ export function RosterDensityControl({ value, onChange, variant = "toolbar", dis
     <div className="roster-density-options" role="radiogroup" aria-label={t("Environment list density")} aria-describedby={variant === "settings" ? descriptionId : undefined} aria-busy={busy || undefined}>
       {options.map((option, index) => <button key={option} ref={node => { buttons.current[index] = node; }} type="button" role="radio" aria-checked={selected === option} aria-disabled={locked || undefined} disabled={disabled} tabIndex={selected === option ? 0 : -1}
         onClick={() => choose(option)} onKeyDown={event => navigate(event, index)}>
-        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true"><path d={option === "comfortable" ? "M4 4h12M4 10h12M4 16h12" : "M4 6h12M4 10h12M4 14h12"} /></svg><span>{t(option === "comfortable" ? "Comfortable" : "Compact")}</span>
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true"><path d={OPTION_META[option].path} /></svg><span>{t(OPTION_META[option].label)}</span>
       </button>)}
     </div>
   </div>;

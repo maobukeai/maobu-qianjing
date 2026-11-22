@@ -40,25 +40,31 @@ async function run(scenario: string) {
     await render();
     if (scenario === "keyboard") {
       radio("Comfortable").focus();
-      assert.equal((await key(radio("Comfortable"), "ArrowRight")).defaultPrevented, true); assert.equal(selected(), "Compact"); assert.equal(selected(1), "Compact"); assert.equal(dom.window.document.activeElement, radio("Compact"));
-      await key(radio("Compact"), "ArrowDown"); assert.equal(selected(), "Comfortable");
+      assert.equal((await key(radio("Comfortable"), "ArrowRight")).defaultPrevented, true); assert.equal(selected(), "Standard"); assert.equal(selected(1), "Standard"); assert.equal(dom.window.document.activeElement, radio("Standard"));
+      await key(radio("Standard"), "ArrowDown"); assert.equal(selected(), "Compact"); assert.equal(selected(1), "Compact"); assert.equal(dom.window.document.activeElement, radio("Compact"));
+      await key(radio("Compact"), "ArrowRight"); assert.equal(selected(), "Comfortable"); assert.equal(dom.window.document.activeElement, radio("Comfortable"));
       await key(radio("Comfortable"), "ArrowLeft"); assert.equal(selected(), "Compact");
       await key(radio("Compact"), "Home"); assert.equal(selected(), "Comfortable");
       await key(radio("Comfortable"), "End"); assert.equal(selected(), "Compact");
-      await key(radio("Compact"), "End"); assert.equal(calls.length, 5, "Selecting the current density must not write it again");
+      await key(radio("Compact"), "End"); assert.equal(calls.length, 6, "Selecting the current density must not write it again");
       assert.equal((await key(radio("Compact"), "k", { ctrlKey: true })).defaultPrevented, false);
       assert.equal((await key(radio("Compact"), "ArrowLeft", { isComposing: true })).defaultPrevented, false);
-      assert.equal((await key(radio("Compact"), "ArrowLeft", { altKey: true })).defaultPrevented, false); assert.equal(calls.length, 5);
+      assert.equal((await key(radio("Compact"), "ArrowLeft", { altKey: true })).defaultPrevented, false); assert.equal(calls.length, 6);
       for (const group of groups()) assert.equal(group.querySelectorAll('[tabindex="0"]').length, 1);
     } else if (scenario === "busy-disabled") {
       radio("Comfortable").focus(); await render({ busy: true });
       assert.equal(dom.window.document.activeElement, radio("Comfortable")); assert.equal(radio("Comfortable").disabled, false); assert.equal(groups()[0]!.getAttribute("aria-busy"), "true");
       await click(radio("Compact")); await key(radio("Comfortable"), "ArrowRight"); assert.deepEqual(calls, []); assert.equal(selected(), "Comfortable");
       await render({ disabled: true }); assert.ok(radio("Compact").disabled); await click(radio("Compact")); await key(radio("Comfortable"), "End"); assert.deepEqual(calls, []);
-      await render(); await click(radio("Compact")); assert.equal(selected(), "Compact"); assert.deepEqual(calls, ["compact"]);
+      await render(); await click(radio("Standard")); assert.equal(selected(), "Standard"); await click(radio("Compact")); assert.equal(selected(), "Compact"); assert.deepEqual(calls, ["standard", "compact"]);
     } else if (scenario === "compact-css" || scenario === "reduced-motion") {
       const originalRow = row(), originalFont = style(originalRow).fontSize, originalName = dom.container.querySelector<DomElement>(".profile-name-button")!;
-      assert.equal(style(originalRow).height, "52px"); await click(radio("Compact"));
+      assert.equal(style(originalRow).height, "52px");
+      await click(radio("Standard"));
+      assert.equal(row(), originalRow); assert.equal(style(row()).height, "48px"); assert.equal(style(row()).fontSize, originalFont); assert.equal(style(originalName).fontSize, "14px");
+      assert.equal(style(dom.container.querySelector<DomElement>(".profile-group-heading")!).minHeight, "35px");
+      assert.equal(style(dom.container.querySelector<DomElement>('tr[data-profile-id="dialog"] > td')!).height, "52px"); assert.equal(style(dom.container.querySelector<DomElement>('tr[data-profile-id="other"] > td')!).height, "52px");
+      await click(radio("Compact"));
       assert.equal(row(), originalRow); assert.equal(style(row()).height, "44px"); assert.equal(style(row()).fontSize, originalFont); assert.equal(style(originalName).fontSize, "14px");
       assert.equal(style(dom.container.querySelector<DomElement>(".profile-group-heading")!).minHeight, "32px");
       assert.ok(dom.container.textContent?.includes("Important tag")); assert.ok(dom.container.textContent?.includes("Restart to apply"));
@@ -66,18 +72,22 @@ async function run(scenario: string) {
       assert.notEqual(style(row()).transform, "scale(0.9)");
       await click(radio("Comfortable")); assert.equal(style(row()).height, "52px");
     } else if (scenario === "coarse-targets") {
-      assert.equal(dom.window.matchMedia("(pointer: coarse)").matches, true); await click(radio("Compact"));
+      assert.equal(dom.window.matchMedia("(pointer: coarse)").matches, true);
       const targetSelectors = [".rowactions > .btn", ".profile-name-button", ".profile-tags-preview", ".status-chip", ".profile-group-toggle", ".profile-group-create"];
-      for (const selector of targetSelectors) {
-        const targets = dom.container.querySelectorAll<DomElement>(`.profiles-workspace > .profile-browser > .tablewrap ${selector}`);
-        assert.ok(targets.length > 0, `${selector} must resolve to a real roster control`);
-        for (const target of targets) assert.ok(parseFloat(style(target).minHeight) >= 44, `${selector} must keep a 44px touch target`);
+      for (const mode of ["Standard", "Compact"] as const) {
+        await click(radio(mode));
+        for (const selector of targetSelectors) {
+          const targets = dom.container.querySelectorAll<DomElement>(`.profiles-workspace > .profile-browser > .tablewrap ${selector}`);
+          assert.ok(targets.length > 0, `${selector} must resolve to a real roster control`);
+          for (const target of targets) assert.ok(parseFloat(style(target).minHeight) >= 44, `${selector} must keep a 44px touch target in ${mode}`);
+        }
       }
       for (const target of groups()[0]!.querySelectorAll<DomButton>("button")) assert.equal(style(target).minHeight, "44px");
       const check = dom.container.querySelector<DomInput>('input[aria-label="Select environment"]')!;
       assert.equal(style(check).width, "44px"); assert.equal(style(check).height, "44px");
       assert.equal(style(dom.container.querySelector<DomElement>("th.chk")!).width, "44px", "The checkbox hit target must not overlap its neighboring name column");
       await act(async () => { check.click(); }); assert.equal(check.checked, true);
+      await click(radio("Standard")); assert.equal(check.checked, true);
       await click(radio("Comfortable")); assert.equal(check.checked, true); await click(radio("Compact")); assert.equal(check.checked, true, "Changing density preserves row selection");
     } else if (scenario === "instance-scope") {
       const ids = [...dom.container.querySelectorAll("[id]")].map(item => item.id); assert.equal(new Set(ids).size, ids.length);

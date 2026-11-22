@@ -233,6 +233,10 @@ test("density survives a new management instance and invalid values never replac
   const cap = (await (await reopened.handle(new Request("http://127.0.0.1/ui/api/workspace/capability", { headers: { Authorization: `Bearer ${f.nonce}` } })))!.json()).token;
   const reloaded = await reopened.handle(new Request("http://127.0.0.1/ui/api/workspace/preferences", { headers: { "X-Maobu-Workspace-Capability": cap } }));
   expect((await reloaded!.json()).preferences).toEqual(before);
+  expect((await f.request("/workspace/preferences", "POST", { key: ROSTER_DENSITY_KEY, value: "standard" })).status).toBe(200);
+  expect((await (await f.request("/workspace/preferences")).json()).preferences[ROSTER_DENSITY_KEY]).toBe("standard");
+  expect((await f.request("/workspace/preferences", "POST", { key: "aliasmode.roster.pageSize", value: "0" })).status).toBe(200);
+  expect((await (await f.request("/workspace/preferences")).json()).preferences["aliasmode.roster.pageSize"]).toBe("0");
   expect((await f.request("/workspace/preferences", "POST", { key: ROSTER_DENSITY_KEY, value: "comfortable" })).status).toBe(200);
   expect((await (await f.request("/workspace/preferences")).json()).preferences[ROSTER_DENSITY_KEY]).toBe("comfortable");
   expect(f.store.count()).toBe(1); expect(readFileSync(join(f.paths.profiles, f.profile.id, "saved-session.bin"), "utf8")).toBe("fixture login storage");
