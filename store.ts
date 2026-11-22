@@ -115,6 +115,30 @@ export class ProfileStore {
     this.dispatchMutation(event);
   }
 
+  /** Raw SQLite connection for co-located store modules sharing profiles.sqlite. */
+  rawDatabase(): Database {
+    return this.db;
+  }
+
+  /** Local at-rest secret protector shared with companion tables in profiles.sqlite. */
+  secretProtector(): LocalSecretProtector {
+    return this.protector;
+  }
+
+  /** Execute `fn` inside a store transaction, preserving nested savepoints and post-COMMIT mutation dispatch. */
+  withTransaction<T>(fn: () => T, mode: "deferred" | "immediate" = "deferred"): T {
+    return this.transaction(fn, mode)();
+  }
+
+  /** Emit a roster mutation event (queued until top-level COMMIT when inside a transaction). */
+  emitRosterMutation(reason: string, profileIds?: string[]): void {
+    this.notifyMutation({
+      kind: "roster",
+      reason,
+      ...(profileIds && profileIds.length > 0 ? { profileIds } : {}),
+    });
+  }
+
   private transaction<A extends unknown[], T>(fn: (...args: A) => T, mode: "deferred" | "immediate" = "deferred"): (...args: A) => T {
     return (...args) => {
       const nested = this.db.inTransaction;
@@ -145,138 +169,146 @@ export class ProfileStore {
     // Defense in depth for direct local API callers that bypass the import
     // parser. Invalid full-profile JSON must never reach persistent identity.
     assertValidProfile(p);
-    const existing = this.db
-      .query<{ seeded: number; trashed_at: number; engine: unknown; chromium_runtime: unknown; hardware_json: string; locale: string; proxy_json: string | null }, [string]>("SELECT seeded, trashed_at, engine, chromium_runtime, hardware_json, locale, proxy_json FROM profiles WHERE id = ?")
-      .get(p.id);
-    if (!p.locale && existing?.locale) p = { ...p, locale: existing.locale };
-    // The runtime is fixed at creation. An edit or re-import that omits it keeps it.
-    const storedRuntime = existing ? normalizeChromiumRuntime(existing.chromium_runtime, storedProfileEngine(existing.engine)) : undefined;
-    if (!p.chromiumRuntime && storedRuntime) p = { ...p, chromiumRuntime: storedRuntime };
-    // An edit or re-import that omits stored hardware keeps it. setHardware clears it.
-    const storedHardware = existing?.hardware_json || "";
-    if (!p.hardware && storedHardware) p = { ...p, hardware: JSON.parse(storedHardware) };
-    if (!this.getLaunch(p.id)) p = completeProfileFingerprint(p);
-    const browser = normalizeProfileEngine(p.engine, p.firefox);
-    if (p.proxy && p.proxyError) throw new Error("profile cannot contain both a valid proxy and a proxy quarantine error");
-    const proxy = p.proxyError ? null : normalizeProxySpec(p.proxy);
-    const proxyError = p.proxyError?.trim() ?? "";
-    if (existing?.trashed_at) throw new Error("Profile is in Trash; restore it before importing or editing it");
-    if (existing && storedProfileEngine(existing.engine) !== browser.engine) {
-      throw new Error("profile engine cannot change in place");
-    }
-    const chromiumRuntime = normalizeChromiumRuntime(p.chromiumRuntime, browser.engine);
-    if (existing && storedRuntime !== chromiumRuntime) {
-      throw new Error("profile Chromium runtime cannot change in place");
-    }
-    const hardware = normalizeProfileHardware(p.hardware);
-    const hardwareJson = hardware ? JSON.stringify(hardware) : "";
-    const seeded = existing ? existing.seeded : p.seeded ? 1 : 0;
-    const nextProxyJson = proxy ? JSON.stringify(proxy) : null;
-    let existingProxyJson: string | null = null;
-    if (existing?.proxy_json) {
-      try {
-        existingProxyJson = this.protector.decrypt(existing.proxy_json);
-      } catch {
-        existingProxyJson = existing.proxy_json;
+    const saved = this.transaction(() => {
+      const existing = this.db
+        .query<{ seeded: number; trashed_at: number; engine: unknown; chromium_runtime: unknown; hardware_json: string; locale: string; proxy_json: string | null }, [string]>("SELECT seeded, trashed_at, engine, chromium_runtime, hardware_json, locale, proxy_json FROM profiles WHERE id = ?")
+        .get(p.id);
+      let nextProfile = p;
+      if (!nextProfile.locale && existing?.locale) nextProfile = { ...nextProfile, locale: existing.locale };
+      // The runtime is fixed at creation. An edit or re-import that omits it keeps it.
+      const storedRuntime = existing ? normalizeChromiumRuntime(existing.chromium_runtime, storedProfileEngine(existing.engine)) : undefined;
+      if (!nextProfile.chromiumRuntime && storedRuntime) nextProfile = { ...nextProfile, chromiumRuntime: storedRuntime };
+      // An edit or re-import that omits stored hardware keeps it. setHardware clears it.
+      const storedHardware = existing?.hardware_json || "";
+      if (!nextProfile.hardware && storedHardware) nextProfile = { ...nextProfile, hardware: JSON.parse(storedHardware) };
+      if (!this.getLaunch(nextProfile.id)) nextProfile = completeProfileFingerprint(nextProfile);
+      const browser = normalizeProfileEngine(nextProfile.engine, nextProfile.firefox);
+      if (nextProfile.proxy && nextProfile.proxyError) throw new Error("profile cannot contain both a valid proxy and a proxy quarantine error");
+      const proxy = nextProfile.proxyError ? null : normalizeProxySpec(nextProfile.proxy);
+      const proxyError = nextProfile.proxyError?.trim() ?? "";
+      if (existing?.trashed_at) throw new Error("Profile is in Trash; restore it before importing or editing it");
+      if (existing && storedProfileEngine(existing.engine) !== browser.engine) {
+        throw new Error("profile engine cannot change in place");
       }
-    }
-    const proxySame = existing ? (existingProxyJson === nextProxyJson ? 1 : 0) : 0;
-    this.db
-      .query(
-        `INSERT INTO profiles
-           (id, engine, chromium_runtime, hardware_json, firefox_config_json, acc_id, name, "group", platform, username, password, email, email_password, twofa, proxy_json, proxy_error, extensions_json, tags_json, custom_no, ua, timezone, timezone_manual, locale,
-            screen_width, screen_height, fingerprint_seed, platform_os, fp_observed_json, fp_expected_json, fp_verdict_json, cookies_json, seeded, created_at, incarnation)
-         -- fp_verdict_json is literal '': a verdict is a COMPUTED fact, written
-         -- only by saveObservedFingerprint from a real measurement. If a caller
-         -- could supply one, an import could hand itself a "verified" badge and
-         -- the badge would mean nothing.
-         VALUES ($id,$engine,$chromiumRuntime,$hardware,$firefox,$acc,$name,$group,$platform,$user,$pass,$email,$emailPass,$twofa,$proxy,$proxyError,$ext,$tags,$customNo,$ua,$tz,$tzManual,$locale,$w,$h,$seed,$platformOs,$fpObserved,$fpExpected,'',$cookies,$seeded,$created,$incarnation)
-         ON CONFLICT(id) DO UPDATE SET
-           engine=$engine, firefox_config_json=$firefox, hardware_json=$hardware, timezone_manual=$tzManual,
-           acc_id=$acc, name=$name, "group"=$group, platform=$platform, username=$user, password=$pass,
-           email=$email, email_password=$emailPass, twofa=$twofa,
-           -- An unrelated edit to a quarantined profile must preserve the raw
-           -- legacy proxy for operator recovery. A valid replacement or an
-           -- explicit clear removes the quarantine and writes the new value.
-           proxy_json = CASE WHEN $proxyError <> '' THEN proxy_json ELSE $proxy END,
-           proxy_error = CASE WHEN $proxyError <> '' THEN $proxyError ELSE NULL END,
-           extensions_json=$ext, tags_json=$tags, custom_no=$customNo, ua=$ua,
-           -- Timezone on re-import:
-           --   * new lookup resolved one ($tz<>'')       -> use it
-           --   * else proxy UNCHANGED                     -> keep stored value
-           --     (a transient ip-api failure must not erase a still-valid tz)
-           --   * else proxy changed/removed + no new tz   -> clear it
-           --     (keeping it would emit --fingerprint-timezone for a proxy the
-           --      profile no longer uses — a worse mismatch than the default).
-           timezone = CASE
-             WHEN $tz <> '' THEN $tz
-             WHEN $proxyError <> '' THEN timezone
-             WHEN $proxySame = 1 THEN timezone
-             ELSE ''
-           END,
-           screen_width=$w, screen_height=$h, locale=$locale,
-           fingerprint_seed=$seed, platform_os=$platformOs,
-           -- An ordinary profile edit carries no capture. Preserving the stored
-           -- one keeps a rename from erasing a measurement that is still true.
-           fp_observed_json = CASE WHEN $fpObserved <> '' THEN $fpObserved ELSE fp_observed_json END,
-           fp_source_json = CASE WHEN $fpObserved <> '' AND $fpObserved IS NOT fp_observed_json THEN '' ELSE fp_source_json END,
-           fp_expected_json = CASE WHEN $fpExpected <> '' THEN $fpExpected ELSE fp_expected_json END,
-           -- A CHANGED expectation invalidates the verdict: one computed
-           -- against the previous expectation must never be read as if it
-           -- applied to this one. An unrelated edit (a rename, a group move)
-           -- re-sends the same expectation and keeps its verdict. As everywhere
-           -- in this clause, the bare column is the OLD row value.
-           fp_verdict_json  = CASE
-             WHEN $fpExpected <> '' AND $fpExpected IS NOT fp_expected_json THEN ''
-             ELSE fp_verdict_json
-           END,
-           cookies_json=$cookies`,
-      )
-      .run({
-        $id: p.id,
-        $engine: browser.engine,
-        $chromiumRuntime: chromiumRuntime ?? "",
-        $hardware: hardwareJson,
-        $firefox: browser.firefox ? JSON.stringify(browser.firefox) : "",
-        $acc: p.accId,
-        $name: p.name,
-        $group: p.group,
-        $platform: p.platform ?? "",
-        $user: p.username,
-        $pass: p.password ? this.protector.encrypt(p.password) : "",
-        $email: p.email ?? "",
-        $emailPass: p.emailPassword ? this.protector.encrypt(p.emailPassword) : "",
-        $twofa: p.twofa ? this.protector.encrypt(p.twofa) : "",
-        $proxy: nextProxyJson ? this.protector.encrypt(nextProxyJson) : null,
-        $proxySame: proxySame,
-        $proxyError: proxyError || null,
-        $ext: JSON.stringify(p.extensions ?? []),
-        $tags: JSON.stringify(p.tags ?? []),
-        $customNo: p.customNo ?? "",
-        $ua: p.ua,
-        $tz: p.timezone ?? "",
-        $tzManual: p.timezoneManual ? 1 : 0,
-        $locale: p.locale ?? "",
-        $w: p.screenWidth,
-        $h: p.screenHeight,
-        $seed: p.fingerprintSeed,
-        $platformOs: p.platformOs ?? "",
-        $fpObserved: p.fpObserved ? JSON.stringify(p.fpObserved) : "",
-        $fpExpected: p.fpExpected ? JSON.stringify(p.fpExpected) : "",
-        $cookies: this.protector.encrypt(JSON.stringify(p.cookies)),
-        $seeded: seeded,
-        // Set on INSERT; preserved on re-import (the ON CONFLICT clause never
-        // updates created_at). New profiles get a real timestamp; rows imported
-        // before this column stay 0 (creation time was never recorded then).
-        $created: Date.now(),
-        // ON CONFLICT deliberately leaves the original incarnation unchanged.
-        $incarnation: randomUUID(),
-      });
-    // An edit or re-import that omits the display scale keeps the stored value.
-    if (p.displayScale !== undefined) this.setDisplayScale(p.id, p.displayScale);
-    if (p.group) this.registerGroup(p.group);
-    this.onProfileSaved?.(p);
-    this.notifyMutation({ kind: "roster", reason: "upsertProfile", profileIds: [p.id] });
+      const chromiumRuntime = normalizeChromiumRuntime(nextProfile.chromiumRuntime, browser.engine);
+      if (existing && storedRuntime !== chromiumRuntime) {
+        throw new Error("profile Chromium runtime cannot change in place");
+      }
+      const hardware = normalizeProfileHardware(nextProfile.hardware);
+      const hardwareJson = hardware ? JSON.stringify(hardware) : "";
+      const seeded = existing ? existing.seeded : nextProfile.seeded ? 1 : 0;
+      const nextProxyJson = proxy ? JSON.stringify(proxy) : null;
+      let existingProxyJson: string | null = null;
+      if (existing?.proxy_json) {
+        try {
+          existingProxyJson = this.protector.decrypt(existing.proxy_json);
+        } catch {
+          existingProxyJson = existing.proxy_json;
+        }
+      }
+      const proxySame = existing ? (existingProxyJson === nextProxyJson ? 1 : 0) : 0;
+      this.db
+        .query(
+          `INSERT INTO profiles
+             (id, engine, chromium_runtime, hardware_json, firefox_config_json, acc_id, name, "group", platform, username, password, email, email_password, twofa, proxy_json, proxy_error, extensions_json, tags_json, custom_no, ua, timezone, timezone_manual, locale,
+              screen_width, screen_height, fingerprint_seed, platform_os, fp_observed_json, fp_expected_json, fp_verdict_json, cookies_json, seeded, created_at, incarnation)
+           -- fp_verdict_json is literal '': a verdict is a COMPUTED fact, written
+           -- only by saveObservedFingerprint from a real measurement. If a caller
+           -- could supply one, an import could hand itself a "verified" badge and
+           -- the badge would mean nothing.
+           VALUES ($id,$engine,$chromiumRuntime,$hardware,$firefox,$acc,$name,$group,$platform,$user,$pass,$email,$emailPass,$twofa,$proxy,$proxyError,$ext,$tags,$customNo,$ua,$tz,$tzManual,$locale,$w,$h,$seed,$platformOs,$fpObserved,$fpExpected,'',$cookies,$seeded,$created,$incarnation)
+           ON CONFLICT(id) DO UPDATE SET
+             engine=$engine, firefox_config_json=$firefox, hardware_json=$hardware, timezone_manual=$tzManual,
+             acc_id=$acc, name=$name, "group"=$group, platform=$platform, username=$user, password=$pass,
+             email=$email, email_password=$emailPass, twofa=$twofa,
+             -- An unrelated edit to a quarantined profile must preserve the raw
+             -- legacy proxy for operator recovery. A valid replacement or an
+             -- explicit clear removes the quarantine and writes the new value.
+             proxy_json = CASE WHEN $proxyError <> '' THEN proxy_json ELSE $proxy END,
+             proxy_error = CASE WHEN $proxyError <> '' THEN $proxyError ELSE NULL END,
+             extensions_json=$ext, tags_json=$tags, custom_no=$customNo, ua=$ua,
+             -- Timezone on re-import:
+             --   * new lookup resolved one ($tz<>'')       -> use it
+             --   * else proxy UNCHANGED                     -> keep stored value
+             --     (a transient ip-api failure must not erase a still-valid tz)
+             --   * else proxy changed/removed + no new tz   -> clear it
+             --     (keeping it would emit --fingerprint-timezone for a proxy the
+             --      profile no longer uses — a worse mismatch than the default).
+             timezone = CASE
+               WHEN $tz <> '' THEN $tz
+               WHEN $proxyError <> '' THEN timezone
+               WHEN $proxySame = 1 THEN timezone
+               ELSE ''
+             END,
+             screen_width=$w, screen_height=$h, locale=$locale,
+             fingerprint_seed=$seed, platform_os=$platformOs,
+             -- An ordinary profile edit carries no capture. Preserving the stored
+             -- one keeps a rename from erasing a measurement that is still true.
+             fp_observed_json = CASE WHEN $fpObserved <> '' THEN $fpObserved ELSE fp_observed_json END,
+             fp_source_json = CASE WHEN $fpObserved <> '' AND $fpObserved IS NOT fp_observed_json THEN '' ELSE fp_source_json END,
+             fp_expected_json = CASE WHEN $fpExpected <> '' THEN $fpExpected ELSE fp_expected_json END,
+             -- A CHANGED expectation invalidates the verdict: one computed
+             -- against the previous expectation must never be read as if it
+             -- applied to this one. An unrelated edit (a rename, a group move)
+             -- re-sends the same expectation and keeps its verdict. As everywhere
+             -- in this clause, the bare column is the OLD row value.
+             fp_verdict_json  = CASE
+               WHEN $fpExpected <> '' AND $fpExpected IS NOT fp_expected_json THEN ''
+               ELSE fp_verdict_json
+             END,
+             cookies_json=$cookies`,
+        )
+        .run({
+          $id: nextProfile.id,
+          $engine: browser.engine,
+          $chromiumRuntime: chromiumRuntime ?? "",
+          $hardware: hardwareJson,
+          $firefox: browser.firefox ? JSON.stringify(browser.firefox) : "",
+          $acc: nextProfile.accId,
+          $name: nextProfile.name,
+          $group: nextProfile.group,
+          $platform: nextProfile.platform ?? "",
+          $user: nextProfile.username,
+          $pass: nextProfile.password ? this.protector.encrypt(nextProfile.password) : "",
+          $email: nextProfile.email ?? "",
+          $emailPass: nextProfile.emailPassword ? this.protector.encrypt(nextProfile.emailPassword) : "",
+          $twofa: nextProfile.twofa ? this.protector.encrypt(nextProfile.twofa) : "",
+          $proxy: nextProxyJson ? this.protector.encrypt(nextProxyJson) : null,
+          $proxySame: proxySame,
+          $proxyError: proxyError || null,
+          $ext: JSON.stringify(nextProfile.extensions ?? []),
+          $tags: JSON.stringify(nextProfile.tags ?? []),
+          $customNo: nextProfile.customNo ?? "",
+          $ua: nextProfile.ua,
+          $tz: nextProfile.timezone ?? "",
+          $tzManual: nextProfile.timezoneManual ? 1 : 0,
+          $locale: nextProfile.locale ?? "",
+          $w: nextProfile.screenWidth,
+          $h: nextProfile.screenHeight,
+          $seed: nextProfile.fingerprintSeed,
+          $platformOs: nextProfile.platformOs ?? "",
+          $fpObserved: nextProfile.fpObserved ? JSON.stringify(nextProfile.fpObserved) : "",
+          $fpExpected: nextProfile.fpExpected ? JSON.stringify(nextProfile.fpExpected) : "",
+          $cookies: this.protector.encrypt(JSON.stringify(nextProfile.cookies)),
+          $seeded: seeded,
+          // Set on INSERT; preserved on re-import (the ON CONFLICT clause never
+          // updates created_at). New profiles get a real timestamp; rows imported
+          // before this column stay 0 (creation time was never recorded then).
+          $created: Date.now(),
+          // ON CONFLICT deliberately leaves the original incarnation unchanged.
+          $incarnation: randomUUID(),
+        });
+      // Manual proxy changes detach stale proxy-vault bindings in the same transaction.
+      if (existing && !proxySame && !proxyError) {
+        this.db.query(`DELETE FROM profile_proxy_bindings WHERE profile_id = ?`).run(nextProfile.id);
+      }
+      // An edit or re-import that omits the display scale keeps the stored value.
+      if (nextProfile.displayScale !== undefined) this.setDisplayScale(nextProfile.id, nextProfile.displayScale);
+      if (nextProfile.group) this.registerGroup(nextProfile.group);
+      this.notifyMutation({ kind: "roster", reason: "upsertProfile", profileIds: [nextProfile.id] });
+      return nextProfile;
+    })();
+    this.onProfileSaved?.(saved);
   }
 
   /** Pins the display scale a Chromium 155 profile's pages draw at. */
@@ -397,6 +429,7 @@ export class ProfileStore {
       const changed = this.db.query(`UPDATE profiles SET trashed_at = ? WHERE id = ? AND trashed_at = 0`).run(Date.now(), id);
       if (changed.changes) {
         this.clearAgentTemporary(id);
+        this.db.query(`DELETE FROM profile_proxy_bindings WHERE profile_id = ?`).run(id);
         this.notifyMutation({ kind: "roster", reason: "trashProfile", profileIds: [id] });
       }
       return changed.changes > 0;
@@ -509,14 +542,18 @@ export class ProfileStore {
     return row?.source ? parseFingerprintSource(safeParse(row.source, null)) : null;
   }
 
-  /** Delete a profile and its launch row. Returns true if a row was removed. */
+  /** Delete a profile and its launch/binding/policy rows. Returns true if a row was removed. */
   deleteProfile(id: string): boolean {
-    this.db.query(`DELETE FROM launches WHERE profile_id = ?`).run(id);
-    this.db.query(`DELETE FROM agent_temporary_profiles WHERE profile_id = ?`).run(id);
-    const res = this.db.query(`DELETE FROM profiles WHERE id = ?`).run(id);
-    const deleted = Number(res.changes) > 0;
-    if (deleted) this.notifyMutation({ kind: "roster", reason: "deleteProfile", profileIds: [id] });
-    return deleted;
+    return this.transaction(() => {
+      this.db.query(`DELETE FROM launches WHERE profile_id = ?`).run(id);
+      this.db.query(`DELETE FROM agent_temporary_profiles WHERE profile_id = ?`).run(id);
+      this.db.query(`DELETE FROM profile_proxy_bindings WHERE profile_id = ?`).run(id);
+      this.db.query(`DELETE FROM profile_resource_policies WHERE profile_id = ?`).run(id);
+      const res = this.db.query(`DELETE FROM profiles WHERE id = ?`).run(id);
+      const deleted = Number(res.changes) > 0;
+      if (deleted) this.notifyMutation({ kind: "roster", reason: "deleteProfile", profileIds: [id] });
+      return deleted;
+    })();
   }
 
   markAgentTemporary(profileId: string): void {

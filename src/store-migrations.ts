@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { isEncryptedSecret, type LocalSecretProtector } from "../dpapi.ts";
 
-export const CURRENT_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = 3;
 
 function existingColumns(db: Database, table: string): Set<string> {
   const rows = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
@@ -160,6 +160,59 @@ function ensureSchemaAndColumns(db: Database): boolean {
     );
   `);
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS proxy_vault (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL DEFAULT '',
+      "group" TEXT NOT NULL DEFAULT '',
+      type TEXT NOT NULL,
+      host TEXT NOT NULL,
+      port INTEGER NOT NULL,
+      auth_encrypted TEXT NOT NULL DEFAULT '',
+      has_auth INTEGER NOT NULL DEFAULT 0,
+      endpoint_hash TEXT NOT NULL,
+      refresh_url_encrypted TEXT NOT NULL DEFAULT '',
+      has_refresh_url INTEGER NOT NULL DEFAULT 0,
+      refresh_url_host TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      last_status TEXT NOT NULL DEFAULT 'unchecked',
+      last_reason TEXT NOT NULL DEFAULT '',
+      last_latency_ms INTEGER,
+      last_exit_ip TEXT NOT NULL DEFAULT '',
+      last_exit_country TEXT NOT NULL DEFAULT '',
+      last_exit_region TEXT NOT NULL DEFAULT '',
+      last_exit_city TEXT NOT NULL DEFAULT '',
+      last_exit_rotating INTEGER NOT NULL DEFAULT 0,
+      last_exit_comparison TEXT NOT NULL DEFAULT '',
+      last_checked_at INTEGER NOT NULL DEFAULT 0,
+      last_refreshed_at INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_proxy_vault_group ON proxy_vault("group");
+    CREATE INDEX IF NOT EXISTS idx_proxy_vault_endpoint_hash ON proxy_vault(endpoint_hash);
+    CREATE INDEX IF NOT EXISTS idx_proxy_vault_exit_ip ON proxy_vault(last_exit_ip);
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS profile_proxy_bindings (
+      profile_id TEXT PRIMARY KEY,
+      proxy_id TEXT NOT NULL,
+      bound_at INTEGER NOT NULL,
+      synced_endpoint_hash TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_profile_proxy_bindings_proxy ON profile_proxy_bindings(proxy_id);
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS profile_resource_policies (
+      profile_id TEXT PRIMARY KEY,
+      memory_saver_mode TEXT NOT NULL DEFAULT 'inherit',
+      data_saver_json TEXT NOT NULL DEFAULT '',
+      updated_at INTEGER NOT NULL
+    );
+  `);
+
   const missing = db.query<{ id: string }, []>("SELECT id FROM profiles WHERE incarnation = ''").all();
   const fill = db.query("UPDATE profiles SET incarnation = ? WHERE id = ? AND incarnation = ''");
   for (const row of missing) fill.run(randomUUID(), row.id);
@@ -212,6 +265,38 @@ function migrateToV2EncryptSensitiveColumns(db: Database, protector: LocalSecret
   }
 }
 
+interface PlaintextProxyVaultRow {
+  id: string;
+  auth_encrypted: string;
+  refresh_url_encrypted: string;
+}
+
+function migrateEncryptProxyVaultSensitiveColumns(db: Database, protector: LocalSecretProtector): void {
+  const rows = db.query<PlaintextProxyVaultRow, []>(
+    `SELECT id, auth_encrypted, refresh_url_encrypted
+     FROM proxy_vault
+     WHERE (auth_encrypted <> '' AND auth_encrypted NOT LIKE 'enc:v1:%')
+        OR (refresh_url_encrypted <> '' AND refresh_url_encrypted NOT LIKE 'enc:v1:%')`,
+  ).all();
+  if (rows.length === 0) return;
+  const update = db.query(
+    `UPDATE proxy_vault SET auth_encrypted = ?, refresh_url_encrypted = ? WHERE id = ?`,
+  );
+  for (const row of rows) {
+    const authEncrypted =
+      row.auth_encrypted && !isEncryptedSecret(row.auth_encrypted)
+        ? protector.encrypt(row.auth_encrypted)
+        : row.auth_encrypted;
+    const refreshUrlEncrypted =
+      row.refresh_url_encrypted && !isEncryptedSecret(row.refresh_url_encrypted)
+        ? protector.encrypt(row.refresh_url_encrypted)
+        : row.refresh_url_encrypted;
+    if (authEncrypted !== row.auth_encrypted || refreshUrlEncrypted !== row.refresh_url_encrypted) {
+      update.run(authEncrypted, refreshUrlEncrypted, row.id);
+    }
+  }
+}
+
 export function runStoreMigrations(
   db: Database,
   transaction: <A extends unknown[], T>(fn: (...args: A) => T, mode?: "deferred" | "immediate") => (...args: A) => T,
@@ -232,6 +317,12 @@ export function runStoreMigrations(
     if (version < 2) {
       migrateToV2EncryptSensitiveColumns(db, protector);
       db.exec("PRAGMA user_version = 2");
+      version = 2;
+    }
+    // Always idempotently re-encrypt any plaintext proxy_vault secrets (e.g. after portable backup restore).
+    migrateEncryptProxyVaultSensitiveColumns(db, protector);
+    if (version < 3) {
+      db.exec("PRAGMA user_version = 3");
     }
   })();
 }

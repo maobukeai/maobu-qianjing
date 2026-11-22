@@ -781,7 +781,7 @@ test("sensitive columns are encrypted at rest with enc:v1: while reading and tim
   store.close();
 });
 
-test("legacy plaintext SQLite stores migrate to encrypted columns and PRAGMA user_version = 2", () => {
+test("legacy plaintext SQLite stores migrate to encrypted columns and PRAGMA user_version = 3", () => {
   const dir = mkdtempSync(join(tmpdir(), "maobu-store-migrate-"));
   const dbPath = join(dir, "profiles.sqlite");
   const keyPath = join(dir, "local.key");
@@ -817,7 +817,7 @@ test("legacy plaintext SQLite stores migrate to encrypted columns and PRAGMA use
     legacy.close();
 
     const store = new ProfileStore(dbPath, { protection: { keyPath } });
-    expect((store as any).db.query("PRAGMA user_version").get().user_version).toBe(2);
+    expect((store as any).db.query("PRAGMA user_version").get().user_version).toBe(3);
     expect((store as any).db.query("PRAGMA busy_timeout").get().timeout).toBe(1500);
     const encryptedRow = (store as any).db
       .query("SELECT password, email_password, twofa, proxy_json, cookies_json, session_json FROM profiles WHERE id = 'legacy01'")
@@ -917,5 +917,98 @@ test("pending_cookies_json is encrypted on write, migrated from plaintext, and t
     try { storeA?.close(); } catch {}
     try { storeB?.close(); } catch {}
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("schema v3 creates proxy_vault, profile_proxy_bindings, and profile_resource_policies without views/triggers/virtual tables", () => {
+  const store = memStore();
+  try {
+    const db = store.rawDatabase();
+    expect(db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(3);
+    const tables = db
+      .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all()
+      .map((r) => r.name);
+    expect(tables).toContain("proxy_vault");
+    expect(tables).toContain("profile_proxy_bindings");
+    expect(tables).toContain("profile_resource_policies");
+
+    const indexes = db
+      .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'index'")
+      .all()
+      .map((r) => r.name);
+    expect(indexes).toContain("idx_proxy_vault_group");
+    expect(indexes).toContain("idx_proxy_vault_endpoint_hash");
+    expect(indexes).toContain("idx_proxy_vault_exit_ip");
+    expect(indexes).toContain("idx_profile_proxy_bindings_proxy");
+
+    // Backup invariant: zero views, triggers, or virtual tables.
+    const forbidden = db
+      .query(
+        "SELECT name FROM sqlite_master WHERE type IN ('view', 'trigger') OR upper(COALESCE(sql, '')) LIKE '%CREATE VIRTUAL TABLE%'",
+      )
+      .all();
+    expect(forbidden).toEqual([]);
+  } finally {
+    store.close();
+  }
+});
+
+test("store cleans up profile_proxy_bindings on profile delete, trash, and manual proxy edits while preserving post-COMMIT onMutation", () => {
+  const store = memStore();
+  try {
+    const db = store.rawDatabase();
+    const p1 = parseExport(SAMPLE).profiles[0]!;
+    const p2 = { ...p1, id: "k1d0cd22" };
+    store.upsertProfile(p1);
+    store.upsertProfile(p2);
+
+    const insertBinding = db.query(
+      "INSERT INTO profile_proxy_bindings (profile_id, proxy_id, bound_at, synced_endpoint_hash) VALUES (?, ?, ?, ?)",
+    );
+    insertBinding.run(p1.id, "pxv_0000000000000001", Date.now(), "hash1");
+    insertBinding.run(p2.id, "pxv_0000000000000001", Date.now(), "hash1");
+    db.query("INSERT INTO profile_resource_policies (profile_id, memory_saver_mode, data_saver_json, updated_at) VALUES (?, 'on', '{}', ?)")
+      .run(p2.id, Date.now());
+
+    // Metadata edit with identical proxy preserves binding.
+    store.upsertProfile({ ...store.getProfile(p1.id)!, name: "RenamedOnly" });
+    expect(db.query("SELECT proxy_id FROM profile_proxy_bindings WHERE profile_id = ?").get(p1.id)).toBeTruthy();
+
+    // Manual proxy edit clears stale binding inside the same transaction.
+    store.upsertProfile({
+      ...store.getProfile(p1.id)!,
+      proxy: { type: "http", host: "9.9.9.9", port: "8080", user: "nu", pass: "np" },
+    });
+    expect(db.query("SELECT proxy_id FROM profile_proxy_bindings WHERE profile_id = ?").get(p1.id)).toBeNull();
+
+    // Trashing clears binding; hard-deleting clears both binding and resource policy.
+    insertBinding.run(p1.id, "pxv_0000000000000001", Date.now(), "hash2");
+    expect(store.trashProfile(p1.id)).toBe(true);
+    expect(db.query("SELECT proxy_id FROM profile_proxy_bindings WHERE profile_id = ?").get(p1.id)).toBeNull();
+
+    expect(store.deleteProfile(p2.id)).toBe(true);
+    expect(db.query("SELECT proxy_id FROM profile_proxy_bindings WHERE profile_id = ?").get(p2.id)).toBeNull();
+    expect(db.query("SELECT profile_id FROM profile_resource_policies WHERE profile_id = ?").get(p2.id)).toBeNull();
+
+    // onMutation only dispatches after top-level COMMIT and never on rollback.
+    const events: string[] = [];
+    store.onMutation = (ev) => events.push(ev.kind === "roster" ? ev.reason : ev.profileId);
+
+    expect(() =>
+      store.withTransaction(() => {
+        store.emitRosterMutation("rolledBackEvent");
+        throw new Error("force rollback");
+      }),
+    ).toThrow("force rollback");
+    expect(events).toEqual([]);
+
+    store.withTransaction(() => {
+      store.emitRosterMutation("nestedBeforeCommit");
+      expect(events).toEqual([]);
+    });
+    expect(events).toEqual(["nestedBeforeCommit"]);
+  } finally {
+    store.close();
   }
 });

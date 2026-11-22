@@ -6,6 +6,8 @@ import { basename, join, resolve, sep } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { buildNewProfile } from "./create.ts";
 import { ProfileStore } from "./store.ts";
+import { ProxyVaultStore } from "./src/proxy-vault/proxy-vault-store.ts";
+import { ENCRYPTED_VALUE_PREFIX } from "./dpapi.ts";
 import { ScriptLibrary } from "./scripts.ts";
 import { WorkspaceCatalog } from "./workspaces.ts";
 import { WorkspaceBackupService } from "./workspace-backups.ts";
@@ -369,6 +371,19 @@ test("password-encrypted backups restore portably across different local protect
     f.store.saveSessionBundle(f.profile.id, '{"cookies":[{"name":"sess"}]}');
     f.store.addPendingCookies(f.profile.id, [{ name: "pending", value: "p-secret", domain: ".example.com", path: "/" }]);
 
+    const sourceVault = new ProxyVaultStore(f.store);
+    const vaultEntry = sourceVault.create({
+      name: "Portable Vault Proxy",
+      group: "US",
+      type: "socks5",
+      host: "203.0.113.20",
+      port: 1080,
+      user: "vault-user",
+      pass: "vault-pass-secret",
+      refreshUrl: "https://rotate.provider.example/v1/ip?token=VAULT_REFRESH_TOKEN",
+      notes: "portable test",
+    });
+
     const backupPassword = "portable-backup-passphrase";
     const created = await completed(f.service, f.service.startCreate(backupPassword).id);
 
@@ -390,6 +405,21 @@ test("password-encrypted backups restore portably across different local protect
     expect(imported.getSessionBundle(f.profile.id)).toBe('{"cookies":[{"name":"sess"}]}');
     expect(imported.getPendingCookies(f.profile.id)[0]?.value).toBe("p-secret");
 
+    // Proxy Vault secrets must restore portably and be re-encrypted under Key B.
+    const restoredVault = new ProxyVaultStore(imported);
+    const restoredEdit = restoredVault.getEditView(vaultEntry.id)!;
+    expect(restoredEdit.user).toBe("vault-user");
+    expect(restoredEdit.pass).toBe("vault-pass-secret");
+    expect(restoredEdit.refreshUrl).toBe("https://rotate.provider.example/v1/ip?token=VAULT_REFRESH_TOKEN");
+    const rawReencrypted = imported
+      .rawDatabase()
+      .query<{ auth_encrypted: string; refresh_url_encrypted: string }, [string]>(
+        "SELECT auth_encrypted, refresh_url_encrypted FROM proxy_vault WHERE id = ?",
+      )
+      .get(vaultEntry.id)!;
+    expect(rawReencrypted.auth_encrypted.startsWith(ENCRYPTED_VALUE_PREFIX)).toBe(true);
+    expect(rawReencrypted.refresh_url_encrypted.startsWith(ENCRYPTED_VALUE_PREFIX)).toBe(true);
+
     // Re-opening with the original machine key must NOT decrypt the target DB (it was re-encrypted under key B).
     process.env.MAOBU_DATA_KEY = "11".repeat(32);
     const wrongKeyStore = new ProfileStore(join(target, "profiles.sqlite"));
@@ -401,6 +431,10 @@ test("password-encrypted backups restore portably across different local protect
     expect(wrongLoaded.cookies).toEqual([]);
     expect(wrongKeyStore.getSessionBundle(f.profile.id)).toBeNull();
     expect(wrongKeyStore.getPendingCookies(f.profile.id)).toEqual([]);
+    const wrongVaultEdit = new ProxyVaultStore(wrongKeyStore).getEditView(vaultEntry.id)!;
+    expect(wrongVaultEdit.user).toBe("");
+    expect(wrongVaultEdit.pass).toBe("");
+    expect(wrongVaultEdit.refreshUrl).toBe("");
   } finally {
     if (previousKey === undefined) delete process.env.MAOBU_DATA_KEY;
     else process.env.MAOBU_DATA_KEY = previousKey;

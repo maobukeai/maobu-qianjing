@@ -109,20 +109,42 @@ function decryptSnapshotForPortableBackup(snapshotPath: string): void {
     const rows = db.query<Record<string, string | null>, []>(
       `SELECT id, ${columns.join(", ")} FROM profiles`,
     ).all();
-    const hasEncrypted = rows.some((row) => columns.some((col) => isEncryptedSecret(row[col])));
-    if (!hasEncrypted) return;
+    const hasProxyVault = table(db, "proxy_vault");
+    const vaultColumns = ["auth_encrypted", "refresh_url_encrypted"] as const;
+    const vaultRows = hasProxyVault
+      ? db.query<Record<string, string | null>, []>(
+          `SELECT id, ${vaultColumns.join(", ")} FROM proxy_vault`,
+        ).all()
+      : [];
+    const hasEncryptedProfiles = rows.some((row) => columns.some((col) => isEncryptedSecret(row[col])));
+    const hasEncryptedVault = vaultRows.some((row) => vaultColumns.some((col) => isEncryptedSecret(row[col])));
+    if (!hasEncryptedProfiles && !hasEncryptedVault) return;
     const protector = createLocalSecretProtector();
-    const update = db.query(
-      `UPDATE profiles SET ${columns.map((c) => `${c} = ?`).join(", ")} WHERE id = ?`,
-    );
+    const updateProfiles = hasEncryptedProfiles
+      ? db.query(`UPDATE profiles SET ${columns.map((c) => `${c} = ?`).join(", ")} WHERE id = ?`)
+      : null;
+    const updateVault = hasEncryptedVault
+      ? db.query(`UPDATE proxy_vault SET ${vaultColumns.map((c) => `${c} = ?`).join(", ")} WHERE id = ?`)
+      : null;
     db.exec("BEGIN");
     try {
-      for (const row of rows) {
-        const next = columns.map((col) => {
-          const val = row[col] ?? null;
-          return typeof val === "string" && isEncryptedSecret(val) ? protector.decrypt(val) : val;
-        });
-        update.run(...next, row.id ?? "");
+      if (updateProfiles) {
+        for (const row of rows) {
+          const next = columns.map((col) => {
+            const val = row[col] ?? null;
+            return typeof val === "string" && isEncryptedSecret(val) ? protector.decrypt(val) : val;
+          });
+          updateProfiles.run(...next, row.id ?? "");
+        }
+      }
+      if (updateVault) {
+        for (const row of vaultRows) {
+          const next = vaultColumns.map((col) => {
+            const val = row[col] ?? "";
+            return typeof val === "string" && isEncryptedSecret(val) ? protector.decrypt(val) : val;
+          });
+          updateVault.run(...next, row.id ?? "");
+        }
       }
       db.exec("PRAGMA user_version = 1");
       db.exec("COMMIT");
