@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { isEncryptedSecret, type LocalSecretProtector } from "../dpapi.ts";
 
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 4;
 
 function existingColumns(db: Database, table: string): Set<string> {
   const rows = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
@@ -78,6 +78,7 @@ function ensureSchemaAndColumns(db: Database): boolean {
     "email_password TEXT NOT NULL DEFAULT ''",
     "extensions_json TEXT NOT NULL DEFAULT '[]'",
     "tags_json TEXT NOT NULL DEFAULT '[]'",
+    "notes TEXT NOT NULL DEFAULT ''",
     "proxy_error TEXT",
     "custom_no TEXT NOT NULL DEFAULT ''",
     "platform_os TEXT NOT NULL DEFAULT ''",
@@ -213,6 +214,21 @@ function ensureSchemaAndColumns(db: Database): boolean {
     );
   `);
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS profile_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      profile_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      status TEXT NOT NULL,
+      actor TEXT NOT NULL DEFAULT 'user',
+      summary TEXT NOT NULL,
+      detail_json TEXT NOT NULL DEFAULT '{}',
+      recovery_kind TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_profile_events_profile_time ON profile_events(profile_id, created_at DESC, id DESC);
+  `);
+
   const missing = db.query<{ id: string }, []>("SELECT id FROM profiles WHERE incarnation = ''").all();
   const fill = db.query("UPDATE profiles SET incarnation = ? WHERE id = ? AND incarnation = ''");
   for (const row of missing) fill.run(randomUUID(), row.id);
@@ -323,6 +339,10 @@ export function runStoreMigrations(
     migrateEncryptProxyVaultSensitiveColumns(db, protector);
     if (version < 3) {
       db.exec("PRAGMA user_version = 3");
+      version = 3;
+    }
+    if (version < 4) {
+      db.exec("PRAGMA user_version = 4");
     }
   })();
 }

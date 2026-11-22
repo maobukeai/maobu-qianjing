@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { inProfileScope, parseFavoriteProfiles, parseSavedProfileViews, serializeFavoriteProfiles, serializeSavedProfileViews, sameProfileView, type SavedProfileView } from "./profile-view-state.ts";
+import { aggregateProfileTagCounts, inProfileScope, matchesTagFilter, parseFavoriteProfiles, parseSavedProfileViews, serializeFavoriteProfiles, serializeSavedProfileViews, sameProfileView, type SavedProfileView } from "./profile-view-state.ts";
 
 const saved: SavedProfileView = { id: `view_${"a".repeat(32)}`, name: "Overseas · running", filters: { scope: "favorites", query: "Research", group: "海外业务", status: "running", sort: { key: "name", dir: -1 }, hiddenColumns: ["no", "tags"], pageSize: 50 } };
 test("a saved view round-trips its actual filter and table layout without copying profile data", () => {
@@ -32,4 +32,34 @@ test("attention is actionable configuration state, not an invented fingerprint o
   expect(inProfileScope({ id: "other" }, "favorites", favorites)).toBe(false);
   expect(inProfileScope({ id: "plain" }, "attention", favorites)).toBe(false);
   for (const value of [{ proxyError: "Invalid address" }, { restartPending: true }, { mobilePersona: true }]) expect(inProfileScope({ id: "needs-work", ...value }, "attention", favorites)).toBe(true);
+});
+test("saved views accept optional multi-tag OR/AND filters while remaining backward-compatible with legacy views", () => {
+  const tagged: SavedProfileView = {
+    ...saved,
+    id: `view_${"c".repeat(32)}`,
+    name: "VIP US",
+    filters: { ...saved.filters, tags: ["VIP", "US"], tagMode: "all" },
+  };
+  expect(parseSavedProfileViews(serializeSavedProfileViews([saved, tagged]))).toEqual([saved, tagged]);
+  expect(sameProfileView(saved.filters, { ...saved.filters, tags: [], tagMode: "any" })).toBe(true);
+  expect(sameProfileView(tagged.filters, { ...tagged.filters, tags: ["us", "vip"], tagMode: "all" })).toBe(true);
+  expect(sameProfileView(tagged.filters, { ...tagged.filters, tagMode: "any" })).toBe(false);
+
+  // Reject invalid tag filters (>20, duplicates, invalid tagMode, control/BiDi chars)
+  for (const badFilters of [
+    { ...saved.filters, tagMode: "xor" },
+    { ...saved.filters, tags: ["dup", "DUP"] },
+    { ...saved.filters, tags: ["bad\u202etag"] },
+    { ...saved.filters, tags: Array.from({ length: 21 }, (_, i) => `t${i}`) },
+  ]) {
+    expect(parseSavedProfileViews(JSON.stringify([{ ...saved, filters: badFilters }]))).toBeNull();
+  }
+
+  expect(matchesTagFilter(["Café", "VIP"], ["Cafe\u0301", "EU"], "any")).toBe(true);
+  expect(matchesTagFilter(["Café", "VIP"], ["Cafe\u0301", "EU"], "all")).toBe(false);
+  expect(matchesTagFilter(["Café", "VIP"], ["Cafe\u0301", "vip"], "all")).toBe(true);
+  expect(aggregateProfileTagCounts([{ tags: ["VIP", "US"] }, { tags: ["vip"] }]).map(item => [item.key, item.count])).toEqual([
+    ["vip", 2],
+    ["us", 1],
+  ]);
 });

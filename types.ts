@@ -119,6 +119,8 @@ export interface Profile {
   extensions?: string[];
   /** Free-form custom tags/labels for this profile. Optional so older literals stay valid; treated as []. */
   tags?: string[];
+  /** Operator notes/memo for this profile (<= 500 chars / 2048 bytes). Optional; treated as "". */
+  notes?: string;
   /**
    * Operator-chosen serial ("custom NO.") shown in the roster and prefixed onto
    * the launched browser's window title / identity bookmark. Digits only, so it

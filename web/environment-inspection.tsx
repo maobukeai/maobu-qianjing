@@ -4,6 +4,7 @@ import { fetchFingerprintReports, measureFingerprint, type FingerprintReport } f
 import { presentFingerprintCheck, type FingerprintCheckStatus, type FingerprintTranslator } from "../fingerprint-check-presentation.ts";
 import { parsePastedProxy } from "./proxy-input.ts";
 import { proxyCheckNote } from "./proxy-check-presentation.ts";
+import { ProfileTimeline } from "./profile-timeline.tsx";
 import { useTranslation } from "./i18n.tsx";
 import "./environment-inspection.css";
 
@@ -16,6 +17,8 @@ export interface EnvironmentInspectionPageProps {
   onBack: () => void;
   onEditProfile: (id: string, field?: InspectionEditField, trigger?: HTMLButtonElement) => void;
   onExplainFingerprint: (report: FingerprintReport) => void;
+  onOpenLogs?: () => void;
+  onRetryLaunch?: (id: string) => void | Promise<void>;
 }
 type Task = "review" | "proxy" | "measure";
 interface ExitObservation { result: ProxyCheckResult; checkedAt: number }
@@ -137,7 +140,7 @@ export function buildInspectionDiagnosticSummary(report: FingerprintReport, opti
 }
 
 /** An inspectable workflow: report reads are local; network and browser probes are explicit. */
-export function EnvironmentInspectionPage({ active, profile, refreshVersion = 0, onBack, onEditProfile, onExplainFingerprint }: EnvironmentInspectionPageProps) {
+export function EnvironmentInspectionPage({ active, profile, refreshVersion = 0, onBack, onEditProfile, onExplainFingerprint, onOpenLogs, onRetryLaunch }: EnvironmentInspectionPageProps) {
   const { t, language } = useTranslation();
   const id = profile?.id ?? "";
   // UiProfile.proxy is a display value. Never parse it or send it as credentials.
@@ -150,6 +153,7 @@ export function EnvironmentInspectionPage({ active, profile, refreshVersion = 0,
   const [proxyError, setProxyError] = useState<string | null>(null);
   const [measurementError, setMeasurementError] = useState<string | null>(null);
   const [showPassed, setShowPassed] = useState(false);
+  const [showTimeline, setShowTimeline] = useState(false);
   const [sourceFilter, setSourceFilter] = useState<InspectionEvidenceSource | "all">("all");
   const [search, setSearch] = useState("");
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
@@ -195,7 +199,7 @@ export function EnvironmentInspectionPage({ active, profile, refreshVersion = 0,
       setExit(null); setReport(null); setReviewedAt(null); setProxyError(null); setReviewError(null); setMeasurementError(null);
       setConfigurationChanged(changed);
       setCopyFeedback(null);
-      if (different) { setShowPassed(false); setSourceFilter("all"); setSearch(""); }
+      if (different) { setShowPassed(false); setShowTimeline(false); setSourceFilter("all"); setSearch(""); }
     }
     if (active && id) void review(true);
     return () => { state.generation++; state.active = false; state.busy = false; };
@@ -363,6 +367,33 @@ export function EnvironmentInspectionPage({ active, profile, refreshVersion = 0,
         <div className="inspection-next-actions"><button className="btn primary" type="button" disabled={!!busy} onClick={event => edit(undefined, event.currentTarget)}>{t("Edit profile configuration")}</button><button className="btn" type="button" disabled={!!busy || !report} onClick={explain}>{t("Draft AI explanation")}</button><p>{t("After saving, refresh the review and repeat the checks affected by your changes.")}</p></div>
       </section>
       {report && <section className="inspection-card inspection-safe-summary" aria-labelledby="inspection-safe-summary-title"><div className="inspection-card-heading"><div><h2 id="inspection-safe-summary-title">{t("Share a safe diagnostic summary")}</h2><p>{t("Copies fixed check categories, status counts and timestamps. It excludes account data, IP addresses and raw evidence.")}</p></div><button className="btn xs" type="button" disabled={!!busy} onClick={() => void copySummary()}>{t("Copy safe summary")}</button></div><p className="inspection-note">{t("The summary covers the full stored report, including checks hidden by filters.")}</p>{copyFeedback && <p className="inspection-copy-feedback" role="status">{t(copyFeedback)}</p>}<details><summary>{t("Preview safe summary")}</summary><pre tabIndex={0}>{safeSummary}</pre></details></section>}
+      <section className="inspection-card inspection-timeline" aria-labelledby="inspection-timeline-title">
+        <div className="inspection-card-heading">
+          <div>
+            <h2 id="inspection-timeline-title">{t("Activity timeline")}</h2>
+            <p>{t("Review recent lifecycle, proxy and configuration events for this environment.")}</p>
+          </div>
+          <button
+            className="btn xs"
+            type="button"
+            aria-expanded={showTimeline}
+            onClick={() => setShowTimeline((prev) => !prev)}
+          >
+            {t(showTimeline ? "Hide activity timeline" : "Show activity timeline")}
+          </button>
+        </div>
+        {showTimeline && (
+          <ProfileTimeline
+            profileId={id}
+            hasProxy={!!profile.proxy && !profile.proxyError}
+            running={profile.running}
+            onOpenLogs={onOpenLogs}
+            onRetryLaunch={onRetryLaunch}
+            onEditProxy={() => edit("proxy")}
+            onCheckProxyComplete={(result) => setExit({ result, checkedAt: result.checkedAt })}
+          />
+        )}
+      </section>
       <p className="inspection-footnote">{t("A consistent configuration is not a guarantee of anonymity or a website acceptance score. Unmeasured fields remain unknown.")}</p>
     </div>}
   </div>;

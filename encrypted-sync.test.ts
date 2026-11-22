@@ -113,4 +113,13 @@ describe("portable encrypted profile snapshots", () => {
     for (const secret of ["alice", "account-password", "cookie-secret", "local-storage-secret"]) expect(JSON.stringify(preview)).not.toContain(secret);
     expect(f.snapshot).toEqual(before); expect(previewSyncSnapshot(f.snapshot, []).newCount).toBe(1);
   });
+  test("encrypted sync snapshots allow and preserve profile notes without cleartext exposure", async () => {
+    const f = fixture();
+    const withNotes = { ...f.profile, notes: "Sensitive operator memo\nKeep isolated" };
+    const snapshot = createSyncSnapshot([withNotes], new Map([[withNotes.id, f.session]]), 1794160000000);
+    const bytes = await sealSyncSnapshot(snapshot, password);
+    expect(bytes.includes(Buffer.from("Sensitive operator memo"))).toBe(false);
+    const opened = await openSyncSnapshot(bytes, password);
+    expect(opened.profiles[0]?.notes).toBe("Sensitive operator memo\nKeep isolated");
+  });
 });

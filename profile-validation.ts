@@ -4,6 +4,7 @@ import type { CookieRecord, Profile } from "./types.ts";
 import { MAX_CUSTOM_NO_LENGTH, MAX_SCREEN_DIMENSION, MIN_SCREEN_HEIGHT, MIN_SCREEN_WIDTH } from "./parse.ts";
 import { assertSafeProfileId } from "./profile-id.ts";
 import { normalizeProfileLocale } from "./profile-locale.ts";
+import { normalizeProfileNotes } from "./profile-notes.ts";
 
 const REQUIRED_STRING_FIELDS = [
   "accId",
@@ -96,6 +97,9 @@ export function assertValidProfile(value: unknown): asserts value is Profile {
     if (list !== undefined && (!Array.isArray(list) || list.some((item) => typeof item !== "string"))) {
       throw new Error(`profile ${field} must be an array of strings`);
     }
+  }
+  if (profile.notes !== undefined) {
+    normalizeProfileNotes(profile.notes);
   }
 
   const width = profile.screenWidth;

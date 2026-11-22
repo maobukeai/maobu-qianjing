@@ -21,6 +21,8 @@ import {
 } from "../../parse.ts";
 import type { ExtensionFetch } from "../../extensions.ts";
 import { isSafeProfileId, PROFILE_ID_ERROR } from "../../profile-id.ts";
+import { normalizeProfileNotes } from "../../profile-notes.ts";
+import type { ProfilePackagePreviewStore } from "../../profile-package.ts";
 import { normalizeProfileTags } from "../../profile-tags.ts";
 import { normalizeProfileLocale } from "../../profile-locale.ts";
 import { proxyHostPort, proxyLegacyString } from "../../proxy.ts";
@@ -56,6 +58,10 @@ export interface UiProfile {
   extensions: string[];
   /** Account platform: "x.com", "telegram.org", or "" (none). */
   platform: string;
+  /** Free-form custom tags. */
+  tags: string[];
+  /** Operator memo/notes (<= 500 chars / 2048 bytes). */
+  notes: string;
   /** "host:port" only — never user/pass. Null when the profile has no proxy. */
   proxy: string | null;
   /** Safe validation message for a quarantined legacy proxy. */
@@ -109,6 +115,10 @@ export interface UiRuntimeOptions {
   extensionFetch?: ExtensionFetch;
   setCookies?: (ws: string, cookies: CookieRecord[]) => Promise<void>;
   events?: UiEventBus;
+  /** Optional SSE hook for Wave 4 companion services. */
+  emitEvent?: (type: string, payload: unknown) => void;
+  /** Optional preview store override for `.mqprofile` encrypted package routes. */
+  packagePreviewStore?: ProfilePackagePreviewStore;
   metrics?: MetricsService;
   resourcePolicies?: ResourcePolicyStore;
   appSettings?: AppSettingsStore;
@@ -163,6 +173,7 @@ export function listUiProfiles(store: ProfileStore): UiProfile[] {
       extensions: p.extensions ?? [],
       platform: p.platform ?? "",
       tags: p.tags ?? [],
+      notes: p.notes ?? "",
       proxy: p.proxy ? proxyHostPort(p.proxy) : null,
       ...(p.proxyError ? { proxyError: p.proxyError } : {}),
       timezone: p.timezone,
@@ -370,6 +381,7 @@ export function profileEditView(p: Profile) {
     resolution: `${p.screenWidth}*${p.screenHeight}`,
     extensions: p.extensions ?? [],
     tags: (p.tags ?? []).join(", "),
+    notes: p.notes ?? "",
     customNo: p.customNo ?? "",
     platformOs: p.platformOs ?? "",
     timezone: p.timezone,
@@ -487,6 +499,7 @@ export function applyEdits(p: Profile, set: Record<string, unknown>): boolean {
     p.extensions = extensions;
   }
   if ("tags" in set) p.tags = normalizeProfileTags(set.tags);
+  if ("notes" in set) p.notes = normalizeProfileNotes(set.notes === null || set.notes === undefined ? "" : set.notes);
   if ("customNo" in set) p.customNo = parseStrictCustomNo(set.customNo);
   return proxyChanged;
 }

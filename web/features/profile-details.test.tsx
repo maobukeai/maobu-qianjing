@@ -22,6 +22,36 @@ test("details expose only roster summary fields without credentials or verificat
   expect(empty).toBe("");
 });
 
+test("details panel renders Overview and Activity timeline tabs plus notes section without leaking credentials", () => {
+  const profile = {
+    id: "environment-notes",
+    name: "Notes profile",
+    engine: "chromium",
+    group: "Ops",
+    platform: "x.com",
+    tags: ["vip"],
+    notes: "Warmup phase 2",
+    proxy: "127.0.0.1:1080",
+    timezone: "UTC",
+    cookieCount: 1,
+    seeded: true,
+    screen: "1920x1080",
+    has2fa: false,
+    running: false,
+  } as UiProfile & { notes?: string };
+  const html = renderToStaticMarkup(
+    createElement(I18nProvider, {
+      children: createElement(ProfileDetailsPanel, { profile, onClose() {}, onEdit() {}, onInspect() {} }),
+    }),
+  );
+  expect(html).toContain('role="tablist"');
+  expect(html).toContain("Overview");
+  expect(html).toContain("Activity timeline");
+  expect(html).toContain("Warmup phase 2");
+  expect(html).toContain("Edit notes");
+  expect(html).not.toMatch(/aria-modal|role="dialog"/);
+});
+
 test("details DOM keeps table focus available and actions target the current profile", async () => {
   const child = Bun.spawn([process.execPath, "--no-env-file", resolve(import.meta.dir, "../../test-fixtures/profile-details-dom.tsx")], {
     cwd: resolve(import.meta.dir, "../.."), stdout: "pipe", stderr: "pipe",

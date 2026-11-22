@@ -781,7 +781,7 @@ test("sensitive columns are encrypted at rest with enc:v1: while reading and tim
   store.close();
 });
 
-test("legacy plaintext SQLite stores migrate to encrypted columns and PRAGMA user_version = 3", () => {
+test("legacy plaintext SQLite stores migrate to encrypted columns and PRAGMA user_version = 4", () => {
   const dir = mkdtempSync(join(tmpdir(), "maobu-store-migrate-"));
   const dbPath = join(dir, "profiles.sqlite");
   const keyPath = join(dir, "local.key");
@@ -817,7 +817,7 @@ test("legacy plaintext SQLite stores migrate to encrypted columns and PRAGMA use
     legacy.close();
 
     const store = new ProfileStore(dbPath, { protection: { keyPath } });
-    expect((store as any).db.query("PRAGMA user_version").get().user_version).toBe(3);
+    expect((store as any).db.query("PRAGMA user_version").get().user_version).toBe(4);
     expect((store as any).db.query("PRAGMA busy_timeout").get().timeout).toBe(1500);
     const encryptedRow = (store as any).db
       .query("SELECT password, email_password, twofa, proxy_json, cookies_json, session_json FROM profiles WHERE id = 'legacy01'")
@@ -920,11 +920,11 @@ test("pending_cookies_json is encrypted on write, migrated from plaintext, and t
   }
 });
 
-test("schema v3 creates proxy_vault, profile_proxy_bindings, and profile_resource_policies without views/triggers/virtual tables", () => {
+test("schema v4 creates proxy_vault, profile_proxy_bindings, profile_resource_policies, profile_events, and profiles.notes without views/triggers/virtual tables", () => {
   const store = memStore();
   try {
     const db = store.rawDatabase();
-    expect(db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(3);
+    expect(db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(4);
     const tables = db
       .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'table'")
       .all()
@@ -932,6 +932,13 @@ test("schema v3 creates proxy_vault, profile_proxy_bindings, and profile_resourc
     expect(tables).toContain("proxy_vault");
     expect(tables).toContain("profile_proxy_bindings");
     expect(tables).toContain("profile_resource_policies");
+    expect(tables).toContain("profile_events");
+
+    const profileCols = db
+      .query<{ name: string }, []>("PRAGMA table_info(profiles)")
+      .all()
+      .map((r) => r.name);
+    expect(profileCols).toContain("notes");
 
     const indexes = db
       .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -941,6 +948,7 @@ test("schema v3 creates proxy_vault, profile_proxy_bindings, and profile_resourc
     expect(indexes).toContain("idx_proxy_vault_endpoint_hash");
     expect(indexes).toContain("idx_proxy_vault_exit_ip");
     expect(indexes).toContain("idx_profile_proxy_bindings_proxy");
+    expect(indexes).toContain("idx_profile_events_profile_time");
 
     // Backup invariant: zero views, triggers, or virtual tables.
     const forbidden = db
@@ -1008,6 +1016,39 @@ test("store cleans up profile_proxy_bindings on profile delete, trash, and manua
       expect(events).toEqual([]);
     });
     expect(events).toEqual(["nestedBeforeCommit"]);
+  } finally {
+    store.close();
+  }
+});
+
+test("store persists normalized profile notes, retains profile_events on trash, and cascades profile_events on delete", () => {
+  const store = memStore();
+  try {
+    const db = store.rawDatabase();
+    const p = parseExport(SAMPLE).profiles[0]!;
+    p.notes = "First line\r\nSecond line";
+    store.upsertProfile(p);
+    expect(store.getProfile(p.id)?.notes).toBe("First line\nSecond line");
+
+    // Re-importing a record that omits `notes` preserves existing local notes; explicit empty string clears them.
+    const reimportWithoutNotes = parseExport(SAMPLE).profiles[0]!;
+    delete reimportWithoutNotes.notes;
+    store.upsertProfile(reimportWithoutNotes);
+    expect(store.getProfile(p.id)?.notes).toBe("First line\nSecond line");
+
+    store.upsertProfile({ ...store.getProfile(p.id)!, notes: "" });
+    expect(store.getProfile(p.id)?.notes).toBe("");
+
+    db.query(
+      `INSERT INTO profile_events (profile_id, event_type, status, actor, summary, detail_json, recovery_kind, created_at)
+       VALUES (?, 'profile.created', 'ok', 'user', 'Created', '{}', '', ?)`,
+    ).run(p.id, Date.now());
+
+    expect(store.trashProfile(p.id)).toBe(true);
+    expect(db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM profile_events WHERE profile_id = ?").get(p.id)!.n).toBe(1);
+
+    expect(store.deleteProfile(p.id)).toBe(true);
+    expect(db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM profile_events WHERE profile_id = ?").get(p.id)!.n).toBe(0);
   } finally {
     store.close();
   }

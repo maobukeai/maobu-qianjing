@@ -1,0 +1,216 @@
+.tag-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.tag-filter-picker {
+  position: relative;
+}
+
+.tag-filter-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-soft);
+}
+
+.tag-filter-trigger.has-selection,
+.tag-filter-trigger.is-open {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.tag-filter-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.tag-filter-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  width: 248px;
+  max-width: min(280px, 90vw);
+  padding: 8px;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  box-shadow: var(--sh-pop);
+}
+
+.tag-filter-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  height: 30px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--surface-sunken);
+  color: var(--muted);
+}
+
+.tag-filter-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--t-xs);
+  outline: none;
+}
+
+.tag-filter-limit {
+  margin: 6px 2px 0;
+  color: var(--warn-ink);
+  font-size: 11px;
+}
+
+.tag-filter-options {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 210px;
+  margin-top: 6px;
+  overflow: auto;
+}
+
+.tag-filter-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: var(--r-sm);
+  font-size: var(--t-xs);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.tag-filter-option:hover {
+  background: var(--surface-hover);
+}
+
+.tag-filter-option.is-selected {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.tag-filter-option.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.tag-filter-option-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-filter-option-count {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: var(--r-pill);
+  background: var(--surface-sunken);
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tag-filter-empty {
+  margin: 0;
+  padding: 12px 8px;
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--t-xs);
+}
+
+.tag-filter-mode {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--surface-sunken);
+}
+
+.tag-filter-mode-btn {
+  border: 0;
+  padding: 3px 8px;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.tag-filter-mode-btn.is-active {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--sh-xs);
+}
+
+.tag-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.tag-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 180px;
+  padding: 2px 6px 2px 8px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: var(--t-xs);
+}
+
+.tag-filter-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-filter-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.tag-filter-chip-remove:hover {
+  background: var(--accent-soft-hover);
+}
+
+.tag-filter-clear {
+  color: var(--muted);
+}

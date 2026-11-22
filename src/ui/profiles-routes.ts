@@ -20,7 +20,9 @@ import {
 import { writeXlsx, readXlsx } from "../../xlsx.ts";
 import { generateTotp } from "../../totp.ts";
 import { isSafeProfileId, PROFILE_ID_ERROR } from "../../profile-id.ts";
+import { ProfileNotesValidationError } from "../../profile-notes.ts";
 import { ProfileTagsValidationError } from "../../profile-tags.ts";
+import { inferLaunchFailureRecoveryKind, recordProfileEvent } from "../../profile-timeline.ts";
 import { convertMobilePersonaToDesktop, isMobileUserAgent } from "../../fingerprint.ts";
 import { syncFirefoxTimezone } from "../../firefox-config.ts";
 import {
@@ -82,6 +84,14 @@ export async function handleProfilesUiRoutes(
         syncFirefoxTimezone(profile);
       }
       store.upsertProfile(profile);
+      recordProfileEvent(store, {
+        profileId: profile.id,
+        eventType: "profile.created",
+        status: "ok",
+        actor: "user",
+        summary: "Created environment.",
+        detail: { engine: profileEngine(profile), hasProxy: !!profile.proxy },
+      });
       launcher.prefetchFirefoxFontPacks?.([profile]);
       return Response.json({ ok: true, id: profile.id });
     } catch (e) {
@@ -101,6 +111,19 @@ export async function handleProfilesUiRoutes(
         return Response.json({ ok: false, error: PROFILE_ID_ERROR }, { status: 400 });
       }
       const moved = store.setGroup(ids, group);
+      if (moved > 0) {
+        for (const id of ids) {
+          if (!store.getProfile(id)) continue;
+          recordProfileEvent(store, {
+            profileId: id,
+            eventType: "group.changed",
+            status: "ok",
+            actor: "user",
+            summary: group ? `Moved to group "${group}".` : "Removed from group.",
+            detail: { group },
+          });
+        }
+      }
       return Response.json({ ok: true, moved, group });
     } catch (e) {
       return Response.json({ ok: false, error: msg(e) }, { status: 500 });
@@ -128,7 +151,16 @@ export async function handleProfilesUiRoutes(
       }
       let deleted = 0;
       for (const id of existing) {
-        if (store.trashProfile(id)) deleted++;
+        if (store.trashProfile(id)) {
+          deleted++;
+          recordProfileEvent(store, {
+            profileId: id,
+            eventType: "profile.trashed",
+            status: "info",
+            actor: "user",
+            summary: "Moved environment to Trash.",
+          });
+        }
       }
       return Response.json({ ok: true, deleted, locked: [] });
     } catch (e) {
@@ -462,6 +494,14 @@ export async function handleProfilesUiRoutes(
             continue;
           }
           live++;
+          recordProfileEvent(store, {
+            profileId: id,
+            eventType: "cookies.updated",
+            status: "ok",
+            actor: "user",
+            summary: `Applied ${cookies.length} cookie(s) to running browser.`,
+            detail: { count: cookies.length, applied: "now" },
+          });
         } else {
           if (!store.getProfile(id)) {
             errors.push({ id, error: "no such profile", status: 404 });
@@ -469,6 +509,14 @@ export async function handleProfilesUiRoutes(
           }
           store.addPendingCookies(id, cookies);
           nextStart++;
+          recordProfileEvent(store, {
+            profileId: id,
+            eventType: "cookies.updated",
+            status: "ok",
+            actor: "user",
+            summary: `Queued ${cookies.length} cookie(s) for next launch.`,
+            detail: { count: cookies.length, applied: "next-start" },
+          });
         }
       } catch (error) {
         errors.push({ id, error: msg(error), status: 500 });
@@ -613,9 +661,62 @@ export async function handleProfilesUiRoutes(
       store.upsertProfile(p);
       if ("timezone" in set) store.setTimezone(id, p.timezone);
       if ("cores" in set) store.setHardware(id, p.hardware);
+      const KNOWN_EDIT_FIELDS = new Set([
+        "name", "group", "platform", "username", "password", "email", "emailPassword", "twofa",
+        "resolution", "platformOs", "locale", "timezone", "fingerprintSeed", "cores",
+        "proxy", "proxyType", "extensions", "tags", "notes", "customNo",
+      ]);
+      const fields = Object.keys(set).filter((key) => KNOWN_EDIT_FIELDS.has(key));
+      if (proxyChanged) {
+        recordProfileEvent(store, {
+          profileId: id,
+          eventType: "proxy.updated",
+          status: "ok",
+          actor: "user",
+          summary: p.proxy ? "Updated saved proxy settings." : "Cleared saved proxy.",
+          detail: { fields, hasProxy: !!p.proxy },
+        });
+      } else if (fields.length === 1 && fields[0] === "notes") {
+        recordProfileEvent(store, {
+          profileId: id,
+          eventType: "notes.updated",
+          status: "ok",
+          actor: "user",
+          summary: p.notes ? "Updated environment notes." : "Cleared environment notes.",
+          detail: { fields: ["notes"], hasNotes: !!p.notes },
+        });
+      } else if (fields.length === 1 && fields[0] === "tags") {
+        recordProfileEvent(store, {
+          profileId: id,
+          eventType: "tags.updated",
+          status: "ok",
+          actor: "user",
+          summary: `Updated tags (${p.tags?.length ?? 0}).`,
+          detail: { fields: ["tags"], tagCount: p.tags?.length ?? 0 },
+        });
+      } else if (fields.length === 1 && fields[0] === "group") {
+        recordProfileEvent(store, {
+          profileId: id,
+          eventType: "group.changed",
+          status: "ok",
+          actor: "user",
+          summary: p.group ? `Moved to group "${p.group}".` : "Removed from group.",
+          detail: { fields: ["group"], group: p.group },
+        });
+      } else if (fields.length > 0) {
+        recordProfileEvent(store, {
+          profileId: id,
+          eventType: "config.updated",
+          status: "ok",
+          actor: "user",
+          summary: `Updated configuration fields: ${fields.join(", ")}.`,
+          detail: { fields },
+        });
+      }
       return Response.json({ ok: true, ...(restartRequired(store, id)) });
     } catch (e) {
-      return Response.json({ ok: false, error: msg(e) }, { status: e instanceof ProfileTagsValidationError ? 400 : 500 });
+      const badInput = e instanceof ProfileTagsValidationError || e instanceof ProfileNotesValidationError;
+      return Response.json({ ok: false, error: msg(e) }, { status: badInput ? 400 : 500 });
     }
   }
 
@@ -661,20 +762,77 @@ export async function handleProfilesUiRoutes(
     try {
       if (action[2] === "open") {
         const r = await launcher.start(id);
+        const warning = "warning" in r && typeof (r as { warning?: unknown }).warning === "string"
+          ? (r as { warning: string }).warning
+          : undefined;
+        recordProfileEvent(store, {
+          profileId: id,
+          eventType: "launch.started",
+          status: warning ? "warn" : "ok",
+          actor: "user",
+          summary: warning ? `Launched browser with warning: ${warning}` : "Launched browser environment.",
+          detail: { engine: profileEngine(profile) },
+          ...(warning ? { recoveryKind: "logs" as const } : {}),
+        });
         return openResponse(profile, r);
       }
       if (action[2] === "close") {
         const launch = store.getLaunch(id);
         await launcher.captureLocalSession(id);
-        return (await launcher.stop(id, launch ?? undefined))
-          ? Response.json({ ok: true })
-          : Response.json({ ok: false, error: "browser teardown unconfirmed" }, { status: 500 });
+        const stopped = await launcher.stop(id, launch ?? undefined);
+        if (stopped) {
+          recordProfileEvent(store, {
+            profileId: id,
+            eventType: "launch.stopped",
+            status: "ok",
+            actor: "user",
+            summary: "Closed browser environment.",
+            detail: { engine: profileEngine(profile) },
+          });
+          return Response.json({ ok: true });
+        }
+        recordProfileEvent(store, {
+          profileId: id,
+          eventType: "launch.stop_failed",
+          status: "failed",
+          actor: "user",
+          summary: "Browser teardown could not be confirmed.",
+          recoveryKind: "logs",
+        });
+        return Response.json({ ok: false, error: "browser teardown unconfirmed" }, { status: 500 });
       }
       const r = await launcher.clearCache(id);
+      recordProfileEvent(store, {
+        profileId: id,
+        eventType: "cache.cleared",
+        status: "ok",
+        actor: "user",
+        summary: "Cleared local browser cache.",
+      });
       return Response.json({ ok: true, cleared: r.cleared });
     } catch (e) {
+      const errorMessage = e instanceof BrowserLaunchError && e.guidance ? e.guidance : msg(e);
+      if (action[2] === "open") {
+        recordProfileEvent(store, {
+          profileId: id,
+          eventType: "launch.failed",
+          status: "failed",
+          actor: "user",
+          summary: `Launch failed: ${errorMessage}`,
+          recoveryKind: inferLaunchFailureRecoveryKind(errorMessage),
+        });
+      } else if (action[2] === "close") {
+        recordProfileEvent(store, {
+          profileId: id,
+          eventType: "launch.stop_failed",
+          status: "failed",
+          actor: "user",
+          summary: `Stop failed: ${errorMessage}`,
+          recoveryKind: "logs",
+        });
+      }
       return Response.json(
-        { ok: false, error: e instanceof BrowserLaunchError && e.guidance ? e.guidance : msg(e) },
+        { ok: false, error: errorMessage },
         { status: 500 },
       );
     }

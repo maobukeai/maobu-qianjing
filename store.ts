@@ -28,6 +28,7 @@ import { completeProfileFingerprint, normalizeChromiumRuntime, normalizeProfileE
 import { normalizeProfileHardware } from "./fingerprint.ts";
 import { normalizeProxySpec } from "./proxy.ts";
 import { assertSafeProfileId } from "./profile-id.ts";
+import { normalizeProfileNotes } from "./profile-notes.ts";
 import { assertValidProfile } from "./profile-validation.ts";
 import { mergeCookies } from "./parse.ts";
 import { fingerprintLaunchDigest, parseFingerprintSource, type FingerprintCaptureSource } from "./fingerprint-source.ts";
@@ -171,10 +172,11 @@ export class ProfileStore {
     assertValidProfile(p);
     const saved = this.transaction(() => {
       const existing = this.db
-        .query<{ seeded: number; trashed_at: number; engine: unknown; chromium_runtime: unknown; hardware_json: string; locale: string; proxy_json: string | null }, [string]>("SELECT seeded, trashed_at, engine, chromium_runtime, hardware_json, locale, proxy_json FROM profiles WHERE id = ?")
+        .query<{ seeded: number; trashed_at: number; engine: unknown; chromium_runtime: unknown; hardware_json: string; locale: string; proxy_json: string | null; notes: string }, [string]>("SELECT seeded, trashed_at, engine, chromium_runtime, hardware_json, locale, proxy_json, notes FROM profiles WHERE id = ?")
         .get(p.id);
       let nextProfile = p;
       if (!nextProfile.locale && existing?.locale) nextProfile = { ...nextProfile, locale: existing.locale };
+      if (nextProfile.notes === undefined && existing?.notes) nextProfile = { ...nextProfile, notes: existing.notes };
       // The runtime is fixed at creation. An edit or re-import that omits it keeps it.
       const storedRuntime = existing ? normalizeChromiumRuntime(existing.chromium_runtime, storedProfileEngine(existing.engine)) : undefined;
       if (!nextProfile.chromiumRuntime && storedRuntime) nextProfile = { ...nextProfile, chromiumRuntime: storedRuntime };
@@ -210,13 +212,13 @@ export class ProfileStore {
       this.db
         .query(
           `INSERT INTO profiles
-             (id, engine, chromium_runtime, hardware_json, firefox_config_json, acc_id, name, "group", platform, username, password, email, email_password, twofa, proxy_json, proxy_error, extensions_json, tags_json, custom_no, ua, timezone, timezone_manual, locale,
+             (id, engine, chromium_runtime, hardware_json, firefox_config_json, acc_id, name, "group", platform, username, password, email, email_password, twofa, proxy_json, proxy_error, extensions_json, tags_json, notes, custom_no, ua, timezone, timezone_manual, locale,
               screen_width, screen_height, fingerprint_seed, platform_os, fp_observed_json, fp_expected_json, fp_verdict_json, cookies_json, seeded, created_at, incarnation)
            -- fp_verdict_json is literal '': a verdict is a COMPUTED fact, written
            -- only by saveObservedFingerprint from a real measurement. If a caller
            -- could supply one, an import could hand itself a "verified" badge and
            -- the badge would mean nothing.
-           VALUES ($id,$engine,$chromiumRuntime,$hardware,$firefox,$acc,$name,$group,$platform,$user,$pass,$email,$emailPass,$twofa,$proxy,$proxyError,$ext,$tags,$customNo,$ua,$tz,$tzManual,$locale,$w,$h,$seed,$platformOs,$fpObserved,$fpExpected,'',$cookies,$seeded,$created,$incarnation)
+           VALUES ($id,$engine,$chromiumRuntime,$hardware,$firefox,$acc,$name,$group,$platform,$user,$pass,$email,$emailPass,$twofa,$proxy,$proxyError,$ext,$tags,$notes,$customNo,$ua,$tz,$tzManual,$locale,$w,$h,$seed,$platformOs,$fpObserved,$fpExpected,'',$cookies,$seeded,$created,$incarnation)
            ON CONFLICT(id) DO UPDATE SET
              engine=$engine, firefox_config_json=$firefox, hardware_json=$hardware, timezone_manual=$tzManual,
              acc_id=$acc, name=$name, "group"=$group, platform=$platform, username=$user, password=$pass,
@@ -226,7 +228,7 @@ export class ProfileStore {
              -- explicit clear removes the quarantine and writes the new value.
              proxy_json = CASE WHEN $proxyError <> '' THEN proxy_json ELSE $proxy END,
              proxy_error = CASE WHEN $proxyError <> '' THEN $proxyError ELSE NULL END,
-             extensions_json=$ext, tags_json=$tags, custom_no=$customNo, ua=$ua,
+             extensions_json=$ext, tags_json=$tags, notes=$notes, custom_no=$customNo, ua=$ua,
              -- Timezone on re-import:
              --   * new lookup resolved one ($tz<>'')       -> use it
              --   * else proxy UNCHANGED                     -> keep stored value
@@ -278,6 +280,7 @@ export class ProfileStore {
           $proxyError: proxyError || null,
           $ext: JSON.stringify(nextProfile.extensions ?? []),
           $tags: JSON.stringify(nextProfile.tags ?? []),
+          $notes: nextProfile.notes !== undefined ? normalizeProfileNotes(nextProfile.notes) : "",
           $customNo: nextProfile.customNo ?? "",
           $ua: nextProfile.ua,
           $tz: nextProfile.timezone ?? "",
@@ -542,13 +545,14 @@ export class ProfileStore {
     return row?.source ? parseFingerprintSource(safeParse(row.source, null)) : null;
   }
 
-  /** Delete a profile and its launch/binding/policy rows. Returns true if a row was removed. */
+  /** Delete a profile and its launch/binding/policy/timeline rows. Returns true if a row was removed. */
   deleteProfile(id: string): boolean {
     return this.transaction(() => {
       this.db.query(`DELETE FROM launches WHERE profile_id = ?`).run(id);
       this.db.query(`DELETE FROM agent_temporary_profiles WHERE profile_id = ?`).run(id);
       this.db.query(`DELETE FROM profile_proxy_bindings WHERE profile_id = ?`).run(id);
       this.db.query(`DELETE FROM profile_resource_policies WHERE profile_id = ?`).run(id);
+      this.db.query(`DELETE FROM profile_events WHERE profile_id = ?`).run(id);
       const res = this.db.query(`DELETE FROM profiles WHERE id = ?`).run(id);
       const deleted = Number(res.changes) > 0;
       if (deleted) this.notifyMutation({ kind: "roster", reason: "deleteProfile", profileIds: [id] });
@@ -1123,6 +1127,7 @@ function rowToProfile(row: any, protector?: LocalSecretProtector): Profile {
     ...(stored.error ? { proxyError: stored.error } : {}),
     extensions: safeParse<string[]>(row.extensions_json, []),
     tags: safeParse<string[]>(row.tags_json, []),
+    notes: typeof row.notes === "string" ? row.notes : "",
     customNo: typeof row.custom_no === "string" ? row.custom_no : "",
     ua: row.ua ?? "",
     timezone: row.timezone ?? "",

@@ -54,6 +54,35 @@
 .profile-details-header h2 { margin: 6px 0 0; color: var(--ink); font-size: var(--t-md); font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; }
 .profile-details-header h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 .profile-details-close { flex: 0 0 auto; }
+.profile-details-tabs {
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--surface-sunken);
+}
+.profile-details-tab {
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.profile-details-tab:hover {
+  color: var(--ink);
+}
+.profile-details-tab.is-active {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--sh-xs);
+}
 .profile-details-content { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 16px 18px; overscroll-behavior: contain; }
 
 /* Status pill with GPU-composited breathing pulse (`transform` + `opacity` only, never box-shadow). */

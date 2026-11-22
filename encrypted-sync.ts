@@ -16,7 +16,7 @@ const MAX_PROFILES = 10_000;
 const FILE_NAME = /^maobu-sync-(\d{13})-[a-f0-9]{16}\.mqsync$/;
 const PROFILE_FIELDS = new Set([
   "id", "engine", "chromiumRuntime", "hardware", "firefox", "accId", "name", "group", "platform", "username", "password", "email", "emailPassword",
-  "twofa", "proxy", "proxyError", "extensions", "tags", "customNo", "ua", "timezone", "timezoneManual", "displayScale", "locale", "screenWidth", "screenHeight",
+  "twofa", "proxy", "proxyError", "extensions", "tags", "notes", "customNo", "ua", "timezone", "timezoneManual", "displayScale", "locale", "screenWidth", "screenHeight",
   "fingerprintSeed", "platformOs", "fpObserved", "fpExpected", "fpVerdict", "cookies", "seeded",
 ]);
 export interface SyncSnapshot {
