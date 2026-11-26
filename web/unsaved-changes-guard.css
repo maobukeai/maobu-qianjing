@@ -62,9 +62,6 @@
 }
 .unsaved-changes-guard-discard { color: var(--danger-ink); border-color: var(--danger-line); background: var(--danger-soft); }
 .unsaved-changes-guard-discard:hover { border-color: var(--danger-ink); }
-:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="dialog"] > .unsaved-changes-guard-backdrop > .unsaved-changes-guard { transform: none; transition: transform var(--desktop-motion-enter) var(--desktop-motion-ease); }
-:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="dialog"]:is([data-motion-phase="entering"], [data-motion-phase="exiting"]) > .unsaved-changes-guard-backdrop > .unsaved-changes-guard { transform: translateY(8px) scale(.992); }
-:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-phase="exiting"] > .unsaved-changes-guard-backdrop > .unsaved-changes-guard { transition-duration: var(--desktop-motion-exit); }
 @media (max-width: 520px) {
   .unsaved-changes-guard-backdrop { padding: 12px; }
   .unsaved-changes-guard { max-height: calc(100dvh - 24px); }

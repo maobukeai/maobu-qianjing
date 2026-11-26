@@ -1282,26 +1282,27 @@ mod win32_engine {
                 thread::sleep(Duration::from_millis(delay));
             }
         }
-        if press_enter && !cancel_flag.load(Ordering::Acquire) {
-            if verify_live_window(target.hwnd_raw, &target.allowed_pids, target.expected_class) {
-                let post_hwnd = resolve_key_target(slave_hwnd, target);
-                let _ = unsafe {
-                    PostMessageW(
-                        Some(post_hwnd),
-                        WM_KEYDOWN,
-                        WPARAM(VK_RETURN.0 as usize),
-                        LPARAM(make_key_lparam(0x1C, false, false, false)),
-                    )
-                };
-                let _ = unsafe {
-                    PostMessageW(
-                        Some(post_hwnd),
-                        WM_KEYUP,
-                        WPARAM(VK_RETURN.0 as usize),
-                        LPARAM(make_key_lparam(0x1C, false, true, false)),
-                    )
-                };
-            }
+        if press_enter
+            && !cancel_flag.load(Ordering::Acquire)
+            && verify_live_window(target.hwnd_raw, &target.allowed_pids, target.expected_class)
+        {
+            let post_hwnd = resolve_key_target(slave_hwnd, target);
+            let _ = unsafe {
+                PostMessageW(
+                    Some(post_hwnd),
+                    WM_KEYDOWN,
+                    WPARAM(VK_RETURN.0 as usize),
+                    LPARAM(make_key_lparam(0x1C, false, false, false)),
+                )
+            };
+            let _ = unsafe {
+                PostMessageW(
+                    Some(post_hwnd),
+                    WM_KEYUP,
+                    WPARAM(VK_RETURN.0 as usize),
+                    LPARAM(make_key_lparam(0x1C, false, true, false)),
+                )
+            };
         }
     }
 

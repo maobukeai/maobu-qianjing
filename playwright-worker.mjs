@@ -59,6 +59,11 @@ async function sessionStep(operation, run) {
 const ORIGIN_READ_TIMEOUT_MS = 20_000;
 const ORIGINS_BUDGET_MS = 120_000;
 
+function boundedTimeout(value, fallback, max = fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.max(1, Math.min(n, max)) : fallback;
+}
+
 /** Settle with `promise`, or reject after `timeoutMs` and call `onTimeout`; the late promise is ignored. */
 async function within(promise, timeoutMs, onTimeout) {
   promise.catch(() => {});
@@ -84,7 +89,7 @@ async function closeWithin(close, timeoutMs = 5_000) {
   } finally { if (timer) clearTimeout(timer); }
 }
 
-async function withBrowser(chromium, endpoint, timeout, operation, run) {
+async function withBrowser(chromium, endpoint, timeout, operation, run, disconnectTimeoutMs = 5_000) {
   const deadline = Date.now() + timeout;
   const sessionOperation = operation === "session-restore" || operation === "session-capture";
   let browser;
@@ -120,7 +125,7 @@ async function withBrowser(chromium, endpoint, timeout, operation, run) {
   } catch (error) {
     operationError = error;
   }
-  const detached = await closeWithin(() => browser.close());
+  const detached = await closeWithin(() => browser.close(), disconnectTimeoutMs);
   if (operationError) throw operationError;
   if (!detached) throw sessionOperation
     ? sessionError("disconnect", "timeout")
@@ -782,8 +787,8 @@ export async function captureSession(browser, payload, options = {}) {
   try {
     const byOrigin = new Map();
     const unreadable = [];
-    const deadline = Date.now() + ORIGINS_BUDGET_MS;
-    const readTimeoutMs = options.originReadTimeoutMs ?? ORIGIN_READ_TIMEOUT_MS;
+    const deadline = Date.now() + boundedTimeout(payload.originsBudgetMs, ORIGINS_BUDGET_MS);
+    const readTimeoutMs = options.originReadTimeoutMs ?? boundedTimeout(payload.originReadTimeoutMs, ORIGIN_READ_TIMEOUT_MS);
     let stalled = false;
     for (const origin of [...origins].sort()) {
       if (WEB_STORE_ORIGINS.has(origin)) continue;
@@ -1220,6 +1225,21 @@ export async function operatePersistentContext(browser, context, operation, payl
     if (!payload.temporary && context.pages().some((page) => {
       try { return typeof page.url === "function" && page.url() === payload.url; } catch { return false; }
     })) return { createdPageTargetIds: [] };
+    if (payload.reuseBlank) {
+      const existing = [...context.pages()];
+      const shown = await shownPageUrls(context, existing, true);
+      const blank = existing.find((page) => {
+        const current = shown.get(page) ?? "";
+        return current === "about:blank" || isInternalNewTabUrl(current);
+      });
+      if (blank) {
+        try {
+          await gotoOrReplace(blank, payload.url, 15_000);
+          await blank.bringToFront?.().catch(() => {});
+        } catch {}
+        return { createdPageTargetIds: [] };
+      }
+    }
     const page = await context.newPage();
     try { await page.goto(payload.url, { waitUntil: "domcontentloaded", timeout: 15_000 }); } catch {}
     if (payload.temporary) await page.close().catch(() => {});
@@ -1450,23 +1470,39 @@ async function operate(chromium, operation, payload) {
           await temporaryPage.close();
           temporaryPage = undefined;
         } else {
-          let canCreate = false;
-          if (automation && typeof context.newCDPSession === "function") {
-            const cdp = await context.newCDPSession(automation);
-            try {
-              const { bounds } = await cdp.send("Browser.getWindowForTarget");
-              canCreate = bounds?.windowState !== "minimized";
-            } catch {
-              canCreate = false;
-            } finally {
-              await cdp.detach().catch(() => {});
+          let reused = false;
+          if (payload.reuseBlank) {
+            const existing = [...context.pages()];
+            const shown = await shownPageUrls(context, existing, false);
+            const blank = existing.find((page) => {
+              const current = shown.get(page) ?? "";
+              return current === "about:blank" || current === UNGOOGLED_FIRST_RUN_URL || isInternalNewTabUrl(current);
+            });
+            if (blank) {
+              reused = true;
+              await blank.goto(payload.url, { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => {});
+              await blank.bringToFront?.().catch(() => {});
             }
           }
-          // The card opens as a background tab, so the user's tab stays in front without being
-          // activated again, which would focus it.
-          if (canCreate) {
-            const page = await context.newPage();
-            await page.goto(payload.url, { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => {});
+          if (!reused) {
+            let canCreate = false;
+            if (automation && typeof context.newCDPSession === "function") {
+              const cdp = await context.newCDPSession(automation);
+              try {
+                const { bounds } = await cdp.send("Browser.getWindowForTarget");
+                canCreate = bounds?.windowState !== "minimized";
+              } catch {
+                canCreate = false;
+              } finally {
+                await cdp.detach().catch(() => {});
+              }
+            }
+            // The card opens as a background tab, so the user's tab stays in front without being
+            // activated again, which would focus it.
+            if (canCreate) {
+              const page = await context.newPage();
+              await page.goto(payload.url, { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => {});
+            }
           }
         }
         await targetCdp.send("Target.getTargets");
@@ -1537,7 +1573,7 @@ async function operate(chromium, operation, payload) {
       } finally { if (payload.temporary) await page.close().catch(() => {}); }
     }
     throw typed("invalid_request");
-  });
+  }, boundedTimeout(payload.disconnectTimeoutMs, 5_000));
 }
 
 export async function runWorkerMain() {

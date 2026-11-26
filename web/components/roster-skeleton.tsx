@@ -8,7 +8,7 @@ export interface RosterSkeletonProps {
   rows?: number;
   /** Number of visible table columns so cells align with `<thead>`. */
   visibleColumnCount: number;
-  /** Active roster density for matching row heights (`44 | 48 | 52` px). */
+  /** Active roster density for matching row heights (`36 | 44 | 48` px). */
   density?: RosterSkeletonDensity;
 }
 

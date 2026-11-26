@@ -3,18 +3,27 @@ use std::{env, fs, path::PathBuf};
 fn main() {
     println!("cargo:rerun-if-env-changed=MAOBU_UPDATE_PUBLIC_KEY");
     println!("cargo:rerun-if-env-changed=MAOBU_UPDATE_ENDPOINT");
-    tauri_build::build();
-
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("manifest directory"));
     let source = manifest.join("generated/browser.json");
     println!("cargo:rerun-if-changed={}", source.display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest.join("generated/VERSION.txt").display()
+    );
+    let windows = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
+    if windows {
+        let sidecar = manifest.join("binaries/aliasmode-sidecar-x86_64-pc-windows-msvc.exe");
+        if sidecar.exists() {
+            println!("cargo:rerun-if-changed={}", sidecar.display());
+        }
+    }
+    tauri_build::build();
 
     let metadata = fs::read_to_string(&source)
         .expect("generated browser metadata is missing; run `bun run desktop:prepare` first");
     let parsed: serde_json::Value =
         serde_json::from_str(&metadata).expect("valid generated browser metadata");
     // Build scripts run on the host, so the target comes from Cargo's environment.
-    let windows = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
     // Apple's linker signs arm64 programs by itself, but not x86_64 ones. Tauri signs the main
     // program before aliasmode-mcp, and codesign refuses to seal an app around unsigned code.
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos")

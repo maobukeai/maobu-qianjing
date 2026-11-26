@@ -644,7 +644,7 @@ export function ProfileCreateModal({
                         <select value={form.chromiumRuntime} onChange={(e) => setF("chromiumRuntime", e.target.value as FormChromiumRuntime)}>
                           <option value="auto">{t("Device default")}</option>
                           {appMode?.defaultChromiumRuntime
-                            ? <><option value="aliasmode">{t("Chromium 155 (default)")}</option><option value="">{t("CloakBrowser 146")}</option></>
+                            ? <><option value="aliasmode">{t("Chromium 155 (default)")}</option><option value="">{t("CloakBrowser 146 (legacy compatibility)")}</option></>
                             : <><option value="">{t("CloakBrowser 146 (default)")}</option><option value="aliasmode">{t("Chromium 155")}</option></>}
                         </select>
                         {form.chromiumRuntime !== "auto" && <small>{!form.chromiumRuntime

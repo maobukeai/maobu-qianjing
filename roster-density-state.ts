@@ -2,9 +2,9 @@
 export const ROSTER_DENSITY_KEY = "aliasmode.roster.density";
 export type RosterDensity = "compact" | "standard" | "comfortable";
 export const ROSTER_DENSITY_ROW_HEIGHT: Record<RosterDensity, number> = {
-  compact: 44,
-  standard: 48,
-  comfortable: 52,
+  compact: 36,
+  standard: 44,
+  comfortable: 48,
 };
 
 export function isRosterDensity(value: unknown): value is RosterDensity {

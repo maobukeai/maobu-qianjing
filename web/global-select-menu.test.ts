@@ -149,3 +149,55 @@ test("installGlobalSelectMenus skips disabled, multiple, size>1, and data-native
     dispose();
   });
 });
+
+test("selecting an option does not trigger parent popover pointerdown dismissal and Escape stops sibling capture listeners", async () => {
+  await withHappyDom((dom) => {
+    const select = dom.document.createElement("select");
+    select.innerHTML = `<option value="zh-CN">简体中文</option><option value="en-US">English</option>`;
+    dom.document.body.appendChild(select as never);
+    Object.defineProperty(select, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 20, top: 40, right: 160, bottom: 72, width: 140, height: 32 }),
+    });
+
+    const dispose = installGlobalSelectMenus();
+
+    let outerPointerDowns = 0;
+    const onDocPointerDown = (e: Event) => {
+      if (!select.contains(e.target as never)) outerPointerDowns++;
+    };
+    document.addEventListener("pointerdown", onDocPointerDown);
+
+    let siblingCaptureEscapes = 0;
+    const onDocCaptureKey = (e: Event) => {
+      if ((e as unknown as KeyboardEvent).key === "Escape") siblingCaptureEscapes++;
+    };
+    document.addEventListener("keydown", onDocCaptureKey, true);
+
+    const changes: string[] = [];
+    select.addEventListener("change", () => changes.push(select.value));
+
+    select.dispatchEvent(new dom.MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+    const popover = dom.document.body.querySelector(".global-select-popover") as unknown as HTMLElement | null;
+    expect(popover).toBeTruthy();
+
+    const options = Array.from(popover!.querySelectorAll<HTMLButtonElement>(".global-select-option"));
+    const PointerCtor = (dom as unknown as { PointerEvent?: new (type: string, init?: EventInit) => Event }).PointerEvent ?? dom.Event;
+    options[1]!.dispatchEvent(new PointerCtor("pointerdown", { bubbles: true, cancelable: true }) as never);
+    options[1]!.dispatchEvent(new dom.MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }) as never);
+    options[1]!.click();
+
+    expect(outerPointerDowns).toBe(0);
+    expect(select.value).toBe("en-US");
+    expect(changes).toEqual(["en-US"]);
+
+    select.dispatchEvent(new dom.MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+    dom.document.dispatchEvent(new dom.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    expect(dom.document.body.querySelector(".global-select-popover")).toBeNull();
+    expect(siblingCaptureEscapes).toBe(0);
+
+    document.removeEventListener("pointerdown", onDocPointerDown);
+    document.removeEventListener("keydown", onDocCaptureKey, true);
+    dispose();
+  });
+});

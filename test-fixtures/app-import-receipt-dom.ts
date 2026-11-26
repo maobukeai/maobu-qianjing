@@ -36,6 +36,7 @@ async function run(scenario: string) {
       "/ui/api/health": { ok: true, version: "0.1.0-fixture", root: "inert-fixture-root" },
       "/ui/api/extensions": { ok: true, extensions: [] },
       "/ui/api/diagnose/latest": { ok: true, report: null },
+      "/ui/api/settings/assistant/services": { ok: true, catalog: { services: [], defaultId: null } },
       "/ui/api/disk-space": { ok: true, freeBytes: 50 * 1024 ** 3, low: false },
       "/ui/api/runtime-downloads": { ok: true, downloads: [] },
       "/ui/api/workspace/capability": { ok: true, token: "c".repeat(64) },

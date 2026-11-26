@@ -15,6 +15,7 @@ const DOCUMENTS: &[(&str, &str)] = &[
         "/help-center/products-and-features/supported-protocols",
     ),
     ("help.decodo.com", "/docs/residential-proxy-session-types"),
+    ("github.com", "/maobukeai/maobu-qianjing"),
 ];
 
 fn destination(input: &str) -> Result<Url, &'static str> {
@@ -102,6 +103,7 @@ mod tests {
         for source in [
             include_str!("../../web/proxy-resources.tsx"),
             include_str!("../../web/local-assistant.tsx"),
+            include_str!("../../web/about-popover.tsx"),
         ] {
             for fragment in source.split("\"https://").skip(1) {
                 let address = format!("https://{}", fragment.split('"').next().unwrap());

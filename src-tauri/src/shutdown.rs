@@ -178,6 +178,7 @@ pub fn restart_after_mode_change(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn restart_workspace(
     app: AppHandle,
     window: WebviewWindow,
@@ -326,6 +327,7 @@ pub(crate) fn desktop_close_unregister(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn desktop_close_resolve(
     app: AppHandle,
     window: WebviewWindow,

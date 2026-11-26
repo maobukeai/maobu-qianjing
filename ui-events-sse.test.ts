@@ -4,9 +4,10 @@ import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildNewProfile } from "./create.ts";
+import { downloadBoundedCurl } from "./bounded-curl.ts";
 import { DESKTOP_SESSION_HEADER } from "./desktop-runtime.ts";
 import { LifecycleAdmissionController } from "./lifecycle-admission.ts";
-import { downloadResumable, subscribeRuntimeDownloads, trackRuntimeDownload, type RuntimeDownload } from "./runtime-download.ts";
+import { downloadResumable, notifyRuntimeDownloadProgress, runtimeDownloads, subscribeRuntimeDownloads, trackRuntimeDownload, type RuntimeDownload } from "./runtime-download.ts";
 import { ScriptLibrary, ScriptSupervisor, type ScriptRun } from "./scripts.ts";
 import { rejectUntrustedLocalRequest } from "./server.ts";
 import { ProfileStore, type StoreMutationEvent } from "./store.ts";
@@ -408,6 +409,54 @@ test("subscribeRuntimeDownloads notifies start/finish immediately and throttles 
     unsub();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("downloadBoundedCurl emits live intermediate progress snapshots during slow transfers", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "maobu-curl-sse-"));
+  const partial = join(dir, "chromium.zip.part");
+  const snapshots: RuntimeDownload[][] = [];
+  const unsub = subscribeRuntimeDownloads((list) => snapshots.push(list));
+  try {
+    await trackRuntimeDownload("aliasmode", partial, 8, async () => {
+      await downloadBoundedCurl("https://example.test/chromium.zip", partial, {
+        executable: "fixture-curl",
+        maxBytes: 8,
+        timeoutMs: 5_000,
+        exactSize: true,
+        spawn: () => {
+          const encoder = new TextEncoder();
+          const stream = new ReadableStream<Uint8Array>({
+            async start(controller) {
+              controller.enqueue(encoder.encode("1234"));
+              await Bun.sleep(280);
+              controller.enqueue(encoder.encode("5678200"));
+              controller.close();
+            },
+          });
+          return { stdout: stream, exited: Promise.resolve(0), kill() {} };
+        },
+      });
+    });
+
+    const intermediate = snapshots.flat().filter((item) => item.receivedBytes > 0 && item.receivedBytes < 8);
+    expect(intermediate.length).toBeGreaterThanOrEqual(1);
+    expect(snapshots[0]).toEqual([{ runtime: "aliasmode", receivedBytes: 0, totalBytes: 8 }]);
+    expect(snapshots.at(-1)).toEqual([]);
+  } finally {
+    unsub();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("notifyRuntimeDownloadProgress reports in-memory bytes immediately even before disk metadata catches up", async () => {
+  const missingOnDisk = join(tmpdir(), `maobu-mem-only-${Date.now()}.part`);
+  await trackRuntimeDownload("cloakbrowser", missingOnDisk, 1000, async () => {
+    notifyRuntimeDownloadProgress(missingOnDisk, 420);
+    expect(runtimeDownloads()).toEqual([{ runtime: "cloakbrowser", receivedBytes: 420, totalBytes: 1000 }]);
+    notifyRuntimeDownloadProgress(missingOnDisk, 0);
+    expect(runtimeDownloads()).toEqual([{ runtime: "cloakbrowser", receivedBytes: 0, totalBytes: 1000 }]);
+  });
+  expect(runtimeDownloads()).toEqual([]);
 });
 
 test("ScriptSupervisor emits redacted onRunChanged transitions", async () => {

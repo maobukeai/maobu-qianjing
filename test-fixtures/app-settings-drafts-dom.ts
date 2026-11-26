@@ -73,6 +73,7 @@ async function run(scenario: string) {
       "/ui/api/workspace/overview": { ok: true, workspaceId: workspace, root: "inert-settings-fixture", profileCount: 0, trashCount: 0, runningCount: 0, bytes: 0, freeBytes: 50 * 1024 ** 3, lastBackupAt: null, backupBusy: false, scriptRunning: false },
       "/ui/api/workspace/backups": { ok: true, backups: [], jobs: [] },
       "/ui/api/settings": { ok: true, settings: settings(workspace) },
+      "/ui/api/settings/assistant/services": { ok: true, catalog: { services: [], defaultId: null } },
       "/ui/api/settings/sync/files": { ok: true, files: [] },
       "/ui/api/settings/updates": { ok: true, update: null },
       "/ui/api/settings/runtimes": { ok: true, inventory: getBrowserRuntimeInventory({ runtimeRoot: "/inert-cache", platform: "win32", arch: "x64", chromiumDefault: "aliasmode-chromium", cloakSource: "managed", firefoxSource: "managed" }) },

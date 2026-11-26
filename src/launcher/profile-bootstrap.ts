@@ -93,10 +93,11 @@ export function profileCardUrl(profileId: string): string {
   return `http://127.0.0.1:${ALIASMODE_PORT}/card?id=${encodeURIComponent(profileId)}`;
 }
 
-export async function openProfileCardTab(ws: string, url: string): Promise<void> {
+export async function openProfileCardTab(ws: string, url: string, opts?: { reuseBlank?: boolean }): Promise<void> {
   await runPlaywrightWorker("profile-card", {
     endpoint: ws,
     url,
+    ...(opts?.reuseBlank ? { reuseBlank: true } : {}),
     connectTimeoutMs: 10_000,
   });
 }

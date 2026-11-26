@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, unlinkSync } from "node:fs";
 import { lstat, open, readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Launcher } from "./launcher.ts";
@@ -7,7 +7,8 @@ import type { ProfileStore } from "./store.ts";
 import type { StatePaths } from "./paths.ts";
 import type { ScriptSupervisor } from "./scripts.ts";
 import { validAgentAuthorization } from "./agent-control.ts";
-import { WorkspaceCatalog, writeWorkspaceJson } from "./workspaces.ts";
+import { WorkspaceCatalog, plainDirectory, workspaceEntryExists, writeWorkspaceJson } from "./workspaces.ts";
+import { renameWithWindowsRetrySync } from "./windows-rename.ts";
 import { validateBackupPassword, WorkspaceBackupService } from "./workspace-backups.ts";
 import { WorkspaceBusyError, WorkspaceMaintenance, workspaceRequestMutates } from "./workspace-maintenance.ts";
 import { recoverWorkspaceUploads, stageWorkspaceUpload } from "./workspace-upload-staging.ts";
@@ -22,7 +23,36 @@ export function isOnboardingStateValue(value: unknown): value is OnboardingState
   return value === "open" || value === "collapsed" || value === "dismissed";
 }
 const MAX_JSON_BYTES = 16 * 1024;
+const MAX_CUSTOM_ICON_BYTES = 2 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = 20 * 1024 ** 3;
+const CUSTOM_ICON_MIME_BY_EXT: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  webp: "image/webp",
+  gif: "image/gif",
+};
+
+function detectImageFormat(bytes: Uint8Array): { ext: "png" | "jpg" | "webp" | "gif"; contentType: string } | null {
+  if (bytes.length >= 8
+    && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
+    && bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a) {
+    return { ext: "png", contentType: "image/png" };
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return { ext: "jpg", contentType: "image/jpeg" };
+  }
+  if (bytes.length >= 6
+    && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38
+    && (bytes[4] === 0x37 || bytes[4] === 0x39) && bytes[5] === 0x61) {
+    return { ext: "gif", contentType: "image/gif" };
+  }
+  if (bytes.length >= 12
+    && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46
+    && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) {
+    return { ext: "webp", contentType: "image/webp" };
+  }
+  return null;
+}
 const NO_STORE = { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" };
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: NO_STORE });
 const detail = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -394,9 +424,113 @@ export class WorkspaceManagement {
         if (!hash) { const digest = createHash("sha256"); for await (const chunk of createReadStream(file.path)) digest.update(chunk); hash = digest.digest("hex"); }
         return new Response(Bun.file(file.path), { headers: { ...NO_STORE, "Content-Type": "application/octet-stream", "Content-Length": String(file.size), "Content-Disposition": `attachment; filename="${download[1]}.mqbackup"`, "X-Backup-SHA256": hash } });
       }
+      if (url.pathname === PREFIX + "/icons" && request.method === "POST") {
+        return await this.uploadCustomIcon(request);
+      }
+      const customIcon = /^\/ui\/api\/workspace\/icons\/([0-9a-f]{32}\.(png|jpg|webp|gif))$/.exec(url.pathname);
+      if (customIcon && request.method === "GET") {
+        return await this.readCustomIcon(customIcon[1]!, customIcon[2]!);
+      }
       return json({ ok: false, error: "Unknown workspace operation" }, 404);
     } catch (error: any) {
       return json({ ok: false, ...(error instanceof WorkspaceBusyError ? { code: "workspace_busy" } : {}), error: detail(error) }, Number.isInteger(error?.status) ? error.status : 400);
     }
+  }
+
+  private async uploadCustomIcon(request: Request): Promise<Response> {
+    const contentLength = Number(request.headers.get("content-length") || 0);
+    if (contentLength > MAX_CUSTOM_ICON_BYTES) {
+      throw Object.assign(new Error("Icon files must be 2 MB or smaller."), { status: 413 });
+    }
+    const stream = request.body;
+    if (!stream) throw new Error("Only PNG, JPG, WebP, and GIF images are supported.");
+    const reader = stream.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > MAX_CUSTOM_ICON_BYTES) {
+          throw Object.assign(new Error("Icon files must be 2 MB or smaller."), { status: 413 });
+        }
+        chunks.push(value);
+      }
+    } catch (error) {
+      await reader.cancel().catch(() => {});
+      throw error;
+    } finally {
+      try { reader.releaseLock(); } catch {}
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    const format = detectImageFormat(bytes);
+    if (!format) throw new Error("Only PNG, JPG, WebP, and GIF images are supported.");
+
+    const iconsDir = join(this.catalog.home, "workspace-icons");
+    plainDirectory(iconsDir, true);
+    const hash = createHash("sha256").update(bytes).digest("hex").slice(0, 32);
+    const filename = `${hash}.${format.ext}`;
+    const target = join(iconsDir, filename);
+    if (workspaceEntryExists(target)) {
+      const stat = await lstat(target);
+      if (stat.isSymbolicLink() || !stat.isFile()) throw new Error("Linked workspace icon files are not supported");
+    } else {
+      const temporary = join(iconsDir, `.${filename}.${randomBytes(8).toString("hex")}.tmp`);
+      const handle = await open(temporary, "wx", 0o600);
+      let failed = false;
+      try {
+        let writtenOffset = 0;
+        try {
+          while (writtenOffset < bytes.byteLength) {
+            const { bytesWritten } = await handle.write(bytes, writtenOffset);
+            if (!bytesWritten) throw new Error("Could not save workspace icon");
+            writtenOffset += bytesWritten;
+          }
+          await handle.sync();
+        } finally {
+          await handle.close();
+        }
+        renameWithWindowsRetrySync(temporary, target);
+      } catch (error) {
+        failed = true;
+        throw error;
+      } finally {
+        try { if (workspaceEntryExists(temporary)) unlinkSync(temporary); }
+        catch (error) { if (!failed) throw error; }
+      }
+    }
+    return json({ ok: true, icon: `custom:${filename}` }, 201);
+  }
+
+  private async readCustomIcon(filename: string, ext: string): Promise<Response> {
+    const iconsDir = join(this.catalog.home, "workspace-icons");
+    if (!workspaceEntryExists(iconsDir)) return json({ ok: false, error: "Workspace icon not found" }, 404);
+    plainDirectory(iconsDir);
+    const target = join(iconsDir, filename);
+    let stat;
+    try {
+      stat = await lstat(target);
+    } catch (error: any) {
+      if (error?.code === "ENOENT") return json({ ok: false, error: "Workspace icon not found" }, 404);
+      throw error;
+    }
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > MAX_CUSTOM_ICON_BYTES) {
+      return json({ ok: false, error: "Linked workspace icon files are not supported" }, 403);
+    }
+    const contentType = CUSTOM_ICON_MIME_BY_EXT[ext] ?? "application/octet-stream";
+    return new Response(Bun.file(target), {
+      headers: {
+        "Content-Type": contentType,
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, max-age=86400",
+        "Referrer-Policy": "no-referrer",
+      },
+    });
   }
 }

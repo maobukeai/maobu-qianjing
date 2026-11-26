@@ -99,7 +99,7 @@ async function run(scenario: string) {
     }
 
     assert.equal(field("API key").value, "");
-    assert.match(dom.container.querySelector(".model-services-list")!.textContent, /API key required for this session/);
+    assert.match(dom.container.querySelector(".model-services-list")!.textContent, /API key required/);
     await selectService(requiresKey.name);
     assert.equal(button("Test and load models").disabled, true);
     await selectService(local.name);
@@ -128,7 +128,7 @@ async function run(scenario: string) {
     assert.equal(catalog.defaultId, remoteId);
     await click("Clear default model service");
     assert.equal(catalog.defaultId, null);
-    await click("Clear session key");
+    await click("Clear saved key");
     assert.match(dom.container.textContent, /Saving will clear/);
     await click("Save connection");
     assert.equal(calls.at(-1)?.body?.apiKey, "");

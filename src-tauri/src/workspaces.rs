@@ -116,7 +116,7 @@ fn is_link(metadata: &fs::Metadata) -> bool {
     {
         use std::os::windows::fs::MetadataExt;
         // Junctions and other reparse points need the same refusal as symlinks.
-        return metadata.file_attributes() & 0x400 != 0;
+        metadata.file_attributes() & 0x400 != 0
     }
     #[cfg(not(windows))]
     false

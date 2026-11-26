@@ -17,7 +17,6 @@
   "Choose the context you share": "Shared context",
   "Context sharing on": "On",
   "Context sharing off": "Off",
-  "API keys are kept for this app session. Enter the key again after restarting.": "Re-enter the API key after restarting.",
   "Messages will be sent to the selected API service. Switching services starts a new request context.": "Messages go to this service. Switching services resets the request context.",
   "This connects to a loopback service. Use Ollama's local-only mode when you need offline inference.": "Connects to this device. Enable Ollama's local-only mode for offline use.",
   "Close profiles before capturing complete browser storage. A saved session only contains data captured by this app.": "Close browsers before making a full backup. Snapshots carry only the session data saved by this app.",

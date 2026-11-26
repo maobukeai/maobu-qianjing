@@ -2,17 +2,19 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, linkSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { AssistantModelServices, AssistantServicesError } from "./assistant-model-services.ts";
+import { ASSISTANT_MODEL_CREDENTIALS_FILE, AssistantModelServices, AssistantServicesError } from "./assistant-model-services.ts";
+import { createLocalSecretProtector } from "./dpapi.ts";
 
 const parent = realpathSync(tmpdir()), roots: string[] = [];
 const remote = { name: "Work API", provider: "openai-compatible" as const, endpoint: "https://api.example.com/v1", model: "example-chat" };
 const local = { name: "Local model", provider: "ollama", endpoint: "http://127.0.0.1:11434", model: "llama3.2:latest" };
 const key = "synthetic-session-key";
+const testProtector = createLocalSecretProtector({ key: Buffer.alloc(32, 7) });
 
-function store(): AssistantModelServices {
+function store(protector = testProtector): AssistantModelServices {
   const root = mkdtempSync(join(parent, "maobu-assistant-catalog-"));
   roots.push(root);
-  return new AssistantModelServices(root);
+  return new AssistantModelServices(root, { protector });
 }
 
 afterEach(() => {
@@ -24,10 +26,11 @@ afterEach(() => {
 });
 
 describe("workspace model service catalog", () => {
-  test("persists explicit model selections and defaults without persisting or returning credentials", () => {
+  test("persists model metadata separately and stores encrypted API keys across restarts without leaking plaintext", () => {
     const owner = store();
     expect(owner.list()).toEqual({ services: [], defaultId: null });
     expect(existsSync(owner.path)).toBe(false);
+    expect(existsSync(owner.credentialsPath)).toBe(false);
     const added = owner.save({ ...remote, apiKey: key });
     const service = added.services[0]!;
     expect(service).toEqual({ id: expect.stringMatching(/^model_[0-9a-f]{32}$/), ...remote, credentialConfigured: true });
@@ -38,13 +41,29 @@ describe("workspace model service catalog", () => {
     expect(raw).not.toContain(key);
     expect(raw).not.toContain("apiKey");
     expect(raw).not.toContain("credentialConfigured");
+    expect(existsSync(owner.credentialsPath)).toBe(true);
+    const encryptedRaw = readFileSync(owner.credentialsPath, "utf8");
+    expect(encryptedRaw).not.toContain(key);
+    expect(encryptedRaw).toContain("enc:v1:");
+    expect(owner.credentialsPath.endsWith(ASSISTANT_MODEL_CREDENTIALS_FILE)).toBe(true);
     expect(JSON.stringify(added)).not.toContain(key);
     expect(JSON.stringify(owner)).not.toContain(key);
 
-    const restarted = new AssistantModelServices(owner.root);
-    expect(restarted.list()).toEqual({ services: [{ ...service, credentialConfigured: false }], defaultId: service.id });
-    expect(restarted.resolve(service.id).apiKey).toBeUndefined();
-    expect(restarted.setDefault({ id: null }).defaultId).toBeNull();
+    const restarted = new AssistantModelServices(owner.root, { protector: testProtector });
+    expect(restarted.list()).toEqual({ services: [{ ...service, credentialConfigured: true }], defaultId: service.id });
+    expect(restarted.resolve(service.id)).toEqual({ service, apiKey: key });
+
+    const differentDevice = new AssistantModelServices(owner.root, {
+      protector: createLocalSecretProtector({ key: Buffer.alloc(32, 9) }),
+    });
+    expect(differentDevice.list()).toEqual({ services: [{ ...service, credentialConfigured: false }], defaultId: service.id });
+    expect(differentDevice.resolve(service.id).apiKey).toBeUndefined();
+
+    restarted.save({ ...remote, id: service.id, apiKey: "" });
+    expect(existsSync(owner.credentialsPath)).toBe(false);
+    const afterClear = new AssistantModelServices(owner.root, { protector: testProtector });
+    expect(afterClear.list().services[0]!.credentialConfigured).toBe(false);
+    expect(afterClear.setDefault({ id: null }).defaultId).toBeNull();
   });
 
   test("retains the session credential only for the same provider and normalized endpoint", () => {

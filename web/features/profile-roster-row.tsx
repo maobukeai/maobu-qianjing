@@ -12,7 +12,7 @@ import { browserLabel, launchRecovery, PlatformPill, StatusDot } from "./profile
 const Icon = AppIcon;
 
 export interface ProfileRosterRowHandlers {
-  openDetails: (id: string, trigger: HTMLButtonElement) => void;
+  openDetails: (id: string, trigger?: HTMLButtonElement | null) => void;
   openEdit: (id: string, field?: InspectionEditField, trigger?: HTMLButtonElement) => void;
   openPendingCookies: (profile: UiProfile) => Promise<void>;
   openCookie: (targets: UiProfile[]) => void;
@@ -28,6 +28,7 @@ export interface ProfileRosterRowHandlers {
   openLogs: () => void;
   trimMemory?: (id: string) => Promise<void>;
   hibernateProfile?: (id: string) => Promise<void>;
+  deleteProfile?: (profile: UiProfile) => Promise<void>;
 }
 
 export interface ProfileRosterRowProps {
@@ -159,88 +160,90 @@ export const ProfileRosterRow = React.memo(function ProfileRosterRow({
       {columnVisible("name") && (
         <td className="col-name" title={`${p.name}\n${p.id}`}>
           <span className="name-cell">
-            <span className="profile-name-line">
-              <button
-                type="button"
-                className={`profile-favorite${isFavorite ? " is-favorite" : ""}`}
-                aria-pressed={isFavorite}
-                aria-label={t(isFavorite ? "Remove {profile} from favorites" : "Add {profile} to favorites", { profile: p.name })}
-                title={t(isFavorite ? "Remove from favorites" : "Add to favorites")}
-                disabled={!viewPreferencesReady || viewPreferenceBusy}
-                onClick={() => void toggleFavorite(p.id)}
-              >
-                <Icon name="star" />
-              </button>
-              {onInlineNameSaved || onSaveInlineName ? (
-                <InlineProfileNameEditor
-                  profileId={p.id}
-                  name={p.name}
-                  disabled={isBusy}
-                  badge={<FingerprintImportBadge p={p} />}
-                  onOpenEdit={openEdit}
-                  onSaveName={onSaveInlineName}
-                  onSaved={onInlineNameSaved}
-                  onError={onInlineEditorError}
-                  onEditingChange={(editing) => onInlineNameEditingChange?.(p.id, editing)}
-                />
-              ) : editingName ? (
-                <input
-                  type="text"
-                  autoFocus
-                  className="profile-inline-rename-input"
-                  aria-label={t("Rename {profile}", { profile: p.name })}
-                  value={inlineRenameDraft ?? p.name}
-                  onChange={(event) => onChangeInlineRename?.(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.nativeEvent.isComposing) return;
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      onCommitInlineRename?.(p.id);
-                    } else if (event.key === "Escape") {
-                      event.preventDefault();
-                      onCancelInlineRename?.();
-                    }
-                  }}
-                  onBlur={() => onCommitInlineRename?.(p.id)}
-                />
-              ) : (
+            <span className="profile-name-primary">
+              <span className="profile-name-line">
                 <button
                   type="button"
-                  className="n profile-name-button"
-                  disabled={isBusy}
-                  aria-label={t("Edit {profile}", { profile: p.name })} onClick={() => openEdit(p.id)}
-                  onDoubleClick={onStartInlineRename ? (event) => { event.preventDefault(); onStartInlineRename(p.id); } : undefined}
+                  className={`profile-favorite${isFavorite ? " is-favorite" : ""}`}
+                  aria-pressed={isFavorite}
+                  aria-label={t(isFavorite ? "Remove {profile} from favorites" : "Add {profile} to favorites", { profile: p.name })}
+                  title={t(isFavorite ? "Remove from favorites" : "Add to favorites")}
+                  disabled={!viewPreferencesReady || viewPreferenceBusy}
+                  onClick={() => void toggleFavorite(p.id)}
                 >
-                  <span className="profile-name-text">{p.name}</span>
-                  <FingerprintImportBadge p={p} />
+                  <Icon name="star" />
                 </button>
-              )}
-            </span>
-            <span className="sub">
-              <span className="profile-serial" title={p.id}>#{no.value}</span>
-              {rosterScope === "recent" && <span>{p.group || t("Ungrouped")}</span>}
-              {rosterScope === "recent" && !!p.lastOpenAt && (
-                <time dateTime={new Date(p.lastOpenAt).toISOString()} title={new Date(p.lastOpenAt).toLocaleString(language)}>
-                  {t("Last launch · {time}", { time: new Date(p.lastOpenAt).toLocaleString(language, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) })}
-                </time>
-              )}
-              <span title={p.engine === "firefox" ? "Native Firefox profile · no CDP, PDF, or Chrome extensions" : `${browserLabel(p.engine, p.chromiumRuntime)} · CDP, PDF, and Chrome extensions`}>
-                {browserLabel(p.engine, p.chromiumRuntime)}
+                {onInlineNameSaved || onSaveInlineName ? (
+                  <InlineProfileNameEditor
+                    profileId={p.id}
+                    name={p.name}
+                    disabled={isBusy}
+                    badge={<FingerprintImportBadge p={p} />}
+                    onOpenEdit={openEdit}
+                    onSaveName={onSaveInlineName}
+                    onSaved={onInlineNameSaved}
+                    onError={onInlineEditorError}
+                    onEditingChange={(editing) => onInlineNameEditingChange?.(p.id, editing)}
+                  />
+                ) : editingName ? (
+                  <input
+                    type="text"
+                    autoFocus
+                    className="profile-inline-rename-input"
+                    aria-label={t("Rename {profile}", { profile: p.name })}
+                    value={inlineRenameDraft ?? p.name}
+                    onChange={(event) => onChangeInlineRename?.(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.nativeEvent.isComposing) return;
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        onCommitInlineRename?.(p.id);
+                      } else if (event.key === "Escape") {
+                        event.preventDefault();
+                        onCancelInlineRename?.();
+                      }
+                    }}
+                    onBlur={() => onCommitInlineRename?.(p.id)}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className="n profile-name-button"
+                    disabled={isBusy}
+                    aria-label={t("Edit {profile}", { profile: p.name })} onClick={() => openEdit(p.id)}
+                    onDoubleClick={onStartInlineRename ? (event) => { event.preventDefault(); onStartInlineRename(p.id); } : undefined}
+                  >
+                    <span className="profile-name-text">{p.name}</span>
+                    <FingerprintImportBadge p={p} />
+                  </button>
+                )}
               </span>
-              {resourceChips}
-              {(onQuickNotesSaved || onSaveQuickNotes) && (
-                <QuickProfileNotesEditor
-                  profileId={p.id}
-                  profileName={p.name}
-                  notes={p.notes ?? ""}
-                  disabled={isBusy}
-                  variant="inline"
-                  onSaveNotes={onSaveQuickNotes}
-                  onSaved={onQuickNotesSaved}
-                  onError={onInlineEditorError}
-                  onOpenChange={(open) => onQuickNotesOpenChange?.(p.id, open)}
-                />
-              )}
+              <span className="sub">
+                <span className="profile-serial" title={p.id}>#{no.value}</span>
+                {rosterScope === "recent" && <span>{p.group || t("Ungrouped")}</span>}
+                {rosterScope === "recent" && !!p.lastOpenAt && (
+                  <time dateTime={new Date(p.lastOpenAt).toISOString()} title={new Date(p.lastOpenAt).toLocaleString(language)}>
+                    {t("Last launch · {time}", { time: new Date(p.lastOpenAt).toLocaleString(language, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) })}
+                  </time>
+                )}
+                <span className="profile-engine-chip" title={p.engine === "firefox" ? "Native Firefox profile · no CDP, PDF, or Chrome extensions" : `${browserLabel(p.engine, p.chromiumRuntime)} · CDP, PDF, and Chrome extensions`}>
+                  {browserLabel(p.engine, p.chromiumRuntime)}
+                </span>
+                {resourceChips}
+                {(onQuickNotesSaved || onSaveQuickNotes) && (
+                  <QuickProfileNotesEditor
+                    profileId={p.id}
+                    profileName={p.name}
+                    notes={p.notes ?? ""}
+                    disabled={isBusy}
+                    variant="inline"
+                    onSaveNotes={onSaveQuickNotes}
+                    onSaved={onQuickNotesSaved}
+                    onError={onInlineEditorError}
+                    onOpenChange={(open) => onQuickNotesOpenChange?.(p.id, open)}
+                  />
+                )}
+              </span>
             </span>
             {p.tags.length > 0 && (
               <button type="button" className="profile-tags-preview" aria-label={t("Manage tags for {profile}", { profile: p.name })} disabled={isBusy} onClick={() => openProfileTags(p)}>
@@ -324,7 +327,7 @@ export const ProfileRosterRow = React.memo(function ProfileRosterRow({
             {p.running ? (
               <button className="btn sm row-stop" aria-label={t("Stop {profile}", { profile: p.name })} disabled={isBusy} onClick={() => act(p.id, closeProfile)}>
                 <Icon name="power" className="sm" />
-                {t("Stop")}
+                {t(isBusy ? "Stopping…" : "Stop")}
               </button>
             ) : p.mobilePersona ? (
               <button className="btn sm warn" disabled={isBusy} title={t("Convert this mobile persona to a desktop device")} onClick={() => openEdit(p.id)}>
@@ -353,6 +356,21 @@ export const ProfileRosterRow = React.memo(function ProfileRosterRow({
               {p.running && p.engine === "chromium" && <button role="menuitem" className="pop-item" disabled={isBusy} onClick={() => act(p.id, raiseProfile)}><Icon name="raise" className="sm" />{t("Bring to front")}</button>}
               {p.running && handlers.trimMemory && <button role="menuitem" className="pop-item" disabled={isBusy} onClick={() => void handlers.trimMemory!(p.id)}><Icon name="activity" className="sm" />{t("Trim memory")}</button>}
               {p.running && handlers.hibernateProfile && <button role="menuitem" className="pop-item" disabled={isBusy} onClick={() => void handlers.hibernateProfile!(p.id)}><Icon name="moon" className="sm" />{t("Save session & hibernate")}</button>}
+              {handlers.deleteProfile && (
+                <>
+                  <div className="pop-sep" role="separator" />
+                  <button
+                    role="menuitem"
+                    className="pop-item danger"
+                    disabled={isBusy || p.running}
+                    title={p.running ? t("Stop this environment before deleting it.") : undefined}
+                    onClick={() => void handlers.deleteProfile!(p)}
+                  >
+                    <Icon name="trash" className="sm" />
+                    {t("Delete environment")}
+                  </button>
+                </>
+              )}
             </ProfileActionMenu>
           </span>
         </td>

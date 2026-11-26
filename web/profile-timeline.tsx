@@ -153,6 +153,7 @@ const EVENT_TYPE_LABELS: Record<ProfileEventType, string> = {
   "package.imported": "Package imported",
   "rpa.run": "Script run",
   "ai.proposal_applied": "AI action applied",
+  "external.url_opened": "Link opened",
 };
 
 const ACTOR_LABELS: Record<ProfileEventActor, string> = {

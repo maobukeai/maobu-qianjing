@@ -1,0 +1,341 @@
+/* Scheme 3: Ultra-Slim Table Top Rail + Expandable Details (无缝嵌入列表顶缘). */
+.runtime-download-dock {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-xl);
+  overflow: hidden;
+  transition: background-color 180ms var(--ease), border-color 180ms var(--ease);
+}
+
+.folded-workbench .profile-browser:has(> .runtime-download-dock) {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.folded-workbench .profile-browser > .runtime-download-dock {
+  border-bottom: 0;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.folded-workbench .profile-browser > .runtime-download-dock + .tablewrap {
+  border-top: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+@media (max-width: 1020px) {
+  .folded-workbench .profile-browser.has-details:has(> .runtime-download-dock) {
+    grid-template-rows: auto minmax(170px, 1fr) minmax(310px, 1.25fr);
+  }
+}
+
+.runtime-download-dock__rail {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+  padding: 5px 14px 7px;
+  background: color-mix(in srgb, var(--surface) 88%, var(--accent-soft) 12%);
+}
+
+.runtime-download-dock.is-paused .runtime-download-dock__rail {
+  background: color-mix(in srgb, var(--surface) 90%, rgba(217, 119, 6, 0.14) 10%);
+}
+
+.runtime-download-dock.is-stale .runtime-download-dock__rail {
+  background: color-mix(in srgb, var(--surface) 92%, var(--warn) 8%);
+}
+
+:root[data-theme="dark"] .runtime-download-dock__rail {
+  background: color-mix(in srgb, var(--surface) 90%, var(--accent) 10%);
+}
+
+:root[data-theme="dark"] .runtime-download-dock.is-paused .runtime-download-dock__rail {
+  background: color-mix(in srgb, var(--surface) 90%, rgba(245, 158, 11, 0.14) 10%);
+}
+
+.runtime-download-dock__status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.runtime-download-dock__indicator {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+:root[data-desktop-motion="full"] .runtime-download-dock:not(.is-paused):not(.is-stale) .runtime-download-dock__indicator::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 999px;
+  border: 1.5px solid var(--accent);
+  opacity: 0;
+  animation: runtime-download-pulse 1.6s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.runtime-download-dock.is-paused .runtime-download-dock__indicator,
+.runtime-download-dock.is-stale .runtime-download-dock__indicator {
+  background: #d97706;
+  box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.16);
+}
+
+.runtime-download-dock__label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.runtime-download-dock__badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.45;
+  flex: 0 0 auto;
+}
+
+.runtime-download-dock.is-paused .runtime-download-dock__badge {
+  background: rgba(217, 119, 6, 0.14);
+  color: #b45309;
+}
+
+:root[data-theme="dark"] .runtime-download-dock.is-paused .runtime-download-dock__badge {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
+}
+
+.runtime-download-dock__metrics {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 0 1 auto;
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.runtime-download-dock__sep {
+  opacity: 0.45;
+}
+
+.runtime-download-dock__actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+
+.runtime-download-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-size: 11.5px;
+  font-weight: 550;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 140ms var(--ease), border-color 140ms var(--ease), color 140ms var(--ease), transform 140ms var(--ease);
+}
+
+.runtime-download-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.runtime-download-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.runtime-download-btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.runtime-download-btn--primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: #fff;
+}
+
+.runtime-download-btn--primary:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.07);
+  color: #fff;
+  border-color: transparent;
+}
+
+.runtime-download-btn--danger:hover:not(:disabled) {
+  border-color: rgba(220, 38, 38, 0.35);
+  background: rgba(220, 38, 38, 0.08);
+  color: #dc2626;
+}
+
+:root[data-theme="dark"] .runtime-download-btn--danger:hover:not(:disabled) {
+  border-color: rgba(248, 113, 113, 0.35);
+  background: rgba(248, 113, 113, 0.14);
+  color: #f87171;
+}
+
+.runtime-download-btn--ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  padding: 0 7px;
+}
+
+.runtime-download-btn--ghost:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: transparent;
+  color: var(--ink);
+}
+
+.runtime-download-dock__track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2.5px;
+  background: var(--line-soft);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.runtime-download-dock__fill {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 68%, #38bdf8 32%));
+  transform-origin: left center;
+  transition: transform 240ms var(--ease);
+  will-change: transform;
+}
+
+.runtime-download-dock.is-paused .runtime-download-dock__fill {
+  background: linear-gradient(90deg, #d97706, #f59e0b);
+}
+
+.runtime-download-dock__fill.is-indeterminate {
+  width: 38%;
+  transform: translateX(-100%);
+  animation: runtime-download-indeterminate 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.runtime-download-dock.is-paused .runtime-download-dock__fill.is-indeterminate {
+  width: 100%;
+  transform: none;
+  animation: none;
+  opacity: 0.45;
+}
+
+.runtime-download-dock__details {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line-soft);
+  background: var(--surface-sunken);
+  font-size: 12px;
+}
+
+.runtime-download-detail-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.runtime-download-detail-row__info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.runtime-download-detail-row__name {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.runtime-download-detail-row__state {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.runtime-download-detail-row__stats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.runtime-download-sr-progress {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  border: 0;
+  white-space: nowrap;
+}
+
+@keyframes runtime-download-pulse {
+  0% { transform: scale(0.9); opacity: 0.75; }
+  100% { transform: scale(2.1); opacity: 0; }
+}
+
+@keyframes runtime-download-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(280%); }
+}
+
+@media (max-width: 720px) {
+  .runtime-download-dock__metrics {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .runtime-download-dock__indicator::after,
+  .runtime-download-dock__fill.is-indeterminate {
+    animation: none !important;
+  }
+  .runtime-download-dock__fill {
+    transition: none;
+  }
+}

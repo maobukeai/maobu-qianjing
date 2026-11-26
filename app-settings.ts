@@ -33,8 +33,13 @@ export interface NetworkSettings {
   chromiumPreloading?: ChromiumPreloadingMode;
   chromiumMemorySaver?: boolean;
   firefoxMemorySaver?: boolean;
+  openStartPageOnLaunch?: boolean;
   dataSaver?: DataSaverSettings;
   batchLaunchMemoryGuard?: BatchLaunchMemoryGuardSettings;
+}
+
+export function resolveOpenStartPageOnLaunch(network?: NetworkSettings): boolean {
+  return network?.openStartPageOnLaunch !== false;
 }
 export interface SignedUpdateSettings { checkOnStartup: boolean }
 export interface AppSettings { version: 1; updates: UpdateSettings; sync: SyncSettings; network?: NetworkSettings; signedUpdates?: SignedUpdateSettings }
@@ -166,7 +171,7 @@ export function parseAppSettings(value: unknown): AppSettings {
   const network = raw.network === undefined ? { checkLocalProxyBeforeLaunch: false } : object(raw.network, "Network settings");
   keys(
     network,
-    ["checkLocalProxyBeforeLaunch", "chromiumPreloading", "chromiumMemorySaver", "firefoxMemorySaver", "dataSaver", "batchLaunchMemoryGuard"],
+    ["checkLocalProxyBeforeLaunch", "chromiumPreloading", "chromiumMemorySaver", "firefoxMemorySaver", "openStartPageOnLaunch", "dataSaver", "batchLaunchMemoryGuard"],
     "network",
   );
   if (
@@ -174,6 +179,7 @@ export function parseAppSettings(value: unknown): AppSettings {
     || (network.chromiumPreloading !== undefined && !["browser-default", "disabled"].includes(network.chromiumPreloading as string))
     || (network.chromiumMemorySaver !== undefined && typeof network.chromiumMemorySaver !== "boolean")
     || (network.firefoxMemorySaver !== undefined && typeof network.firefoxMemorySaver !== "boolean")
+    || (network.openStartPageOnLaunch !== undefined && typeof network.openStartPageOnLaunch !== "boolean")
   ) throw new Error("Invalid network settings");
   const dataSaver = network.dataSaver === undefined ? undefined : parseDataSaverSettings(network.dataSaver);
   const batchLaunchMemoryGuard = network.batchLaunchMemoryGuard === undefined
@@ -191,6 +197,7 @@ export function parseAppSettings(value: unknown): AppSettings {
       chromiumPreloading: network.chromiumPreloading as ChromiumPreloadingMode ?? "browser-default",
       chromiumMemorySaver: network.chromiumMemorySaver === true,
       ...(network.firefoxMemorySaver !== undefined ? { firefoxMemorySaver: network.firefoxMemorySaver } : {}),
+      ...(network.openStartPageOnLaunch !== undefined ? { openStartPageOnLaunch: network.openStartPageOnLaunch } : {}),
       ...(dataSaver !== undefined ? { dataSaver } : {}),
       ...(batchLaunchMemoryGuard !== undefined ? { batchLaunchMemoryGuard } : {}),
     },

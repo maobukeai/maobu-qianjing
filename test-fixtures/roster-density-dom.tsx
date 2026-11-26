@@ -59,18 +59,19 @@ async function run(scenario: string) {
       await render(); await click(radio("Standard")); assert.equal(selected(), "Standard"); await click(radio("Compact")); assert.equal(selected(), "Compact"); assert.deepEqual(calls, ["standard", "compact"]);
     } else if (scenario === "compact-css" || scenario === "reduced-motion") {
       const originalRow = row(), originalFont = style(originalRow).fontSize, originalName = dom.container.querySelector<DomElement>(".profile-name-button")!;
-      assert.equal(style(originalRow).height, "52px");
-      await click(radio("Standard"));
-      assert.equal(row(), originalRow); assert.equal(style(row()).height, "48px"); assert.equal(style(row()).fontSize, originalFont); assert.equal(style(originalName).fontSize, "14px");
+      assert.equal(style(originalRow).height, "48px");
       assert.equal(style(dom.container.querySelector<DomElement>(".profile-group-heading")!).minHeight, "35px");
-      assert.equal(style(dom.container.querySelector<DomElement>('tr[data-profile-id="dialog"] > td')!).height, "52px"); assert.equal(style(dom.container.querySelector<DomElement>('tr[data-profile-id="other"] > td')!).height, "52px");
-      await click(radio("Compact"));
+      await click(radio("Standard"));
       assert.equal(row(), originalRow); assert.equal(style(row()).height, "44px"); assert.equal(style(row()).fontSize, originalFont); assert.equal(style(originalName).fontSize, "14px");
       assert.equal(style(dom.container.querySelector<DomElement>(".profile-group-heading")!).minHeight, "32px");
+      assert.equal(style(dom.container.querySelector<DomElement>('tr[data-profile-id="dialog"] > td')!).height, "52px"); assert.equal(style(dom.container.querySelector<DomElement>('tr[data-profile-id="other"] > td')!).height, "52px");
+      await click(radio("Compact"));
+      assert.equal(row(), originalRow); assert.equal(style(row()).height, "36px"); assert.equal(style(row()).fontSize, originalFont); assert.equal(style(originalName).fontSize, "14px");
+      assert.equal(style(dom.container.querySelector<DomElement>(".profile-group-heading")!).minHeight, "28px");
       assert.ok(dom.container.textContent?.includes("Important tag")); assert.ok(dom.container.textContent?.includes("Restart to apply"));
       assert.equal(style(dom.container.querySelector<DomElement>('tr[data-profile-id="dialog"] > td')!).height, "52px"); assert.equal(style(dom.container.querySelector<DomElement>('tr[data-profile-id="other"] > td')!).height, "52px");
       assert.notEqual(style(row()).transform, "scale(0.9)");
-      await click(radio("Comfortable")); assert.equal(style(row()).height, "52px");
+      await click(radio("Comfortable")); assert.equal(style(row()).height, "48px");
     } else if (scenario === "coarse-targets") {
       assert.equal(dom.window.matchMedia("(pointer: coarse)").matches, true);
       const targetSelectors = [".rowactions > .btn", ".profile-name-button", ".profile-tags-preview", ".status-chip", ".profile-group-toggle", ".profile-group-create"];

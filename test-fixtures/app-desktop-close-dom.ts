@@ -56,6 +56,7 @@ async function run(scenario: string) {
       "/ui/api/workspace/overview": { ok: true, workspaceId: "default", root: "inert-app-close-root", profileCount: 2, trashCount: 0, runningCount: 0, bytes: 0, freeBytes: 50 * 1024 ** 3, lastBackupAt: null, backupBusy: false, scriptRunning: false },
       "/ui/api/workspace/backups": { ok: true, backups: [], jobs: [] },
       "/ui/api/settings": { ok: true, settings },
+      "/ui/api/settings/assistant/services": { ok: true, catalog: { services: [], defaultId: null } },
       "/ui/api/settings/templates": { ok: true, catalog: { version: 1, revision: 0, templates: [] } },
       "/ui/api/settings/sync/files": { ok: true, files: [] },
       "/ui/api/settings/updates": { ok: true, update: null },

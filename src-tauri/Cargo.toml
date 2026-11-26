@@ -1,6 +1,6 @@
 [package]
 name = "aliasmode-desktop"
-version = "3.0.0"
+version = "3.1.0"
 description = "Maobu local browser profile manager"
 edition = "2021"
 rust-version = "1.89"
@@ -70,6 +70,7 @@ windows = { version = "0.62.2", features = [
   "Win32_UI_Controls",
   "Win32_UI_HiDpi",
   "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }
 

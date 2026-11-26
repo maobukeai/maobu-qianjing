@@ -6,7 +6,8 @@ import { DESKTOP_DRAFT_LABELS, type DesktopDraftLabel } from "./desktop-close-st
 import { availableLanguages, languageNativeName, useTranslation } from "./i18n.tsx";
 import type { RuntimeDownload } from "./api.ts";
 import type { ThemeChoice } from "./theme.ts";
-import { WORKSPACE_COLORS, WORKSPACE_ICONS, activateWorkspace, archiveWorkspace, cancelActivation, createWorkspace, downloadWorkspaceBackup, fetchWorkspaceBackups, fetchWorkspaceJob, fetchWorkspaceOverview, fetchWorkspaces, openWorkspaceLocation, restartWorkspace, restoreWorkspace, startWorkspaceBackup, updateWorkspace, workspaceDesktopAvailable, workspaceHistoryJob, workspaceJobActive, workspaceJobPercent, type WorkspaceBackups, type WorkspaceCatalog, type WorkspaceIcon, type WorkspaceJob, type WorkspaceMetadata, type WorkspaceOverview, type WorkspaceRecord } from "./workspaces-api.ts";
+import { WORKSPACE_COLORS, activateWorkspace, archiveWorkspace, cancelActivation, createWorkspace, downloadWorkspaceBackup, fetchWorkspaceBackups, fetchWorkspaceJob, fetchWorkspaceOverview, fetchWorkspaces, openWorkspaceLocation, restartWorkspace, restoreWorkspace, startWorkspaceBackup, updateWorkspace, workspaceDesktopAvailable, workspaceHistoryJob, workspaceJobActive, workspaceJobPercent, type WorkspaceBackups, type WorkspaceCatalog, type WorkspaceIcon, type WorkspaceJob, type WorkspaceMetadata, type WorkspaceOverview, type WorkspaceRecord } from "./workspaces-api.ts";
+import { WorkspaceIconBadge, WorkspaceIconPicker, workspaceIconLabel } from "./workspace-icon.tsx";
 import { changedWorkspaceFields, createWorkspaceMetadataDraft, followWorkspaceMetadata, reviewWorkspaceMetadata, workspaceMetadata, workspaceMetadataPatch } from "./workspace-metadata-draft.ts";
 import "./workspace-manager.css";
 import { createWorkspaceOperationCoordinator, WorkspaceOperationsProvider, useWorkspaceOperations, workspaceOperationMessage, type WorkspaceOperationKind } from "./workspace-operations.tsx";
@@ -37,7 +38,6 @@ export interface DevicePanelProps {
   renderIcon?: WorkspaceSwitcherProps["renderIcon"];
 }
 
-const ICON_LABELS: Record<WorkspaceIcon, string> = { laptop: "Laptop", folder: "Folder", briefcase: "Briefcase", globe: "Globe", star: "Star", layers: "Layers" };
 const COLOR_LABELS: Record<string, string> = { "#8169c8": "Purple", "#628ac7": "Blue", "#638f77": "Green", "#c4905b": "Amber", "#b87594": "Rose", "#7c7d8e": "Slate" };
 const METADATA_LABELS: Record<keyof WorkspaceMetadata, string> = { name: "Workspace name", color: "Workspace color", icon: "Workspace icon" };
 interface WorkspaceContextValue { catalog: WorkspaceCatalog | null; currentWorkspace: WorkspaceRecord | undefined; currentName: string; loading: boolean; error: string | null; refresh: (signal?: AbortSignal) => Promise<WorkspaceCatalog | null>; acceptRecord: (workspace: WorkspaceRecord) => void; acceptActiveId: (id: string) => void; activity: WorkspaceActivityState; setActivity: (activity: WorkspaceActivityState) => void; }
@@ -76,12 +76,12 @@ function bytes(value: number | null): string { if (value === null) return "—";
 function date(value: number): string { return value ? new Date(value).toLocaleString() : "—"; }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : "Workspace request failed."; }
 function controls(node: HTMLElement): HTMLElement[] { return [...node.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]')].filter(el => el.getClientRects().length > 0); }
-function useDialogFocus(ref: { current: HTMLElement | null }, open: boolean, close: () => void, paused = false) {
+function useDialogFocus(ref: { current: HTMLElement | null }, open: boolean, close: () => void, paused = false, focusPanel = false) {
   const closeRef = useRef(close), pauseRef = useRef(paused); closeRef.current = close; pauseRef.current = paused;
   useLayoutEffect(() => {
     if (!open || !ref.current) return;
     const node = ref.current, previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    (controls(node)[0] ?? node).focus({ preventScroll: true });
+    (focusPanel ? node : (controls(node)[0] ?? node)).focus({ preventScroll: true });
     const key = (event: KeyboardEvent) => {
       if (pauseRef.current) return;
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeRef.current(); return; }
@@ -145,7 +145,8 @@ function usePopover(
   useEffect(() => {
     if (!open) return;
     const down = (event: PointerEvent) => {
-      const target = event.target as Node;
+      const target = event.target as Node | null;
+      if (target && "closest" in target && typeof (target as Element).closest === "function" && (target as Element).closest(".global-select-popover")) return;
       if (!panel.current?.contains(target) && !trigger.current?.contains(target)) closeRef.current();
     };
     const key = (event: KeyboardEvent) => {
@@ -178,8 +179,7 @@ function usePopover(
   return { placement, style };
 }
 function WorkspaceBadge({ workspace, icon, monogram, render }: { workspace?: WorkspaceRecord | WorkspaceMetadata; icon?: WorkspaceIcon; monogram?: string; render?: WorkspaceSwitcherProps["renderIcon"] }) {
-  if (monogram) return <span className="wm-workspace-badge is-monogram" aria-hidden="true">{monogram}</span>;
-  return <span className="wm-workspace-badge" style={{ "--workspace-color": workspace?.color ?? WORKSPACE_COLORS[0] } as CSSProperties}><Icon name={icon ?? workspace?.icon ?? "laptop"} render={render} /></span>;
+  return <WorkspaceIconBadge workspace={workspace} icon={icon} monogram={monogram} render={render} />;
 }
 
 /** Backups always use the running workspace, independently of the metadata editor. */
@@ -209,9 +209,12 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
   const { catalog, currentWorkspace: current, loading, error, refresh, activity } = useWorkspaceCatalog();
   const [menuOpen, setMenuOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null), menu = useRef<HTMLDivElement>(null);
-  const context = props.variant === "context", rail = props.variant === "rail";
+  const context = props.variant === "context", rail = props.variant === "rail", inlineRail = rail && !props.compact;
   const menuId = useId(), noteId = useId();
   const { placement, style } = usePopover(menuOpen, trigger, menu, () => setMenuOpen(false), rail ? "right" : "bottom");
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [props.compact]);
   const pending = !!catalog && catalog.currentId !== catalog.activeId;
   const batchActive = snapshot.operation?.kind === "profile-batch", importActive = snapshot.operation?.kind === "profile-import", moveActive = snapshot.operation?.kind === "profile-move", cookieActive = snapshot.operation?.kind === "profile-cookies", fileUpdateActive = snapshot.operation?.kind === "profile-file-update", trashActive = snapshot.operation?.kind === "profile-trash", proxyActive = snapshot.operation?.kind === "profile-proxies", profileTaskActive = batchActive || importActive || moveActive || cookieActive || fileUpdateActive || trashActive || proxyActive;
   const busy = snapshot.blocked || pending || !!activity.job && workspaceJobActive(activity.job);
@@ -246,21 +249,127 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
   useLayoutEffect(() => {
     if (menuOpen && !loading && document.activeElement === menu.current) focusMenuEntry();
   }, [menuOpen, loading, catalog, error, focusMenuEntry]);
-  const monogram = [...name.trim()][0]?.toUpperCase() || "W";
   const subtitle = note
     ? t(note)
     : rail
       ? (props.connection ? t("{profiles} profiles · {running} running", { profiles: props.profileCount, running: props.runningCount }) : t("Switch workspace"))
       : t("Independent local workspace");
+  const triggerButton = (
+    <button type="button" className={`${triggerClass}${props.managementActive ? " is-current-page" : ""}`} ref={trigger} aria-haspopup="menu" aria-expanded={menuOpen} aria-controls={menuOpen ? menuId : undefined} aria-describedby={rail && note ? noteId : undefined} title={rail ? actionName : current?.name ?? t("Workspaces")} aria-label={actionName} onClick={() => setMenuOpen(value => !value)} onKeyDown={event => { if (event.key === "ArrowDown") { event.preventDefault(); setMenuOpen(true); } }}>
+      <WorkspaceBadge workspace={current} render={render} /><span className="wm-trigger-copy"><strong>{name}</strong>{(!context || note) && <small>{subtitle}</small>}</span>{rail ? <span className="wm-chevron-pill" aria-hidden="true"><Icon name="chevronDown" render={render} /></span> : <Icon name="chevronDown" render={render} />}
+    </button>
+  );
+  const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Tab") {
+      trigger.current?.focus({ preventScroll: true });
+      setMenuOpen(false);
+      return;
+    }
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const items = controls(menu.current!);
+    if (items.length === 0) return;
+    const index = items.indexOf(document.activeElement as HTMLElement);
+    const targetIndex = event.key === "Home"
+      ? 0
+      : event.key === "End" || (event.key === "ArrowUp" && index === -1)
+        ? items.length - 1
+        : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+    items[targetIndex]?.focus();
+  };
+  const menuBody = (
+    <>
+      {!inlineRail && <div className="wm-popover-heading">{t("Workspaces")}</div>}
+      {rail && note && <p className="wm-small">{t(note)}</p>}
+      {profileTaskActive && (
+        <div className="wm-batch-note" role="status">
+          <p>{t(workspaceOperationMessage(snapshot))}</p>
+          {batchActive && props.onShowBatchTask && (
+            <button
+              type="button"
+              className="btn ghost xs"
+              role="menuitem"
+              onClick={() => {
+                setMenuOpen(false);
+                props.onShowBatchTask?.();
+              }}
+            >
+              {t("View environment task")}
+            </button>
+          )}
+        </div>
+      )}
+      {loading && !catalog && <p className="wm-small" role="status">{t("Loading workspaces…")}</p>}
+      {error && (
+        <div className="wm-error" role="alert">
+          <span>{t(error)}</span>
+          <button type="button" role="menuitem" disabled={loading} onClick={() => {
+            menu.current?.focus({ preventScroll: true });
+            void refresh();
+          }}>{t("Retry")}</button>
+        </div>
+      )}
+      <div className="wm-switcher-list">
+        {catalog?.workspaces.filter(w => !w.archived).map(w => (
+          <button
+            type="button"
+            key={w.id}
+            className="wm-switcher-item"
+            role="menuitemradio"
+            aria-checked={w.id === catalog.currentId}
+            disabled={busy && w.id !== catalog.currentId}
+            onClick={() => open({ mode: w.id === catalog.currentId ? "manage" : "switch", workspaceId: w.id })}
+          >
+            <WorkspaceBadge workspace={w} render={render} />
+            <span>
+              {w.name}
+              <small>{t(w.id === catalog.currentId ? "Current workspace" : "Independent data and browser profiles")}</small>
+            </span>
+            {w.id === catalog.currentId && <Icon name="check" render={render} />}
+          </button>
+        ))}
+        {catalog && catalog.workspaces.filter(w => !w.archived).length === 0 && (
+          <p className="wm-small">{t("No active workspaces.")}</p>
+        )}
+      </div>
+      <div className="wm-popover-foot">
+        <button type="button" role="menuitem" disabled={busy && !profileTaskActive} onClick={() => open({ mode: "create" })}>
+          <Icon name="plus" render={render} />{t("New workspace")}
+        </button>
+        <button type="button" role="menuitem" onClick={() => open({ mode: "manage" })}>
+          <Icon name="settings" render={render} />{t("Manage workspaces")}
+        </button>
+      </div>
+    </>
+  );
   return <div className={context ? "wm-context-switcher" : rail ? "wm-rail-switcher" : "wm-sidebar-switcher"} data-compact={rail && props.compact ? "true" : undefined}>
     {context && <span className="wm-context-label">{t("Workspaces")}</span>}
-    <button type="button" className={`${triggerClass}${props.managementActive ? " is-current-page" : ""}`} ref={trigger} aria-haspopup="menu" aria-expanded={menuOpen} aria-controls={menuOpen ? menuId : undefined} aria-describedby={rail && note ? noteId : undefined} title={rail ? actionName : current?.name ?? t("Workspaces")} aria-label={actionName} onClick={() => setMenuOpen(value => !value)} onKeyDown={event => { if (event.key === "ArrowDown") { event.preventDefault(); setMenuOpen(true); } }}>
-      <WorkspaceBadge workspace={current} icon={rail ? "folder" : undefined} monogram={rail ? monogram : undefined} render={render} /><span className="wm-trigger-copy"><strong>{name}</strong>{(!context || note) && <small>{subtitle}</small>}</span><Icon name={rail ? "chevronsUpDown" : "chevronDown"} render={render} />
-    </button>
+    {inlineRail ? (
+      <div className="wm-rail-card" data-open={menuOpen ? "true" : undefined}>
+        {triggerButton}
+        <MotionPresence present={menuOpen} kind="panel" exitMs={165}>
+          <div className="wm-inline-accordion">
+            <div className="wm-inline-accordion-inner">
+              <div
+                className="wm-switcher-inline-menu"
+                id={menuId}
+                ref={menu}
+                role="menu"
+                tabIndex={-1}
+                aria-label={t("Workspaces")}
+                onKeyDown={handleMenuKeyDown}
+              >
+                {menuBody}
+              </div>
+            </div>
+          </div>
+        </MotionPresence>
+      </div>
+    ) : triggerButton}
     {rail && note && <span className="wm-sr-only" id={noteId}>{t(note)}</span>}
     {context && props.onOpenManagement && <button type="button" className={`wm-context-manage${props.managementActive ? " is-current-page" : ""}`} aria-current={props.managementActive ? "page" : undefined} onClick={() => open({ mode: "manage" })}>{t("Manage workspaces")}</button>}
-    {typeof document !== "undefined" && createPortal(
-      <MotionPresence present={menuOpen} kind="popover">
+    {!inlineRail && typeof document !== "undefined" && createPortal(
+      <MotionPresence present={menuOpen} kind="popover" exitMs={rail ? 140 : undefined}>
         <div
           className={`wm-switcher-popover${rail ? " is-rail" : ""}`}
           data-placement={rail ? placement : undefined}
@@ -270,84 +379,9 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
           tabIndex={-1}
           aria-label={t("Workspaces")}
           style={style}
-          onKeyDown={event => {
-            if (event.key === "Tab") {
-              trigger.current?.focus({ preventScroll: true });
-              setMenuOpen(false);
-              return;
-            }
-            if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-            event.preventDefault();
-            const items = controls(menu.current!);
-            if (items.length === 0) return;
-            const index = items.indexOf(document.activeElement as HTMLElement);
-            const targetIndex = event.key === "Home"
-              ? 0
-              : event.key === "End" || (event.key === "ArrowUp" && index === -1)
-                ? items.length - 1
-                : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
-            items[targetIndex]?.focus();
-          }}
+          onKeyDown={handleMenuKeyDown}
         >
-          <div className="wm-popover-heading">{t("Workspaces")}</div>
-          {rail && note && <p className="wm-small">{t(note)}</p>}
-          {profileTaskActive && (
-            <div className="wm-batch-note" role="status">
-              <p>{t(workspaceOperationMessage(snapshot))}</p>
-              {batchActive && props.onShowBatchTask && (
-                <button
-                  type="button"
-                  className="btn ghost xs"
-                  role="menuitem"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    props.onShowBatchTask?.();
-                  }}
-                >
-                  {t("View environment task")}
-                </button>
-              )}
-            </div>
-          )}
-          {loading && !catalog && <p className="wm-small" role="status">{t("Loading workspaces…")}</p>}
-          {error && (
-            <div className="wm-error" role="alert">
-              <span>{t(error)}</span>
-              <button type="button" role="menuitem" disabled={loading} onClick={() => {
-                menu.current?.focus({ preventScroll: true });
-                void refresh();
-              }}>{t("Retry")}</button>
-            </div>
-          )}
-          {catalog?.workspaces.filter(w => !w.archived).map(w => (
-            <button
-              type="button"
-              key={w.id}
-              className="wm-switcher-item"
-              role="menuitemradio"
-              aria-checked={w.id === catalog.currentId}
-              disabled={busy && w.id !== catalog.currentId}
-              onClick={() => open({ mode: w.id === catalog.currentId ? "manage" : "switch", workspaceId: w.id })}
-            >
-              <WorkspaceBadge workspace={w} render={render} />
-              <span>
-                {w.name}
-                <small>{t(w.id === catalog.currentId ? "Current workspace" : "Independent data and browser profiles")}</small>
-              </span>
-              {w.id === catalog.currentId && <Icon name="check" render={render} />}
-            </button>
-          ))}
-          {catalog && catalog.workspaces.filter(w => !w.archived).length === 0 && (
-            <p className="wm-small">{t("No active workspaces.")}</p>
-          )}
-          <div className="wm-popover-foot">
-            <button type="button" role="menuitem" disabled={busy && !profileTaskActive} onClick={() => open({ mode: "create" })}>
-              <Icon name="plus" render={render} />{t("New workspace")}
-            </button>
-            <button type="button" role="menuitem" onClick={() => open({ mode: "manage" })}>
-              <Icon name="settings" render={render} />{t("Manage workspaces")}
-            </button>
-          </div>
+          {menuBody}
         </div>
       </MotionPresence>,
       document.body,
@@ -730,13 +764,13 @@ export function WorkspaceManagementPage(props: WorkspaceManagementPageProps) {
                 </div>
                 <div className="wm-card-body">
                   <label className="fld"><span>{t("Workspace name")}</span><input ref={nameInput} value={draft.name} maxLength={40} disabled={!!operation} required placeholder={t("For example: Client A or Personal projects")} onChange={event => changeDraft({ name: event.target.value })} /></label>
-                  <div className="wm-identity-options"><fieldset className="wm-choice-field"><legend>{t("Workspace icon")}</legend><div className="wm-icon-choices">{WORKSPACE_ICONS.map(icon => <button type="button" key={icon} disabled={!!operation} aria-pressed={draft.icon === icon} aria-label={t(ICON_LABELS[icon])} onClick={() => changeDraft({ icon })}><Icon name={icon} render={render} /></button>)}</div></fieldset><fieldset className="wm-choice-field"><legend>{t("Workspace color")}</legend><div className="wm-color-choices">{WORKSPACE_COLORS.map(color => <button type="button" key={color} style={{ backgroundColor: color }} disabled={!!operation} aria-pressed={draft.color === color} aria-label={t(COLOR_LABELS[color] ?? "Purple")} onClick={() => changeDraft({ color })}>{draft.color === color && <Icon name="check" render={render} />}</button>)}</div></fieldset></div>
+                  <div className="wm-identity-options"><fieldset className="wm-choice-field"><legend>{t("Workspace icon")}</legend><WorkspaceIconPicker value={draft.icon} color={draft.color} name={draft.name || base.name} disabled={!!operation} render={render} onChange={icon => changeDraft({ icon })} onError={message => setError(message)} /></fieldset><fieldset className="wm-choice-field"><legend>{t("Workspace color")}</legend><div className="wm-color-choices">{WORKSPACE_COLORS.map(color => <button type="button" key={color} style={{ backgroundColor: color }} disabled={!!operation} aria-pressed={draft.color === color} aria-label={t(COLOR_LABELS[color] ?? "Purple")} onClick={() => changeDraft({ color })}>{draft.color === color && <Icon name="check" render={render} />}</button>)}</div></fieldset></div>
                   {missingEditor && <div className="wm-warning" role="status">{t("The workspace is unavailable. Choose another workspace to continue.")}</div>}
                   {metadataReview && latestMetadata && needsReview && <section className="wm-metadata-review" aria-labelledby="wm-metadata-review-title">
                     <div role="status"><h3 id="wm-metadata-review-title">{t("Workspace details changed")}</h3><p>{t("Review the saved details before saving your draft.")}</p></div>
                     <dl>{metadataReview.changedFields.map(field => <div key={field}>
                       <dt>{t(METADATA_LABELS[field])}</dt>
-                      <dd>{field === "name" ? latestMetadata.name : field === "icon" ? t(ICON_LABELS[latestMetadata.icon]) : t(COLOR_LABELS[latestMetadata.color] ?? "Purple")}</dd>
+                      <dd>{field === "name" ? latestMetadata.name : field === "icon" ? workspaceIconLabel(latestMetadata.icon, t) : t(COLOR_LABELS[latestMetadata.color] ?? "Purple")}</dd>
                       {metadataReview.conflicts.includes(field) && <dd className="wm-metadata-conflict">{t("This field also changed in your draft.")}</dd>}
                     </div>)}</dl>
                     <div className="wm-metadata-review-actions"><button type="button" className="btn ghost" disabled={!!operation} onClick={() => reviewMetadata(false)}>{t("Use saved details")}</button><button type="button" className="btn" disabled={!!operation} onClick={() => reviewMetadata(true)}>{t("Keep my edits")}</button></div>
@@ -902,7 +936,7 @@ export function DevicePanel(props: DevicePanelProps) {
     const visible = [...document.querySelectorAll<HTMLButtonElement>(".wm-device-trigger")].find(entry => entry !== trigger.current && entry.getClientRects().length > 0 && getComputedStyle(entry).visibility !== "hidden");
     visible?.focus({ preventScroll: true });
   }
-  const { style: position } = usePopover(
+  const { style: position, placement } = usePopover(
     open,
     trigger,
     panel,
@@ -911,27 +945,62 @@ export function DevicePanel(props: DevicePanelProps) {
     focusVisibleDeviceEntry,
   );
   useEffect(() => { const otherOpened = (event: Event) => { if ((event as CustomEvent<string>).detail !== panelId) setOpen(false); }; window.addEventListener("maobu:device-panel-open", otherOpened); return () => window.removeEventListener("maobu:device-panel-open", otherOpened); }, [panelId]);
-  useDialogFocus(panel, open, () => setOpen(false)); const render = props.renderIcon;
+  useDialogFocus(panel, open, () => setOpen(false), false, true); const render = props.renderIcon;
   function togglePanel() { const next = !open; if (next) window.dispatchEvent(new CustomEvent("maobu:device-panel-open", { detail: panelId })); setOpen(next); }
   async function action(run: () => void | Promise<void>) { if (!openRef.current || actionInFlight.current) return; actionInFlight.current = true; setBusy(true); setError(null); try { await run(); } catch (e) { setError(errorMessage(e)); } finally { actionInFlight.current = false; setBusy(false); } }
   function navigate(run: () => void) { if (!openRef.current) return; trigger.current?.focus({ preventScroll: true }); setOpen(false); run(); }
-  const railLabel = connecting ? t("Connecting to the local service…") : props.connection ? t("Local encrypted ready · 127.0.0.1") : t("Connection interrupted");
+  const railLabel = connecting ? t("Connecting to the local service…") : props.connection ? t("Local encrypted ready") : t("Connection interrupted");
   return <><button type="button" className={`wm-device-trigger is-${variant}${variant === "sidebar" ? " sidebar-identity" : ""}`} ref={trigger} title={variant === "sidebar" ? currentName || t("This device") : `${t("This device")} · ${t(connectionText)}`} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? panelId : undefined} aria-describedby={statusId} aria-label={t("Open device panel")} onClick={togglePanel}><span className={variant === "sidebar" ? "sidebar-avatar" : "wm-device-icon"}><Icon name="laptop" render={render} /></span>{variant === "sidebar" ? <span className="wm-trigger-copy"><strong>{currentName || t("This device")}</strong><small id={statusId}>{t(connectionText)}</small></span> : <><span className="wm-device-label">{variant === "rail" ? railLabel : t("This device")}</span><span className="wm-sr-only" id={statusId}>{t(connectionText)}</span></>}<span className={connectionClass} aria-hidden="true" /></button>
-    {typeof document !== "undefined" && createPortal(<MotionPresence present={open} kind="popover"><section className={`wm-device-popover${variant === "rail" ? " is-rail" : ""}`} id={panelId} ref={panel} role="dialog" aria-labelledby={headingId} tabIndex={-1} style={position}><header><div><h2 id={headingId}>{t("This device")}</h2><small>{t("Local runtime and quick preferences")}</small></div><button type="button" className="iconbtn" aria-label={t("Close device panel")} onClick={() => setOpen(false)}><Icon name="close" render={render} /></button></header>{error && <div className="wm-error" role="alert">{t(error)}</div>}
-      <div className="wm-device-status" role="status" aria-live="polite" aria-busy={connecting}><span className={connectionClass} /><span>{t(connectionText)}</span>{props.onRetryConnection && !props.connection && !connecting && <button type="button" className="btn xs" disabled={busy} onClick={() => void action(props.onRetryConnection!)}>{t("Retry")}</button>}</div>
-      <button type="button" className="wm-running-link" disabled={connecting} onClick={() => navigate(props.onShowRunning)}><span>{t(connecting || props.connection ? "Running environments" : "Last known running environments")}</span><strong>{connecting ? "—" : props.runningCount}</strong><Icon name="open" render={render} /></button>
-      <div className="wm-device-section"><h3>{t("Browser downloads")}</h3>
-        {connecting ? <p className="wm-small" role="status">{t("Checking download status…")}</p>
-          : !props.connection ? <p className="wm-small">{t("Download status unavailable while the service is disconnected.")}</p>
-          : props.downloadStatusUnavailable ? <p className="wm-small" role="status">{t("Download status temporarily unavailable")}</p>
-          : props.downloads.length === 0 ? <p className="wm-small">{t("No active download tasks.")}</p>
-          : props.downloads.map((download, index) => {
-            const percent = download.totalBytes > 0 ? Math.min(100, Math.max(0, Math.floor(download.receivedBytes / download.totalBytes * 100))) : undefined;
-            return <div className="wm-download" key={`${download.runtime}-${index}`}><div><span>{download.runtime === "firefox" ? "Firefox" : download.runtime === "cloakbrowser" ? "CloakBrowser" : "Chromium"}</span><small>{bytes(download.receivedBytes)} / {bytes(download.totalBytes || null)}</small></div><progress max={100} value={percent} aria-label={t("Browser download progress")} /></div>;
-          })}
+    {typeof document !== "undefined" && createPortal(<MotionPresence present={open} kind="popover" exitMs={150}><section className={`wm-device-popover${variant === "rail" ? " is-rail" : ""}`} id={panelId} ref={panel} role="dialog" aria-labelledby={headingId} tabIndex={-1} data-placement={placement} style={position}>
+      <div className="wm-device-hud">
+        <div className="wm-device-left">
+          <div className="wm-device-left-top">
+            <div className="wm-device-brand">
+              <h2 id={headingId}>{t("This device")}</h2>
+              <span className="wm-device-ver" title={t("Version")}>{props.version || t("Unavailable")}</span>
+            </div>
+            <div className="wm-device-status" role="status" aria-live="polite" aria-busy={connecting}>
+              <span className={connectionClass} />
+              <span>{t(connectionText)}</span>
+              {props.onRetryConnection && !props.connection && !connecting && <button type="button" className="btn xs" disabled={busy} onClick={() => void action(props.onRetryConnection!)}>{t("Retry")}</button>}
+            </div>
+          </div>
+          <button type="button" className="wm-running-link" disabled={connecting} onClick={() => navigate(props.onShowRunning)}>
+            <span>{t(connecting || props.connection ? "Running environments" : "Last known running environments")}</span>
+            <strong>{connecting ? "—" : props.runningCount}</strong>
+            <Icon name="open" render={render} />
+          </button>
+          <div className="wm-device-downloads">
+            <h3>{t("Browser downloads")}</h3>
+            {connecting ? <p className="wm-small" role="status">{t("Checking download status…")}</p>
+              : !props.connection ? <p className="wm-small">{t("Download status unavailable while the service is disconnected.")}</p>
+              : props.downloadStatusUnavailable ? <p className="wm-small" role="status">{t("Download status temporarily unavailable")}</p>
+              : props.downloads.length === 0 ? <p className="wm-small">{t("No active download tasks.")}</p>
+              : props.downloads.map((download, index) => {
+                const percent = download.totalBytes > 0 ? Math.min(100, Math.max(0, Math.floor(download.receivedBytes / download.totalBytes * 100))) : undefined;
+                return <div className="wm-download" key={`${download.runtime}-${index}`}><div><span>{download.runtime === "firefox" ? "Firefox" : download.runtime === "cloakbrowser" ? "CloakBrowser" : "Chromium"}</span><small>{bytes(download.receivedBytes)} / {bytes(download.totalBytes || null)}</small></div><progress max={100} value={percent} aria-label={t("Browser download progress")} /></div>;
+              })}
+          </div>
+        </div>
+        <div className="wm-device-right">
+          <header className="wm-device-right-head">
+            <h3>{t("Quick preferences")}</h3>
+            <button type="button" className="iconbtn" aria-label={t("Close device panel")} onClick={() => setOpen(false)}><Icon name="close" render={render} /></button>
+          </header>
+          {error && <div className="wm-error" role="alert">{t(error)}</div>}
+          <div className="wm-theme-options" role="group" aria-label={t("Theme")}>
+            {(["light", "dark", "system"] as const).map(theme => <button type="button" key={theme} aria-pressed={props.theme === theme} disabled={busy} onClick={() => props.chooseTheme(theme)}><Icon name={theme === "light" ? "sun" : theme === "dark" ? "moon" : "laptop"} render={render} />{t(theme === "light" ? "Light" : theme === "dark" ? "Dark" : "System")}</button>)}
+          </div>
+          <label className="wm-device-language">
+            <span>{t("language.label")}</span>
+            <select className="select" value={props.language} disabled={busy} onChange={event => void action(() => props.setLanguage(event.target.value))}>{availableLanguages().map(code => <option key={code} value={code}>{languageNativeName(code)}</option>)}</select>
+          </label>
+          <div className="wm-device-actions">
+            <button type="button" className="btn ghost" onClick={() => navigate(props.onViewLogs)}><Icon name="logs" render={render} />{t("View logs")}</button>
+            <button type="button" className="btn ghost" onClick={() => navigate(() => props.onSettings("general"))}><Icon name="settings" render={render} />{t("All settings")}</button>
+          </div>
+        </div>
       </div>
-      <div className="wm-device-section"><h3>{t("Quick preferences")}</h3><div className="wm-theme-options" role="group" aria-label={t("Theme")}>{(["light", "dark", "system"] as const).map(theme => <button type="button" key={theme} aria-pressed={props.theme === theme} disabled={busy} onClick={() => props.chooseTheme(theme)}><Icon name={theme === "light" ? "sun" : theme === "dark" ? "moon" : "laptop"} render={render} />{t(theme === "light" ? "Light" : theme === "dark" ? "Dark" : "System")}</button>)}</div><label className="wm-device-language"><span>{t("language.label")}</span><select className="select" value={props.language} disabled={busy} onChange={event => void action(() => props.setLanguage(event.target.value))}>{availableLanguages().map(code => <option key={code} value={code}>{languageNativeName(code)}</option>)}</select></label></div>
-      <div className="wm-device-actions"><button type="button" className="btn ghost" onClick={() => navigate(props.onViewLogs)}><Icon name="logs" render={render} />{t("View logs")}</button><button type="button" className="btn ghost" onClick={() => navigate(() => props.onSettings("general"))}><Icon name="settings" render={render} />{t("All settings")}</button></div><footer><span>{t("Version")}</span><span>{props.version || t("Unavailable")}</span></footer>
     </section></MotionPresence>, document.body)}
   </>;
 }

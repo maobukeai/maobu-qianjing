@@ -228,7 +228,7 @@ test("dashboard selects browser for new profiles", () => {
     // Chrome version: 155 is the default where this computer can run it, and 146 stays the default
     // elsewhere. Choosing 146 uses CloakBrowser.
     expect(createModal).toContain('{form.engine === "chromium" && !appMode?.chromiumRuntime && (');
-    expect(createModal).toContain('? <><option value="aliasmode">{t("Chromium 155 (default)")}</option><option value="">{t("CloakBrowser 146")}</option></>');
+    expect(createModal).toContain('? <><option value="aliasmode">{t("Chromium 155 (default)")}</option><option value="">{t("CloakBrowser 146 (legacy compatibility)")}</option></>');
     expect(createModal).toContain(': <><option value="">{t("CloakBrowser 146 (default)")}</option><option value="aliasmode">{t("Chromium 155")}</option></>}');
     expect(app).toContain('chromiumRuntime: "" as FormChromiumRuntime');
     expect(app).toContain('...(createRuntimeInput ? { chromiumRuntime: createRuntimeInput } : {}),');

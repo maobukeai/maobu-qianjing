@@ -65,7 +65,9 @@ export interface ProfileRosterTableProps {
   onToggleDiag: () => void;
   hasDetails: boolean;
   detailsPanel?: ReactNode;
+  topRail?: ReactNode;
   loadingContent?: ReactNode;
+  footerNote?: ReactNode;
   folderLabel: (name: string) => string;
   openLabel: (profile: UiProfile) => string;
   onToggleSort: (key: SortKey) => void;
@@ -154,7 +156,9 @@ export function ProfileRosterTable({
   onToggleDiag,
   hasDetails,
   detailsPanel,
+  topRail,
   loadingContent,
+  footerNote,
   folderLabel,
   openLabel,
   onToggleSort,
@@ -450,6 +454,7 @@ export function ProfileRosterTable({
   return (
     <>
       <div className={`profile-browser${hasDetails ? " has-details" : ""}`} data-roster-empty={showWorkspaceEmpty ? "workspace" : showStandaloneEmpty ? "results" : undefined}>
+        {topRail}
         <div
           ref={scrollContainerRef}
           className={`tablewrap${tableScrolled ? " scrolled" : ""}`}
@@ -648,6 +653,7 @@ export function ProfileRosterTable({
       <footer className="statusbar">
         <span className="stat"><b>{profilesCount}</b> {t("profiles")}</span>
         <span className="stat"><StatusDot running={runningCount > 0} /><b>{runningCount}</b> {t("running")}</span>
+        {footerNote}
         {diag && (
           <span className="diag" onClick={onToggleDiag}>
             {t("Diagnose · last {when}", { when: diagWhen ?? "" })}

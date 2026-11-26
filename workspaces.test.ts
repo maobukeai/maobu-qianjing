@@ -67,3 +67,15 @@ test("atomic metadata replacement retains old bytes on serialization failure and
   expect(readFileSync(path, "utf8")).toBe(before);
   expect(readdirSync(root).filter(name => name.endsWith(".tmp"))).toEqual([]);
 });
+
+test("supports studio, monogram, and validated custom workspace icons", () => {
+  const root = home(), catalog = new WorkspaceCatalog(root, root);
+  for (const invalid of ["<svg>", "live-siri", "custom:../etc.png", "custom:abcd.png", "custom:" + "a".repeat(32) + ".svg", "custom:" + "A".repeat(32) + ".png"]) {
+    expect(() => catalog.create({ name: "Bad-" + invalid.slice(0, 6), icon: invalid })).toThrow();
+  }
+  const customIcon = `custom:${"0123456789abcdef0123456789abcdef"}.gif` as const;
+  const studio = catalog.create({ name: "3D", icon: "studio-cat" });
+  const mono = catalog.create({ name: "Mono", icon: "monogram" });
+  const custom = catalog.create({ name: "Custom", icon: customIcon });
+  expect([studio.icon, mono.icon, custom.icon]).toEqual(["studio-cat", "monogram", customIcon]);
+});

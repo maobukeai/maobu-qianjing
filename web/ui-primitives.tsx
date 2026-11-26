@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { MotionPresence } from "./desktop-motion.tsx";
 import { useTranslation } from "./i18n";
 
 /**
@@ -29,20 +30,22 @@ export const ICONS = {
   chevronDown: <path d="M6 9l6 6 6-6" />,
   chevronUp: <path d="M6 15l6-6 6 6" />,
   chevronLeft: <path d="M15 6l-6 6 6 6" />,
-  collapseRail: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M9 5v14m7-10-3 3 3 3" /></>,
-  expandRail: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M9 5v14m5-10 3 3-3 3" /></>,
+  collapseRail: <><rect x="3" y="4.5" width="18" height="15" rx="3" /><rect x="3.8" y="5.3" width="5.2" height="13.4" rx="2.1" fill="currentColor" fillOpacity="0.16" stroke="none" /><path d="M9.5 4.5v15M15.8 9.5 13.3 12l2.5 2.5" /></>,
+  expandRail: <><rect x="3" y="4.5" width="18" height="15" rx="3" /><path d="M9.5 4.5v15M13.7 9.5 16.2 12l-2.5 2.5" /></>,
   sort: <path d="M8 9l4-4 4 4M8 15l4 4 4-4" />,
   sortUp: <path d="M7 14l5-5 5 5" />,
   sortDown: <path d="M7 10l5 5 5-5" />,
   profiles: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18M8 9v11" /></>,
   folder: <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />,
   folders: <><path d="M8 17a2 2 0 01-2-2V5a2 2 0 012-2h2.88a2 2 0 011.41.59l.71.7A2 2 0 0014.41 5H18a2 2 0 012 2v8a2 2 0 01-2 2z" /><path d="M2 8v11a2 2 0 002 2h14" /></>,
+  inbox: <><polyline points="22 12 16 12 14 15 10 15 8 12 2 12" /><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" /></>,
   puzzle: <path d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z" />,
   logs: <><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z" /><path d="M14 3v5h5M9 13h6M9 17h4" /></>,
   user: <><circle cx="12" cy="8" r="3.6" /><path d="M5 20c.6-4 3-6 7-6s6.4 2 7 6" /></>,
   settings: <><path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" /></>,
   columns: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M15 4v16" /></>,
   play: <path d="M7 4.5l12 7.5-12 7.5z" />,
+  pause: <><rect x="6" y="4" width="4" height="16" rx="1" /><rect x="14" y="4" width="4" height="16" rx="1" /></>,
   power: <><path d="M12 3v9" /><path d="M6.5 6.5a8 8 0 1011 0" /></>,
   trash: <><path d="M4 7h16M10 7V5a1 1 0 011-1h2a1 1 0 011 1v2" /><path d="M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12" /></>,
   edit: <><path d="M4 20h4L20 8a2.8 2.8 0 10-4-4L4 16z" /><path d="M14 6l4 4" /></>,
@@ -246,9 +249,9 @@ export function ModalDialog({
   const { t } = useTranslation();
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const mountedPortal = useRef(open);
+  if (open) mountedPortal.current = true;
   useDialogKeyboard(panelRef, open, closeOnEscape && !busy ? onClose : null);
-
-  if (!open) return null;
 
   const sizeCls = MODAL_SIZE_CLASS[size];
   const modalClass = ["modal", sizeCls, className].filter(Boolean).join(" ");
@@ -258,7 +261,7 @@ export function ModalDialog({
   const resolvedLabelledBy =
     ariaLabelledBy ?? (title !== undefined ? titleId : undefined);
 
-  const content = (
+  const renderDialog = () => (
     <div
       className={backdropClass}
       style={backdropStyle}
@@ -300,10 +303,17 @@ export function ModalDialog({
     </div>
   );
 
-  if (portal && typeof document !== "undefined") {
-    return createPortal(content, document.body);
+  if (typeof document === "undefined") {
+    return open ? renderDialog() : null;
   }
-  return content;
+
+  if (portal) {
+    return mountedPortal.current
+      ? createPortal(<MotionPresence present={open}>{renderDialog}</MotionPresence>, document.body)
+      : null;
+  }
+
+  return <MotionPresence present={open}>{renderDialog}</MotionPresence>;
 }
 
 export interface ConfirmDialogProps {
@@ -337,11 +347,11 @@ export function ConfirmDialog({
   const cancelBtnRef = useRef<HTMLButtonElement | null>(null);
   const confirmBtnRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const mountedPortal = useRef(open);
+  if (open) mountedPortal.current = true;
   useDialogKeyboard(panelRef, open, busy ? null : onCancel, () => tone === "danger" ? cancelBtnRef.current : confirmBtnRef.current);
 
-  if (!open) return null;
-
-  const dialog = (
+  const renderDialog = () => (
     <div
       className="modal-backdrop confirm-dialog-backdrop"
       onClick={(e) => {
@@ -399,10 +409,17 @@ export function ConfirmDialog({
     </div>
   );
 
-  if (portal && typeof document !== "undefined") {
-    return createPortal(dialog, document.body);
+  if (typeof document === "undefined") {
+    return open ? renderDialog() : null;
   }
-  return dialog;
+
+  if (portal) {
+    return mountedPortal.current
+      ? createPortal(<MotionPresence present={open}>{renderDialog}</MotionPresence>, document.body)
+      : null;
+  }
+
+  return <MotionPresence present={open}>{renderDialog}</MotionPresence>;
 }
 
 export interface ConfirmRequestOptions {
@@ -454,19 +471,19 @@ export function useConfirmDialog({ portal = false }: Pick<ConfirmDialogProps, "p
   }, []);
   const cancelConfirm = useCallback(() => settle(false), [settle]);
 
-  const confirmDialogNode = pending ? (
+  const confirmDialogNode = (
     <ConfirmDialog
-      open
+      open={pending !== null}
       portal={portal}
-      title={pending.title}
-      message={pending.message}
-      confirmLabel={pending.confirmLabel}
-      cancelLabel={pending.cancelLabel}
-      tone={pending.tone}
+      title={pending?.title ?? ""}
+      message={pending?.message ?? ""}
+      confirmLabel={pending?.confirmLabel}
+      cancelLabel={pending?.cancelLabel}
+      tone={pending?.tone}
       onConfirm={() => settle(true)}
       onCancel={cancelConfirm}
     />
-  ) : null;
+  );
 
   return {
     requestConfirm,

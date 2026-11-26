@@ -11,7 +11,14 @@ import {
   CLOAKBROWSER_MACOS_VERSION, CLOAKBROWSER_VERSION, CLOAKBROWSER_WINDOWS_X64_ARCHIVE_SHA256,
   CLOAKBROWSER_WINDOWS_X64_EXECUTABLE_SHA256, renameWhenUnlocked, sha256File, windowsSystemTool,
 } from "./browser-install.ts";
-import { trackRuntimeDownload } from "./runtime-download.ts";
+import {
+  isRuntimeDownloadCancelled,
+  notifyRuntimeDownloadProgress,
+  RuntimeDownloadCancelledError,
+  RuntimeDownloadPausedError,
+  trackRuntimeDownload,
+  waitWhileRuntimeDownloadPaused,
+} from "./runtime-download.ts";
 import { CURL_ATTEMPT_TIMEOUT_MS, CurlCleanupError, downloadBoundedCurl } from "./bounded-curl.ts";
 
 // AliasMode's own Windows, Linux and macOS arm64 builds of the patch series. The Windows package includes
@@ -291,9 +298,25 @@ async function downloadWithRetry(
   sleep: (ms: number) => Promise<void>,
   now: () => number,
 ): Promise<void> {
-  const deadline = now() + DOWNLOAD_TOTAL_TIMEOUT_MS;
+  let deadline = now() + DOWNLOAD_TOTAL_TIMEOUT_MS;
   let failures = 0;
-  for (let attempt = 1; attempt <= DOWNLOAD_MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 1; attempt <= DOWNLOAD_MAX_ATTEMPTS;) {
+    if (isRuntimeDownloadCancelled(partial)) {
+      rmSync(partial, { force: true });
+      notifyRuntimeDownloadProgress(partial, 0);
+      throw new RuntimeDownloadCancelledError();
+    }
+    const pausedBefore = now();
+    try {
+      await waitWhileRuntimeDownloadPaused(partial);
+    } catch (error) {
+      if (error instanceof RuntimeDownloadCancelledError) {
+        rmSync(partial, { force: true });
+        notifyRuntimeDownloadProgress(partial, 0);
+      }
+      throw error;
+    }
+    deadline += Math.max(0, now() - pausedBefore);
     const remaining = Math.ceil(deadline - now());
     if (remaining < 1) throw new Error(`${spec.label} download timed out`);
     let before = fileSize(partial);
@@ -305,8 +328,28 @@ async function downloadWithRetry(
       await download(spec.url, partial, Math.min(CURL_ATTEMPT_TIMEOUT_MS, remaining));
       return;
     } catch (error) {
+      if (error instanceof RuntimeDownloadCancelledError) {
+        rmSync(partial, { force: true });
+        notifyRuntimeDownloadProgress(partial, 0);
+        throw error;
+      }
+      if (error instanceof RuntimeDownloadPausedError) {
+        const pausedAt = now();
+        try {
+          await waitWhileRuntimeDownloadPaused(partial);
+        } catch (waitError) {
+          if (waitError instanceof RuntimeDownloadCancelledError) {
+            rmSync(partial, { force: true });
+            notifyRuntimeDownloadProgress(partial, 0);
+          }
+          throw waitError;
+        }
+        deadline += Math.max(0, now() - pausedAt);
+        continue;
+      }
       if (error instanceof CurlCleanupError || attempt === DOWNLOAD_MAX_ATTEMPTS) throw error;
       if (fileSize(partial) <= before && ++failures >= DOWNLOAD_NO_PROGRESS_ATTEMPTS) throw error;
+      attempt++;
       const delay = Math.ceil(deadline - now());
       if (delay < 1) throw new Error(`${spec.label} download timed out`, { cause: error });
       await sleep(Math.min(delay, 30_000, 1000 * 2 ** failures));

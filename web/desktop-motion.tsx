@@ -9,7 +9,7 @@ export const DESKTOP_MOTION_EVENT = "maobu:desktop-motion-change";
 export type DesktopMotionPreference = "system" | "reduced" | "full";
 export type EffectiveDesktopMotion = "reduced" | "full";
 const REDUCED_MEDIA = "(prefers-reduced-motion: reduce)";
-const EXIT_MS = 120;
+const EXIT_MS = 135;
 
 export function validDesktopMotionPreference(value: unknown): value is DesktopMotionPreference {
   return value === "system" || value === "reduced" || value === "full";
@@ -134,6 +134,8 @@ export function DesktopMotionSettings({ value, onChange }: {
 export interface MotionPresenceProps {
   present: boolean;
   kind?: "dialog" | "popover" | "panel";
+  /** Override the exit retention window in ms when a surface has a longer CSS exit transition. */
+  exitMs?: number;
   /** Skip the 120ms exit retention when a surface has no active CSS exit host. */
   immediateExit?: boolean;
   children: ReactNode | (() => ReactNode);
@@ -144,7 +146,7 @@ export interface MotionPresenceProps {
  * assistive technology, and captured events cannot submit retained controls.
  * For portals, mount this component inside the portal, around its surface.
  */
-export function MotionPresence({ present, kind = "dialog", immediateExit = false, children }: MotionPresenceProps) {
+export function MotionPresence({ present, kind = "dialog", exitMs = EXIT_MS, immediateExit = false, children }: MotionPresenceProps) {
   const effective = useEffectiveDesktopMotion();
   const [retained, setRetained] = useState(present);
   const [phase, setPhase] = useState<"entering" | "present" | "exiting">(present ? "entering" : "exiting");
@@ -167,10 +169,10 @@ export function MotionPresence({ present, kind = "dialog", immediateExit = false
     } else if (visible.current) {
       setPhase("exiting");
       if (effective === "reduced" || immediateExit) { visible.current = false; setRetained(false); content.current = null; }
-      else timer = setTimeout(() => { visible.current = false; setRetained(false); content.current = null; }, EXIT_MS);
+      else timer = setTimeout(() => { visible.current = false; setRetained(false); content.current = null; }, exitMs);
     }
     return () => { if (frame !== undefined) window.cancelAnimationFrame(frame); if (timer !== undefined) clearTimeout(timer); };
-  }, [present, effective, immediateExit]);
+  }, [present, effective, immediateExit, exitMs]);
   if (!present && !retained) return null;
   const block = (event: { preventDefault(): void; stopPropagation(): void }) => { if (!present) { event.preventDefault(); event.stopPropagation(); } };
   return <div ref={host} className="desktop-motion-presence" data-motion-kind={kind} data-motion-phase={phase}

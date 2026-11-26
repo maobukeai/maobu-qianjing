@@ -15,6 +15,7 @@
 .roster-group-link > .icon { flex: none; color: var(--muted); }
 .roster-group-link:hover { background: var(--surface-hover); }
 .roster-group-link[aria-current] { color: var(--accent-ink); background: var(--accent-soft); font-weight: 550; }
+.roster-group-link[aria-current] > .icon { color: var(--accent-ink); }
 .roster-group-navigation[data-indicator-visible] .roster-group-link[aria-current] { background: transparent; }
 .roster-navigation.is-compact { overflow: visible; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; position: relative; }
 .roster-navigation.is-compact .roster-navigation-trigger { width: 100%; flex: 0 0 auto; }

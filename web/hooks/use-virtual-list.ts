@@ -232,7 +232,7 @@ export function useVirtualList<T>({
     const nextIdx = keyToIndex.get(anchor.key);
     if (nextIdx === undefined) return;
     const rowHeight = Math.max(1, offsets[nextIdx + 1]! - offsets[nextIdx]!);
-    const nextTop = Math.max(0, offsets[nextIdx]! + Math.min(anchor.subOffset, rowHeight));
+    const nextTop = Math.max(0, offsets[nextIdx]! + Math.min(anchor.subOffset, Math.max(0, rowHeight - 1)));
     el.scrollTop = nextTop;
     scrollTopRef.current = nextTop;
     setScrollTop(nextTop);
@@ -276,6 +276,7 @@ export function useVirtualList<T>({
           const adjusted = Math.max(0, currentScrollTop + scrollDelta);
           scrollEl.scrollTop = adjusted;
           scrollTopRef.current = adjusted;
+          setScrollTop(adjusted);
         }
         setMeasureVersion((version) => version + 1);
       }

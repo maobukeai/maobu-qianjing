@@ -10,20 +10,25 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
+  width: 0;
   height: 20px;
+  margin-left: -4px;
   padding: 0;
   border: 0;
   border-radius: var(--r-xs);
   background: transparent;
   color: var(--muted);
   opacity: 0;
+  overflow: hidden;
   cursor: pointer;
-  transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+  transition: width 130ms ease, margin-left 130ms ease, opacity 120ms ease, background 120ms ease, color 120ms ease;
 }
 
+tr[data-profile-id]:hover .inline-rename-pencil,
 .inline-name-display:hover .inline-rename-pencil,
 .inline-name-display:focus-within .inline-rename-pencil {
+  width: 20px;
+  margin-left: 0;
   opacity: 1;
 }
 

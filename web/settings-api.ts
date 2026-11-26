@@ -4,7 +4,7 @@ import type { IntegrationInfo } from "../agent/integration-info.ts";
 import type { IntegrationProbeResult } from "../agent/integration-probe.ts";
 import type { SyncFileRecord, SyncPreview } from "../encrypted-sync.ts";
 import type { UpdateCheckResult } from "../app-updates.ts";
-import type { BrowserRuntimeInventory } from "../runtime-inventory.ts";
+import type { BrowserRuntimeInventory, RuntimeInventoryId } from "../runtime-inventory.ts";
 import type { LocalProxyDiscoveryReport, LocalProxyDiscoveryRequest } from "../network-diagnostics.ts";
 import { isFingerprintCheckEvidence, isFingerprintCheckMessage, type PresentableFingerprintCheck } from "../fingerprint-check-presentation.ts";
 
@@ -89,11 +89,12 @@ function settings(value: unknown): boolean {
     && text(value.updates.repository) && ["stable", "beta"].includes(value.updates.channel) && typeof value.updates.checkOnStartup === "boolean"
     && typeof value.sync.enabled === "boolean" && text(value.sync.folder) && count(value.sync.retainSnapshots) && value.sync.retainSnapshots >= 1 && value.sync.retainSnapshots <= 100
     && (value.network === undefined || object(value.network)
-      && Object.keys(value.network).every(key => ["checkLocalProxyBeforeLaunch", "chromiumPreloading", "chromiumMemorySaver", "firefoxMemorySaver", "dataSaver", "batchLaunchMemoryGuard"].includes(key))
+      && Object.keys(value.network).every(key => ["checkLocalProxyBeforeLaunch", "chromiumPreloading", "chromiumMemorySaver", "firefoxMemorySaver", "openStartPageOnLaunch", "dataSaver", "batchLaunchMemoryGuard"].includes(key))
       && typeof value.network.checkLocalProxyBeforeLaunch === "boolean"
       && (value.network.chromiumPreloading === undefined || ["browser-default", "disabled"].includes(value.network.chromiumPreloading))
       && (value.network.chromiumMemorySaver === undefined || typeof value.network.chromiumMemorySaver === "boolean")
       && (value.network.firefoxMemorySaver === undefined || typeof value.network.firefoxMemorySaver === "boolean")
+      && (value.network.openStartPageOnLaunch === undefined || typeof value.network.openStartPageOnLaunch === "boolean")
       && (value.network.dataSaver === undefined || dataSaverConfig(value.network.dataSaver))
       && (value.network.batchLaunchMemoryGuard === undefined || memoryGuardConfig(value.network.batchLaunchMemoryGuard)))
     && (value.signedUpdates === undefined || object(value.signedUpdates) && Object.keys(value.signedUpdates).every(key => key === "checkOnStartup") && typeof value.signedUpdates.checkOnStartup === "boolean");
@@ -156,7 +157,8 @@ function runtimeInventory(value: unknown, checked: boolean): boolean {
   const cacheStates = checked ? ["not-checked", "missing", "present-unverified", "incomplete", "unreadable"] : ["not-checked"];
   return list(value.runtimes, row => ids.includes(row.id) && text(row.pinnedVersion) && /^[0-9][0-9A-Za-z.-]{0,63}$/.test(row.pinnedVersion)
     && typeof row.hostSupported === "boolean" && ["managed", "configured", "bundled", "unconfigured"].includes(row.source)
-    && (row.hostSupported && row.source === "managed" ? cacheStates.includes(row.cache) : row.cache === "not-applicable"))
+    && (row.hostSupported && row.source === "managed" ? cacheStates.includes(row.cache) : row.cache === "not-applicable")
+    && (row.sizeBytes === undefined || (checked && (row.cache === "present-unverified" || row.cache === "incomplete") && count(row.sizeBytes))))
     && new Set(value.runtimes.map(row => row.id)).size === ids.length;
 }
 async function request<T>(path: string, method = "GET", value?: unknown, signal?: AbortSignal): Promise<T> {
@@ -231,6 +233,10 @@ export async function fetchBrowserRuntimeInventory(signal?: AbortSignal): Promis
 }
 export async function inspectBrowserRuntimeCache(signal?: AbortSignal): Promise<BrowserRuntimeInventory> {
   const result = await request<{ inventory: unknown }>("/runtimes/inspect", "POST", {}, signal);
+  return read(result.inventory, value => runtimeInventory(value, true));
+}
+export async function removeBrowserRuntimeCache(id: RuntimeInventoryId, signal?: AbortSignal): Promise<BrowserRuntimeInventory> {
+  const result = await request<{ inventory: unknown }>("/runtimes/remove", "POST", { id }, signal);
   return read(result.inventory, value => runtimeInventory(value, true));
 }
 export async function discoverProxies(input: LocalProxyDiscoveryRequest = {}): Promise<LocalDiscovery> {

@@ -1,0 +1,10 @@
+[[permission]]
+identifier = "allow-default-browser"
+description = "Allows the trusted main window to query and register default browser status, open Windows default apps settings, and drain intercepted external URLs."
+commands.allow = [
+  "default_browser_status",
+  "default_browser_register",
+  "default_browser_open_settings",
+  "default_browser_unregister",
+  "default_browser_take_pending_urls",
+]

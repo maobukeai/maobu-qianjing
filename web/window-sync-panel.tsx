@@ -464,7 +464,7 @@ export function WindowSyncPanel({
   };
 
   return (
-    <MotionPresence present={open} kind="panel">
+    <MotionPresence present={open} kind="panel" exitMs={155}>
       <div
         className="wsync-drawer-backdrop"
         onClick={(event) => {

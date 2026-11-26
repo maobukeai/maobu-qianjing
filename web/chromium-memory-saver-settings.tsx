@@ -49,18 +49,23 @@ export function ChromiumMemorySaverSettings() {
     <div className="feature-card-title">
       <div className="feature-card-head-main">
         <h3>{t("Memory saver")}</h3>
+        <p>{t("Let tabs in a Chromium profile share a few renderer processes to use less memory. Pages with many tabs may respond more slowly.")}</p>
       </div>
       <span className={`feature-badge ${value ? "positive" : ""}`}>{t(value ? "Enabled" : "Disabled")}</span>
     </div>
     <div className="feature-card-body">
-      <p>{t("Let tabs in a Chromium profile share a few renderer processes to use less memory. Pages with many tabs may respond more slowly.")}</p>
       <label className="feature-toggle">
         <span><strong>{t("Limit renderer processes")}</strong></span>
         <input type="checkbox" role="switch" checked={value} disabled={busy || saved === null} onChange={event => { setValue(event.target.checked); setNotice(""); setError(""); }} />
       </label>
-      <p className="feature-inline-note">{t("Applies to Chromium profiles on the next fresh launch. Running browsers and Firefox are left as they are. Off by default.")}</p>
+      <details className="feature-note-disclosure">
+        <summary>{t("Scope & notes")}</summary>
+        <div className="feature-note-disclosure-body">
+          <p>{t("Applies to Chromium profiles on the next fresh launch. Running browsers and Firefox are left as they are. Off by default.")}</p>
+        </div>
+      </details>
       {error && <p className="feature-alert" role="alert">{t(error)}</p>}{notice && <p className="feature-success" role="status">{t(notice)}</p>}
-      <div className="feature-actions feature-card-footer-actions">{saved === null ? <button type="button" className="btn" disabled={busy} onClick={() => void load()}>{t(busy ? "Loading…" : "Try again")}</button> : <button type="button" className="btn primary" disabled={busy || value === saved} aria-busy={busy} onClick={() => void save()}>{t(busy ? "Saving…" : "Save memory saver preference")}</button>}</div>
+      <div className="feature-actions feature-card-footer-actions">{saved === null ? <button type="button" className="btn sm" disabled={busy} onClick={() => void load()}>{t(busy ? "Loading…" : "Try again")}</button> : <button type="button" className="btn sm primary" disabled={busy || value === saved} aria-busy={busy} onClick={() => void save()}>{t(busy ? "Saving…" : "Save memory saver preference")}</button>}</div>
     </div>
   </section>;
 }

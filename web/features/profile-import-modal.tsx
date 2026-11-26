@@ -335,15 +335,15 @@ export function ProfileImportModal({
 
   return (
     <>
-      {pendingView && (
-        <ModalDialog
-          open
-          className="pending-cookie-dialog"
-          backdropClassName="profile-import-backdrop"
-          busy={pendingView.busy}
-          onClose={closePendingCookies}
-          title={<span className="pending-cookie-heading"><span className="modal-title-icon"><Icon name="cookie" /></span>{t("Cookies at next start")}</span>}
-          footer={
+      <ModalDialog
+        open={!!pendingView}
+        className="pending-cookie-dialog"
+        backdropClassName="profile-import-backdrop"
+        busy={pendingView?.busy ?? false}
+        onClose={closePendingCookies}
+        title={<span className="pending-cookie-heading"><span className="modal-title-icon"><Icon name="cookie" /></span>{t("Cookies at next start")}</span>}
+        footer={
+          pendingView && (
             <>
               <button className="btn ghost" type="button" disabled={pendingView.busy} onClick={closePendingCookies}>{t("Close")}</button>
               {pendingView.error ? <button className="btn" type="button" onClick={retryPendingCookies}>{t("Retry")}</button> :
@@ -351,32 +351,36 @@ export function ProfileImportModal({
                   <Icon name="trash" className="sm" />{t("Remove pending cookies")}
                 </button>}
             </>
-          }
-        >
-          <div className="pending-cookie-profile">
-            <Icon name="profiles" className="sm" />
-            <bdi>{pendingView.profile.name}</bdi>
-          </div>
-          {pendingView.error ? (
-            <p className="modal-err" role="alert"><Icon name="alert" className="sm" />{pendingView.error}</p>
-          ) : pendingView.cookies === null ? (
-            <p className="pending-cookie-status" role="status">{t("Loading…")}</p>
-          ) : pendingView.cookies.length === 0 ? (
-            <p className="pending-cookie-status" role="status"><Icon name="cookie" />{t("No cookies are queued for the next start.")}</p>
-          ) : (
-            <div className="pending-cookie-list">
-              <table aria-busy={pendingView.busy}>
-                <thead><tr><th scope="col">{t("Domain")}</th><th scope="col">{t("Cookie name")}</th></tr></thead>
-                <tbody>
-                  {pendingView.cookies.map((cookie, index) => (
-                    <tr key={index}><td><bdi>{cookie.domain}</bdi></td><td><bdi>{cookie.name}</bdi></td></tr>
-                  ))}
-                </tbody>
-              </table>
+          )
+        }
+      >
+        {pendingView && (
+          <>
+            <div className="pending-cookie-profile">
+              <Icon name="profiles" className="sm" />
+              <bdi>{pendingView.profile.name}</bdi>
             </div>
-          )}
-        </ModalDialog>
-      )}
+            {pendingView.error ? (
+              <p className="modal-err" role="alert"><Icon name="alert" className="sm" />{pendingView.error}</p>
+            ) : pendingView.cookies === null ? (
+              <p className="pending-cookie-status" role="status">{t("Loading…")}</p>
+            ) : pendingView.cookies.length === 0 ? (
+              <p className="pending-cookie-status" role="status"><Icon name="cookie" />{t("No cookies are queued for the next start.")}</p>
+            ) : (
+              <div className="pending-cookie-list">
+                <table aria-busy={pendingView.busy}>
+                  <thead><tr><th scope="col">{t("Domain")}</th><th scope="col">{t("Cookie name")}</th></tr></thead>
+                  <tbody>
+                    {pendingView.cookies.map((cookie, index) => (
+                      <tr key={index}><td><bdi>{cookie.domain}</bdi></td><td><bdi>{cookie.name}</bdi></td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+      </ModalDialog>
 
       <MotionPresence present={showBulk}>{() => (
         /* Form dialog: a stray backdrop click must not discard typed input —

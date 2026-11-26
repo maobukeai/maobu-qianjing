@@ -17,8 +17,17 @@ const catalog: BrowserRuntimeInventory = {
 };
 const inspected: BrowserRuntimeInventory = {
   ...catalog, checked: true,
-  runtimes: catalog.runtimes.map(runtime => ({ ...runtime,
+  runtimes: catalog.runtimes.map(runtime => ({
+    ...runtime,
     cache: runtime.id === "aliasmode-chromium" ? "present-unverified" : runtime.id === "aliasmode-firefox" ? "missing" : "not-applicable",
+    ...(runtime.id === "aliasmode-chromium" ? { sizeBytes: 203_500_000 } : {}),
+  })),
+};
+const inspectedAfterRemove: BrowserRuntimeInventory = {
+  ...catalog, checked: true,
+  runtimes: catalog.runtimes.map(runtime => ({
+    ...runtime,
+    cache: runtime.id === "aliasmode-chromium" ? "missing" : runtime.id === "aliasmode-firefox" ? "missing" : "not-applicable",
   })),
 };
 const activeDownloads: readonly RuntimeDownload[] = [
@@ -49,6 +58,10 @@ async function run(scenario: string) {
         return Response.json({ ok: true, inventory: { ...catalog, checked: true } });
       }
       return Response.json({ ok: true, inventory: catalog });
+    }
+    if (input === "/ui/api/settings/runtimes/remove") {
+      assert.equal(options.body, JSON.stringify({ id: "aliasmode-chromium" }));
+      return Response.json({ ok: true, inventory: inspectedAfterRemove });
     }
     assert.equal(input, "/ui/api/settings/runtimes/inspect");
     assert.equal(options.body, "{}");
@@ -105,6 +118,15 @@ async function run(scenario: string) {
       await act(async () => button("Try again").click());
       await dom.flush();
     }
+    assert.deepEqual(
+      [...dom.container.querySelectorAll("[data-browser-runtime]")].map(item => item.getAttribute("data-browser-runtime")),
+      ["aliasmode-chromium", "aliasmode-firefox", "cloakbrowser"],
+    );
+    assert.ok(card("aliasmode-chromium").textContent?.includes("Primary Chrome engine for daily e-commerce, social, and ad workflows."));
+    assert.ok(card("aliasmode-firefox").textContent?.includes("Gecko engine with real hardware profiles and a distinct TLS/HTTP2 stack."));
+    assert.ok(card("cloakbrowser").textContent?.includes("Legacy Chromium 146 fallback for older profiles only."));
+    assert.ok(card("cloakbrowser").textContent?.includes("Legacy compatibility"));
+    assert.ok(!card("aliasmode-chromium").textContent?.includes("Legacy compatibility"));
     assert.ok(dom.container.textContent?.includes("Cache not checked"));
     assert.ok(dom.container.textContent?.includes("Default when engine is unspecified"));
     assert.ok(dom.container.textContent?.includes("Chromium default"));
@@ -143,6 +165,17 @@ async function run(scenario: string) {
     assert.ok(dom.container.textContent?.includes("Showing the last local cache check."));
     assert.equal(button("Refresh local cache").disabled, false);
     assert.equal(dom.container.querySelector('[role="alert"]'), null);
+    if (scenario === "remove") {
+      assert.ok(card("aliasmode-chromium").textContent.includes("203.5 MB"));
+      await act(async () => button("Remove cache").click());
+      await dom.flush();
+      assert.ok(card("aliasmode-chromium").textContent.includes("Remove cached files?"));
+      await act(async () => button("Confirm remove").click());
+      await dom.flush();
+      assert.ok(card("aliasmode-chromium").textContent.includes("Not cached"));
+      assert.ok(!card("aliasmode-chromium").textContent.includes("Remove cache"));
+      assert.ok(dom.container.textContent?.includes("Removed cached browser files. It will download again when needed."));
+    }
     if (scenario === "transfers") {
       const count = requests.length;
       await render([]);

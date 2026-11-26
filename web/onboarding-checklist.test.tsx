@@ -119,6 +119,7 @@ describe("OnboardingChecklist", () => {
 
     expect(h.container.querySelector("[data-onboarding-checklist='open']")).not.toBeNull();
     expect(h.container.querySelector("[data-onboarding-progress='2/4']")).not.toBeNull();
+    expect(h.container.querySelector(".onboarding-focus")?.textContent).toContain("Recommended next · Step 3 / 4");
     expect(h.container.querySelector("[data-onboarding-step='create_profile']")?.getAttribute("data-completed")).toBe("true");
     expect(h.container.querySelector("[data-onboarding-step='configure_proxy']")?.getAttribute("data-completed")).toBe("true");
     expect(h.container.querySelector("[data-onboarding-step='launch_profile']")?.getAttribute("data-completed")).toBe("false");
@@ -144,6 +145,22 @@ describe("OnboardingChecklist", () => {
 
     expect(h.container.querySelector("[data-onboarding-checklist='collapsed']")).not.toBeNull();
     expect(steps?.hasAttribute("hidden")).toBe(true);
+    expect(savedPrefs.at(-1)).toEqual({ key: ONBOARDING_STATE_KEY, value: "collapsed" });
+
+    // Clicking the header summary also toggles expand <-> collapse
+    const summary = h.container.querySelector<HTMLElement>(".onboarding-summary")!;
+    await act(async () => {
+      summary.click();
+    });
+    await h.flush();
+    expect(h.container.querySelector("[data-onboarding-checklist='open']")).not.toBeNull();
+    expect(savedPrefs.at(-1)).toEqual({ key: ONBOARDING_STATE_KEY, value: "open" });
+
+    await act(async () => {
+      summary.click();
+    });
+    await h.flush();
+    expect(h.container.querySelector("[data-onboarding-checklist='collapsed']")).not.toBeNull();
     expect(savedPrefs.at(-1)).toEqual({ key: ONBOARDING_STATE_KEY, value: "collapsed" });
 
     // Dismiss checklist -> disappears and persists "dismissed"

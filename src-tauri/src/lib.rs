@@ -1,6 +1,7 @@
 mod acceptance;
 mod browser;
 mod credentials;
+mod default_browser;
 mod desktop_close;
 mod diagnostics;
 mod external_resources;
@@ -76,6 +77,7 @@ fn trusted_loopback_capability(port: u16) -> CapabilityBuilder {
         .permission("allow-window-backdrop")
         .permission("allow-window-control")
         .permission("allow-system-diagnostics")
+        .permission("allow-default-browser")
         .permission("core:event:allow-listen")
         .permission("core:event:allow-unlisten");
     #[cfg(windows)]
@@ -449,6 +451,9 @@ mod tests {
         assert!(permissions
             .iter()
             .any(|permission| permission == "allow-system-diagnostics"));
+        assert!(permissions
+            .iter()
+            .any(|permission| permission == "allow-default-browser"));
         assert!(!permissions.iter().any(|permission| permission
             .as_str()
             .is_some_and(|value| value.starts_with("shell:"))));
@@ -457,7 +462,7 @@ mod tests {
             .is_some_and(|value| value.starts_with("updater:"))));
         #[cfg(windows)]
         {
-            assert_eq!(permissions.len(), 18);
+            assert_eq!(permissions.len(), 19);
             for permission in [
                 "core:window:allow-is-maximized",
                 "core:window:allow-minimize",
@@ -472,7 +477,7 @@ mod tests {
             }
         }
         #[cfg(not(windows))]
-        assert_eq!(permissions.len(), 12);
+        assert_eq!(permissions.len(), 13);
         assert!(!permissions.iter().any(|permission| {
             permission.as_str().is_some_and(|permission| {
                 permission.ends_with(":default")
@@ -645,11 +650,17 @@ pub fn run() {
     if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
-    let background = background_requested(std::env::args_os());
+    let startup_external_urls = default_browser::extract_external_urls(
+        std::env::args_os().map(|arg| arg.to_string_lossy().into_owned()),
+    );
+    let background = startup_external_urls.is_empty() && background_requested(std::env::args_os());
+    let pending_external_urls = default_browser::PendingExternalUrls::default();
+    pending_external_urls.enqueue(startup_external_urls);
     let import_request = parse_cloakpit_import_args(std::env::args_os().skip(1));
     let builder = tauri::Builder::default()
         .manage(acceptance_mode)
         .manage(RevealRequested::default())
+        .manage(pending_external_urls)
         .manage(Arc::new(shutdown::CloseState::default()))
         .manage(Arc::new(win32_sync::SyncController::new()))
         .manage(if isolated_acceptance {
@@ -662,7 +673,11 @@ pub fn run() {
         builder
     } else {
         builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            if background_requested(argv) {
+            let external_urls =
+                default_browser::extract_external_urls(argv.iter().map(String::as_str));
+            if !external_urls.is_empty() {
+                default_browser::handle_incoming_external_urls(app, external_urls);
+            } else if background_requested(argv) {
                 return;
             }
             app.state::<RevealRequested>()
@@ -692,6 +707,11 @@ pub fn run() {
             signed_updates::signed_update_check,
             signed_updates::signed_update_install,
             external_resources::open_external_resource,
+            default_browser::default_browser_status,
+            default_browser::default_browser_register,
+            default_browser::default_browser_open_settings,
+            default_browser::default_browser_unregister,
+            default_browser::default_browser_take_pending_urls,
             window_backdrop::set_window_theme,
             win32_layout::window_list_monitors,
             win32_window_registry::window_list_managed,

@@ -79,9 +79,9 @@ export type FlatRosterItem =
   | { kind: "launch-failure"; key: string; profile: UiProfile; message: string };
 
 const GROUP_HEADER_HEIGHT: Record<RosterDensity, number> = {
-  compact: 36,
-  standard: 40,
-  comfortable: 44,
+  compact: 30,
+  standard: 36,
+  comfortable: 40,
 };
 const LAUNCH_FAILURE_ROW_HEIGHT = 68;
 

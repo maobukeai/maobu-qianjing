@@ -343,12 +343,12 @@ export async function defaultBrowserClose(ws: string, timeoutMs: number): Promis
     } catch (err) {
       const name = (err as { name?: string })?.name;
       if (name === "TimeoutError" || name === "AbortError") {
-        await sleep(150);
+        await sleep(60);
         continue;
       }
       return true;
     }
-    await sleep(150);
+    await sleep(60);
   }
   return false;
 }

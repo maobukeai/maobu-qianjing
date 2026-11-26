@@ -343,9 +343,9 @@ fn validate_environment_values(
             ));
         }
     }
-    if value("WEBVIEW2_USER_DATA_FOLDER")
-        .is_some_and(|value| !value.is_empty() && PathBuf::from(value) != paths.webview_data)
-    {
+    if value("WEBVIEW2_USER_DATA_FOLDER").is_some_and(|value| {
+        !value.is_empty() && std::path::Path::new(&value) != paths.webview_data
+    }) {
         return Err("Acceptance refuses a WebView user-data environment override".into());
     }
     Ok(())

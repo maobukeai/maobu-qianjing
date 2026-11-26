@@ -307,6 +307,7 @@ describe("TagFilterBar and inline profile editors", () => {
 
   test("QuickProfileNotesEditor opens a viewport dialog, restores focus and saves on Ctrl+Enter", async () => {
     const h = await createDomHarness();
+    h.dom.document.documentElement.dataset.desktopMotion = "reduced";
     const saved: Array<{ id: string; notes: string }> = [];
     const openChanges: boolean[] = [];
 
@@ -332,43 +333,45 @@ describe("TagFilterBar and inline profile editors", () => {
       trigger.focus();
       trigger.click();
     });
-    const findTextarea = () => h.dom.document.querySelector<HappyTextAreaElement>('.quick-notes-dialog[role="dialog"] textarea')!;
+    const findTextarea = () => h.dom.document.querySelector<HappyTextAreaElement>('.quick-notes-dialog[role="dialog"] textarea');
     const firstTextarea = findTextarea();
-    expect(h.container.contains(firstTextarea)).toBe(false);
-    expect(h.dom.document.activeElement).toBe(firstTextarea);
+    expect(firstTextarea !== null).toBe(true);
+    expect(h.container.contains(firstTextarea!)).toBe(false);
+    expect(h.dom.document.activeElement === firstTextarea).toBe(true);
     expect(openChanges).toEqual([true]);
 
     await act(async () => {
-      firstTextarea.dispatchEvent(new h.dom.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      firstTextarea!.dispatchEvent(new h.dom.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
     });
-    expect(findTextarea()).toBeNull();
-    expect(h.dom.document.activeElement).toBe(trigger);
+    expect(findTextarea() === null).toBe(true);
+    expect(h.dom.document.activeElement === trigger).toBe(true);
     expect(openChanges).toEqual([true, false]);
     expect(saved).toEqual([]);
 
     await act(async () => trigger.click());
     const textarea = findTextarea();
-    expect(h.dom.document.activeElement).toBe(textarea);
+    expect(textarea !== null).toBe(true);
+    expect(h.dom.document.activeElement === textarea).toBe(true);
 
     await act(async () => {
-      textarea.focus();
+      textarea!.focus();
       Object.getOwnPropertyDescriptor(h.dom.HTMLTextAreaElement.prototype, "value")!.set!.call(
-        textarea,
+        textarea!,
         "Account warmup\r\nDay 3",
       );
-      textarea.dispatchEvent(new h.dom.Event("input", { bubbles: true }));
-      textarea.dispatchEvent(new h.dom.Event("change", { bubbles: true }));
-      textarea.dispatchEvent(new h.dom.KeyboardEvent("keyup", { bubbles: true }));
+      textarea!.dispatchEvent(new h.dom.Event("input", { bubbles: true }));
+      textarea!.dispatchEvent(new h.dom.Event("change", { bubbles: true }));
+      textarea!.dispatchEvent(new h.dom.KeyboardEvent("keyup", { bubbles: true }));
     });
     await act(async () => {
-      textarea.dispatchEvent(
+      textarea!.dispatchEvent(
         new h.dom.KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }),
       );
     });
 
     expect(saved).toEqual([{ id: "env_note", notes: "Account warmup\nDay 3" }]);
-    expect(findTextarea()).toBeNull();
-    expect(h.dom.document.activeElement).toBe(trigger);
+    expect(findTextarea() === null).toBe(true);
+    expect(h.dom.document.activeElement === trigger).toBe(true);
     expect(openChanges).toEqual([true, false, true, false]);
   });
 });

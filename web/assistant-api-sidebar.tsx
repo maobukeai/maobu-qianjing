@@ -171,15 +171,15 @@ export function AssistantApiSidebar({ active, disabled, keyEditRequest, onApply 
       if (!editing && needsKey) editKey();
       else setEditing(value => !value);
     }}>{t(editing ? "Hide connection details" : needsKey ? "Update API key" : "Edit connection")}</button></div>}
-    {needsKey && <p id={keyHintId} className="assistant-key-note">{t("API key required for this session")}</p>}
+    {needsKey && <p id={keyHintId} className="assistant-key-note">{t("API key required")}</p>}
     <div className="assistant-api-edit" id={detailsId} hidden={!!draft.id && !editing}>
       <label className="fld"><span>{t("Connection name")}</span><input value={draft.name} maxLength={80} disabled={blocked} onChange={event => update({ name: event.target.value })} /></label>
       <label className="fld"><span>{t("Service protocol")}</span><select value={draft.provider} disabled={blocked} onChange={event => {
         setModels(null); update({ provider: event.target.value as AssistantServiceDraft["provider"], apiKey: undefined, endpoint: "", model: "" });
       }}>{(["openai-compatible", "anthropic", "gemini"] as const).map(provider => <option key={provider} value={provider}>{t(ASSISTANT_SERVICE_LABELS[provider])}</option>)}</select></label>
       <label className="fld"><span>{t("API base URL")}</span><input value={draft.endpoint} maxLength={512} autoComplete="off" spellCheck={false} placeholder={exampleEndpoint[draft.provider]} disabled={blocked} onChange={event => { setModels(null); update({ endpoint: event.target.value, apiKey: undefined }); }} /></label>
-      <label className="fld"><span>{t("API key")}</span><input ref={keyInput} value={draft.apiKey ?? ""} type="password" autoComplete="new-password" maxLength={2048} spellCheck={false} placeholder={savedKeyAvailable ? t("Available for this app session") : undefined} aria-describedby={needsKey ? keyHintId : undefined} disabled={blocked} onChange={event => { setModels(null); update({ apiKey: event.target.value || undefined }); }} /></label>
-      <p className="assistant-note">{t("API keys are kept for this app session. Enter the key again after restarting.")}</p>
+      <label className="fld"><span>{t("API key")}</span><input ref={keyInput} value={draft.apiKey ?? ""} type="password" autoComplete="new-password" maxLength={2048} spellCheck={false} placeholder={savedKeyAvailable ? t("Encrypted key saved on this device") : undefined} aria-describedby={needsKey ? keyHintId : undefined} disabled={blocked} onChange={event => { setModels(null); update({ apiKey: event.target.value || undefined }); }} /></label>
+      <p className="assistant-note">{t("API keys are encrypted on this device and excluded from workspace backups.")}</p>
       <button className="btn" type="button" disabled={blocked || needsKey || !draft.endpoint.trim()} onClick={() => void run("test")}>{t("Test and load models")}</button>
     </div>
     {!!models?.length && <label className="fld"><span>{t("Available models")}</span><select value={models.includes(draft.model) ? draft.model : ""} disabled={blocked} onChange={event => update({ model: event.target.value })}><option value="">{t("Choose a model")}</option>{models.map(name => <option key={name}>{name}</option>)}</select></label>}

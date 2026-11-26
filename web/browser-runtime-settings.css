@@ -31,12 +31,43 @@
   flex-wrap: wrap;
   gap: 8px 16px;
 }
+.browser-runtime-card-meta > div:first-child { min-width: 0; flex: 1 1 260px; }
 .browser-runtime-card-meta h4 { margin: 0 0 3px; color: var(--ink); font-size: 13px; font-weight: 620; }
 .browser-runtime-card-meta p { font-size: var(--t-xs); overflow-wrap: anywhere; }
+.browser-runtime-card-meta .browser-runtime-summary { margin: 5px 0 0; color: var(--muted); font-size: var(--t-xs); line-height: 1.5; }
 .browser-runtime-card-meta code { font: inherit; font-variant-numeric: tabular-nums; }
 .browser-runtime-badges { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
 .browser-runtime-badges .feature-badge { flex-shrink: 1; padding: 3px 6px; overflow-wrap: anywhere; }
+.browser-runtime-badges .browser-runtime-legacy { color: var(--muted); }
+.browser-runtime-badges .browser-runtime-size { font-variant-numeric: tabular-nums; color: var(--ink-soft); }
 .browser-runtime-badges .runtime-host-warning { color: var(--warn-ink); background: var(--warn-soft); border-color: var(--warn-line); }
+.browser-runtime-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-soft);
+}
+.browser-runtime-remove-btn { color: var(--danger-ink); }
+.browser-runtime-remove-btn:hover:not(:disabled) {
+  background: var(--danger-soft);
+  border-color: var(--danger-line);
+}
+.browser-runtime-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  width: 100%;
+  font-size: var(--t-xs);
+  color: var(--ink-soft);
+}
+.browser-runtime-confirm-buttons { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.browser-runtime-settings .browser-runtime-notice {
+  margin-bottom: 10px;
+  color: var(--success-ink);
+}
 .browser-runtime-settings .browser-runtime-check-note { margin-top: 9px; font-size: var(--t-xs); }
 .browser-runtime-help > summary { width: fit-content; min-height: 24px; color: var(--accent-ink); }
 .browser-runtime-help > p { margin-top: 3px; font-size: var(--t-xs); }

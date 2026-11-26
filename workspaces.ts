@@ -4,9 +4,20 @@ import { basename, dirname, join, resolve } from "node:path";
 import { renameWithWindowsRetrySync } from "./windows-rename.ts";
 
 export const WORKSPACE_COLORS = ["#8169c8", "#628ac7", "#638f77", "#c4905b", "#b87594", "#7c7d8e"] as const;
-export const WORKSPACE_ICONS = ["laptop", "folder", "briefcase", "globe", "star", "layers"] as const;
+export const WORKSPACE_STUDIO_ICONS = ["studio-cat", "studio-prism", "studio-rocket", "studio-globe", "studio-shield", "studio-bolt"] as const;
+export const WORKSPACE_STATIC_ICONS = ["laptop", "folder", "briefcase", "globe", "star", "layers", "bag", "store", "shield", "key", "bot", "terminal", "cpu", "video", "mail", "crown"] as const;
+export const WORKSPACE_ICONS = [...WORKSPACE_STUDIO_ICONS, ...WORKSPACE_STATIC_ICONS, "monogram"] as const;
 export type WorkspaceColor = typeof WORKSPACE_COLORS[number];
-export type WorkspaceIcon = typeof WORKSPACE_ICONS[number];
+export type BuiltinWorkspaceIcon = typeof WORKSPACE_ICONS[number];
+export type CustomWorkspaceIcon = `custom:${string}`;
+export type WorkspaceIcon = BuiltinWorkspaceIcon | CustomWorkspaceIcon;
+export const CUSTOM_WORKSPACE_ICON_PATTERN = /^custom:([0-9a-f]{32}\.(png|jpg|webp|gif))$/;
+export function isCustomWorkspaceIcon(value: unknown): value is CustomWorkspaceIcon {
+  return typeof value === "string" && CUSTOM_WORKSPACE_ICON_PATTERN.test(value);
+}
+export function isValidWorkspaceIcon(value: unknown): value is WorkspaceIcon {
+  return (WORKSPACE_ICONS as readonly unknown[]).includes(value) || isCustomWorkspaceIcon(value);
+}
 export interface Workspace {
   id: string; name: string; color: WorkspaceColor; icon: WorkspaceIcon;
   createdAt: number; updatedAt: number; lastOpenedAt: number; archived: boolean;
@@ -59,8 +70,8 @@ function workspaceName(value: unknown): string {
   return name;
 }
 function appearance(color: unknown, icon: unknown): { color: WorkspaceColor; icon: WorkspaceIcon } {
-  if (!(WORKSPACE_COLORS as readonly unknown[]).includes(color) || !(WORKSPACE_ICONS as readonly unknown[]).includes(icon)) throw new Error("Invalid workspace color or icon");
-  return { color: color as WorkspaceColor, icon: icon as WorkspaceIcon };
+  if (!(WORKSPACE_COLORS as readonly unknown[]).includes(color) || !isValidWorkspaceIcon(icon)) throw new Error("Invalid workspace color or icon");
+  return { color: color as WorkspaceColor, icon };
 }
 function validateRegistry(value: unknown): WorkspaceRegistry {
   const registry = value as WorkspaceRegistry;

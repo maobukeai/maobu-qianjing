@@ -340,12 +340,13 @@ describe("AboutPopover", () => {
     );
     expect(releaseLink?.getAttribute("href")).toBe("https://github.com/maobukeai/maobu-qianjing/releases/tag/v0.2.0");
 
-    // Toggle GitHub startup check
+    // Toggle unified startup update check (active even on non-signed local builds)
     const switches = Array.from(dialog.querySelectorAll('input[type="checkbox"][role="switch"]')) as HTMLInputElement[];
-    expect(switches).toHaveLength(2);
-    const githubSwitch = switches[1]!;
+    expect(switches).toHaveLength(1);
+    const startupSwitch = switches[0]!;
+    expect(startupSwitch.disabled).toBe(false);
     await act(async () => {
-      githubSwitch.click();
+      startupSwitch.click();
     });
     await flush();
     expect(settings.updates.checkOnStartup).toBe(true);
@@ -409,6 +410,18 @@ describe("AboutPopover", () => {
         const method = init?.method ?? "GET";
         if (path === "/ui/api/shell-language") return Response.json({ ok: true, language: "en-US" });
         if (path === "/ui/api/settings" && method === "GET") return Response.json({ ok: true, settings });
+        if (path === "/ui/api/settings" && method === "PATCH") {
+          const patch = JSON.parse(String(init?.body ?? "{}")) as {
+            updates?: Partial<typeof settings.updates>;
+            signedUpdates?: Partial<typeof settings.signedUpdates>;
+          };
+          settings = {
+            ...settings,
+            ...(patch.updates ? { updates: { ...settings.updates, ...patch.updates } } : {}),
+            ...(patch.signedUpdates ? { signedUpdates: { ...settings.signedUpdates, ...patch.signedUpdates } } : {}),
+          };
+          return Response.json({ ok: true, settings });
+        }
         if (path === "/ui/api/settings/updates") {
           return Response.json({
             ok: true,
@@ -494,8 +507,10 @@ describe("AboutPopover", () => {
     expect(dialog.textContent).toContain("Up to date");
     expect(dialog.textContent).toContain("v1.0.0 is up to date");
 
-    // Toggle signed startup check (a)
-    const signedSwitch = dialog.querySelectorAll('input[type="checkbox"][role="switch"]')[0] as HTMLInputElement;
+    // Toggle unified startup check (a): updates both signed and GitHub channels
+    const switches = dialog.querySelectorAll('input[type="checkbox"][role="switch"]');
+    expect(switches).toHaveLength(1);
+    const signedSwitch = switches[0] as HTMLInputElement;
     expect(signedSwitch.disabled).toBe(false);
     expect(signedSwitch.checked).toBe(false);
     await act(async () => {
@@ -503,6 +518,7 @@ describe("AboutPopover", () => {
     });
     await flush();
     expect(savedPrefs).toEqual([true]);
+    expect(settings.updates.checkOnStartup).toBe(true);
     expect(signedSwitch.checked).toBe(true);
 
     // Check updates via unified CTA -> discovers signed 1.2.3

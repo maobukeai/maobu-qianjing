@@ -1,0 +1,210 @@
+.wm-workspace-badge.is-studio,
+.wm-workspace-badge.is-custom-image {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 9px;
+}
+
+.wm-workspace-badge.is-studio {
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px rgba(18, 22, 38, 0.08), 0 2px 6px rgba(16, 20, 36, 0.1);
+}
+
+:root[data-theme="dark"] .wm-workspace-badge.is-studio {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14), 0 3px 10px rgba(0, 0, 0, 0.32);
+}
+
+.wm-workspace-badge.is-studio img,
+.wm-workspace-badge.is-custom-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.wm-workspace-badge.is-studio::after {
+  content: "";
+  position: absolute;
+  inset: -40%;
+  width: 55%;
+  height: 180%;
+  background: linear-gradient(105deg, transparent 20%, rgba(255, 255, 255, 0.52) 50%, transparent 80%);
+  transform: translateX(-180%) rotate(18deg);
+  pointer-events: none;
+}
+
+:root[data-desktop-motion="full"] .wm-workspace-badge.is-studio img {
+  will-change: transform;
+  animation: wm-studio-breathe 4.4s ease-in-out infinite;
+}
+
+:root[data-desktop-motion="full"] .wm-workspace-badge.is-studio::after {
+  will-change: transform, opacity;
+  animation: wm-glass-sheen-ambient 5.6s ease-in-out infinite;
+}
+
+:root[data-desktop-motion="full"] .wm-workspace-trigger:hover .wm-workspace-badge.is-studio::after,
+:root[data-desktop-motion="full"] .wm-icon-picker-tile:hover .wm-workspace-badge.is-studio::after,
+:root[data-desktop-motion="full"] .wm-catalog-item:hover .wm-workspace-badge.is-studio::after {
+  animation: wm-glass-sheen 1.2s cubic-bezier(0.22, 1, 0.36, 1) 1;
+}
+
+@keyframes wm-studio-breathe {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1.02); }
+  50% { transform: translate3d(0, -1px, 0) scale(1.07); }
+}
+
+@keyframes wm-glass-sheen-ambient {
+  0%, 62% { transform: translateX(-180%) rotate(18deg); opacity: 0; }
+  72% { opacity: 0.85; }
+  88%, 100% { transform: translateX(260%) rotate(18deg); opacity: 0; }
+}
+
+@keyframes wm-glass-sheen {
+  0% { transform: translateX(-180%) rotate(18deg); opacity: 0; }
+  25% { opacity: 0.92; }
+  75%, 100% { transform: translateX(260%) rotate(18deg); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wm-workspace-badge.is-studio img,
+  .wm-workspace-badge.is-studio::after { animation: none !important; }
+}
+
+/* Tabbed Workspace Icon Picker */
+.wm-icon-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.wm-icon-picker-tabs {
+  position: relative;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  width: fit-content;
+  max-width: 100%;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--surface-sunken);
+}
+
+.wm-icon-picker-tabs > .global-sliding-pill {
+  border-radius: 7px;
+}
+
+.wm-icon-picker-tabs > button {
+  position: relative;
+  z-index: 1;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 4px 10px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.wm-icon-picker-tabs > button:hover:not(:disabled):not([aria-pressed="true"]) {
+  color: var(--ink);
+  background: var(--surface-hover);
+}
+
+.wm-icon-picker-tabs > button[aria-pressed="true"] {
+  background: var(--surface);
+  color: var(--accent-ink);
+  font-weight: 650;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.wm-icon-picker-grid {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wm-icon-picker-tile {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 68px;
+  padding: 8px 6px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface-sunken);
+  color: var(--muted);
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+}
+
+.wm-icon-picker-tile:hover:not(:disabled):not([aria-pressed="true"]) {
+  background: var(--surface);
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.wm-icon-picker-tile[aria-pressed="true"] {
+  background: var(--surface);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 0 0 2.5px var(--accent-soft);
+}
+
+.wm-icon-picker-tile--static {
+  min-width: 38px;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 9px;
+}
+
+.wm-icon-picker-tile-name {
+  font-size: 10.5px;
+  font-weight: 550;
+  line-height: 1.25;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.wm-icon-picker-custom {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface-sunken);
+}
+
+.wm-icon-picker-custom-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 200px;
+}
+
+.wm-icon-picker-custom-copy small {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.wm-icon-picker-custom-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}

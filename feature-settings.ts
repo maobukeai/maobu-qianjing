@@ -23,7 +23,8 @@ import { AssistantModelServices, AssistantServicesError } from "./assistant-mode
 import { RemoteAssistantError, type RemoteAssistantConnection } from "./remote-assistant.ts";
 import { ProfileTemplateStore, PROFILE_TEMPLATES_FILE } from "./profile-templates.ts";
 import { handleProfileTemplateRequest } from "./profile-template-routes.ts";
-import { getBrowserRuntimeInventory, inspectBrowserRuntimeInventory, type RuntimeInventoryDeployment } from "./runtime-inventory.ts";
+import { getBrowserRuntimeInventory, inspectBrowserRuntimeInventory, isRuntimeInventoryId, removeBrowserRuntimeCache, RuntimeCacheRemovalError, type RuntimeInventoryDeployment } from "./runtime-inventory.ts";
+import { runtimeDownloads } from "./runtime-download.ts";
 
 const services = new Map<string, { settings: AppSettingsStore; updates: AppUpdateService; lastUpdate: UpdateCheckResult | null; models: AssistantModelServices }>();
 function relevantUpdate(result: UpdateCheckResult | null, preferences: { repository: string; channel: string }): boolean {
@@ -102,6 +103,32 @@ export async function handleFeatureSettingsRequest(request: Request, store: Prof
       const deployment = options.runtimeInventory;
       if (!deployment) return json({ ok: false, error: "Browser runtime inventory is unavailable" }, 503);
       const inventory = inspect ? await inspectBrowserRuntimeInventory(deployment) : getBrowserRuntimeInventory(deployment);
+      return json({ ok: true, inventory });
+    }
+    if (path === "/ui/api/settings/runtimes/remove") {
+      if (request.method !== "POST") return json({ ok: false, error: "Method not allowed" }, 405);
+      if (search) return json({ ok: false, error: "Browser runtime inventory does not accept options" }, 400);
+      const input = await body(request);
+      if (Object.keys(input).some(key => key !== "id") || !isRuntimeInventoryId(input.id)) {
+        return json({ ok: false, error: "Invalid browser runtime identifier" }, 400);
+      }
+      const deployment = options.runtimeInventory;
+      if (!deployment) return json({ ok: false, error: "Browser runtime inventory is unavailable" }, 503);
+      const launches = store.listLaunches();
+      const runningBinaries: string[] = [];
+      const runningEngines: ("chromium" | "firefox")[] = [];
+      for (const launch of launches) {
+        if (launch.binaryPath) runningBinaries.push(launch.binaryPath);
+        if (launch.ownerBinaryPath) runningBinaries.push(launch.ownerBinaryPath);
+        if (!launch.binaryPath && !launch.ownerBinaryPath && (launch.engine === "chromium" || launch.engine === "firefox")) {
+          runningEngines.push(launch.engine);
+        }
+      }
+      const inventory = await removeBrowserRuntimeCache(deployment, input.id, {
+        runningBinaries,
+        runningEngines,
+        activeDownloads: runtimeDownloads(),
+      });
       return json({ ok: true, inventory });
     }
     if (path === "/ui/api/settings/assistant/models" && request.method === "POST") {
@@ -284,6 +311,7 @@ export async function handleFeatureSettingsRequest(request: Request, store: Prof
     if (error instanceof LocalAssistantError || error instanceof RemoteAssistantError) return json({ ok: false, error: error.message, code: error.code, retryable: error.retryable }, error.httpStatus);
     if (error instanceof AssistantServicesError) return json({ ok: false, error: error.message, code: error.code, retryable: false }, error.httpStatus);
     if (error instanceof FingerprintReviewError) return json({ ok: false, error: error.message }, error.status);
+    if (error instanceof RuntimeCacheRemovalError) return json({ ok: false, error: error.message }, error.status);
     const filesystemCode = error && typeof error === "object" && "code" in error ? String(error.code) : "";
     const detail = ["ENOENT", "EACCES", "EPERM", "ENOTDIR", "EISDIR", "EEXIST"].includes(filesystemCode)
       ? "Local storage operation failed. Check the configured folder and permissions."

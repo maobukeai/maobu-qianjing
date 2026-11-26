@@ -286,6 +286,11 @@ export function installGlobalSelectMenus(root?: HTMLElement | Document): () => v
       }
     }
 
+    menu.addEventListener("pointerdown", (e) => {
+      // Keep parent popovers' document-level outside-click `pointerdown` listeners
+      // from dismissing the popover before option `click` / `change` commits.
+      e.stopPropagation();
+    });
     menu.addEventListener("mousedown", (e) => {
       // Keep focus on `<select>` so modal focus traps / blur listeners stay calm.
       e.preventDefault();
@@ -359,6 +364,7 @@ export function installGlobalSelectMenus(root?: HTMLElement | Document): () => v
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
+        event.stopImmediatePropagation();
         closeMenu(true);
         return;
       }

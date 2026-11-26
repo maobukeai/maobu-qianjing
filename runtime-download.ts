@@ -7,6 +7,22 @@
 import { existsSync, rmSync, statSync } from "node:fs";
 import { open } from "node:fs/promises";
 
+export type RuntimeDownloadStatus = "downloading" | "paused";
+
+export class RuntimeDownloadPausedError extends Error {
+  constructor(message = "runtime download paused") {
+    super(message);
+    this.name = "RuntimeDownloadPausedError";
+  }
+}
+
+export class RuntimeDownloadCancelledError extends Error {
+  constructor(message = "runtime download cancelled") {
+    super(message);
+    this.name = "RuntimeDownloadCancelledError";
+  }
+}
+
 export interface ResumableDownloadDeps {
   fetch?: (url: string, init: RequestInit) => Promise<Response>;
   sleep?: (ms: number) => Promise<void>;
@@ -75,6 +91,10 @@ async function receive(
   const stalled = () => controller.abort(new Error("download stalled"));
   let timer = setTimeout(stalled, stallMs);
   const alive = () => { clearTimeout(timer); timer = setTimeout(stalled, stallMs); };
+  const unregisterAbort = registerRuntimeDownloadAbort(partial, (reason) => {
+    clearTimeout(timer);
+    controller.abort(reason);
+  });
   let response: Response | undefined;
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   let file: Awaited<ReturnType<typeof open>> | undefined;
@@ -83,6 +103,8 @@ async function receive(
   let failed = false;
   let written = have;
   try {
+    if (isRuntimeDownloadCancelled(partial)) throw new RuntimeDownloadCancelledError();
+    if (isRuntimeDownloadPaused(partial)) throw new RuntimeDownloadPausedError();
     const request = (deps.fetch ?? fetch)(url, {
       headers: have > 0 ? { range: `bytes=${have}-` } : {},
       signal: controller.signal,
@@ -130,16 +152,18 @@ async function receive(
         written += bytes;
         controller.signal.throwIfAborted();
         progress(written);
-        if (activeDownloads.has(partial)) notifyRuntimeDownloadsThrottled();
+        notifyRuntimeDownloadProgress(partial, written);
       });
     }
   } catch (error) {
     failed = true;
+    if (error instanceof RuntimeDownloadCancelledError) discard = true;
     // A full byte count without EOF must not turn into success at the start of
     // the next attempt. A shorter saved prefix can still safely resume.
-    if (file && written === size) discard = true;
+    else if (file && written === size) discard = true;
     throw error;
   } finally {
+    unregisterAbort();
     clearTimeout(timer);
     controller.abort();
     if (reader) {
@@ -153,7 +177,10 @@ async function receive(
     } catch (error) {
       if (!failed) throw error;
     } finally {
-      if (discard) rmSync(partial, { force: true });
+      if (discard) {
+        rmSync(partial, { force: true });
+        notifyRuntimeDownloadProgress(partial, 0);
+      }
     }
   }
 }
@@ -171,13 +198,28 @@ export async function downloadResumable(
 ): Promise<void> {
   const attempts = deps.attempts ?? 5;
   let lastError: unknown = new Error("download did not run");
-  for (let attempt = 1; attempt <= attempts; attempt++) {
+  for (let attempt = 1; attempt <= attempts;) {
+    if (isRuntimeDownloadCancelled(partial)) {
+      rmSync(partial, { force: true });
+      notifyRuntimeDownloadProgress(partial, 0);
+      throw new RuntimeDownloadCancelledError();
+    }
+    try {
+      await waitWhileRuntimeDownloadPaused(partial);
+    } catch (error) {
+      if (error instanceof RuntimeDownloadCancelledError) {
+        rmSync(partial, { force: true });
+        notifyRuntimeDownloadProgress(partial, 0);
+      }
+      throw error;
+    }
     let have = existsSync(partial) ? statSync(partial).size : 0;
     if (have > size) {
       rmSync(partial, { force: true });
       have = 0;
     }
     progress(have);
+    notifyRuntimeDownloadProgress(partial, have);
     if (have === size) return;
     try {
       await receive(url, partial, have, size, deps, progress);
@@ -186,8 +228,26 @@ export async function downloadResumable(
       if (received > size) rmSync(partial, { force: true });
       throw new Error("download ended early");
     } catch (error) {
+      if (error instanceof RuntimeDownloadCancelledError) {
+        rmSync(partial, { force: true });
+        notifyRuntimeDownloadProgress(partial, 0);
+        throw error;
+      }
+      if (error instanceof RuntimeDownloadPausedError) {
+        try {
+          await waitWhileRuntimeDownloadPaused(partial);
+        } catch (waitError) {
+          if (waitError instanceof RuntimeDownloadCancelledError) {
+            rmSync(partial, { force: true });
+            notifyRuntimeDownloadProgress(partial, 0);
+          }
+          throw waitError;
+        }
+        continue;
+      }
       lastError = error;
-      if (attempt < attempts) await (deps.sleep ?? Bun.sleep)(Math.min(30_000, 1000 * 2 ** (attempt - 1)));
+      attempt++;
+      if (attempt <= attempts) await (deps.sleep ?? Bun.sleep)(Math.min(30_000, 1000 * 2 ** (attempt - 2)));
     }
   }
   throw lastError;
@@ -199,10 +259,27 @@ export interface RuntimeDownload {
   runtime: "aliasmode" | "cloakbrowser" | "firefox";
   receivedBytes: number;
   totalBytes: number;
+  status?: RuntimeDownloadStatus;
+  bytesPerSec?: number;
 }
 
-const activeDownloads = new Map<string, Omit<RuntimeDownload, "receivedBytes">>();
+interface ActiveDownloadEntry {
+  runtime: RuntimeDownload["runtime"];
+  totalBytes: number;
+  reportedBytes?: number;
+  status: RuntimeDownloadStatus;
+  cancelled: boolean;
+  bytesPerSec: number;
+  lastSampleAt: number;
+  lastSampleBytes: number;
+  abortCurrent?: (reason: Error) => void;
+  resumeWaiters: Set<() => void>;
+}
+
+const activeDownloads = new Map<string, ActiveDownloadEntry>();
 const DOWNLOAD_NOTIFY_THROTTLE_MS = 250;
+const DOWNLOAD_SPEED_SAMPLE_MS = 800;
+const DOWNLOAD_SPEED_STALE_MS = 5_000;
 const downloadListeners = new Set<(downloads: RuntimeDownload[]) => void>();
 let lastDownloadNotifyAt = 0;
 let downloadNotifyTimer: ReturnType<typeof setTimeout> | undefined;
@@ -239,6 +316,127 @@ function notifyRuntimeDownloadsThrottled(): void {
   }
 }
 
+/** Record in-memory received bytes for an active download and emit throttled SSE snapshots. */
+export function notifyRuntimeDownloadProgress(partial: string, receivedBytes: number): void {
+  const entry = activeDownloads.get(partial);
+  if (!entry) return;
+  const clamped = Number.isFinite(receivedBytes) && receivedBytes >= 0 ? Math.floor(receivedBytes) : 0;
+  entry.reportedBytes = clamped;
+  const now = Date.now();
+  if (entry.status === "paused" || entry.cancelled) {
+    entry.bytesPerSec = 0;
+    entry.lastSampleAt = now;
+    entry.lastSampleBytes = clamped;
+  } else if (clamped < entry.lastSampleBytes) {
+    entry.bytesPerSec = 0;
+    entry.lastSampleAt = now;
+    entry.lastSampleBytes = clamped;
+  } else if (now - entry.lastSampleAt >= DOWNLOAD_SPEED_SAMPLE_MS) {
+    const elapsedMs = now - entry.lastSampleAt;
+    const deltaBytes = clamped - entry.lastSampleBytes;
+    const instant = elapsedMs > 0 ? Math.max(0, Math.round((deltaBytes * 1000) / elapsedMs)) : 0;
+    entry.bytesPerSec = entry.bytesPerSec > 0 ? Math.round(entry.bytesPerSec * 0.4 + instant * 0.6) : instant;
+    entry.lastSampleAt = now;
+    entry.lastSampleBytes = clamped;
+  }
+  notifyRuntimeDownloadsThrottled();
+}
+
+export function updateRuntimeDownloadTotal(partial: string, totalBytes: number): void {
+  const entry = activeDownloads.get(partial);
+  if (!entry) return;
+  const nextTotal = Number.isSafeInteger(totalBytes) && totalBytes >= 0 ? totalBytes : 0;
+  if (entry.totalBytes === nextTotal) return;
+  entry.totalBytes = nextTotal;
+  emitRuntimeDownloadsNow();
+}
+
+export function registerRuntimeDownloadAbort(partial: string, abort: (reason: Error) => void): () => void {
+  const entry = activeDownloads.get(partial);
+  if (!entry) return () => {};
+  entry.abortCurrent = abort;
+  if (entry.cancelled) abort(new RuntimeDownloadCancelledError());
+  else if (entry.status === "paused") abort(new RuntimeDownloadPausedError());
+  return () => {
+    if (entry.abortCurrent === abort) entry.abortCurrent = undefined;
+  };
+}
+
+export function isRuntimeDownloadPaused(partial: string): boolean {
+  return activeDownloads.get(partial)?.status === "paused";
+}
+
+export function isRuntimeDownloadCancelled(partial: string): boolean {
+  return activeDownloads.get(partial)?.cancelled === true;
+}
+
+export async function waitWhileRuntimeDownloadPaused(partial: string): Promise<void> {
+  while (true) {
+    const entry = activeDownloads.get(partial);
+    if (!entry) return;
+    if (entry.cancelled) throw new RuntimeDownloadCancelledError();
+    if (entry.status !== "paused") return;
+    await new Promise<void>((resolve) => {
+      entry.resumeWaiters.add(resolve);
+    });
+  }
+}
+
+export function pauseRuntimeDownload(runtime?: RuntimeDownload["runtime"]): number {
+  let count = 0;
+  const now = Date.now();
+  for (const entry of activeDownloads.values()) {
+    if (runtime && entry.runtime !== runtime) continue;
+    if (entry.cancelled || entry.status === "paused") continue;
+    entry.status = "paused";
+    entry.bytesPerSec = 0;
+    entry.lastSampleAt = now;
+    entry.abortCurrent?.(new RuntimeDownloadPausedError());
+    count++;
+  }
+  if (count > 0) emitRuntimeDownloadsNow();
+  return count;
+}
+
+export function resumeRuntimeDownload(runtime?: RuntimeDownload["runtime"]): number {
+  let count = 0;
+  const now = Date.now();
+  for (const [partial, entry] of activeDownloads) {
+    if (runtime && entry.runtime !== runtime) continue;
+    if (entry.cancelled || entry.status !== "paused") continue;
+    const currentBytes = entry.reportedBytes !== undefined
+      ? entry.reportedBytes
+      : (statSync(partial, { throwIfNoEntry: false })?.size ?? 0);
+    entry.status = "downloading";
+    entry.bytesPerSec = 0;
+    entry.lastSampleAt = now;
+    entry.lastSampleBytes = currentBytes;
+    const waiters = [...entry.resumeWaiters];
+    entry.resumeWaiters.clear();
+    for (const wake of waiters) wake();
+    count++;
+  }
+  if (count > 0) emitRuntimeDownloadsNow();
+  return count;
+}
+
+export function cancelRuntimeDownload(runtime?: RuntimeDownload["runtime"]): number {
+  let count = 0;
+  for (const entry of activeDownloads.values()) {
+    if (runtime && entry.runtime !== runtime) continue;
+    if (entry.cancelled) continue;
+    entry.cancelled = true;
+    entry.bytesPerSec = 0;
+    const waiters = [...entry.resumeWaiters];
+    entry.resumeWaiters.clear();
+    for (const wake of waiters) wake();
+    entry.abortCurrent?.(new RuntimeDownloadCancelledError());
+    count++;
+  }
+  if (count > 0) emitRuntimeDownloadsNow();
+  return count;
+}
+
 /** Subscribe to active runtime download snapshots (throttled to <= 4 Hz during chunk writes). */
 export function subscribeRuntimeDownloads(listener: (downloads: RuntimeDownload[]) => void): () => void {
   downloadListeners.add(listener);
@@ -253,7 +451,7 @@ export function subscribeRuntimeDownloads(listener: (downloads: RuntimeDownload[
 
 /**
  * Report the download into `partial` as in progress until `download` settles. Its
- * progress is the size of `partial`, so this only observes the download.
+ * progress is tracked from explicit progress reports (falling back to file size).
  */
 export async function trackRuntimeDownload<T>(
   runtime: RuntimeDownload["runtime"],
@@ -261,20 +459,54 @@ export async function trackRuntimeDownload<T>(
   totalBytes: number,
   download: () => Promise<T>,
 ): Promise<T> {
-  activeDownloads.set(partial, { runtime, totalBytes });
+  const initialBytes = statSync(partial, { throwIfNoEntry: false })?.size ?? 0;
+  activeDownloads.set(partial, {
+    runtime,
+    totalBytes,
+    status: "downloading",
+    cancelled: false,
+    bytesPerSec: 0,
+    lastSampleAt: Date.now(),
+    lastSampleBytes: initialBytes,
+    resumeWaiters: new Set(),
+  });
   emitRuntimeDownloadsNow();
   try {
     return await download();
   } finally {
+    const entry = activeDownloads.get(partial);
     activeDownloads.delete(partial);
+    if (entry) {
+      for (const wake of entry.resumeWaiters) wake();
+      entry.resumeWaiters.clear();
+    }
     emitRuntimeDownloadsNow();
   }
 }
 
 /** The browser runtime downloads in progress now. */
 export function runtimeDownloads(): RuntimeDownload[] {
-  return [...activeDownloads].map(([partial, { runtime, totalBytes }]) => {
-    const size = statSync(partial, { throwIfNoEntry: false })?.size ?? 0;
-    return { runtime, receivedBytes: totalBytes > 0 ? Math.min(size, totalBytes) : size, totalBytes };
-  });
+  const now = Date.now();
+  const list: RuntimeDownload[] = [];
+  for (const [partial, entry] of activeDownloads) {
+    if (entry.cancelled) continue;
+    const size = entry.reportedBytes !== undefined
+      ? entry.reportedBytes
+      : (statSync(partial, { throwIfNoEntry: false })?.size ?? 0);
+    const receivedBytes = entry.totalBytes > 0 ? Math.min(size, entry.totalBytes) : size;
+    const bytesPerSec = entry.status === "paused"
+      ? 0
+      : (now - entry.lastSampleAt > DOWNLOAD_SPEED_STALE_MS ? 0 : entry.bytesPerSec);
+    list.push({
+      runtime: entry.runtime,
+      receivedBytes,
+      totalBytes: entry.totalBytes,
+      ...(entry.status === "paused"
+        ? { status: "paused" as const, bytesPerSec: 0 }
+        : bytesPerSec > 0
+          ? { status: "downloading" as const, bytesPerSec }
+          : {}),
+    });
+  }
+  return list;
 }

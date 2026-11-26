@@ -396,6 +396,7 @@ where
     Ok(())
 }
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn signed_update_install(
     app: AppHandle,
     window: WebviewWindow,

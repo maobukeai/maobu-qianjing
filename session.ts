@@ -1102,8 +1102,12 @@ export function decodeReadSessionResult(raw: string): ReadSessionResult {
   throw new Error("invalid session capture subprocess response");
 }
 
-interface ReadSessionSubprocessOptions extends PlaywrightWorkerOptions {
+export interface ReadSessionSubprocessOptions extends PlaywrightWorkerOptions {
   captureSeed?: SessionCaptureSeed;
+  connectTimeoutMs?: number;
+  originReadTimeoutMs?: number;
+  originsBudgetMs?: number;
+  disconnectTimeoutMs?: number;
 }
 
 export function readSessionWorkerCommand(
@@ -1120,11 +1124,16 @@ export async function readSessionInSubprocess(
   options: ReadSessionSubprocessOptions = {},
 ): Promise<string> {
   const captureSeed = options.captureSeed ?? { origins: [] };
-  const bundle = keepUnreadableOrigins(await runPlaywrightWorker<string>("session-capture", {
+  const raw = await runPlaywrightWorker<string>("session-capture", {
     endpoint: ws,
-    connectTimeoutMs: 30_000,
+    connectTimeoutMs: options.connectTimeoutMs ?? 30_000,
+    ...(options.originReadTimeoutMs !== undefined ? { originReadTimeoutMs: options.originReadTimeoutMs } : {}),
+    ...(options.originsBudgetMs !== undefined ? { originsBudgetMs: options.originsBudgetMs } : {}),
+    ...(options.disconnectTimeoutMs !== undefined ? { disconnectTimeoutMs: options.disconnectTimeoutMs } : {}),
     captureSeed: workerCaptureSeed(captureSeed),
-  }, { ...options, timeoutMs: options.timeoutMs ?? SESSION_SUBPROCESS_TIMEOUT_MS }), captureSeed.saved);
+  }, { ...options, timeoutMs: options.timeoutMs ?? SESSION_SUBPROCESS_TIMEOUT_MS });
+  const kept = keepUnreadableOrigins(raw, captureSeed.saved);
+  const bundle = captureSeed.openTabsOnly ? keepUncapturedOrigins(kept, captureSeed.saved) : kept;
   parseCapturedSessionBundle(bundle);
   return bundle;
 }

@@ -9,7 +9,7 @@
  *   active -> data.data.status === "Inactive"
  *   status -> data.code === 0 (health)
  */
-import { BrowserLaunchError, type Launcher } from "./launcher.ts";
+import { BrowserLaunchError, CLOSE_SESSION_CAPTURE_OPTIONS, type Launcher } from "./launcher.ts";
 import { callFirefoxOwner, type FirefoxOwner } from "./firefox-runtime.ts";
 import type { ProfileStore } from "./store.ts";
 import { normalizeProfileIds, type LifecycleAdmissionController, type LifecycleState, } from "./lifecycle-admission.ts";
@@ -198,7 +198,7 @@ export async function handleRequest(req: Request, launcher: Launcher, store: Pro
                 await captureFirefoxSession(store, userId, launch.firefoxOwner);
         }
         else
-            await launcher.captureLocalSession(userId);
+            await launcher.captureLocalSession(userId, CLOSE_SESSION_CAPTURE_OPTIONS);
         return (await launcher.stop(userId, launch ?? undefined))
             ? ok()
             : fail(`browser teardown unconfirmed: ${userId}`);

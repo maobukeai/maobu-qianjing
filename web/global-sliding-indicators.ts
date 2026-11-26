@@ -30,11 +30,11 @@ function isHiddenElement(el: HTMLElement): boolean {
   return el.hidden || el.closest("[hidden], [inert], [aria-hidden='true']") !== null;
 }
 
-function detectAxis(items: HTMLElement[]): "horizontal" | "vertical" {
+function detectAxis(items: HTMLElement[], scaleX = 1, scaleY = 1): "horizontal" | "vertical" {
   if (items.length < 2) return "horizontal";
   const a = items[0]!.getBoundingClientRect();
   const b = items[1]!.getBoundingClientRect();
-  return Math.abs(b.top - a.top) > Math.abs(b.left - a.left) ? "vertical" : "horizontal";
+  return Math.abs(b.top - a.top) / scaleY > Math.abs(b.left - a.left) / scaleX ? "vertical" : "horizontal";
 }
 
 function isItemActive(el: HTMLElement): boolean {
@@ -118,6 +118,9 @@ export function installGlobalSlidingIndicators(root?: HTMLElement | Document): (
       return;
     }
 
+    const scaleX = container.offsetWidth > 0 && containerRect.width > 0 ? containerRect.width / container.offsetWidth : 1;
+    const scaleY = container.offsetHeight > 0 && containerRect.height > 0 ? containerRect.height / container.offsetHeight : 1;
+
     const items = Array.from(container.querySelectorAll<HTMLElement>(ITEM_SELECTOR)).filter(
       (item) => !item.hidden && item.getBoundingClientRect().width > 0 && item.getBoundingClientRect().height > 0,
     );
@@ -142,12 +145,12 @@ export function installGlobalSlidingIndicators(root?: HTMLElement | Document): (
 
     const axis = container.dataset.slidingAxis === "vertical" || container.dataset.slidingAxis === "horizontal"
       ? container.dataset.slidingAxis
-      : detectAxis(items);
+      : detectAxis(items, scaleX, scaleY);
 
-    const left = Math.round((activeRect.left - containerRect.left + container.scrollLeft) * 100) / 100;
-    const top = Math.round((activeRect.top - containerRect.top + container.scrollTop) * 100) / 100;
-    const width = Math.round(activeRect.width * 100) / 100;
-    const height = Math.round(activeRect.height * 100) / 100;
+    const left = Math.round(((activeRect.left - containerRect.left) / scaleX - container.clientLeft + container.scrollLeft) * 100) / 100;
+    const top = Math.round(((activeRect.top - containerRect.top) / scaleY - container.clientTop + container.scrollTop) * 100) / 100;
+    const width = Math.round((activeRect.width / scaleX) * 100) / 100;
+    const height = Math.round((activeRect.height / scaleY) * 100) / 100;
     const radius = typeof getComputedStyle === "function" ? getComputedStyle(active).borderRadius || "6px" : "6px";
     const key = `${left}|${top}|${width}|${height}|${axis}|${radius}`;
 

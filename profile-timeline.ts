@@ -30,6 +30,7 @@ export const PROFILE_EVENT_TYPES = [
   "package.imported",
   "rpa.run",
   "ai.proposal_applied",
+  "external.url_opened",
 ] as const;
 
 export type ProfileEventType = (typeof PROFILE_EVENT_TYPES)[number];

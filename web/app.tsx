@@ -10,7 +10,7 @@ import { GROUP_DISCLOSURE_KEY, readGroupDisclosure, serializeGroupDisclosure, to
 import { profileTagsUpdate } from "../profile-tags.ts";
 import { FAVORITE_PROFILES_KEY, SAVED_PROFILE_VIEWS_KEY, parseFavoriteProfiles, parseSavedProfileViews, serializeFavoriteProfiles, serializeSavedProfileViews, type RosterScope, type SavedProfileView } from "../profile-view-state.ts";
 import { AboutPopover } from "./about-popover.tsx";
-import { assignExtensionBulk, closeProfile, convertMobileProfile, createGroup, deleteGroup, deleteProfiles, exportProfiles, fetchAppMode, fetchDiagnose, fetchDiskSpace, fetchExtensions, fetchGroupExtensionDefaults, fetchHealth, fetchRuntimeDownloads, fetchTotp, installWebStoreExtension, isUnauthorizedError, moveGroup, openProfile, previewGroupExtensionDefaults, removeExtension, renameGroup, restartProfile, setGroupExtensionDefaults, setStandaloneSessionToken, subscribeAppLocked, subscribeUnauthorized, updateProfile, uploadExtensions, type AppModeConfig, type DiagnoseReport, type DiskSpace, type ExportFormat, type ExportProgress, type Extension, type GroupExtensionDefaults, type RuntimeDownload, type UiProfile } from "./api.ts";
+import { assignExtensionBulk, cancelRuntimeDownloads, closeProfile, convertMobileProfile, createGroup, deleteGroup, deleteProfiles, exportProfiles, fetchAppMode, fetchDiagnose, fetchDiskSpace, fetchExtensions, fetchGroupExtensionDefaults, fetchHealth, fetchRuntimeDownloads, fetchTotp, installWebStoreExtension, isUnauthorizedError, moveGroup, openProfile, openProfileUrl, pauseRuntimeDownloads, previewGroupExtensionDefaults, raiseProfile, removeExtension, renameGroup, restartProfile, resumeRuntimeDownloads, setGroupExtensionDefaults, setStandaloneSessionToken, subscribeAppLocked, subscribeUnauthorized, updateProfile, uploadExtensions, type AppModeConfig, type DiagnoseReport, type DiskSpace, type ExportFormat, type ExportProgress, type Extension, type GroupExtensionDefaults, type RuntimeDownload, type UiProfile } from "./api.ts";
 import { useAppLockController } from "./app-lock-api.ts";
 import { AppLockScreen } from "./app-lock-screen.tsx";
 import { backgroundScriptRuns, useBackgroundScriptRun } from "./background-script-run.tsx";
@@ -20,6 +20,8 @@ import { CommandPalette, type CommandPaletteCommand } from "./command-palette.ts
 import { ActionDock } from "./components/action-dock.tsx";
 import { ToastStack, useToastStack, type ToastTone } from "./components/toast-stack.tsx";
 import { CookieImportTaskDialog, CookieImportTaskPanel, useCookieImportTask } from "./cookie-import-task-panel.tsx";
+import { isDesktopDefaultBrowserHost, listenExternalUrls, loadDefaultBrowserConfig, resolveExternalUrlRoute, saveDefaultBrowserConfig, takePendingExternalUrls, upsertDomainRule, type DefaultBrowserRoutingConfig } from "./default-browser.ts";
+import { DefaultBrowserPicker } from "./default-browser-picker.tsx";
 import { DesktopCloseHost, DesktopCloseRegistryProvider, useDesktopCloseDraft, useDesktopCloseRegistry } from "./desktop-close.tsx";
 import { useDesktopMotion, usePanelMotion } from "./desktop-motion.tsx";
 import { useGlobalSelectMenus } from "./global-select-menu.ts";
@@ -67,7 +69,7 @@ import { SyncEmergencyBar, WindowSyncPanel } from "./window-sync-panel.tsx";
 import type { ProxyAssignmentSnapshot } from "./proxy-assignment-task.ts";
 import { ROSTER_DENSITY_KEY, RosterDensityControl, parseRosterDensity, type RosterDensity } from "./roster-density.tsx";
 import { RosterViews } from "./roster-views.tsx";
-import { RuntimeDownloadProgressView, runtimeDownloadLabel } from "./runtime-download-progress.tsx";
+import { RuntimeDownloadProgressView, areRuntimeDownloadsPaused, runtimeDownloadLabel } from "./runtime-download-progress.tsx";
 import { ScriptRunPanel, ScriptsPage } from "./scripts.tsx";
 import type { FingerprintReport } from "./settings-api.ts";
 import type { LocalProxyDraftCandidate } from "./settings-center.tsx";
@@ -80,6 +82,7 @@ import { AppIcon, ModalDialog, useConfirmDialog } from "./ui-primitives.tsx";
 import { useWindowBackdrop, useWindowChrome, WindowActionError, WindowControls } from "./window-chrome.tsx";
 import { StartupScreen } from "./features/startup-screen.tsx";
 import { WorkbenchActivity, type WorkbenchActivityItem } from "./workbench-activity.tsx";
+import { WorkbenchContextMenu, shouldAllowNativeContextMenu, type ContextMenuEntry, type WorkbenchContextMenuState } from "./workbench-context-menu.tsx";
 import { getWorkbenchShortcut, readWorkbenchShortcutContext, type WorkbenchShortcutAction } from "./workbench-shortcuts.ts";
 import { DevicePanel, useWorkspaceCatalog, WorkspaceActivity, WorkspaceManagementPage, WorkspaceProvider, WorkspaceSwitcher, type WorkspacePageIntent, type WorkspacePageRequest } from "./workspace-manager.tsx";
 import { useWorkspaceOperations, workspaceOperationMessage, type WorkspaceOperationLease } from "./workspace-operations.tsx";
@@ -168,6 +171,7 @@ function App() {
   const appLock = useAppLockController({ enabled: appMode?.appLockAvailable === true });
   const appUnlocked = !!appMode && (appMode.appLockAvailable !== true || (appLock.status !== null && !appLock.status.locked));
   const [runtimeDownloads, setRuntimeDownloads] = useState<RuntimeDownload[]>([]), [runtimeDownloadsStale, setRuntimeDownloadsStale] = useState(false);
+  const [runtimeDownloadAction, setRuntimeDownloadAction] = useState<"pause" | "resume" | "cancel" | null>(null);
   const runtimeTransfersObserved = useRef(false), initialDownloadsFetched = useRef(false);
   const bulkOwnerActive = useRef(true);
   const { loaded, hasRoster, connErr, connectionAlertDismissed, dismissConnectionAlert, retryConnection, refreshing, load, readFreshRoster, lastRosterResult, transport } = useRosterEvents({
@@ -251,6 +255,24 @@ function App() {
   useLayoutEffect(() => { if (view !== "settings" || settingsTab !== "updates" || !focusRuntimePanelOnOpen.current) return; focusRuntimePanelOnOpen.current = false; focusRuntimePanel(); }, [view, settingsTab]);
   function focusRuntimePanel() { const target = settingsPanelRef.current?.querySelector<HTMLElement>("[data-browser-runtime-settings-heading]"); target?.focus({ preventScroll: true }); target?.scrollIntoView({ block: "start", behavior: "instant" }); }
   function viewRuntimeDownloads() { if (view === "settings" && settingsTab === "updates") { focusRuntimePanel(); return; } focusRuntimePanelOnOpen.current = true; setSettingsTab("updates"); setView("settings"); }
+  const runRuntimeDownloadAction = async (action: "pause" | "resume" | "cancel") => {
+    if (runtimeDownloadAction) return;
+    setRuntimeDownloadAction(action);
+    setActionErr(null);
+    try {
+      const result = action === "pause"
+        ? await pauseRuntimeDownloads()
+        : action === "resume"
+          ? await resumeRuntimeDownloads()
+          : await cancelRuntimeDownloads();
+      setRuntimeDownloads(result.downloads);
+      setRuntimeDownloadsStale(false);
+    } catch (error) {
+      setActionErr(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRuntimeDownloadAction(null);
+    }
+  };
   function viewSignedUpdate() {
     signedUpdateStartup.dismissNotice();
     openSignedUpdateSettings();
@@ -264,6 +286,17 @@ function App() {
     const onKey = (event: KeyboardEvent) => { const action = getWorkbenchShortcut(event, { ...readWorkbenchShortcutContext(event.target), desktop: !!desktopInvoke(), commandPaletteOpen: commandOpen }); if (!action) return; event.preventDefault(); shortcutAction.current(action); };
     document.addEventListener("keydown", onKey); return () => document.removeEventListener("keydown", onKey);
   }, [commandOpen]);
+
+  const [contextMenu, setContextMenu] = useState<WorkbenchContextMenuState | null>(null);
+  const buildContextMenuRef = useRef<(event: globalThis.MouseEvent) => void>((event) => {
+    if (!shouldAllowNativeContextMenu(event.target, event.shiftKey)) event.preventDefault();
+  });
+  useEffect(() => { setContextMenu(null); }, [view, currentWorkspaceId]);
+  useEffect(() => {
+    const onContextMenu = (event: globalThis.MouseEvent) => buildContextMenuRef.current(event);
+    document.addEventListener("contextmenu", onContextMenu);
+    return () => document.removeEventListener("contextmenu", onContextMenu);
+  }, []);
 
   const [appVersion, setAppVersion] = useState(""), [aboutOpen, setAboutOpen] = useState(false), [githubUpdateAvailable, setGithubUpdateAvailable] = useState(false), aboutTriggerRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { setGithubUpdateAvailable(false); }, [currentWorkspaceId]);
@@ -491,9 +524,122 @@ function App() {
     workspaceId: catalog?.currentId, workspaceCoordinator, bulkOwnerActiveRef: bulkOwnerActive,
     onLoadRoster: load, onRefreshImportedProfiles: refreshImportedProfiles, onActionError: setActionErr, onFlash: flash, onOpenProfilesView: () => setView("profiles"), t,
   });
+  const [externalUrlQueue, setExternalUrlQueue] = useState<Array<{ url: string; hostname: string }>>([]);
   const reuseCanOpen = view === "profiles" && !createModal.showCreate && !editModal.editId && !importModal.showBulk && !showUpdate && !cookieTargets && !importModal.pendingView
-    && !movingFolder && !logs.state && !scriptRunOpen && !commandOpen && !shortcutHelpOpen && !tagsTarget && !showDiag && !resourceDrawerOpen && !windowSyncOpen && !packageExportOpen && !packageImportOpen;
+    && !movingFolder && !logs.state && !scriptRunOpen && !commandOpen && !shortcutHelpOpen && !tagsTarget && !showDiag && !resourceDrawerOpen && !windowSyncOpen && !packageExportOpen && !packageImportOpen && externalUrlQueue.length === 0;
   useSyncReuseCanOpen(createModal, reuseCanOpen);
+
+  const [defaultBrowserConfig, setDefaultBrowserConfig] = useState<DefaultBrowserRoutingConfig>(() => loadDefaultBrowserConfig(null));
+  const defaultBrowserWorkspaceRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (defaultBrowserWorkspaceRef.current === currentWorkspaceId) return;
+    defaultBrowserWorkspaceRef.current = currentWorkspaceId;
+    setDefaultBrowserConfig(loadDefaultBrowserConfig(currentWorkspaceId));
+  }, [currentWorkspaceId]);
+  const updateDefaultBrowserConfig = useCallback((next: DefaultBrowserRoutingConfig) => {
+    const saved = saveDefaultBrowserConfig(currentWorkspaceId, next);
+    setDefaultBrowserConfig(saved);
+  }, [currentWorkspaceId]);
+
+  const [externalOpenBusy, setExternalOpenBusy] = useState(false);
+  const [externalOpenErr, setExternalOpenErr] = useState<string | null>(null);
+  const seenExternalEventIds = useRef(new Set<number>());
+  const latestDefaultBrowserConfig = useRef(defaultBrowserConfig);
+  latestDefaultBrowserConfig.current = defaultBrowserConfig;
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  const flashRef = useRef(flash);
+  flashRef.current = flash;
+
+  const openExternalUrlInProfile = useCallback(async (profileId: string, targetUrl: string, hostname: string) => {
+    const profile = latestProfiles.current.find((item) => item.id === profileId);
+    const result = await openProfileUrl(profileId, targetUrl);
+    if (!result || result.ok !== true) {
+      throw new Error(result?.error || "Could not open external link");
+    }
+    flashRef.current(t(result.started ? "Started {name} and opened {host}" : "Opened {host} in {name}", {
+      host: hostname,
+      name: profile?.name ?? profileId,
+    }));
+    if (result.started) {
+      void loadRef.current();
+    }
+  }, [t]);
+
+  const enqueuePickerUrl = useCallback((url: string, hostname: string) => {
+    setExternalOpenErr(null);
+    setExternalUrlQueue((current) => {
+      if (current.some((item) => item.url === url)) return current;
+      return [...current, { url, hostname }];
+    });
+  }, []);
+
+  const dispatchIncomingExternalUrl = useCallback((rawUrl: string) => {
+    const decision = resolveExternalUrlRoute(rawUrl, latestProfiles.current, latestDefaultBrowserConfig.current);
+    if (decision.action === "invalid") {
+      flashRef.current(t(decision.error), "error");
+      return;
+    }
+    if (decision.action === "open") {
+      void openExternalUrlInProfile(decision.profile.id, decision.url, decision.hostname).catch(() => {
+        enqueuePickerUrl(decision.url, decision.hostname);
+      });
+      return;
+    }
+    enqueuePickerUrl(decision.url, decision.hostname);
+  }, [enqueuePickerUrl, openExternalUrlInProfile, t]);
+
+  useEffect(() => {
+    if (!appUnlocked || !loaded || !isDesktopDefaultBrowserHost()) return;
+    let alive = true;
+    let unlisten: (() => void) | null = null;
+    const handleEvent = (event: { id: number; url: string }) => {
+      if (!alive) return;
+      if (typeof event.id === "number") {
+        if (seenExternalEventIds.current.has(event.id)) return;
+        seenExternalEventIds.current.add(event.id);
+      }
+      dispatchIncomingExternalUrl(event.url);
+    };
+    void listenExternalUrls(handleEvent).then((dispose) => {
+      if (!alive) dispose();
+      else unlisten = dispose;
+    }).catch(() => {});
+    void takePendingExternalUrls().then((events) => {
+      if (!alive) return;
+      for (const event of events) handleEvent(event);
+    }).catch(() => {});
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
+  }, [appUnlocked, loaded, dispatchIncomingExternalUrl]);
+
+  const handleSelectPickerProfile = useCallback((profileId: string, rememberDomain: boolean) => {
+    const current = externalUrlQueue[0];
+    if (!current || externalOpenBusy) return;
+    if (rememberDomain) {
+      updateDefaultBrowserConfig(upsertDomainRule(latestDefaultBrowserConfig.current, current.hostname, profileId));
+    }
+    setExternalOpenBusy(true);
+    setExternalOpenErr(null);
+    void openExternalUrlInProfile(profileId, current.url, current.hostname)
+      .then(() => {
+        setExternalUrlQueue((items) => items.slice(1));
+      })
+      .catch((error) => {
+        setExternalOpenErr(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        setExternalOpenBusy(false);
+      });
+  }, [externalOpenBusy, externalUrlQueue, openExternalUrlInProfile, updateDefaultBrowserConfig]);
+
+  const handleCancelPicker = useCallback(() => {
+    if (externalOpenBusy) return;
+    setExternalOpenErr(null);
+    setExternalUrlQueue((items) => items.slice(1));
+  }, [externalOpenBusy]);
 
   useWindowBackdrop(theme);
   useEffect(() => {
@@ -722,6 +868,44 @@ function App() {
       if (problems.length) setActionErr(t("{problems}. These profiles remain selected.", { problems: problems.join("; ") }));
       setSelected(new Set([...(r.locked ?? []), ...(r.failed ?? [])])); flash(t("{count} profiles moved to Trash", { count: r.deleted.toLocaleString() })); await load();
     } catch (e) { setActionErr(String(e)); } finally { deleteInFlight.current = false; setDeleting(false); }
+  };
+  const deleteSingleProfile = async (profile: UiProfile) => {
+    if (deleteInFlight.current || busy[profile.id] || profile.running) return;
+    if (workspaceOperationState.blocked) {
+      setActionErr(t(workspaceOperationMessage(workspaceOperationState)));
+      return;
+    }
+    const confirmed = await requestConfirm({
+      title: t("Move to Trash"),
+      message: t("Move “{name}” to Trash? You can restore it with its saved data.", { name: profile.name }),
+      confirmLabel: t("Move to Trash"),
+      cancelLabel: t("Cancel"),
+      tone: "danger",
+    });
+    if (!confirmed || deleteInFlight.current) return;
+    deleteInFlight.current = true;
+    setDeleting(true);
+    setActionErr(null);
+    try {
+      const r = await deleteProfiles([profile.id]);
+      if (r.ok === false) { setActionErr(r.error || t("Delete failed")); return; }
+      if (r.locked?.length) { setActionErr(t("This environment is in use and could not be deleted.")); return; }
+      if (r.failed?.length) { setActionErr(t("Delete failed")); return; }
+      setSelected((current) => {
+        if (!current.has(profile.id)) return current;
+        const next = new Set(current);
+        next.delete(profile.id);
+        return next;
+      });
+      setDetailsTarget((current) => (current?.id === profile.id ? null : current));
+      flash(t("Moved “{name}” to Trash", { name: profile.name }));
+      await load();
+    } catch (e) {
+      setActionErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      deleteInFlight.current = false;
+      setDeleting(false);
+    }
   };
 
   const setLaunchFailure = (id: string, message: string | null) => setLaunchFailureState((previous) => {
@@ -1058,6 +1242,7 @@ function App() {
     changeProfileSelection: (...args) => rowHandlersRef.current!.changeProfileSelection(...args), setLaunchFailure: (...args) => rowHandlersRef.current!.setLaunchFailure(...args),
     openNetworkSettings: () => rowHandlersRef.current!.openNetworkSettings(), openLogs: () => rowHandlersRef.current!.openLogs(),
     trimMemory: (id) => rowHandlersRef.current!.trimMemory!(id), hibernateProfile: (id) => rowHandlersRef.current!.hibernateProfile!(id),
+    deleteProfile: (profile) => rowHandlersRef.current!.deleteProfile!(profile),
   }), []);
   const handleInlineNameSaved = useCallback((id: string, nextName: string) => {
     setProfiles((current) => current.map((item) => (item.id === id ? { ...item, name: nextName } : item)));
@@ -1129,8 +1314,8 @@ function App() {
   const diagWhen = diag ? new Date(diag.generatedAt).toLocaleTimeString() : null, shownColumns = COLUMNS.filter((column) => columnVisible(column.key)), visibleColumnCount = 1 + shownColumns.length;
   const tableMinWidth = CHECKBOX_COLUMN_WIDTH + shownColumns.reduce((total, column) => total + column.width, 0);
 
-  const groupNavigation = groupManagerOpen && (
-    <ModalDialog open={view === "profiles"} title={t("Manage groups")} onClose={closeGroupManager} busy={groupEditBusy}
+  const groupNavigation = (
+    <ModalDialog open={groupManagerOpen && view === "profiles"} title={t("Manage groups")} onClose={closeGroupManager} busy={groupEditBusy}
       className="group-management-dialog" backdropClassName="group-dialog-backdrop" portal footer={addingGroup ? (
         <form className="group-management-create" onSubmit={(event) => { event.preventDefault(); createSidebarGroup(); }}>
           <label className="fld">
@@ -1227,7 +1412,7 @@ function App() {
 
   rowHandlersRef.current = {
     openDetails: (id, trigger) => {
-      detailsTrigger.current = trigger; focusDetailsOnOpen.current = true; setDetailsTarget({ id, workspaceId: currentWorkspaceId });
+      detailsTrigger.current = trigger ?? null; focusDetailsOnOpen.current = true; setDetailsTarget({ id, workspaceId: currentWorkspaceId });
       if (detailsProfile?.id === id) { detailsHeading.current?.focus({ preventScroll: true }); focusDetailsOnOpen.current = false; }
     },
     openEdit: editModal.openEdit, openPendingCookies: importModal.openPendingCookies, openCookie, act, openInspection,
@@ -1248,10 +1433,202 @@ function App() {
         await Promise.all([load(), resourceMonitor.refreshNow()]);
       } catch (error) { setActionErr(error instanceof Error ? error.message : String(error)); }
     },
+    deleteProfile: deleteSingleProfile,
+  };
+
+  const copyTextToClipboard = async (text: string, successMessage: string) => {
+    try {
+      await copyPlainText(text);
+      flash(successMessage);
+    } catch {
+      flash(t("Copy failed"), "error");
+    }
+  };
+  buildContextMenuRef.current = (event) => {
+    if (shouldAllowNativeContextMenu(event.target, event.shiftKey)) {
+      setContextMenu(null);
+      return;
+    }
+    event.preventDefault();
+    const rawTarget = event.target as (Element & { parentElement?: Element | null }) | null;
+    const targetEl = rawTarget && typeof rawTarget.closest === "function" ? rawTarget : rawTarget?.parentElement ?? null;
+    if (targetEl?.closest('[role="dialog"], .modal, .popover, .command-palette, .wm-device-popover, .wm-switcher-popover, .global-select-popover, .workbench-context-menu')) {
+      setContextMenu(null);
+      return;
+    }
+    const paletteShortcut = typeof navigator !== "undefined" && /Mac/.test(navigator.platform) ? "⌘K" : "Ctrl+K";
+
+    const profileRow = targetEl?.closest<HTMLTableRowElement>("tr[data-profile-id]");
+    const profileId = profileRow?.dataset.profileId;
+    if (profileId) {
+      if (selected.size > 1 && selected.has(profileId)) {
+        const bulkBusy = bulkTaskActive || bulkTaskRefreshing || deleting || workspaceOperationState.blocked;
+        setContextMenu({
+          x: event.clientX,
+          y: event.clientY,
+          header: t("{count} selected", { count: selected.size.toLocaleString() }),
+          items: [
+            { kind: "item", id: "bulk-start", label: t("Start selected"), icon: "play", tone: "primary", disabled: bulkBusy, onSelect: openSelected },
+            { kind: "item", id: "bulk-stop", label: t("Stop selected"), icon: "power", disabled: bulkBusy, onSelect: closeSelected },
+            { kind: "separator", id: "bulk-sep-1" },
+            { kind: "item", id: "bulk-cookies", label: t("Add cookies"), icon: "cookie", onSelect: () => openCookie(profiles.filter((item) => selected.has(item.id))) },
+            { kind: "item", id: "bulk-script", label: t("Run script"), icon: "play", onSelect: () => { setScriptRunProfiles(profiles.filter((item) => selected.has(item.id))); setScriptRunOpen(true); } },
+            { kind: "item", id: "bulk-clear", label: t("Clear selection"), icon: "close", onSelect: () => { rangeSelectionAnchor.current = null; setSelected(new Set()); } },
+            { kind: "separator", id: "bulk-sep-2" },
+            { kind: "item", id: "bulk-trash", label: t("Move {count} to Trash", { count: selected.size.toLocaleString() }), icon: "trash", tone: "danger", disabled: deleting, onSelect: () => void deleteSelected() },
+          ],
+        });
+        return;
+      }
+
+      const profile = profilesById.get(profileId);
+      if (profile) {
+        const no = numbering.get(profile.id);
+        const isBusy = !!busy[profile.id];
+        const isFavorite = favoriteProfileIds.has(profile.id);
+        const isReuseLoading = createModal.reuseRequest?.status === "loading" && createModal.reuseRequest.id === profile.id;
+        const items: ContextMenuEntry[] = [];
+        if (profile.running) {
+          items.push({ kind: "item", id: "row-stop", label: t("Stop"), icon: "power", disabled: isBusy, onSelect: () => void act(profile.id, closeProfile) });
+          if (profile.engine === "chromium") {
+            items.push({ kind: "item", id: "row-raise", label: t("Bring to front"), icon: "raise", disabled: isBusy, onSelect: () => void act(profile.id, raiseProfile) });
+          }
+          if (rowHandlersRef.current?.trimMemory) {
+            items.push({ kind: "item", id: "row-trim", label: t("Trim memory"), icon: "activity", disabled: isBusy, onSelect: () => void rowHandlersRef.current?.trimMemory?.(profile.id) });
+          }
+          if (rowHandlersRef.current?.hibernateProfile) {
+            items.push({ kind: "item", id: "row-hibernate", label: t("Save session & hibernate"), icon: "moon", disabled: isBusy, onSelect: () => void rowHandlersRef.current?.hibernateProfile?.(profile.id) });
+          }
+        } else if (profile.mobilePersona) {
+          items.push({ kind: "item", id: "row-convert", label: t("Convert"), icon: "laptop", disabled: isBusy, onSelect: () => editModal.openEdit(profile.id) });
+        } else {
+          items.push({ kind: "item", id: "row-start", label: t("Start"), icon: "play", tone: "primary", disabled: isBusy, onSelect: () => void act(profile.id, openProfile) });
+        }
+        items.push(
+          { kind: "separator", id: "row-sep-1" },
+          { kind: "item", id: "row-details", label: t("Environment details"), icon: "window", onSelect: () => { const trigger = profileRow?.querySelector<HTMLButtonElement>(".profile-details-trigger") ?? null; rowHandlersRef.current?.openDetails(profile.id, trigger); } },
+          { kind: "item", id: "row-edit", label: t("Edit profile"), icon: "edit", disabled: isBusy, onSelect: () => editModal.openEdit(profile.id) },
+          { kind: "item", id: "row-inspect", label: t("Inspect network & fingerprint"), icon: "activity", onSelect: () => openInspection(profile.id) },
+          { kind: "item", id: "row-tags", label: t("Manage tags"), icon: "hash", disabled: isBusy, onSelect: () => openProfileTags(profile) },
+          { kind: "item", id: "row-cookie", label: t("Add cookies"), icon: "cookie", onSelect: () => openCookie([profile]) },
+          { kind: "item", id: "row-reuse", label: t("Create from this configuration"), icon: "copy", disabled: isReuseLoading, onSelect: () => void createModal.reuseProfileConfiguration(profile.id, profile.name) },
+          { kind: "item", id: "row-fav", label: t(isFavorite ? "Remove from favorites" : "Add to favorites"), icon: "star", disabled: !viewPreferencesReady || viewPreferenceBusy, onSelect: () => void toggleFavorite(profile.id) },
+          { kind: "separator", id: "row-sep-2" },
+        );
+        if (profile.proxy) {
+          items.push({ kind: "item", id: "row-copy-proxy", label: t("Copy proxy"), icon: "copy", onSelect: () => void copyTextToClipboard(profile.proxy!, t("Copied proxy")) });
+        }
+        items.push({ kind: "item", id: "row-copy-id", label: t("Copy environment ID"), icon: "copy", onSelect: () => void copyTextToClipboard(profile.id, t("Copied environment ID")) });
+        if (profile.has2fa) {
+          items.push({ kind: "item", id: "row-copy-2fa", label: t("Copy current 2FA code"), icon: "key", onSelect: () => void copy2fa(profile.id) });
+        }
+        items.push(
+          { kind: "separator", id: "row-sep-3" },
+          {
+            kind: "item",
+            id: "row-delete",
+            label: t("Delete environment"),
+            icon: "trash",
+            tone: "danger",
+            disabled: isBusy || profile.running,
+            title: profile.running ? t("Stop this environment before deleting it.") : undefined,
+            onSelect: () => void deleteSingleProfile(profile),
+          },
+        );
+        setContextMenu({
+          x: event.clientX,
+          y: event.clientY,
+          header: `${no ? `#${no.value} · ` : ""}${profile.name}`,
+          items,
+        });
+        return;
+      }
+    }
+
+    const groupTarget = targetEl?.closest<HTMLElement>("tr[data-group-name], [data-sidebar-group]");
+    if (groupTarget) {
+      const groupName = groupTarget.dataset.groupName ?? groupTarget.dataset.sidebarGroup ?? "";
+      if (groupName === "all") {
+        setContextMenu({
+          x: event.clientX,
+          y: event.clientY,
+          header: t("All groups"),
+          items: [
+            { kind: "item", id: "all-new", label: t("New Profile"), icon: "plus", onSelect: createModal.openCreate },
+            { kind: "item", id: "all-manage", label: t("Manage groups"), icon: "folders", onSelect: () => setGroupManagerOpen(true) },
+            { kind: "item", id: "all-refresh", label: t("Refresh"), icon: "refresh", disabled: refreshing, onSelect: () => void refreshRoster() },
+          ],
+        });
+        return;
+      }
+      const displayGroup = groupName === "" ? t("Ungrouped") : folderLabel(groupName);
+      const headerItem = flatItems.find((item) => item.kind === "group-header" && item.section.name === groupName);
+      const items: ContextMenuEntry[] = [
+        { kind: "item", id: "grp-create", label: t("New profile in this group"), icon: "plus", onSelect: () => openCreateInGroup(groupName) },
+        ...(groupName !== "" ? [{ kind: "item" as const, id: "grp-sub", label: t("New subfolder"), icon: "folder" as const, onSelect: () => { openGroupCreate(groupName); setGroupManagerOpen(true); } }] : []),
+        { kind: "item", id: "grp-manage", label: t("Manage groups"), icon: "folders", onSelect: () => { selectFolder(groupName); setGroupManagerOpen(true); } },
+      ];
+      if (headerItem && headerItem.kind === "group-header") {
+        items.push(
+          { kind: "separator", id: "grp-sep-1" },
+          { kind: "item", id: "grp-select", label: t("Select all in group"), icon: "check", disabled: headerItem.section.matches.length === 0, onSelect: () => { rangeSelectionAnchor.current = null; setSelected((current) => toggleProfileSelection(current, headerItem.section.matches)); } },
+          { kind: "item", id: "grp-toggle", label: t(headerItem.collapsed ? "Expand group" : "Collapse group"), icon: headerItem.collapsed ? "chevronDown" : "chevronUp", disabled: revealGroupMatches, onSelect: () => toggleProfileGroup(groupName, headerItem.collapsed) },
+        );
+      }
+      setContextMenu({
+        x: event.clientX,
+        y: event.clientY,
+        header: displayGroup,
+        items,
+      });
+      return;
+    }
+
+    if (view === "profiles" && targetEl?.closest(".profiles-workspace")) {
+      setContextMenu({
+        x: event.clientX,
+        y: event.clientY,
+        header: t("Environments"),
+        items: [
+          { kind: "item", id: "ws-new", label: t("New Profile"), icon: "plus", onSelect: createModal.openCreate },
+          { kind: "item", id: "ws-import", label: t("Import profiles"), icon: "fileImport", onSelect: importModal.openBulk },
+          { kind: "item", id: "ws-refresh", label: t("Refresh"), icon: "refresh", disabled: refreshing, onSelect: () => void refreshRoster() },
+          { kind: "separator", id: "ws-sep-1" },
+          {
+            kind: "density",
+            id: "ws-density",
+            label: t("Density"),
+            value: rosterDensity,
+            disabled: !viewPreferencesReady || viewPreferenceBusy,
+            options: [
+              { value: "comfortable", label: t("Comfortable") },
+              { value: "standard", label: t("Standard") },
+              { value: "compact", label: t("Compact") },
+            ],
+            onSelect: (next) => { void chooseRosterDensity(next); },
+          },
+          { kind: "separator", id: "ws-sep-2" },
+          { kind: "item", id: "ws-palette", label: t("Command palette"), icon: "search", shortcut: paletteShortcut, onSelect: () => setCommandOpen(true) },
+          { kind: "item", id: "ws-settings", label: t("Settings"), icon: "settings", onSelect: openSettings },
+        ],
+      });
+      return;
+    }
+
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      header: "猫步·千境",
+      items: [
+        { kind: "item", id: "app-palette", label: t("Command palette"), icon: "search", shortcut: paletteShortcut, onSelect: () => setCommandOpen(true) },
+        { kind: "item", id: "app-refresh", label: t("Refresh"), icon: "refresh", disabled: refreshing, onSelect: () => void refreshRoster() },
+        { kind: "item", id: "app-settings", label: t("Settings"), icon: "settings", onSelect: openSettings },
+      ],
+    });
   };
 
   const activityItems: WorkbenchActivityItem[] = [];
-  if (runtimeDownloads.length > 0) activityItems.push({ id: "browser-downloads", title: t("Browser downloads"), description: runtimeDownloadsStale ? t("Download status temporarily unavailable") : runtimeDownloadLabel(runtimeDownloads, t), state: runtimeDownloadsStale ? "attention" : "running", onView: viewRuntimeDownloads });
+  if (runtimeDownloads.length > 0) activityItems.push({ id: "browser-downloads", title: t("Browser downloads"), description: runtimeDownloadsStale ? t("Download status temporarily unavailable") : runtimeDownloadLabel(runtimeDownloads, t), state: runtimeDownloadsStale || areRuntimeDownloadsPaused(runtimeDownloads) ? "attention" : "running", onView: viewRuntimeDownloads });
   if (scriptBackground.run) activityItems.push({ id: "script", title: t("Script run"), description: scriptBackground.run.scriptName, state: scriptBackground.state === "unavailable" ? "attention" : scriptBackground.state !== "finished" ? "running" : scriptBackground.summary.failed ? "attention" : "complete", progress: { done: scriptBackground.summary.settled, total: scriptBackground.summary.total }, onView: () => setScriptRunOpen(true) });
   if (bulkTaskSnapshot) activityItems.push({ id: "batch", title: t("Batch task"), state: bulkTaskActive || bulkTaskRefreshing ? "running" : bulkTaskSnapshot.summary.failed ? "attention" : "complete", progress: { done: bulkTaskSnapshot.summary.settled, total: bulkTaskSnapshot.summary.total }, onView: showBulkTask });
   if (importModal.importBusy || importModal.importReceipt) activityItems.push({ id: "import", title: t("Import profiles"), state: importModal.importBusy || importModal.importReceiptRefreshing ? "running" : importModal.importReceipt && (importModal.importReceipt.skipped || importModal.importReceipt.issues.length) ? "attention" : "complete", onView: importModal.showImportReceipt });
@@ -1307,7 +1684,7 @@ function App() {
       <ProfileTagsDialog target={tagsTarget} sessionKey={catalog?.currentId} onSave={saveProfileTags} onClose={() => setTagsTarget(null)} returnFocus={() => (tagsReturnFocus.current?.isConnected ? tagsReturnFocus.current : document.getElementById("profiles-page-title"))} />
       <WindowActionError chrome={windowChrome} />
       <SyncEmergencyBar state={syncState} profiles={profiles} onOpenPanel={() => setWindowSyncOpen(true)} onPauseToggle={(paused) => { void pauseWindowSync(paused).then(setSyncState).catch((error) => setActionErr(error instanceof Error ? error.message : String(error))); }} onEmergencyStop={() => { void stopWindowSync().then(setSyncState).catch((error) => setActionErr(error instanceof Error ? error.message : String(error))); }} />
-      <div data-roster-density={rosterDensity} className={`app airy-workbench folded-workbench${windowChrome.enabled ? " desktop-frameless" : ""}${windowChrome.enabled && !windowChrome.focused ? " is-window-unfocused" : ""}`}
+      <div data-roster-density={rosterDensity} className={`app airy-workbench folded-workbench${view === "profiles" && !rosterUnavailable ? " is-merged-footer" : ""}${windowChrome.enabled ? " desktop-frameless" : ""}${windowChrome.enabled && !windowChrome.focused ? " is-window-unfocused" : ""}`}
         onDragOver={(e) => { if (!Array.from(e.dataTransfer.types).includes("Files") || e.defaultPrevented || readWorkbenchShortcutContext(e.target).modalOpen) return; e.preventDefault(); if (!dragging) setDragging(true); }}
         onDragLeave={(e) => { e.preventDefault(); if (e.currentTarget === e.target) setDragging(false); }}
         onDrop={(e) => {
@@ -1326,7 +1703,7 @@ function App() {
         }}>
         {dragging && <div className="dropzone"><Icon name="fileImport" /><span>{t("Drop TXT, CSV, JSON, XLSX, or .mqprofile exports to import")}</span></div>}
 
-        <WorkbenchSidebar compact={sidebarIsCompact} collapsed={sidebarCollapsed} forced={railForced} view={view} profileCount={profiles.length} extensionCount={extensions.length} loaded={loaded} onToggle={toggleSidebar} onNavigate={setView} onProfiles={() => { chooseRosterScope("all"); selectFolder("all"); }} onExtensions={openExtensions} onSettings={openSettings} navigationRef={navigationMotion.navRef} error={modeErr}
+        <WorkbenchSidebar compact={sidebarIsCompact} collapsed={sidebarCollapsed} forced={railForced} hideToggle view={view} profileCount={profiles.length} extensionCount={extensions.length} loaded={loaded} onToggle={toggleSidebar} onNavigate={setView} onProfiles={() => { chooseRosterScope("all"); selectFolder("all"); }} onExtensions={openExtensions} onSettings={openSettings} navigationRef={navigationMotion.navRef} error={modeErr}
           switcher={<WorkspaceSwitcher variant="rail" compact={sidebarIsCompact} profileCount={profiles.length} runningCount={runningCount} connection={loaded && !connErr} onShowRunning={showRunningProfiles} onOpenManagement={openWorkspaceManagement} onShowBatchTask={showBulkTask} managementActive={view === "workspaces"} />}
           device={<DevicePanel variant="rail" runningCount={runningCount} downloads={runtimeDownloads} downloadStatusUnavailable={runtimeDownloadsStale} connection={loaded && !connErr} connectionLoading={!loaded} version={appVersion ?? ""} theme={theme} chooseTheme={chooseTheme} language={language} setLanguage={setLanguage} onShowRunning={showRunningProfiles} onSettings={(section) => { setSettingsTab(section === "advanced" ? "advanced" : "account"); setView("settings"); }} onViewLogs={logs.open} onRetryConnection={refreshRoster} />}>
           <RosterNavigation compact={sidebarIsCompact} active={view === "profiles"} scope={rosterScope} onScope={chooseRosterScope} group={group} total={profiles.length} ungrouped={countFor("")} groups={tree.map((folder) => ({ name: folder.name, label: folder.label ?? folderLabel(folder.name), depth: folder.depth, count: countFor(folder.name) }))} onGroup={selectFolder}>
@@ -1336,12 +1713,29 @@ function App() {
 
         <div className="main">
           <header className="workspace-header" onMouseDown={windowChrome.onMouseDown}>
-            <button ref={aboutTriggerRef} type="button" className={`desktop-brand${aboutOpen ? " is-open" : ""}`} data-no-drag aria-haspopup="dialog" aria-expanded={aboutOpen} aria-controls={aboutOpen ? "about-popover-dialog" : undefined} aria-label={hasUpdateNotice ? `${t("About {app}", { app: "猫步·千境" })} · ${t("Update available")}` : t("About {app}", { app: "猫步·千境" })} title={t("About {app}", { app: "猫步·千境" })} onClick={() => setAboutOpen((open) => !open)}>
-              <MaobuMark /><strong>猫步·千境</strong>
-              {sidebarIsCompact && savedWorkspaceName && <span className="desktop-workspace-name" title={savedWorkspaceName}>{savedWorkspaceName}</span>}
-              {appVersion && <span className="appversion" title={appVersion}>{appVersion}</span>}
-              <span className="desktop-brand-dot" data-update-available={hasUpdateNotice ? "true" : undefined} aria-hidden="true" />
-            </button>
+            <div className="topbar-leading">
+              {!railForced && (
+                <button
+                  type="button"
+                  className="rail-toggle topbar-rail-toggle"
+                  data-no-drag
+                  aria-label={t(sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")}
+                  data-tip={t(sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")}
+                  title={t(sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")}
+                  aria-controls="workspace-navigation"
+                  aria-expanded={!sidebarCollapsed}
+                  onClick={toggleSidebar}
+                >
+                  <Icon name={sidebarCollapsed ? "expandRail" : "collapseRail"} />
+                </button>
+              )}
+              <button ref={aboutTriggerRef} type="button" className={`desktop-brand${aboutOpen ? " is-open" : ""}`} data-no-drag aria-haspopup="dialog" aria-expanded={aboutOpen} aria-controls={aboutOpen ? "about-popover-dialog" : undefined} aria-label={hasUpdateNotice ? `${t("About {app}", { app: "猫步·千境" })} · ${t("Update available")}` : t("About {app}", { app: "猫步·千境" })} title={t("About {app}", { app: "猫步·千境" })} onClick={() => setAboutOpen((open) => !open)}>
+                <MaobuMark /><strong>猫步·千境</strong>
+                {sidebarIsCompact && savedWorkspaceName && <span className="desktop-workspace-name" title={savedWorkspaceName}>{savedWorkspaceName}</span>}
+                {appVersion && <span className="appversion" title={appVersion}>{appVersion}</span>}
+                <span className="desktop-brand-dot" data-update-available={hasUpdateNotice ? "true" : undefined} aria-hidden="true" />
+              </button>
+            </div>
             <button type="button" className="command-palette-trigger" data-no-drag aria-label={t("Command palette")} title={t("Command palette")} aria-haspopup="dialog" aria-expanded={commandOpen} onClick={() => setCommandOpen(true)}><Icon name="search" className="sm" /><span>{t("Command palette")}</span><kbd>{typeof navigator !== "undefined" && /Mac/.test(navigator.platform) ? "⌘ K" : "Ctrl K"}</kbd></button>
             <div className="topbar-actions">
               <ResourceTopCapsule runningCount={runningCount} snapshot={resourceMonitor.snapshot} open={resourceDrawerOpen} onToggle={() => setResourceDrawerOpen((open) => !open)} />
@@ -1403,7 +1797,7 @@ function App() {
               )}
 
               <ProxiesPage key={`proxies-${currentWorkspaceId ?? "loading"}`} active={view === "proxies"} groups={["", ...groups.slice(1)]} folders={folders} profiles={profiles} loadingProfiles={!loaded} onChanged={refreshImportedProfiles} onTaskSnapshotChange={publishProxyTask} focusTask={view === "proxies" && proxyTaskFocusRequest !== null && proxyTaskFocusRequest.workspaceId === currentWorkspaceId} onTaskFocused={completeProxyTaskFocus} localAssignmentIntent={activeLocalProxyIntent} onDismissLocalAssignmentIntent={dismissLocalProxyAssignment} requestedTask={proxyTabRequest} />
-              <LocalAssistantPage active={view === "assistant"} onOpenMcp={() => { setSettingsTab("integrations"); setView("settings"); }} onOpenModelServices={() => openSettingsFromPalette("models")} draftSuggestion={assistantDraftSuggestion} onDismissDraftSuggestion={(id) => setAssistantDraftSuggestion((current) => (current?.id === id ? null : current))} onReturnToTask={(source) => { if (source.returnKey) { setInspectionId(source.returnKey); setView("inspection"); } }} onLocateProfiles={locateProfilesFromAssistant} />
+              <LocalAssistantPage active={view === "assistant"} autoLoadDefaultModel={appUnlocked} onOpenMcp={() => { setSettingsTab("integrations"); setView("settings"); }} onOpenModelServices={() => openSettingsFromPalette("models")} draftSuggestion={assistantDraftSuggestion} onDismissDraftSuggestion={(id) => setAssistantDraftSuggestion((current) => (current?.id === id ? null : current))} onReturnToTask={(source) => { if (source.returnKey) { setInspectionId(source.returnKey); setView("inspection"); } }} onLocateProfiles={locateProfilesFromAssistant} />
               <EnvironmentInspectionPage active={view === "inspection"} profile={inspectionId ? profilesById.get(inspectionId) ?? null : null} refreshVersion={fingerprintRefreshVersion} onBack={backFromInspection} onEditProfile={(id, field, trigger) => { if (!editModal.isEditSessionOpen()) editModal.openEdit(id, field, trigger); }} onExplainFingerprint={explainFingerprint} />
               <TrashPage key={`trash-${currentWorkspaceId ?? "loading"}`} active={view === "trash"} onChanged={refreshImportedProfiles} folderTree={folders} onTaskSnapshotChange={(snapshot) => setTrashTaskState({ workspaceId: currentWorkspaceId, snapshot })} />
               <WorkspaceManagementPage key="local-workspaces" active={view === "workspaces"} request={workspacePageRequest} onBack={() => setView("profiles")} onShowRunning={showRunningProfiles} onShowBatchTask={showBulkTask} />
@@ -1477,7 +1871,16 @@ function App() {
                     </div>
                   )}
 
-                  {runtimeDownloads.length > 0 && (runtimeDownloadsStale ? <div className="update-progress" role="status">{t("Download status temporarily unavailable")}</div> : <RuntimeDownloadProgressView downloads={runtimeDownloads} />)}
+                  {rosterUnavailable && runtimeDownloads.length > 0 && (
+                    <RuntimeDownloadProgressView
+                      downloads={runtimeDownloads}
+                      stale={runtimeDownloadsStale}
+                      pendingAction={runtimeDownloadAction}
+                      onPause={() => { void runRuntimeDownloadAction("pause"); }}
+                      onResume={() => { void runRuntimeDownloadAction("resume"); }}
+                      onCancel={() => { void runRuntimeDownloadAction("cancel"); }}
+                    />
+                  )}
                   {importModal.importBusy && <div className="import-task-indicator" role="status"><Icon name="refresh" className="sm" /><span>{t("Importing environments…")}</span></div>}
                   {importModal.importReceipt && <ImportReceiptPanel receipt={importModal.importReceipt} expanded={importModal.importReceiptExpanded} refreshing={importModal.importReceiptRefreshing} onExpandedChange={importModal.setImportReceiptExpanded} onBrowseAll={() => { setSelected(new Set()); chooseRosterScope("all"); selectFolder("all"); }} onViewAttention={() => { setSelected(new Set()); chooseRosterScope("attention"); selectFolder("all"); }} onDismiss={importModal.dismissImportReceipt} />}
                   {!cookieTargets && cookieImport.snapshot.phase !== "idle" && <div ref={cookieTaskPanelRef} tabIndex={-1} className="cookie-import-result-anchor"><CookieImportTaskPanel snapshot={cookieImport.snapshot} onRetryFailed={() => { void cookieImport.task.retryFailed(); }} onDismiss={() => { cookieImport.task.dismiss(); }} /></div>}
@@ -1505,7 +1908,7 @@ function App() {
                   )}
 
                   {!rosterUnavailable && (
-                  <ProfileRosterTable loaded={loaded} profilesCount={profiles.length} filteredCount={filtered.length} flatItems={flatItems} selectableProfilesCount={selectableProfiles.length} numbering={numbering} rosterScope={rosterScope} rosterDensity={rosterDensity} missingRosterGroup={missingRosterGroup} hasRosterRefinements={hasRosterRefinements} revealGroupMatches={revealGroupMatches} sort={sort} hiddenCols={hiddenCols} shownColumns={shownColumns} visibleColumnCount={visibleColumnCount} tableMinWidth={tableMinWidth} tableScrolled={tableScrolled} onTableScrolledChange={setTableScrolled} selected={selected} allVisibleSelected={allVisibleSelected} busy={busy} favoriteProfileIds={favoriteProfileIds} reuseLoadingId={createModal.reuseRequest?.status === "loading" ? createModal.reuseRequest.id : null} twoFaFlashId={twoFaFlash?.id ?? null} viewPreferencesReady={viewPreferencesReady} viewPreferenceBusy={viewPreferenceBusy} language={language} rangeKeyboardActivation={rangeKeyboardActivation} profilePageCount={profilePageCount} visibleProfilePage={visibleProfilePage} pageSize={pageSize} onPageChange={setProfilePage} onPageSizeChange={applyPageSize} runningCount={runningCount} diag={diag} diagWhen={diagWhen} showDiag={showDiag} onToggleDiag={() => setShowDiag((s) => !s)} hasDetails={!!detailsProfile} detailsPanel={<ProfileDetailsPanel profile={detailsProfile} headingRef={detailsHeading} onClose={closeDetails} onEdit={(id) => editModal.openEdit(id, undefined, detailsTrigger.current ?? undefined)} onInspect={openInspection} onSaveNotes={handleDetailsSaveNotes} onOpenLogs={stableRowHandlers.openLogs} onRetryLaunch={(id) => act(id, openProfile)} onEditProxy={(id) => editModal.openEdit(id, "proxy", detailsTrigger.current ?? undefined)} />} groupDisclosureKey={groupDisclosureKey} motionAllowed={motion.effective === "full"} renderResourceChips={renderResourceChips} onInlineNameSaved={handleInlineNameSaved} onQuickNotesSaved={handleQuickNotesSaved} onInlineEditorError={setActionErr} folderLabel={folderLabel} openLabel={openLabel} onToggleSort={toggleSort} onToggleAll={() => { rangeSelectionAnchor.current = null; toggleAll(); }} onToggleProfileGroup={toggleProfileGroup} onToggleGroupSelection={(matches) => { rangeSelectionAnchor.current = null; setSelected((current) => toggleProfileSelection(current, matches)); }} onCreateInGroup={openCreateInGroup} onManageGroup={(name) => { selectFolder(name); setGroupManagerOpen(true); }} onNewSubfolder={(name) => { openGroupCreate(name || null); setGroupManagerOpen(true); }} onOpenCreate={createModal.openCreate} onOpenBulk={importModal.openBulk} onSelectAllGroups={() => setGroup("all")} onChooseRosterScope={chooseRosterScope} onClearRosterRefinements={clearRosterRefinements} rowHandlers={stableRowHandlers} t={t} />
+                  <ProfileRosterTable loaded={loaded} profilesCount={profiles.length} filteredCount={filtered.length} flatItems={flatItems} selectableProfilesCount={selectableProfiles.length} numbering={numbering} rosterScope={rosterScope} rosterDensity={rosterDensity} missingRosterGroup={missingRosterGroup} hasRosterRefinements={hasRosterRefinements} revealGroupMatches={revealGroupMatches} sort={sort} hiddenCols={hiddenCols} shownColumns={shownColumns} visibleColumnCount={visibleColumnCount} tableMinWidth={tableMinWidth} tableScrolled={tableScrolled} onTableScrolledChange={setTableScrolled} selected={selected} allVisibleSelected={allVisibleSelected} busy={busy} favoriteProfileIds={favoriteProfileIds} reuseLoadingId={createModal.reuseRequest?.status === "loading" ? createModal.reuseRequest.id : null} twoFaFlashId={twoFaFlash?.id ?? null} viewPreferencesReady={viewPreferencesReady} viewPreferenceBusy={viewPreferenceBusy} language={language} rangeKeyboardActivation={rangeKeyboardActivation} profilePageCount={profilePageCount} visibleProfilePage={visibleProfilePage} pageSize={pageSize} onPageChange={setProfilePage} onPageSizeChange={applyPageSize} runningCount={runningCount} diag={diag} diagWhen={diagWhen} showDiag={showDiag} onToggleDiag={() => setShowDiag((s) => !s)} hasDetails={!!detailsProfile} topRail={runtimeDownloads.length > 0 ? <RuntimeDownloadProgressView downloads={runtimeDownloads} stale={runtimeDownloadsStale} pendingAction={runtimeDownloadAction} onPause={() => { void runRuntimeDownloadAction("pause"); }} onResume={() => { void runRuntimeDownloadAction("resume"); }} onCancel={() => { void runRuntimeDownloadAction("cancel"); }} /> : undefined} footerNote={<span className="statusbar-note"><Icon name="laptop" className="sm" />{t("Data stays on this device")}</span>} detailsPanel={<ProfileDetailsPanel profile={detailsProfile} headingRef={detailsHeading} onClose={closeDetails} onEdit={(id) => editModal.openEdit(id, undefined, detailsTrigger.current ?? undefined)} onInspect={openInspection} onSaveNotes={handleDetailsSaveNotes} onOpenLogs={stableRowHandlers.openLogs} onRetryLaunch={(id) => act(id, openProfile)} onEditProxy={(id) => editModal.openEdit(id, "proxy", detailsTrigger.current ?? undefined)} />} groupDisclosureKey={groupDisclosureKey} motionAllowed={motion.effective === "full"} renderResourceChips={renderResourceChips} onInlineNameSaved={handleInlineNameSaved} onQuickNotesSaved={handleQuickNotesSaved} onInlineEditorError={setActionErr} folderLabel={folderLabel} openLabel={openLabel} onToggleSort={toggleSort} onToggleAll={() => { rangeSelectionAnchor.current = null; toggleAll(); }} onToggleProfileGroup={toggleProfileGroup} onToggleGroupSelection={(matches) => { rangeSelectionAnchor.current = null; setSelected((current) => toggleProfileSelection(current, matches)); }} onCreateInGroup={openCreateInGroup} onManageGroup={(name) => { selectFolder(name); setGroupManagerOpen(true); }} onNewSubfolder={(name) => { openGroupCreate(name || null); setGroupManagerOpen(true); }} onOpenCreate={createModal.openCreate} onOpenBulk={importModal.openBulk} onSelectAllGroups={() => setGroup("all")} onChooseRosterScope={chooseRosterScope} onClearRosterRefinements={clearRosterRefinements} rowHandlers={stableRowHandlers} t={t} />
 
                   )}
 
@@ -1570,11 +1973,13 @@ function App() {
 
               {scriptsVisit.current.visited && <ScriptsPage key={currentWorkspaceId} active={view === "scripts"} onViewRun={() => setScriptRunOpen(true)} />}
               {settingsVisited.current && (
-                <SettingsPanel visible={view === "settings"} workspaceId={catalog?.currentId} tabs={SETTINGS_TABS} activeTab={settingsTab} onTabChange={setSettingsTab} settingsPanelRef={settingsPanelRef} signedUpdateStartup={signedUpdateStartup} onProfilesImported={refreshImportedProfiles} onLocateSnapshotProfile={locateProfile} onOpenAssistant={() => setView("assistant")} onCreateWithLocalProxy={createModal.beginCreate} runtimeDownloads={runtimeDownloads} runtimeDownloadsStale={runtimeDownloadsStale} onAssignLocalProxy={startLocalProxyAssignment} onResumeLocalProxyAssignment={activeLocalProxyIntent ? () => setView("proxies") : undefined} localProxyAssignmentBlocked={workspaceOperationState.blocked} fingerprintRefreshVersion={fingerprintRefreshVersion} onInspectProfile={openInspection} onEditProfile={(id) => { if (!editModal.isEditSessionOpen()) editModal.openEdit(id); }} onExplainFingerprint={explainFingerprint} currentWorkspaceName={currentName} profileCount={profiles.length} language={language} onLanguageChange={setLanguage} onLanguageError={setActionErr} themes={THEMES} theme={theme} onThemeChange={chooseTheme} rosterDensity={rosterDensity} onRosterDensityChange={chooseRosterDensity} viewPreferencesReady={viewPreferencesReady} viewPreferencesLoading={viewPreferencesLoading} viewPreferenceBusy={viewPreferenceBusy} viewPreferenceReadError={viewPreferenceReadError} onRetryViewPreferences={() => setPreferenceLoadAttempt((value) => value + 1)} motionPreference={motion.preference} onMotionPreferenceChange={motion.setPreference} onOpenLogs={logs.open} logDir={logDir} modeErr={modeErr} onDone={() => setView("profiles")} appLockAvailable={appMode.appLockAvailable === true} appLockStatus={appLock.status} beginAppLockSettingsChange={appLock.beginSettingsStatusChange} onReopenOnboarding={reopenOnboarding} onDiagnosticsRun={() => setDiagnosticsRun(true)} />
+                <SettingsPanel visible={view === "settings"} workspaceId={catalog?.currentId} tabs={SETTINGS_TABS} activeTab={settingsTab} onTabChange={setSettingsTab} settingsPanelRef={settingsPanelRef} signedUpdateStartup={signedUpdateStartup} onProfilesImported={refreshImportedProfiles} onLocateSnapshotProfile={locateProfile} onOpenAssistant={() => setView("assistant")} onCreateWithLocalProxy={createModal.beginCreate} runtimeDownloads={runtimeDownloads} runtimeDownloadsStale={runtimeDownloadsStale} onAssignLocalProxy={startLocalProxyAssignment} onResumeLocalProxyAssignment={activeLocalProxyIntent ? () => setView("proxies") : undefined} localProxyAssignmentBlocked={workspaceOperationState.blocked} fingerprintRefreshVersion={fingerprintRefreshVersion} onInspectProfile={openInspection} onEditProfile={(id) => { if (!editModal.isEditSessionOpen()) editModal.openEdit(id); }} onExplainFingerprint={explainFingerprint} currentWorkspaceName={currentName} profileCount={profiles.length} language={language} onLanguageChange={setLanguage} onLanguageError={setActionErr} themes={THEMES} theme={theme} onThemeChange={chooseTheme} rosterDensity={rosterDensity} onRosterDensityChange={chooseRosterDensity} viewPreferencesReady={viewPreferencesReady} viewPreferencesLoading={viewPreferencesLoading} viewPreferenceBusy={viewPreferenceBusy} viewPreferenceReadError={viewPreferenceReadError} onRetryViewPreferences={() => setPreferenceLoadAttempt((value) => value + 1)} motionPreference={motion.preference} onMotionPreferenceChange={motion.setPreference} onOpenLogs={logs.open} logDir={logDir} modeErr={modeErr} onDone={() => setView("profiles")} appLockAvailable={appMode.appLockAvailable === true} appLockStatus={appLock.status} beginAppLockSettingsChange={appLock.beginSettingsStatusChange} onReopenOnboarding={reopenOnboarding} onDiagnosticsRun={() => setDiagnosticsRun(true)} profiles={profiles} defaultBrowserConfig={defaultBrowserConfig} onDefaultBrowserConfigChange={updateDefaultBrowserConfig} onTestExternalUrl={dispatchIncomingExternalUrl} />
               )}
             </ErrorBoundary>
           </div>
-          <footer className="workspace-footer"><span><Icon name="laptop" className="sm" />{t("Data stays on this device")}</span></footer>
+          {!(view === "profiles" && !rosterUnavailable) && (
+            <footer className="workspace-footer"><span><Icon name="laptop" className="sm" />{t("Data stays on this device")}</span></footer>
+          )}
         </div>
 
         <LogModal state={logs.state} onReload={logs.open} onClose={logs.close} />
@@ -1590,6 +1995,21 @@ function App() {
         <ScriptRunPanel open={scriptRunOpen} selectedProfiles={scriptRunProfiles} onClose={() => setScriptRunOpen(false)} />
         <ResourceDashboardDrawer open={resourceDrawerOpen} onClose={() => setResourceDrawerOpen(false)} profiles={profiles} monitor={resourceMonitor} onRefreshRoster={load} onFlash={flash} />
         <WindowSyncPanel open={windowSyncOpen} onClose={() => setWindowSyncOpen(false)} profiles={profiles} syncState={syncState} onSyncStateChange={setSyncState} onFlash={flash} />
+        <DefaultBrowserPicker
+          open={externalUrlQueue.length > 0}
+          url={externalUrlQueue[0]?.url ?? ""}
+          hostname={externalUrlQueue[0]?.hostname ?? ""}
+          queuedCount={Math.max(0, externalUrlQueue.length - 1)}
+          profiles={profiles}
+          favoriteProfileIds={favoriteProfileIds}
+          runningOnly={defaultBrowserConfig.pickerRunningOnly}
+          busy={externalOpenBusy}
+          error={externalOpenErr}
+          onRunningOnlyChange={(value) => updateDefaultBrowserConfig({ ...defaultBrowserConfig, pickerRunningOnly: value })}
+          onSelect={handleSelectPickerProfile}
+          onCancel={handleCancelPicker}
+        />
+        <WorkbenchContextMenu state={contextMenu} onClose={() => setContextMenu(null)} />
       </div>
     </>
   );

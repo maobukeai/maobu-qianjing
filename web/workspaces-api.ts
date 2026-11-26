@@ -1,8 +1,19 @@
 import { notifyAppLockedFromResponse, notifyUnauthorizedResponse, withStandaloneAuthHeaders } from "./api.ts";
 
 export const WORKSPACE_COLORS = ["#8169c8", "#628ac7", "#638f77", "#c4905b", "#b87594", "#7c7d8e"] as const;
-export const WORKSPACE_ICONS = ["laptop", "folder", "briefcase", "globe", "star", "layers"] as const;
-export type WorkspaceIcon = typeof WORKSPACE_ICONS[number];
+export const WORKSPACE_STUDIO_ICONS = ["studio-cat", "studio-prism", "studio-rocket", "studio-globe", "studio-shield", "studio-bolt"] as const;
+export const WORKSPACE_STATIC_ICONS = ["laptop", "folder", "briefcase", "globe", "star", "layers", "bag", "store", "shield", "key", "bot", "terminal", "cpu", "video", "mail", "crown"] as const;
+export const WORKSPACE_ICONS = [...WORKSPACE_STUDIO_ICONS, ...WORKSPACE_STATIC_ICONS, "monogram"] as const;
+export type BuiltinWorkspaceIcon = typeof WORKSPACE_ICONS[number];
+export type CustomWorkspaceIcon = `custom:${string}`;
+export type WorkspaceIcon = BuiltinWorkspaceIcon | CustomWorkspaceIcon;
+export const CUSTOM_WORKSPACE_ICON_PATTERN = /^custom:([0-9a-f]{32}\.(png|jpg|webp|gif))$/;
+export function isCustomWorkspaceIcon(value: unknown): value is CustomWorkspaceIcon {
+  return typeof value === "string" && CUSTOM_WORKSPACE_ICON_PATTERN.test(value);
+}
+export function isValidWorkspaceIcon(value: unknown): value is WorkspaceIcon {
+  return (WORKSPACE_ICONS as readonly unknown[]).includes(value) || isCustomWorkspaceIcon(value);
+}
 export interface WorkspaceRecord { id: string; name: string; color: string; icon: WorkspaceIcon; archived: boolean; createdAt: number; updatedAt: number; lastOpenedAt: number; }
 export interface WorkspaceCatalog { currentId: string; activeId: string; workspaces: WorkspaceRecord[]; }
 export interface WorkspaceOverview { workspaceId: string; root: string; profileCount: number; trashCount: number; runningCount: number; bytes: number | null; freeBytes: number | null; lastBackupAt: number | null; backupBusy: boolean; scriptRunning: boolean; }
@@ -24,6 +35,8 @@ export const WORKSPACE_API_MESSAGES = [
   "Enter the password for this encrypted backup.",
   "The backup password is incorrect or the encrypted backup is damaged.",
   "Backup model services are invalid or unsupported.",
+  "Icon files must be 2 MB or smaller.",
+  "Only PNG, JPG, WebP, and GIF images are supported.",
 ] as const;
 
 let capability: string | undefined;
@@ -55,7 +68,7 @@ function object(value: unknown): value is Record<string, any> { return !!value &
 function incomplete(): never { throw new Error("Workspace response was incomplete."); }
 function record(value: unknown): WorkspaceRecord {
   if (!object(value) || typeof value.id !== "string" || !value.id || typeof value.name !== "string" || typeof value.color !== "string" || !finite(value.createdAt) || !finite(value.updatedAt) || !finite(value.lastOpenedAt)) return incomplete();
-  return { id: value.id, name: value.name, color: WORKSPACE_COLORS.includes(value.color as any) ? value.color : WORKSPACE_COLORS[0], icon: WORKSPACE_ICONS.includes(value.icon) ? value.icon : "laptop", archived: value.archived === true, createdAt: value.createdAt, updatedAt: value.updatedAt, lastOpenedAt: value.lastOpenedAt };
+  return { id: value.id, name: value.name, color: WORKSPACE_COLORS.includes(value.color as any) ? value.color : WORKSPACE_COLORS[0], icon: isValidWorkspaceIcon(value.icon) ? value.icon : "laptop", archived: value.archived === true, createdAt: value.createdAt, updatedAt: value.updatedAt, lastOpenedAt: value.lastOpenedAt };
 }
 function job(value: unknown): WorkspaceJob {
   if (!object(value) || typeof value.id !== "string" || !["backup", "restore"].includes(value.kind) || !["queued", "running", "succeeded", "failed"].includes(value.status) || typeof value.phase !== "string" || !finite(value.completed) || !finite(value.total)) return incomplete();
@@ -139,6 +152,50 @@ export async function fetchWorkspaceJob(id: string, signal?: AbortSignal): Promi
   return next;
 }
 export function workspaceBackupDownloadUrl(id: string, token: string): string { return `/ui/api/workspace/backups/${encodeURIComponent(id)}/download?capability=${encodeURIComponent(token)}`; }
+const MAX_CUSTOM_ICON_BYTES = 2 * 1024 * 1024;
+const customIconUrlCache = new Map<string, Promise<string>>();
+
+export async function uploadWorkspaceIcon(file: File): Promise<CustomWorkspaceIcon> {
+  if (file.size > MAX_CUSTOM_ICON_BYTES) throw new Error("Icon files must be 2 MB or smaller.");
+  const body = await request("/workspace/icons", {
+    method: "POST",
+    headers: { "Content-Type": file.type || "application/octet-stream" },
+    body: file,
+  });
+  if (!isCustomWorkspaceIcon(body.icon)) return incomplete();
+  return body.icon;
+}
+
+export function fetchWorkspaceIconBlobUrl(icon: CustomWorkspaceIcon): Promise<string> {
+  const match = CUSTOM_WORKSPACE_ICON_PATTERN.exec(icon);
+  if (!match) return Promise.reject(new Error("Workspace request failed."));
+  const filename = match[1]!;
+  const existing = customIconUrlCache.get(filename);
+  if (existing) return existing;
+  const loader = (async () => {
+    const fetchWithCap = async (retry: boolean): Promise<Response> => {
+      const token = await workspaceCapability();
+      const res = await fetch(`/ui/api/workspace/icons/${encodeURIComponent(filename)}`, {
+        credentials: "same-origin",
+        headers: withStandaloneAuthHeaders({ "X-Maobu-Workspace-Capability": token }),
+      });
+      if (res.status === 401 && retry) {
+        clearWorkspaceCapability();
+        return fetchWithCap(false);
+      }
+      return res;
+    };
+    const response = await fetchWithCap(true);
+    if (!response.ok) throw new Error("Workspace request failed.");
+    const blob = await response.blob();
+    return URL.createObjectURL(blob);
+  })().catch((error) => {
+    customIconUrlCache.delete(filename);
+    throw error;
+  });
+  customIconUrlCache.set(filename, loader);
+  return loader;
+}
 function desktopInvoke(): DesktopInvoke | undefined { return typeof window === "undefined" ? undefined : (window as any).__TAURI_INTERNALS__?.invoke; }
 export function workspaceDesktopAvailable(): boolean { return typeof desktopInvoke() === "function"; }
 export async function openWorkspaceLocation(kind: WorkspaceLocation): Promise<void> { const invoke = desktopInvoke(); if (!invoke) throw new Error("Open this action in the desktop app."); await invoke("open_workspace_location", { kind }); }

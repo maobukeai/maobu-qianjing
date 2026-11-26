@@ -7,8 +7,8 @@ export type WorkbenchView = "profiles" | "inspection" | "proxies" | "scripts" | 
 interface NavigationItem { view: WorkbenchView; label: string; icon: IconName; count?: number }
 
 /** The shell renders navigation; domain actions and task ownership stay with App. */
-export function WorkbenchSidebar({ compact, collapsed, forced, view, profileCount, extensionCount, loaded, onToggle, onNavigate, onProfiles, onExtensions, onSettings, navigationRef, switcher, children, device, error }: {
-  compact: boolean; collapsed: boolean; forced: boolean; view: WorkbenchView;
+export function WorkbenchSidebar({ compact, collapsed, forced, hideToggle = false, view, profileCount, extensionCount, loaded, onToggle, onNavigate, onProfiles, onExtensions, onSettings, navigationRef, switcher, children, device, error }: {
+  compact: boolean; collapsed: boolean; forced: boolean; hideToggle?: boolean; view: WorkbenchView;
   profileCount: number; extensionCount: number; loaded: boolean;
   onToggle: () => void; onNavigate: (view: WorkbenchView) => void;
   onProfiles: () => void; onExtensions: () => void; onSettings: () => void;
@@ -38,11 +38,14 @@ export function WorkbenchSidebar({ compact, collapsed, forced, view, profileCoun
     </button>;
   };
   return <aside className={`sidebar${compact ? " collapsed" : ""}`} aria-label={t("Workspace navigation")}>
-    <div className="rail-heading"><span className="rail-section-label" aria-hidden="true">{t("Workspaces")}</span>
-      {!forced && <button type="button" className="rail-toggle" aria-label={t(collapsed ? "Expand sidebar" : "Collapse sidebar")}
-        data-tip={t(collapsed ? "Expand sidebar" : "Collapse sidebar")} title={t(collapsed ? "Expand sidebar" : "Collapse sidebar")}
-        aria-controls="workspace-navigation" aria-expanded={!collapsed} onClick={onToggle}><AppIcon name={collapsed ? "expandRail" : "collapseRail"} /></button>}
-    </div>
+    {!hideToggle && (
+      <div className="rail-heading">
+        {!forced && <button type="button" className="rail-toggle" aria-label={t(collapsed ? "Expand sidebar" : "Collapse sidebar")}
+          data-tip={t(collapsed ? "Expand sidebar" : "Collapse sidebar")} title={t(collapsed ? "Expand sidebar" : "Collapse sidebar")}
+          aria-controls="workspace-navigation" aria-expanded={!collapsed} onClick={onToggle}><AppIcon name={collapsed ? "expandRail" : "collapseRail"} /></button>}
+        <span className="rail-section-label" aria-hidden="true">{t("Workspaces")}</span>
+      </div>
+    )}
     {switcher}
     <nav id="workspace-navigation" className="sidenav" ref={navigationRef} aria-label={t("Workspace navigation")}>
       <span className="rail-active-marker" aria-hidden="true" />

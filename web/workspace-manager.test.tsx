@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { I18nProvider } from "./i18n.tsx";
+import { WorkspaceIconPicker } from "./workspace-icon.tsx";
 import { DevicePanel, WorkspaceBackupIntro, WorkspaceManagementPage, WorkspaceProvider, WorkspaceSwitcher, useWorkspaceCatalog } from "./workspace-manager.tsx";
 import type { WorkspaceCatalog } from "./workspaces-api.ts";
 const catalog: WorkspaceCatalog = { currentId: "one", activeId: "one", workspaces: [{ id: "one", name: "Research & review", color: "#8169c8", icon: "folder", archived: false, createdAt: 1, updatedAt: 1, lastOpenedAt: 0 }, { id: "two", name: "Other project", color: "#628ac7", icon: "laptop", archived: false, createdAt: 1, updatedAt: 1, lastOpenedAt: 0 }] };
@@ -156,4 +157,47 @@ test("header and rail device entries have unique accessible connection descripti
   expect(html).not.toContain("Research &amp; review");
   expect(html).not.toContain("Connection interrupted");
   expect(elements.some(element => element.attrs.role === "dialog")).toBe(false);
+});
+
+test("rail workspace switcher shows the workspace icon instead of a forced monogram and respects explicit monogram mode", () => {
+  const studioCatalog: WorkspaceCatalog = {
+    currentId: "one",
+    activeId: "one",
+    workspaces: [{ id: "one", name: "个人工作区", color: "#8169c8", icon: "studio-cat", archived: false, createdAt: 1, updatedAt: 1, lastOpenedAt: 0 }],
+  };
+  const studioHtml = renderToStaticMarkup(
+    <I18nProvider><WorkspaceProvider initialCatalog={studioCatalog}>
+      <WorkspaceSwitcher variant="rail" compact profileCount={2} runningCount={0} connection onShowRunning={noop} />
+    </WorkspaceProvider></I18nProvider>,
+  );
+  expect(studioHtml).toContain("is-studio");
+  expect(studioHtml).not.toContain("is-monogram");
+
+  const monogramCatalog: WorkspaceCatalog = {
+    currentId: "one",
+    activeId: "one",
+    workspaces: [{ ...studioCatalog.workspaces[0]!, icon: "monogram" }],
+  };
+  const monogramHtml = renderToStaticMarkup(
+    <I18nProvider><WorkspaceProvider initialCatalog={monogramCatalog}>
+      <WorkspaceSwitcher variant="rail" compact profileCount={2} runningCount={0} connection onShowRunning={noop} />
+    </WorkspaceProvider></I18nProvider>,
+  );
+  expect(monogramHtml).toContain("is-monogram");
+});
+
+test("workspace icon picker category tabs and grids participate in global sliding indicators", async () => {
+  const html = renderToStaticMarkup(
+    <I18nProvider>
+      <WorkspaceIconPicker value="studio-cat" color="#8169c8" name="个人工作区" onChange={noop} />
+    </I18nProvider>,
+  );
+  const elements = await elementsIn(html);
+  const tabs = elements.find((el) => el.attrs.class === "wm-icon-picker-tabs");
+  const grid = elements.find((el) => el.attrs.class === "wm-icon-picker-grid");
+  expect(tabs?.attrs["data-sliding-group"]).toBeDefined();
+  expect(tabs?.attrs["data-sliding-axis"]).toBe("horizontal");
+  expect(grid?.attrs["data-sliding-group"]).toBeDefined();
+  expect(html).not.toContain("data-sliding-managed");
+  expect(html).not.toContain("data-sliding-disabled");
 });

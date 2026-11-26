@@ -1,6 +1,6 @@
 {
   "name": "maobu-browser",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Local browser profile manager with on-demand browser engines",
   "module": "cli.ts",
   "type": "module",

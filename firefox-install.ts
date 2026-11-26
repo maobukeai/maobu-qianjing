@@ -1,7 +1,19 @@
 import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { beforeAbort, cancelBody, trackRuntimeDownload, writeDownloadChunk } from "./runtime-download.ts";
+import {
+  beforeAbort,
+  cancelBody,
+  isRuntimeDownloadCancelled,
+  notifyRuntimeDownloadProgress,
+  registerRuntimeDownloadAbort,
+  RuntimeDownloadCancelledError,
+  RuntimeDownloadPausedError,
+  trackRuntimeDownload,
+  updateRuntimeDownloadTotal,
+  waitWhileRuntimeDownloadPaused,
+  writeDownloadChunk,
+} from "./runtime-download.ts";
 import { browserEnvText, sha256File, windowsSystemTool } from "./browser-install.ts";
 
 export interface FirefoxRuntimeBuild {
@@ -84,6 +96,7 @@ async function fetchFirefoxRelease(
   url: string,
   fetcher: NonNullable<FirefoxDownloadDependencies["fetch"]>,
   signal: AbortSignal,
+  headers?: Record<string, string>,
 ): Promise<Response> {
   let target = new URL(url);
   for (let redirects = 0; ; redirects++) {
@@ -91,7 +104,7 @@ async function fetchFirefoxRelease(
       throw new Error("approved Firefox release download requires HTTPS without URL credentials");
     }
     signal.throwIfAborted();
-    const request = fetcher(target.href, { redirect: "manual", signal }).then(response => {
+    const request = fetcher(target.href, headers ? { redirect: "manual", signal, headers } : { redirect: "manual", signal }).then(response => {
       if (signal.aborted) {
         cancelBody(response.body);
         throw signal.reason;
@@ -123,6 +136,17 @@ function firefoxContentLength(response: Response, maxBytes: number): number | un
   return length;
 }
 
+function firefoxContentRange(response: Response, have: number, maxBytes: number): { start: number; total: number } | undefined {
+  const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get("content-range") ?? "");
+  if (!match) return undefined;
+  const start = Number(match[1]);
+  const end = Number(match[2]);
+  const total = Number(match[3]);
+  if (![start, end, total].every(Number.isSafeInteger)) return undefined;
+  if (start !== have || end < start || total <= end || total > maxBytes) return undefined;
+  return { start, total };
+}
+
 async function downloadFirefoxArchive(
   build: FirefoxRuntimeBuild,
   cwd: string,
@@ -136,63 +160,105 @@ async function downloadFirefoxArchive(
   const directory = mkdtempSync(join(cwd, ".aliasmode-firefox-download-"));
   const archive = join(directory, url.split("/").at(-1)!);
   const cleanup = () => rmSync(directory, { recursive: true, force: true });
-  const controller = new AbortController();
-  const deadline = performance.now() + timeoutMs;
-  const expire = () => controller.abort(new Error("approved Firefox release download timed out"));
-  const timer = setTimeout(expire, timeoutMs);
-  const checkDeadline = () => {
-    if (performance.now() >= deadline) expire();
-    controller.signal.throwIfAborted();
-  };
-  let response: Response | undefined;
-  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-  let file: Awaited<ReturnType<typeof open>> | undefined;
-  let complete = false;
   try {
-    try {
-      response = await fetchFirefoxRelease(url, dependencies.fetch ?? fetch, controller.signal);
-      checkDeadline();
-      if (response.status !== 200) throw new Error(`approved Firefox release download failed (HTTP ${response.status})`);
-      const body = response.body;
-      if (!body) throw new Error("approved Firefox release download returned no archive data");
-      const length = firefoxContentLength(response, maxBytes);
-      await trackRuntimeDownload("firefox", archive, length ?? 0, async () => {
-        const streamReader = reader = body.getReader();
-        const output = file = await open(archive, "wx");
-        let written = 0;
-        while (true) {
+    let deadline = performance.now() + timeoutMs;
+    await trackRuntimeDownload("firefox", archive, 0, async () => {
+      let written = 0;
+      let length: number | undefined;
+      while (true) {
+        if (isRuntimeDownloadCancelled(archive)) throw new RuntimeDownloadCancelledError();
+        const pauseStart = performance.now();
+        await waitWhileRuntimeDownloadPaused(archive);
+        deadline += Math.max(0, performance.now() - pauseStart);
+        const remaining = Math.ceil(deadline - performance.now());
+        if (remaining < 1) throw new Error("approved Firefox release download timed out");
+
+        const controller = new AbortController();
+        const expire = () => controller.abort(new Error("approved Firefox release download timed out"));
+        const timer = setTimeout(expire, remaining);
+        const checkDeadline = () => {
+          if (performance.now() >= deadline) expire();
+          controller.signal.throwIfAborted();
+        };
+        const unregisterAbort = registerRuntimeDownloadAbort(archive, (reason) => {
+          clearTimeout(timer);
+          controller.abort(reason);
+        });
+        let response: Response | undefined;
+        let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+        let file: Awaited<ReturnType<typeof open>> | undefined;
+        let complete = false;
+        try {
+          const resuming = written > 0;
+          response = await fetchFirefoxRelease(
+            url,
+            dependencies.fetch ?? fetch,
+            controller.signal,
+            resuming ? { range: `bytes=${written}-` } : undefined,
+          );
           checkDeadline();
-          const { done, value } = await beforeAbort(streamReader.read(), controller.signal);
-          checkDeadline();
-          if (done) break;
-          if (value.byteLength > maxBytes - written) {
-            throw new Error("approved Firefox release exceeded its archive byte limit");
+          const resumed = resuming && response.status === 206;
+          if (resumed) {
+            const range = firefoxContentRange(response, written, maxBytes);
+            if (!range) throw new Error("approved Firefox release download returned invalid Content-Range");
+            length = range.total;
+            updateRuntimeDownloadTotal(archive, length);
+          } else {
+            if (response.status !== 200) throw new Error(`approved Firefox release download failed (HTTP ${response.status})`);
+            written = 0;
+            length = firefoxContentLength(response, maxBytes);
+            updateRuntimeDownloadTotal(archive, length ?? 0);
           }
-          if (length !== undefined && value.byteLength > length - written) {
-            throw new Error("approved Firefox release exceeded Content-Length");
-          }
-          await writeDownloadChunk(output, value, count => {
-            written += count;
+          const body = response.body;
+          if (!body) throw new Error("approved Firefox release download returned no archive data");
+          const streamReader = reader = body.getReader();
+          const output = file = await open(archive, resumed ? "a" : (!existsSync(archive) ? "wx" : "w"));
+          while (true) {
             checkDeadline();
-          });
-        }
-        if (written === 0) throw new Error("approved Firefox release download returned no archive data");
-        if (length !== undefined && written !== length) throw new Error("approved Firefox release ended before Content-Length");
-      });
-      complete = true;
-    } finally {
-      clearTimeout(timer);
-      if (!complete) {
-        controller.abort();
-        if (reader) {
-          try { void reader.cancel().catch(() => {}); } catch {}
-        } else {
-          cancelBody(response?.body ?? null);
+            const { done, value } = await beforeAbort(streamReader.read(), controller.signal);
+            checkDeadline();
+            if (done) break;
+            if (value.byteLength > maxBytes - written) {
+              throw new Error("approved Firefox release exceeded its archive byte limit");
+            }
+            if (length !== undefined && value.byteLength > length - written) {
+              throw new Error("approved Firefox release exceeded Content-Length");
+            }
+            await writeDownloadChunk(output, value, count => {
+              written += count;
+              notifyRuntimeDownloadProgress(archive, written);
+              checkDeadline();
+            });
+          }
+          if (written === 0) throw new Error("approved Firefox release download returned no archive data");
+          if (length !== undefined && written !== length) throw new Error("approved Firefox release ended before Content-Length");
+          complete = true;
+          return;
+        } catch (error) {
+          if (error instanceof RuntimeDownloadCancelledError) throw error;
+          if (error instanceof RuntimeDownloadPausedError) {
+            const pauseWaitAt = performance.now();
+            await waitWhileRuntimeDownloadPaused(archive);
+            deadline += Math.max(0, performance.now() - pauseWaitAt);
+            continue;
+          }
+          throw error;
+        } finally {
+          unregisterAbort();
+          clearTimeout(timer);
+          if (!complete) {
+            controller.abort();
+            if (reader) {
+              try { void reader.cancel().catch(() => {}); } catch {}
+            } else {
+              cancelBody(response?.body ?? null);
+            }
+          }
+          try { reader?.releaseLock(); }
+          finally { await file?.close(); }
         }
       }
-      try { reader?.releaseLock(); }
-      finally { await file?.close(); }
-    }
+    });
     return { archive, cleanup };
   } catch (error) {
     cleanup();

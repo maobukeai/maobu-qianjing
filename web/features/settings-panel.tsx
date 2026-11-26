@@ -1,8 +1,10 @@
 import type { RefObject } from "react";
 import { useId, useRef, useState } from "react";
-import type { RuntimeDownload } from "../api";
+import type { RuntimeDownload, UiProfile } from "../api";
 import type { AppLockStatus } from "../app-lock-api.ts";
 import { AppLockSettings, type AppLockSettingsProps } from "../app-lock-settings.tsx";
+import type { DefaultBrowserRoutingConfig } from "../default-browser.ts";
+import { DefaultBrowserSettings } from "../default-browser-settings.tsx";
 import { DiagnosticsBox } from "../diagnostics-box.tsx";
 import {
   persistOnboardingState,
@@ -117,6 +119,10 @@ export interface SettingsPanelProps {
   onReopenOnboarding?: () => void;
   /** Optional callback when diagnostics finishes running. */
   onDiagnosticsRun?: () => void;
+  profiles?: readonly UiProfile[];
+  defaultBrowserConfig?: DefaultBrowserRoutingConfig;
+  onDefaultBrowserConfigChange?: (next: DefaultBrowserRoutingConfig) => void;
+  onTestExternalUrl?: (url: string) => void;
 }
 
 export function SettingsPanel({
@@ -166,6 +172,10 @@ export function SettingsPanel({
   beginAppLockSettingsChange,
   onReopenOnboarding,
   onDiagnosticsRun,
+  profiles,
+  defaultBrowserConfig,
+  onDefaultBrowserConfigChange,
+  onTestExternalUrl,
 }: SettingsPanelProps) {
   const { t } = useTranslation();
   const themeLabel = useId();
@@ -424,6 +434,14 @@ export function SettingsPanel({
                 </div>
               </div>
             </section>
+            {defaultBrowserConfig && onDefaultBrowserConfigChange && (
+              <DefaultBrowserSettings
+                profiles={profiles ?? []}
+                config={defaultBrowserConfig}
+                onChange={onDefaultBrowserConfigChange}
+                onTestExternalUrl={onTestExternalUrl}
+              />
+            )}
           </>
         )}
         {appLockAvailable && appLockVisited.current === lockWorkspaceId && (

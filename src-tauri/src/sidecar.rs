@@ -354,6 +354,7 @@ fn should_present_unexpected_exit(shutting_down: bool) -> bool {
     !shutting_down
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn launch_and_verify(
     app: &AppHandle,
     data_dir: &Path,

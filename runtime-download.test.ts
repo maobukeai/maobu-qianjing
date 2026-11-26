@@ -2,7 +2,17 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { downloadResumable, writeDownloadChunk, type ResumableDownloadDeps } from "./runtime-download.ts";
+import {
+  cancelRuntimeDownload,
+  downloadResumable,
+  pauseRuntimeDownload,
+  resumeRuntimeDownload,
+  RuntimeDownloadCancelledError,
+  runtimeDownloads,
+  trackRuntimeDownload,
+  writeDownloadChunk,
+  type ResumableDownloadDeps,
+} from "./runtime-download.ts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -304,4 +314,90 @@ test("propagates a filesystem error after a successful short write", async () =>
 
   expect(calls).toBe(2);
   expect(progress).toEqual([1]);
+});
+
+test("pauses an active download, preserves partial bytes, and resumes via Range", async () => {
+  const partial = partialFile();
+  const ranges: Array<string | null> = [];
+  let releasePausedRead!: () => void;
+  const pausedReadBlocked = new Promise<void>((resolve) => { releasePausedRead = resolve; });
+
+  const fetch: NonNullable<ResumableDownloadDeps["fetch"]> = async (_url, init) => {
+    const range = new Headers(init.headers).get("range");
+    ranges.push(range);
+    if (range === null) {
+      let sentFirst = false;
+      const stream = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          if (!sentFirst) {
+            sentFirst = true;
+            controller.enqueue(bytes(1, 2));
+            return;
+          }
+          await pausedReadBlocked;
+        },
+        cancel() { releasePausedRead(); },
+      });
+      return new Response(stream, { headers: { "content-length": "4" } });
+    }
+    return new Response(bytes(3, 4), {
+      status: 206,
+      headers: { "content-length": "2", "content-range": "bytes 2-3/4" },
+    });
+  };
+
+  let pausedObserved = false;
+  const run = trackRuntimeDownload("firefox", partial, 4, () =>
+    downloadResumable("https://fixture.test/file", partial, 4, { ...defaults, attempts: 1, fetch }, (written) => {
+      if (written === 2 && !pausedObserved) {
+        pausedObserved = true;
+        queueMicrotask(() => {
+          expect(pauseRuntimeDownload("firefox")).toBe(1);
+          const active = runtimeDownloads();
+          expect(active[0]?.status).toBe("paused");
+          expect(active[0]?.bytesPerSec).toBe(0);
+          expect(statSync(partial).size).toBe(2);
+          setTimeout(() => {
+            expect(resumeRuntimeDownload("firefox")).toBe(1);
+          }, 15);
+        });
+      }
+    }),
+  );
+
+  await run;
+  expect(ranges).toEqual([null, "bytes=2-"]);
+  expect([...readFileSync(partial)]).toEqual([1, 2, 3, 4]);
+  expect(runtimeDownloads()).toEqual([]);
+});
+
+test("cancelling a paused download removes partial bytes and rejects cleanly", async () => {
+  const partial = partialFile();
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      controller.enqueue(bytes(9, 8));
+      return new Promise<void>(() => {});
+    },
+  });
+  const fetch: NonNullable<ResumableDownloadDeps["fetch"]> = async () =>
+    new Response(stream, { headers: { "content-length": "4" } });
+
+  let triggered = false;
+  const run = trackRuntimeDownload("aliasmode", partial, 4, () =>
+    downloadResumable("https://fixture.test/file", partial, 4, { ...defaults, fetch }, (written) => {
+      if (written === 2 && !triggered) {
+        triggered = true;
+        queueMicrotask(() => {
+          expect(pauseRuntimeDownload("aliasmode")).toBe(1);
+          expect(runtimeDownloads()).toHaveLength(1);
+          expect(cancelRuntimeDownload("aliasmode")).toBe(1);
+          expect(runtimeDownloads()).toEqual([]);
+        });
+      }
+    }),
+  );
+
+  await expect(run).rejects.toBeInstanceOf(RuntimeDownloadCancelledError);
+  expect(existsSync(partial)).toBe(false);
+  expect(runtimeDownloads()).toEqual([]);
 });

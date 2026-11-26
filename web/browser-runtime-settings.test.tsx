@@ -11,7 +11,7 @@ test("browser runtime card can render before the catalog is fetched", () => {
   expect(markup).not.toContain("Files found · unverified");
 });
 
-for (const scenario of ["refresh", "retry", "unmount", "transfers"]) {
+for (const scenario of ["refresh", "retry", "unmount", "transfers", "remove"]) {
   test(`browser runtime card ${scenario} (isolated DOM)`, async () => {
     const child = Bun.spawn([process.execPath, resolve(import.meta.dir, "../test-fixtures/browser-runtime-settings-dom.tsx"), scenario], {
       cwd: resolve(import.meta.dir, ".."), stdout: "pipe", stderr: "pipe",

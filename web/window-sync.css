@@ -142,11 +142,49 @@
   color: var(--ink);
   overflow: hidden;
   min-width: 0;
+  transform-origin: 82% 0%;
+  will-change: transform, opacity;
 }
 :root[data-theme="dark"] .wsync-drawer {
   background: rgba(22, 25, 38, 0.84);
   border-color: rgba(255, 255, 255, 0.14);
   box-shadow: 0 20px 54px rgba(0, 0, 0, 0.62), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* 与实时资源看板同源的方案 2 动效：蒙层纯透明度过渡 + 抽屉右上锚点液态弹簧展开 */
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="panel"] > .wsync-drawer-backdrop {
+  opacity: 1;
+  transform: none;
+  transition: opacity 190ms ease-out;
+}
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="panel"]:is([data-motion-phase="entering"], [data-motion-phase="exiting"]) > .wsync-drawer-backdrop {
+  opacity: 0;
+  transform: none;
+}
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="panel"][data-motion-phase="exiting"] > .wsync-drawer-backdrop {
+  transition-duration: 145ms;
+  transition-timing-function: ease-in;
+}
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="panel"] > .wsync-drawer-backdrop > .wsync-drawer {
+  opacity: 1;
+  transform: translate3d(0, 0, 0) scale(1, 1);
+  transition:
+    opacity 170ms ease-out,
+    transform 295ms cubic-bezier(0.22, 1.16, 0.36, 1);
+  transition-timing-function:
+    ease-out,
+    linear(0, 0.012, 0.045, 0.101, 0.174, 0.261, 0.358, 0.461, 0.564, 0.663, 0.754, 0.834, 0.902, 0.955, 0.995, 1.022, 1.036, 1.041, 1.038, 1.03, 1.02, 1.011, 1.004, 0.999, 0.997, 0.997, 0.998, 1);
+}
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="panel"][data-motion-phase="entering"] > .wsync-drawer-backdrop > .wsync-drawer {
+  opacity: 0;
+  transform: translate3d(12px, -18px, 0) scale(0.86, 0.80);
+}
+:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="panel"][data-motion-phase="exiting"] > .wsync-drawer-backdrop > .wsync-drawer {
+  opacity: 0;
+  transform: translate3d(12px, -18px, 0) scale(0.86, 0.80);
+  transition:
+    opacity 115ms ease-in,
+    transform 145ms cubic-bezier(0.45, 0, 0.55, 1);
 }
 
 .wsync-drawer-head {
@@ -380,7 +418,7 @@
   transform: rotate(42deg);
 }
 :root[data-theme="dark"] :is(.wsync-slave-item, .wsync-switch-item) input[type="checkbox"]:checked::after {
-  border-color: #0e111a;
+  border-color: var(--bg);
 }
 
 .wsync-safety-note {

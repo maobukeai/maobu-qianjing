@@ -7,6 +7,7 @@ import { LocalProxyPreflightSettings } from "./local-proxy-preflight-settings.ts
 import { ChromiumPreloadingSettings } from "./chromium-preloading-settings.tsx";
 import { ChromiumMemorySaverSettings } from "./chromium-memory-saver-settings.tsx";
 import { DataSaverSettings } from "./data-saver-settings.tsx";
+import { StartPageSettings } from "./start-page-settings.tsx";
 import { presentFingerprintCheck } from "../fingerprint-check-presentation.ts";
 import type { LocalProxyDiscoveryRequest, LocalProxyHost } from "../network-diagnostics.ts";
 import { checkForUpdate, createSyncFile, discoverProxies, fetchFingerprintReports, fetchIntegrationInfo, fetchLastUpdate, fetchSettings, fetchSyncFiles, importSyncFile, measureFingerprint, patchSettings, previewSyncFile, type AppSettings, type FingerprintReport, type IntegrationInfo, type LocalDiscovery, type SyncFileRecord, type SyncPreview, type UpdateResult } from "./settings-api.ts";
@@ -138,7 +139,7 @@ function NetworkPanel({ onCreateWithLocalProxy, onAssignLocalProxy, onResumeLoca
   }
   return <div className="feature-panel">
     <h2 className="sr-only">{t("Network & proxies")}</h2>
-    <section className="feature-card">
+    <section className="feature-card local-proxy-discovery-card">
       <form onSubmit={event => { event.preventDefault(); void scan(); }}>
         <div className="feature-card-title">
           <div className="feature-card-head-main">
@@ -177,8 +178,7 @@ function NetworkPanel({ onCreateWithLocalProxy, onAssignLocalProxy, onResumeLoca
             {listening.map(result => {
               const endpoint = localProxyEndpoint(result.host, result.port);
               return <div className="local-proxy-result" key={endpoint}>
-                <div className="local-proxy-address"><span className="feature-dot" /><strong className="mono">{endpoint}</strong><span className="feature-badge">{result.latencyMs ?? "—"} ms</span></div>
-                <p>{t(result.socks5 === "available" ? "SOCKS5 handshake confirmed" : result.socks5 === "authentication_required" ? "SOCKS5 requires authentication" : "TCP listener detected; protocol needs verification")}</p>
+                <div className="local-proxy-address"><span className="feature-dot" /><strong className="mono">{endpoint}</strong><span className="feature-badge">{result.latencyMs ?? "—"} ms</span><span className="local-proxy-protocol">{t(result.socks5 === "available" ? "SOCKS5 handshake confirmed" : result.socks5 === "authentication_required" ? "SOCKS5 requires authentication" : "TCP listener detected; protocol needs verification")}</span></div>
                 <div className="feature-actions">{result.suggestions.map(suggestion => {
                   const key = `${endpoint}/${suggestion.type}`, protocol = suggestion.type.toUpperCase();
                   const checked = checks[key], note = checked && proxyCheckNote(checked);
@@ -221,11 +221,12 @@ function NetworkPanel({ onCreateWithLocalProxy, onAssignLocalProxy, onResumeLoca
       </form>
     </section>
     <LocalProxyPreflightSettings />
-    <div className="feature-grid">
+    <div className="feature-grid feature-grid-compact">
       <ChromiumPreloadingSettings />
       <ChromiumMemorySaverSettings />
     </div>
     <DataSaverSettings />
+    <StartPageSettings />
     <details className="feature-disclosure">
       <summary>{t("Verify before assigning")}</summary>
       <div className="feature-grid feature-disclosure-content">

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { BrowserLaunchError, defaultSetCookies, type Launcher } from "../../launcher.ts";
+import { BrowserLaunchError, CLOSE_SESSION_CAPTURE_OPTIONS, defaultSetCookies, type Launcher } from "../../launcher.ts";
 import type { ProfileStore } from "../../store.ts";
 import type { CookieRecord, Profile } from "../../types.ts";
 import { importInbox, importBuffers, ProfileImportError } from "../../inbox.ts";
@@ -589,6 +589,61 @@ export async function handleProfilesUiRoutes(
     }
   }
 
+  const openUrl = pathname.match(/^\/ui\/api\/profiles\/([^/]+)\/open-url$/);
+  if (openUrl && req.method === "POST") {
+    const rejected = rejectUntrustedJsonMutation(req);
+    if (rejected) return rejected;
+    const decoded = safeDecodeIdParam(openUrl[1]!);
+    if (!decoded.ok) return decoded.response;
+    const id = decoded.id;
+    let body: { url?: unknown };
+    try {
+      body = (await req.json()) as { url?: unknown };
+    } catch {
+      return Response.json({ ok: false, error: "URL must be a valid http:// or https:// address" }, { status: 400 });
+    }
+    const rawInput = typeof body.url === "string" ? body.url : "";
+    const rawUrl = rawInput.trim();
+    let parsedUrl: URL;
+    try {
+      if (!rawUrl || rawInput.length > 4096 || /[\u0000-\u001f\u007f]/.test(rawInput)) {
+        throw new Error("invalid");
+      }
+      parsedUrl = new URL(rawUrl);
+      if ((parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") || !parsedUrl.hostname) {
+        throw new Error("invalid");
+      }
+    } catch {
+      return Response.json({ ok: false, error: "URL must be a valid http:// or https:// address" }, { status: 400 });
+    }
+    const profile = store.getProfile(id);
+    if (!profile) return Response.json({ ok: false, error: "no such profile" }, { status: 404 });
+    const canonicalUrl = parsedUrl.toString();
+    const engine = profileEngine(profile);
+    try {
+      const hadLaunch = !!store.getLaunch(id);
+      const started = await launcher.start(id, hadLaunch ? [] : [canonicalUrl]);
+      if (started.reattached) {
+        await launcher.navigate(started.ws, [canonicalUrl], false);
+      }
+      if (engine !== "firefox") {
+        await launcher.bringToFront(id).catch(() => {});
+      }
+      recordProfileEvent(store, {
+        profileId: id,
+        eventType: "external.url_opened",
+        status: "ok",
+        actor: "user",
+        summary: `Opened external link (${parsedUrl.hostname}).`,
+        detail: { host: parsedUrl.hostname, startedProfile: !started.reattached, engine },
+      });
+      return Response.json({ ok: true, id, url: canonicalUrl, started: !started.reattached, engine });
+    } catch (e) {
+      const errorMessage = e instanceof BrowserLaunchError && e.guidance ? e.guidance : msg(e);
+      return Response.json({ ok: false, error: errorMessage }, { status: 500 });
+    }
+  }
+
   const totp = pathname.match(/^\/ui\/api\/profiles\/([^/]+)\/totp$/);
   if (totp && req.method === "GET") {
     const decoded = safeDecodeIdParam(totp[1]!);
@@ -793,7 +848,7 @@ export async function handleProfilesUiRoutes(
       }
       if (action[2] === "close") {
         const launch = store.getLaunch(id);
-        await launcher.captureLocalSession(id);
+        await launcher.captureLocalSession(id, CLOSE_SESSION_CAPTURE_OPTIONS);
         const stopped = await launcher.stop(id, launch ?? undefined);
         if (stopped) {
           recordProfileEvent(store, {

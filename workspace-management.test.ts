@@ -399,3 +399,41 @@ test("onboarding checklist preference persists valid states and rejects invalid 
   }
   expect((await (await f.request("/workspace/preferences")).json()).preferences[ONBOARDING_STATE_KEY]).toBe("dismissed");
 });
+
+test("custom workspace icons validate image magic bytes, enforce 2 MB limit, and serve with nosniff", async () => {
+  const f = fixture(); const token = await f.authorize();
+  const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]);
+  const uploadRes = await f.manager.handle(new Request("http://127.0.0.1/ui/api/workspace/icons", {
+    method: "POST",
+    headers: { "Content-Type": "image/png", "X-Maobu-Workspace-Capability": token },
+    body: pngBytes,
+  }));
+  expect(uploadRes?.status).toBe(201);
+  const uploaded = await uploadRes!.json();
+  expect(uploaded.ok).toBe(true);
+  expect(uploaded.icon).toMatch(/^custom:[0-9a-f]{32}\.png$/);
+
+  const filename = uploaded.icon.slice("custom:".length);
+  const getRes = await f.manager.handle(new Request(`http://127.0.0.1/ui/api/workspace/icons/${filename}`, {
+    method: "GET",
+    headers: { "X-Maobu-Workspace-Capability": token },
+  }));
+  expect(getRes?.status).toBe(200);
+  expect(getRes?.headers.get("Content-Type")).toBe("image/png");
+  expect(getRes?.headers.get("X-Content-Type-Options")).toBe("nosniff");
+  expect(new Uint8Array(await getRes!.arrayBuffer())).toEqual(pngBytes);
+
+  const badRes = await f.manager.handle(new Request("http://127.0.0.1/ui/api/workspace/icons", {
+    method: "POST",
+    headers: { "Content-Type": "image/svg+xml", "X-Maobu-Workspace-Capability": token },
+    body: "<svg xmlns='http://www.w3.org/2000/svg'></svg>",
+  }));
+  expect(badRes?.status).toBe(400);
+
+  const bigRes = await f.manager.handle(new Request("http://127.0.0.1/ui/api/workspace/icons", {
+    method: "POST",
+    headers: { "Content-Type": "image/png", "X-Maobu-Workspace-Capability": token },
+    body: new Uint8Array(2 * 1024 * 1024 + 1),
+  }));
+  expect(bigRes?.status).toBe(413);
+});

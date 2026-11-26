@@ -5,7 +5,7 @@ import { defaultChromiumRuntime, managedChromiumLocation } from "./aliasmode-chr
 import { firefoxBuildForHost, firefoxInstallDirectoryPrefix } from "./firefox-install.ts";
 import { FIREFOX_MANAGED_RECORD, firefoxManagedDirectory } from "./firefox-managed.ts";
 import { Launcher } from "./launcher.ts";
-import { getBrowserRuntimeInventory, inspectBrowserRuntimeInventory, type BrowserRuntimeInventory, type RuntimeInventoryDeployment } from "./runtime-inventory.ts";
+import { getBrowserRuntimeInventory, inspectBrowserRuntimeInventory, removeBrowserRuntimeCache, type BrowserRuntimeInventory, type RuntimeInventoryDeployment } from "./runtime-inventory.ts";
 import type { ProfileStore } from "./store.ts";
 import { serveDashboard } from "./web.ts";
 
@@ -199,5 +199,74 @@ test("real dashboard settings routes guard static GET and explicit cache POST be
     expect(json).not.toContain("workspace-home");
     expect(json).not.toContain("chrome.exe");
     expect(reads).toBe(1);
+  } finally { server.stop(true); }
+});
+
+test("inspection reports cache byte sizes and removal deletes only unlinked inactive managed runtimes", async () => {
+  const home = fixture();
+  const root = join(home, "runtimes");
+  const source = deployment(root);
+  const chromiumExe = putChromium(root, "aliasmode");
+  const firefox = firefoxFixture(root);
+
+  const before = await inspectBrowserRuntimeInventory(source);
+  expect(before.runtimes[0]?.sizeBytes).toBeGreaterThan(0);
+  expect(before.runtimes[2]?.sizeBytes).toBeGreaterThan(0);
+
+  // Blocked when an active browser or active download uses this runtime.
+  await expect(removeBrowserRuntimeCache(source, "aliasmode-chromium", { runningBinaries: [chromiumExe] }))
+    .rejects.toThrow("Close running browsers using this runtime before removing its cache.");
+  await expect(removeBrowserRuntimeCache(source, "aliasmode-firefox", {
+    activeDownloads: [{ runtime: "firefox", receivedBytes: 10, totalBytes: 100 }],
+  })).rejects.toThrow("Wait for the browser download to finish before removing this cache.");
+  expect(existsSync(chromiumExe)).toBe(true);
+
+  // Linked folder outside the runtime root must stay untouched.
+  const outside = join(home, "outside-keep");
+  mkdirSync(outside);
+  writeFileSync(join(outside, "keep.txt"), "safe");
+  symlinkSync(outside, join(dirname(chromiumExe), "ext-link"), process.platform === "win32" ? "junction" : "dir");
+
+  const afterRemove = await removeBrowserRuntimeCache(source, "aliasmode-chromium");
+  expect(afterRemove.runtimes[0]?.cache).toBe("missing");
+  expect(afterRemove.runtimes[0]?.sizeBytes).toBeUndefined();
+  expect(existsSync(dirname(chromiumExe))).toBe(false);
+  expect(existsSync(join(outside, "keep.txt"))).toBe(true);
+  expect(existsSync(firefox.executable)).toBe(true);
+});
+
+test("POST /ui/api/settings/runtimes/remove validates requests, blocks running launches, and updates cache state", async () => {
+  const root = join(fixture(), "workspace-home", "runtimes");
+  const source = deployment(root);
+  const chromiumExe = putChromium(root, "aliasmode");
+  const firefox = firefoxFixture(root);
+  let launches: Array<{ binaryPath?: string; engine?: "chromium" | "firefox" }> = [
+    { binaryPath: chromiumExe, engine: "chromium" },
+  ];
+  const launchStore = { listLaunches: () => launches } as unknown as ProfileStore;
+  const server = serveDashboard({ port: 0, store: launchStore, launcher: fakeLauncher, runtimeInventory: source, log: () => {} });
+  const origin = `http://127.0.0.1:${server.port}`;
+  const settingsHeader = { "X-Maobu-Settings": "1", Origin: origin, "Content-Type": "application/json" };
+  try {
+    expect((await fetch(`${origin}/ui/api/settings/runtimes/remove`, { method: "GET", headers: settingsHeader })).status).toBe(405);
+    expect((await fetch(`${origin}/ui/api/settings/runtimes/remove`, {
+      method: "POST", headers: settingsHeader, body: JSON.stringify({ id: "unknown-runtime" }),
+    })).status).toBe(400);
+
+    const blocked = await fetch(`${origin}/ui/api/settings/runtimes/remove`, {
+      method: "POST", headers: settingsHeader, body: JSON.stringify({ id: "aliasmode-chromium" }),
+    });
+    expect(blocked.status).toBe(409);
+    expect(existsSync(chromiumExe)).toBe(true);
+
+    launches = [];
+    const removed = await fetch(`${origin}/ui/api/settings/runtimes/remove`, {
+      method: "POST", headers: settingsHeader, body: JSON.stringify({ id: "aliasmode-firefox" }),
+    });
+    expect(removed.status).toBe(200);
+    const body = await removed.json() as { ok: boolean; inventory: BrowserRuntimeInventory };
+    expect(body.ok).toBe(true);
+    expect(body.inventory.runtimes[2]?.cache).toBe("missing");
+    expect(existsSync(firefox.executable)).toBe(false);
   } finally { server.stop(true); }
 });

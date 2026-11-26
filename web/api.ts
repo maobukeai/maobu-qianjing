@@ -2,13 +2,13 @@
 import type { ScriptLanguage, ScriptRecord, ScriptSummary, } from "../contracts/local.ts";
 import type { ScriptRun } from "../scripts.ts";
 import type { PythonRuntimeStatus } from "../python-runtime.ts";
-import type { RuntimeDownload } from "../runtime-download.ts";
+import type { RuntimeDownload, RuntimeDownloadStatus } from "../runtime-download.ts";
 import type { FolderInfo } from "../folders.ts";
 import type { FingerprintImportComparison } from "../fingerprint-import-comparison.ts";
 import type { ExtensionGroupReview } from "../extension-group-revision.ts";
 import { isSafeProfileId } from "../profile-id.ts";
 export type { ExtensionGroupReview } from "../extension-group-revision.ts";
-export type { RuntimeDownload } from "../runtime-download.ts";
+export type { RuntimeDownload, RuntimeDownloadStatus } from "../runtime-download.ts";
 export interface UiProfile {
     id: string;
     name: string;
@@ -227,18 +227,56 @@ export async function saveShellLanguage(language: string): Promise<void> {
     if (!response.ok || body.ok !== true)
         throw new Error(body.error || "Could not save language preference");
 }
+function isValidRuntimeDownloadItem(item: RuntimeDownload | null): item is RuntimeDownload {
+    return !!item
+        && (item.runtime === "aliasmode" || item.runtime === "cloakbrowser" || item.runtime === "firefox")
+        && Number.isSafeInteger(item.receivedBytes) && item.receivedBytes >= 0
+        && Number.isSafeInteger(item.totalBytes) && item.totalBytes >= 0
+        && (item.totalBytes === 0 || item.receivedBytes <= item.totalBytes)
+        && (item.status === undefined || item.status === "downloading" || item.status === "paused")
+        && (item.bytesPerSec === undefined || (typeof item.bytesPerSec === "number" && Number.isFinite(item.bytesPerSec) && item.bytesPerSec >= 0));
+}
+
 /** Browser runtimes downloading now, with the bytes received so far. */
 export async function fetchRuntimeDownloads(): Promise<RuntimeDownload[]> {
     const path = "/ui/api/runtime-downloads";
     const response = await apiFetch(path);
     const body = await apiJson(response, path);
-    if (!response.ok || !Array.isArray(body?.downloads) || !body.downloads.every((item: RuntimeDownload | null) =>
-        !!item && (item.runtime === "aliasmode" || item.runtime === "cloakbrowser" || item.runtime === "firefox")
-        && Number.isSafeInteger(item.receivedBytes) && item.receivedBytes >= 0
-        && Number.isSafeInteger(item.totalBytes) && item.totalBytes >= 0
-        && (item.totalBytes === 0 || item.receivedBytes <= item.totalBytes)))
+    if (!response.ok || !Array.isArray(body?.downloads) || !body.downloads.every(isValidRuntimeDownloadItem))
         throw new Error("Browser downloads returned invalid data");
     return body.downloads as RuntimeDownload[];
+}
+
+async function mutateRuntimeDownloads(
+    action: "pause" | "resume" | "cancel",
+    runtime?: RuntimeDownload["runtime"],
+): Promise<{ count: number; downloads: RuntimeDownload[] }> {
+    const path = `/ui/api/runtime-downloads/${action}`;
+    const response = await apiFetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(runtime ? { runtime } : {}),
+    });
+    const body = await apiJson(response, path);
+    if (!response.ok || body?.ok !== true || !Array.isArray(body.downloads) || !body.downloads.every(isValidRuntimeDownloadItem)) {
+        throw new Error(typeof body?.error === "string" && body.error ? body.error : "Could not update runtime download");
+    }
+    return {
+        count: typeof body.count === "number" && Number.isSafeInteger(body.count) ? body.count : 0,
+        downloads: body.downloads as RuntimeDownload[],
+    };
+}
+
+export function pauseRuntimeDownloads(runtime?: RuntimeDownload["runtime"]) {
+    return mutateRuntimeDownloads("pause", runtime);
+}
+
+export function resumeRuntimeDownloads(runtime?: RuntimeDownload["runtime"]) {
+    return mutateRuntimeDownloads("resume", runtime);
+}
+
+export function cancelRuntimeDownloads(runtime?: RuntimeDownload["runtime"]) {
+    return mutateRuntimeDownloads("cancel", runtime);
 }
 
 export async function fetchLogs(signal?: AbortSignal): Promise<{
@@ -434,6 +472,15 @@ export async function restartProfile(id: string): Promise<any> {
     return opened?.ok === false || opened?.warning ? opened : closed;
 }
 export const raiseProfile = (id: string) => post(`/ui/api/profiles/${encodeURIComponent(id)}/raise`);
+export async function openProfileUrl(id: string, url: string): Promise<{ ok: boolean; id?: string; url?: string; started?: boolean; engine?: "chromium" | "firefox"; error?: string }> {
+    const path = `/ui/api/profiles/${encodeURIComponent(id)}/open-url`;
+    const response = await apiFetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+    });
+    return apiJson(response, path);
+}
 export const clearProfileCache = (id: string) => post(`/ui/api/profiles/${encodeURIComponent(id)}/clear-cache`);
 /** The hosted fingerprint checker is not part of the local edition. */
 export const importInbox = () => post("/ui/api/import");

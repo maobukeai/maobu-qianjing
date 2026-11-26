@@ -63,15 +63,6 @@
 }
 .signed-update-discard { color: var(--danger-ink); border-color: var(--danger-line); background: var(--danger-soft); }
 .signed-update-discard:hover:not(:disabled) { border-color: var(--danger-ink); }
-:root[data-desktop-motion="full"] .signed-update-dialog {
-  transition: transform var(--desktop-motion-enter) var(--desktop-motion-ease);
-}
-:root[data-desktop-motion="full"] .signed-update-dialog-layer :is([data-motion-phase="entering"], [data-motion-phase="exiting"]) .signed-update-dialog {
-  transform: translateY(8px) scale(.992);
-}
-:root[data-desktop-motion="full"] .signed-update-dialog-layer [data-motion-phase="exiting"] .signed-update-dialog {
-  transition-duration: var(--desktop-motion-exit);
-}
 @media (max-width: 540px) {
   .signed-update-dialog-backdrop { padding: 12px; }
   .signed-update-dialog { max-height: calc(100dvh - 24px); }

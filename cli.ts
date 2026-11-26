@@ -14,7 +14,7 @@ import { importBuffers, importInbox, watchInbox } from "./inbox.ts";
 import { ensureStateDirectories, resolveStateRoot, statePaths, type StatePaths } from "./paths.ts";
 import { migrateLegacyState, type LegacyMigrationResult, type MigrationOptions } from "./migration.ts";
 import { AppConfigStore } from "./app-config.ts";
-import { AppSettingsStore, resolveBatchLaunchMemoryGuardSettings } from "./app-settings.ts";
+import { AppSettingsStore, resolveBatchLaunchMemoryGuardSettings, resolveOpenStartPageOnLaunch } from "./app-settings.ts";
 import { createLocalProxyPreflight } from "./local-proxy-preflight.ts";
 import { createLaunchPolicyResolver } from "./src/launcher/resource-policy.ts";
 import { MemoryWatermarkGuard } from "./src/metrics/memory-watermark-guard.ts";
@@ -178,6 +178,7 @@ function makeLauncher(
     autofill,
     ...(preferences ? { checkLocalProxyBeforeLaunch: createLocalProxyPreflight(() => preferences.read()) } : {}),
     ...(preferences ? { chromiumPreloading: () => preferences.read().network?.chromiumPreloading ?? "browser-default" } : {}),
+    ...(preferences ? { openStartPageOnLaunch: () => resolveOpenStartPageOnLaunch(preferences.read().network) } : {}),
     ...(launchPolicy ? { launchPolicy } : {}),
     dataRoot: defaultDataRoot,
     ...(chromiumRuntimeRoot ? { chromiumRuntimeRoot } : {}),

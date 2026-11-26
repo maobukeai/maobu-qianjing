@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ScriptArtifactRecord } from "../contracts/local.ts";
 import type { ScriptRun, ScriptRunProfile } from "../scripts.ts";
+import { MotionPresence } from "./desktop-motion.tsx";
 import { useTranslation } from "./i18n.tsx";
 import { fetchScriptArtifactBlob, fetchScriptRuns, stopScriptRunById } from "./rpa-api.ts";
 import "./rpa-studio.css";
@@ -149,7 +150,7 @@ export function RpaProfileReceipt({
         </div>
       )}
 
-      {lightbox && (
+      <MotionPresence present={!!lightbox}>{() => lightbox && (
         <div
           className="rpa-lightbox-backdrop"
           role="dialog"
@@ -169,7 +170,7 @@ export function RpaProfileReceipt({
             <img src={lightbox.url} alt={lightbox.artifact.label} />
           </div>
         </div>
-      )}
+      )}</MotionPresence>
     </div>
   );
 }

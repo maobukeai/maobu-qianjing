@@ -880,6 +880,10 @@ Section Uninstall
   ; We do this when not updating (to preserve the registry value on updates)
   ${If} $UpdateMode <> 1
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
+    DeleteRegValue HKCU "Software\RegisteredApplications" "MaobuBrowser"
+    DeleteRegKey HKCU "Software\Clients\StartMenuInternet\MaobuBrowser"
+    DeleteRegKey HKCU "Software\Classes\MaobuBrowserURL"
+    DeleteRegKey HKCU "Software\Classes\MaobuBrowserHTML"
   ${EndIf}
 
   ; Delete app data if the checkbox is selected

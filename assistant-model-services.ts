@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, unlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { createLocalSecretProtector, isEncryptedSecret, type LocalSecretProtector } from "./dpapi.ts";
 import { normalizeAssistantEndpoint } from "./local-assistant.ts";
 import { isRemoteAssistantModelId, normalizeRemoteAssistantEndpoint, type RemoteModelProvider } from "./remote-assistant.ts";
 import { plainDirectory, workspaceEntryExists, writeWorkspaceJson } from "./workspaces.ts";
 
 export const ASSISTANT_MODEL_SERVICES_FILE = "assistant-model-services.json";
+export const ASSISTANT_MODEL_CREDENTIALS_FILE = "assistant-model-credentials.enc.json";
 export const ASSISTANT_MODEL_SERVICES_FILE_LIMIT = 128 * 1024;
 const MAX_SERVICES = 32;
 const PROVIDERS = ["ollama", "openai-compatible", "anthropic", "gemini"] as const;
@@ -24,6 +26,8 @@ export interface AssistantServiceView extends StoredAssistantService { credentia
 export interface AssistantServicesCatalog { services: AssistantServiceView[]; defaultId: string | null }
 interface StoredCatalog { version: 1; services: StoredAssistantService[]; defaultId: string | null }
 interface SessionCredential { provider: AssistantServiceProvider; endpoint: string; apiKey: string }
+interface StoredEncryptedCredential { provider: RemoteModelProvider; endpoint: string; encryptedApiKey: string }
+interface StoredCredentialsFile { version: 1; credentials: Record<string, StoredEncryptedCredential> }
 
 const ERRORS = {
   "invalid-input": { message: "The model service settings are invalid.", status: 400 },
@@ -113,42 +117,112 @@ function parseCatalog(value: unknown): StoredCatalog {
   return { version: 1, defaultId, services };
 }
 
-/** The disk file is a workspace-local catalog. Credentials live only in the owning sidecar instance. */
+function readSafeJsonFile(path: string, limit: number): unknown {
+  const named = lstatSync(path);
+  if (!named.isFile() || named.isSymbolicLink() || named.nlink !== 1 || named.size > limit) throw new Error("unsafe");
+  const fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  try {
+    const opened = fstatSync(fd);
+    if (!opened.isFile() || opened.dev !== named.dev || opened.ino !== named.ino || opened.nlink !== 1 || opened.size > limit) throw new Error("unsafe");
+    const bytes = Buffer.alloc(limit + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const count = readSync(fd, bytes, length, bytes.length - length, null);
+      if (!count) break;
+      length += count;
+    }
+    if (length > limit) throw new Error("limit");
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, length)));
+  } finally { closeSync(fd); }
+}
+
+/**
+ * The catalog file stores workspace-local service metadata; API keys are stored
+ * encrypted separately in the workspace using LocalSecretProtector and excluded from backups.
+ */
 export class AssistantModelServices {
   readonly root: string;
   readonly path: string;
+  readonly credentialsPath: string;
   readonly #credentials = new Map<string, SessionCredential>();
+  #credentialsLoaded = false;
+  readonly #providedProtector?: LocalSecretProtector;
+  #protector: LocalSecretProtector | null = null;
 
-  constructor(workspaceRoot: string) {
+  constructor(workspaceRoot: string, options: { protector?: LocalSecretProtector } = {}) {
     this.root = resolve(workspaceRoot);
     this.path = join(this.root, ASSISTANT_MODEL_SERVICES_FILE);
+    this.credentialsPath = join(this.root, ASSISTANT_MODEL_CREDENTIALS_FILE);
+    this.#providedProtector = options.protector;
+  }
+
+  private protector(): LocalSecretProtector {
+    return (this.#protector ??= this.#providedProtector ?? createLocalSecretProtector());
   }
 
   private read(): StoredCatalog {
-    let fd: number | undefined;
     try {
       if (!workspaceEntryExists(this.root)) return emptyCatalog();
       plainDirectory(this.root);
       if (!workspaceEntryExists(this.path)) return emptyCatalog();
-      const named = lstatSync(this.path);
-      if (!named.isFile() || named.isSymbolicLink() || named.nlink !== 1 || named.size > ASSISTANT_MODEL_SERVICES_FILE_LIMIT) return fail("invalid-catalog");
-      fd = openSync(this.path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-      const opened = fstatSync(fd);
-      if (!opened.isFile() || opened.dev !== named.dev || opened.ino !== named.ino || opened.nlink !== 1 || opened.size > ASSISTANT_MODEL_SERVICES_FILE_LIMIT) return fail("invalid-catalog");
-      const bytes = Buffer.alloc(ASSISTANT_MODEL_SERVICES_FILE_LIMIT + 1);
-      let length = 0;
-      while (length < bytes.length) {
-        const count = readSync(fd, bytes, length, bytes.length - length, null);
-        if (!count) break;
-        length += count;
-      }
-      if (length > ASSISTANT_MODEL_SERVICES_FILE_LIMIT) return fail("invalid-catalog");
-      return parseCatalog(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, length))));
+      return parseCatalog(readSafeJsonFile(this.path, ASSISTANT_MODEL_SERVICES_FILE_LIMIT));
     } catch { return fail("invalid-catalog"); }
-    finally { if (fd !== undefined) closeSync(fd); }
   }
 
-  /** Copy validated metadata without reading or exposing any session credentials. */
+  private loadCredentials(): void {
+    if (this.#credentialsLoaded) return;
+    this.#credentialsLoaded = true;
+    try {
+      if (!workspaceEntryExists(this.root)) return;
+      plainDirectory(this.root);
+      if (!workspaceEntryExists(this.credentialsPath)) return;
+      const parsed = readSafeJsonFile(this.credentialsPath, ASSISTANT_MODEL_SERVICES_FILE_LIMIT);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || (parsed as { version?: unknown }).version !== 1) return;
+      const entries = (parsed as { credentials?: unknown }).credentials;
+      if (!entries || typeof entries !== "object" || Array.isArray(entries)) return;
+      for (const [id, rawEntry] of Object.entries(entries)) {
+        if (!/^model_[0-9a-f]{32}$/.test(id) || !rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) continue;
+        const entry = rawEntry as Record<string, unknown>;
+        if (!(PROVIDERS as readonly unknown[]).includes(entry.provider) || entry.provider === "ollama") continue;
+        const provider = entry.provider as RemoteModelProvider;
+        if (typeof entry.endpoint !== "string" || !isEncryptedSecret(entry.encryptedApiKey)) continue;
+        try {
+          const endpoint = normalizeRemoteAssistantEndpoint(entry.endpoint);
+          const decrypted = this.protector().decrypt(entry.encryptedApiKey);
+          const apiKey = inputKey(decrypted, provider);
+          if (apiKey) this.#credentials.set(id, { provider, endpoint, apiKey });
+        } catch { /* Ignore entries encrypted under a different user or key. */ }
+      }
+    } catch { /* Ignore unreadable credential store so metadata stays recoverable. */ }
+  }
+
+  private persistCredentials(): void {
+    const credentials: Record<string, StoredEncryptedCredential> = {};
+    if (this.#credentials.size > 0) {
+      const protector = this.protector();
+      for (const [id, cred] of this.#credentials) {
+        if (cred.provider === "ollama" || !cred.apiKey) continue;
+        credentials[id] = { provider: cred.provider, endpoint: cred.endpoint, encryptedApiKey: protector.encrypt(cred.apiKey) };
+      }
+    }
+    if (Object.keys(credentials).length === 0) {
+      if (workspaceEntryExists(this.credentialsPath)) {
+        try {
+          const stat = lstatSync(this.credentialsPath);
+          if (!stat.isSymbolicLink() && stat.isFile()) unlinkSync(this.credentialsPath);
+        } catch { return fail("storage-error"); }
+      }
+      return;
+    }
+    const payload: StoredCredentialsFile = { version: 1, credentials };
+    if (Buffer.byteLength(JSON.stringify(payload, null, 2) + "\n") > ASSISTANT_MODEL_SERVICES_FILE_LIMIT) return fail("catalog-full");
+    try {
+      plainDirectory(this.root, true);
+      writeWorkspaceJson(this.credentialsPath, payload);
+    } catch { return fail("storage-error"); }
+  }
+
+  /** Copy validated metadata without reading or exposing any encrypted credentials. */
   backupMetadata(): StoredCatalog { return this.read(); }
 
   private write(catalog: StoredCatalog): void {
@@ -160,15 +234,22 @@ export class AssistantModelServices {
   }
 
   private keyFor(service: StoredAssistantService): string | undefined {
+    this.loadCredentials();
     const saved = this.#credentials.get(service.id);
     return saved?.provider === service.provider && saved.endpoint === service.endpoint ? saved.apiKey : undefined;
   }
 
   private view(catalog: StoredCatalog): AssistantServicesCatalog {
-    for (const id of this.#credentials.keys()) {
+    this.loadCredentials();
+    let pruned = false;
+    for (const id of Array.from(this.#credentials.keys())) {
       const service = catalog.services.find(item => item.id === id);
-      if (!service || !this.keyFor(service)) this.#credentials.delete(id);
+      if (!service || !this.keyFor(service)) {
+        this.#credentials.delete(id);
+        pruned = true;
+      }
     }
+    if (pruned) this.persistCredentials();
     return { defaultId: catalog.defaultId, services: catalog.services.map(service => ({ ...service, credentialConfigured: !!this.keyFor(service) })) };
   }
 
@@ -181,6 +262,7 @@ export class AssistantModelServices {
   save(input: unknown): AssistantServicesCatalog {
     const raw = readObject(input, INPUT_FIELDS), fields = serviceFields(raw, true);
     const suppliedKey = inputKey(raw.apiKey, fields.provider), catalog = this.read();
+    this.loadCredentials();
     const existing = raw.id === undefined ? undefined : this.requireService(catalog, serviceId(raw.id));
     const id = existing?.id ?? `model_${randomUUID().replaceAll("-", "")}`;
     const name = fields.name.toLowerCase();
@@ -194,16 +276,18 @@ export class AssistantModelServices {
     this.write(catalog);
     if (apiKey) this.#credentials.set(id, { provider: fields.provider, endpoint: fields.endpoint, apiKey });
     else this.#credentials.delete(id);
+    this.persistCredentials();
     return this.view(catalog);
   }
 
   remove(input: unknown): AssistantServicesCatalog {
     const id = serviceId(readObject(input, ["id"]).id), catalog = this.read();
     const target = this.requireService(catalog, id);
+    this.loadCredentials();
     catalog.services.splice(catalog.services.indexOf(target), 1);
     if (catalog.defaultId === id) catalog.defaultId = null;
     this.write(catalog);
-    this.#credentials.delete(id);
+    if (this.#credentials.delete(id)) this.persistCredentials();
     return this.view(catalog);
   }
 

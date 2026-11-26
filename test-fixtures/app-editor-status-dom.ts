@@ -77,6 +77,7 @@ async function run(scenario: string) {
       __TAURI_INTERNALS__: { value: { async invoke(command: string, args?: Record<string, unknown>) {
         if (command === "desktop_close_register") { registered = true; return { sessionId }; }
         if (command === "desktop_close_unregister" || command === "agent_runtime_ready") return;
+        if (command === "default_browser_take_pending_urls") return [];
         if (command === "desktop_close_resolve") {
           assert.equal(args?.sessionId, sessionId);
           assert.equal(args?.requestId, requestId);

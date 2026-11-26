@@ -51,9 +51,6 @@
 .profile-tags-dialog :is(input, button):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .profile-tags-chips button:focus-visible { outline-offset: 0; }
 .profile-tags-dialog:focus { outline: none; }
-:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="dialog"] > .profile-tags-backdrop > .profile-tags-dialog { transform: none; transition: transform var(--desktop-motion-enter) var(--desktop-motion-ease); }
-:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-kind="dialog"]:is([data-motion-phase="entering"], [data-motion-phase="exiting"]) > .profile-tags-backdrop > .profile-tags-dialog { transform: translateY(8px) scale(.992); }
-:root[data-desktop-motion="full"] .desktop-motion-presence[data-motion-phase="exiting"] > .profile-tags-backdrop > .profile-tags-dialog { transition-duration: var(--desktop-motion-exit); }
 @media (max-width: 520px) {
   .profile-tags-backdrop { padding: 12px; }
   .profile-tags-dialog { max-height: calc(100dvh - 24px); }

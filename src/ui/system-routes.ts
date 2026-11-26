@@ -9,7 +9,13 @@ import { checkProxy as runProxyCheck } from "../../proxy-check.ts";
 import { handleProxyToolsRequest } from "../../proxy-tools.ts";
 import { handleTrashRequest } from "../../trash.ts";
 import { normalizeProxySpec, type ProxyInput } from "../../proxy.ts";
-import { runtimeDownloads } from "../../runtime-download.ts";
+import {
+  cancelRuntimeDownload,
+  pauseRuntimeDownload,
+  resumeRuntimeDownload,
+  runtimeDownloads,
+  type RuntimeDownload,
+} from "../../runtime-download.ts";
 import {
   APPLICATION_ROOT,
   appVersion,
@@ -129,6 +135,43 @@ export async function handleSystemUiRoutes(
   }
   if (pathname === "/ui/api/runtime-downloads" && req.method === "GET") {
     return noStoreJson({ downloads: runtimeDownloads() });
+  }
+  if (
+    (pathname === "/ui/api/runtime-downloads/pause"
+      || pathname === "/ui/api/runtime-downloads/resume"
+      || pathname === "/ui/api/runtime-downloads/cancel")
+    && req.method === "POST"
+  ) {
+    const rejected = rejectUntrustedJsonMutation(req);
+    if (rejected) {
+      rejected.headers.set("Cache-Control", "no-store");
+      return rejected;
+    }
+    let targetRuntime: RuntimeDownload["runtime"] | undefined;
+    try {
+      const raw = await req.text();
+      if (raw.trim().length > 0) {
+        const body = JSON.parse(raw) as { runtime?: unknown };
+        if (!body || typeof body !== "object" || Array.isArray(body)) {
+          return noStoreJson({ ok: false, error: "Invalid runtime download request" }, 400);
+        }
+        if (body.runtime !== undefined) {
+          if (body.runtime !== "aliasmode" && body.runtime !== "cloakbrowser" && body.runtime !== "firefox") {
+            return noStoreJson({ ok: false, error: "Invalid runtime identifier" }, 400);
+          }
+          targetRuntime = body.runtime;
+        }
+      }
+    } catch {
+      return noStoreJson({ ok: false, error: "Invalid runtime download request" }, 400);
+    }
+    const action = pathname.endsWith("/pause")
+      ? pauseRuntimeDownload
+      : pathname.endsWith("/resume")
+        ? resumeRuntimeDownload
+        : cancelRuntimeDownload;
+    const count = action(targetRuntime);
+    return noStoreJson({ ok: true, count, downloads: runtimeDownloads() });
   }
   if (pathname === "/ui/api/proxy/check" && req.method === "POST") {
     const rejected = rejectUntrustedJsonMutation(req);

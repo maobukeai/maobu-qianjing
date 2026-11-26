@@ -117,7 +117,7 @@ async function run(scenario: string) {
       });
       await type("Keep this draft through key repair");
       await click("Model settings"); await click("Use default model");
-      assert.equal(evidence(), "API key required for this session");
+      assert.equal(evidence(), "API key required");
       assert.equal(dom.window.document.activeElement, keyInput());
       assert.equal(button("Test and load models").disabled, true);
       assert.equal(button("Send message ↑").disabled, true);
@@ -351,7 +351,13 @@ async function run(scenario: string) {
       };
       await send("Show visible response text");
       await resolveProposal(0, `${prose}\n\n${proposalFence}`);
-      assert.deepEqual(messages(), ["Show visible response text", prose]);
+      assert.equal(messages().length, 2);
+      assert.equal(messages()[0], "Show visible response text");
+      const assistantProseNode = dom.container.querySelector(".assistant-message.assistant .assistant-message-content");
+      assert.ok(assistantProseNode?.textContent?.includes("Review these checks."));
+      assert.equal(assistantProseNode?.querySelector(".assistant-md-code code")?.textContent, "Visible example");
+      assert.ok(!assistantProseNode?.textContent?.includes("HIDDEN_STRUCTURED_PAYLOAD"));
+      assert.ok(!assistantProseNode?.textContent?.includes("maobu-proposal"));
       await click("Copy");
       await click("Copy conversation");
       const firstTranscript = `You\nShow visible response text\n\nAssistant\n${prose}`;

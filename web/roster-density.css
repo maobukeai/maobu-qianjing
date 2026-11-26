@@ -12,34 +12,58 @@
 .roster-density-control.is-settings { display: flex; width: 100%; justify-content: space-between; gap: 14px 24px; }
 .roster-density-control.is-settings .roster-density-copy > span { font-size: 13px; font-weight: 550; color: var(--ink-soft); }
 
-/* Comfortable (52px) + 8px vertical card gap; Standard (48px) + 7px gap; Compact (44px) + 5px gap. */
-:where([data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table { border-spacing: 0 8px; }
-:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table { border-spacing: 0 7px; }
-:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table { border-spacing: 0 5px; }
+/* Comfortable (48px) + 7px vertical card gap; Standard (44px) + 5px gap; Compact (36px) + 3px gap. */
+:where([data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table { border-spacing: 0 7px; }
+:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table { border-spacing: 0 5px; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table { border-spacing: 0 3px; }
 
-:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table > tbody > tr[data-profile-id] > td { height: 48px; padding-top: 3px; padding-bottom: 3px; }
-:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .name-cell { gap: 2px; }
-:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .name-cell .sub { line-height: 1.32; }
-:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-name-button { min-height: 30px; }
-:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-favorite { width: 30px; height: 30px; }
-:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .rowactions > .btn { min-width: 30px; min-height: 29px; height: auto; }
-:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-row > td { padding-top: 5px; }
-:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-heading { min-height: 35px; gap: 9px; }
-:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-toggle { min-height: 30px; padding-top: 3px; padding-bottom: 3px; }
-:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-create { min-width: 28px; min-height: 28px; right: 33px; }
+:where([data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table > tbody > tr[data-profile-id] > td { height: 48px; padding-top: 3px; padding-bottom: 3px; }
+:where([data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .name-cell { gap: 2px; }
+:where([data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .name-cell .sub { line-height: 1.32; }
+:where([data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-name-button { min-height: 30px; }
+:where([data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-favorite { width: 30px; height: 30px; }
+:where([data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .rowactions > .btn { min-width: 30px; min-height: 29px; height: auto; }
+:where([data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-row > td { padding-top: 5px; }
+:where([data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-heading { min-height: 35px; gap: 9px; }
+:where([data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-toggle { min-height: 30px; padding-top: 3px; padding-bottom: 3px; }
+:where([data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-create { min-width: 28px; min-height: 28px; right: 33px; }
+:where([data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-heading > .profile-menu-trigger { flex-basis: 28px; width: 28px; height: 28px; }
+
+:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table > tbody > tr[data-profile-id] > td { height: 44px; padding-top: 2px; padding-bottom: 2px; }
+:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .name-cell { gap: 1px; }
+:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .name-cell .sub { line-height: 1.25; }
+:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-name-button { min-height: 28px; }
+:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-favorite { width: 28px; height: 28px; }
+:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .rowactions > .btn { min-width: 28px; min-height: 28px; height: auto; }
+:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-row > td { padding-top: 2px; }
+:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-heading { min-height: 32px; gap: 8px; }
+:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-toggle { min-height: 32px; padding-top: 3px; padding-bottom: 3px; }
+:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-create { min-width: 28px; min-height: 28px; right: 32px; }
 :where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-heading > .profile-menu-trigger { flex-basis: 28px; width: 28px; height: 28px; }
 
-:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table > tbody > tr[data-profile-id] > td { height: 44px; padding-top: 2px; padding-bottom: 2px; }
-:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .name-cell { gap: 1px; }
-:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .name-cell .sub { line-height: 1.25; }
-:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-name-button { min-height: 28px; }
-:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-favorite { width: 28px; height: 28px; }
-:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .rowactions > .btn { min-width: 28px; min-height: 28px; height: auto; }
-:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-row > td { padding-top: 2px; }
-:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-heading { min-height: 32px; gap: 8px; }
-:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-toggle { min-height: 32px; padding-top: 3px; padding-bottom: 3px; }
-:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-create { min-width: 28px; min-height: 28px; right: 32px; }
-:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-heading > .profile-menu-trigger { flex-basis: 28px; width: 28px; height: 28px; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table > tbody > tr[data-profile-id] > td { height: 36px; padding-top: 1px; padding-bottom: 1px; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table > tbody > tr[data-profile-id] > td:first-child { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table > tbody > tr[data-profile-id] > td:last-child { border-top-right-radius: 8px; border-bottom-right-radius: 8px; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .name-cell { gap: 0; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-name-line { gap: 2px; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-name-line + .sub { margin-left: 18px; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .name-cell .sub { font-size: 11px; line-height: 1.15; gap: 2px 6px; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-name-button { min-height: 18px; line-height: 1.2; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-favorite { width: 20px; height: 20px; padding: 2px; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-favorite .icon { width: 13px; height: 13px; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .quick-notes-trigger:not(.has-notes) { width: 18px; min-height: 16px; padding: 1px; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .quick-notes-trigger.has-notes { padding: 0 5px; line-height: 1.25; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .quick-notes-trigger .icon { width: 11px; height: 11px; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-tags-preview { margin-top: 2px; margin-left: 18px; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-status { padding: 2px 8px 2px 17px; line-height: 1.25; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .rowactions { gap: 4px; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .rowactions > .btn { min-width: 24px; min-height: 24px; height: auto; padding-top: 2px; padding-bottom: 2px; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .rowactions .iconbtn { width: 24px; height: 24px; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-row > td { padding-top: 1px; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-heading { min-height: 28px; gap: 6px; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-toggle { min-height: 26px; padding-top: 1px; padding-bottom: 1px; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-create { min-width: 24px; min-height: 24px; right: 28px; padding: 3px; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-heading > .profile-menu-trigger { flex-basis: 24px; width: 24px; height: 24px; }
 
 /* Virtualized table spacers preserve exact scroll geometry with zero padding or chrome. */
 .profiles-workspace > .profile-browser > .tablewrap > .profile-table > tbody > tr.virtual-spacer > td,
@@ -72,31 +96,33 @@
 /* Density changes spacing immediately; no row transforms, zoom, or geometry animation. */
 @media (pointer: coarse) {
   .roster-density-options > button { min-height: 44px; min-width: 44px; padding-left: 10px; padding-right: 10px; }
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table > tbody > tr[data-profile-id] > td { height: 52px; padding-top: 3px; padding-bottom: 3px; }
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .rowactions > .btn,
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-name-button,
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-tags-preview,
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .status-chip { min-width: 44px; min-height: 44px; }
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-favorite { width: 44px; height: 44px; }
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-name-line + .sub { margin-left: 43px; }
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-heading { min-height: 46px; }
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-toggle { min-height: 44px; }
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-create { min-width: 44px; min-height: 44px; right: 48px; }
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-heading > .profile-menu-trigger { flex-basis: 44px; width: 44px; height: 44px; }
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table > tbody > tr[data-profile-id] > td { height: 52px; padding-top: 3px; padding-bottom: 3px; }
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .rowactions > .btn,
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-name-button,
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-tags-preview,
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .status-chip { min-width: 44px; min-height: 44px; }
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .rowactions .iconbtn { width: 44px; height: 44px; }
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-favorite { width: 44px; height: 44px; }
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-name-line + .sub { margin-left: 43px; }
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-tags-preview { margin-left: 43px; }
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-heading { min-height: 46px; }
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-toggle { min-height: 44px; }
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-create { min-width: 44px; min-height: 44px; right: 48px; }
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-heading > .profile-menu-trigger { flex-basis: 44px; width: 44px; height: 44px; }
   /* Keep a small visual checkbox inside a full touch target, using its native input semantics. */
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table th.chk { width: 44px !important; }
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table :is(th.chk, td.chk) { padding-left: 0; padding-right: 0; }
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table :is(th.chk, td.chk) input[type="checkbox"],
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-check { appearance: none; position: relative; display: inline-grid; place-content: center; width: 44px; height: 44px; margin: 0; border: 0; padding: 0; background: transparent; color: var(--on-accent); flex: 0 0 44px; cursor: pointer; }
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table input[type="checkbox"]::before { content: ""; width: 17px; height: 17px; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--surface); }
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table input[type="checkbox"]:is(:checked, :indeterminate)::before { border-color: var(--accent); background: var(--accent); }
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table input[type="checkbox"]:checked::after { content: ""; position: absolute; top: 16px; left: 19px; width: 5px; height: 9px; border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(45deg); }
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table input[type="checkbox"]:indeterminate::after { content: ""; position: absolute; top: 21px; left: 17px; width: 10px; height: 2px; border: 0; background: currentColor; transform: none; }
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 6px; }
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table input[type="checkbox"]:disabled { opacity: .5; cursor: default; }
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table th.chk { width: 44px !important; }
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table :is(th.chk, td.chk) { padding-left: 0; padding-right: 0; }
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table :is(th.chk, td.chk) input[type="checkbox"],
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-check { appearance: none; position: relative; display: inline-grid; place-content: center; width: 44px; height: 44px; margin: 0; border: 0; padding: 0; background: transparent; color: var(--on-accent); flex: 0 0 44px; cursor: pointer; }
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table input[type="checkbox"]::before { content: ""; width: 17px; height: 17px; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--surface); }
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table input[type="checkbox"]:is(:checked, :indeterminate)::before { border-color: var(--accent); background: var(--accent); }
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table input[type="checkbox"]:checked::after { content: ""; position: absolute; top: 16px; left: 19px; width: 5px; height: 9px; border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table input[type="checkbox"]:indeterminate::after { content: ""; position: absolute; top: 21px; left: 17px; width: 10px; height: 2px; border: 0; background: currentColor; transform: none; }
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 6px; }
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table input[type="checkbox"]:disabled { opacity: .5; cursor: default; }
 }
 @media (forced-colors: active) and (pointer: coarse) {
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table input[type="checkbox"] { forced-color-adjust: none; color: HighlightText; }
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table input[type="checkbox"]::before { border-color: ButtonText; background: Canvas; }
-  :where([data-roster-density="compact"], [data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table input[type="checkbox"]:is(:checked, :indeterminate)::before { border-color: Highlight; background: Highlight; }
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table input[type="checkbox"] { forced-color-adjust: none; color: HighlightText; }
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table input[type="checkbox"]::before { border-color: ButtonText; background: Canvas; }
+  :where([data-roster-density="compact"], [data-roster-density="standard"], [data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table input[type="checkbox"]:is(:checked, :indeterminate)::before { border-color: Highlight; background: Highlight; }
 }

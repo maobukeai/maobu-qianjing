@@ -4,7 +4,7 @@
   background: #f5f4f9;
 }
 :root[data-theme="dark"] .folded-workbench .workspace-content:has(> .workspace.scripts-page:not([hidden])) {
-  background: #10121b;
+  background: var(--surface-sunken);
 }
 .airy-workbench .workspace.scripts-page,
 .workspace.scripts-page {

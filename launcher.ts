@@ -184,6 +184,7 @@ import {
   type LaunchNavigator,
   type WindowLabeler,
 } from "./src/launcher/profile-bootstrap.ts";
+import { writeProfileStartPage } from "./src/launcher/start-page.ts";
 
 export {
   buildWindowLabel,
@@ -461,6 +462,10 @@ export interface LauncherOptions {
   chromiumPreloading?: () => ChromiumPreloadingMode;
   /** Workspace preference: cap Chromium renderer processes to lower memory use. */
   chromiumMemorySaver?: () => boolean;
+  /** Workspace preference: open the local zero-traffic start page when launching a profile. */
+  openStartPageOnLaunch?: () => boolean;
+  /** Override opening the local start page tab (primarily for tests). */
+  openStartPage?: (ws: string, url: string) => Promise<void>;
   /** Optional profile-aware memory saver and data saver launch policy resolver. */
   launchPolicy?: LaunchPolicyResolver;
   readSession?: typeof readSessionInSubprocess;
@@ -531,6 +536,24 @@ type LinuxTerminationProof =
 /** Renderer process cap used when the workspace memory saver is on. */
 export const CHROMIUM_MEMORY_SAVER_RENDERER_LIMIT = 4;
 
+export interface CaptureLocalSessionOptions {
+  timeoutMs?: number;
+  connectTimeoutMs?: number;
+  originReadTimeoutMs?: number;
+  originsBudgetMs?: number;
+  disconnectTimeoutMs?: number;
+  openTabsOnly?: boolean;
+}
+
+export const CLOSE_SESSION_CAPTURE_OPTIONS: CaptureLocalSessionOptions = {
+  timeoutMs: 2_500,
+  connectTimeoutMs: 1_200,
+  originReadTimeoutMs: 1_000,
+  originsBudgetMs: 1_500,
+  disconnectTimeoutMs: 800,
+  openTabsOnly: true,
+};
+
 export class Launcher {
   readonly browserRuntimeDeployment: RuntimeInventoryDeployment;
   private store: ProfileStore;
@@ -581,6 +604,8 @@ export class Launcher {
   private checkLocalProxyBeforeLaunchFn?: (endpoint: LocalProxyEndpoint) => Promise<void>;
   private chromiumPreloadingFn?: () => ChromiumPreloadingMode;
   private chromiumMemorySaverFn?: () => boolean;
+  private openStartPageOnLaunchFn?: () => boolean;
+  private openStartPageFn: (ws: string, url: string) => Promise<void>;
   private launchPolicy?: LaunchPolicyResolver;
   private readSessionFn: typeof readSessionInSubprocess;
   private applySessionFn: typeof applySessionToEndpoint;
@@ -712,6 +737,8 @@ export class Launcher {
     this.checkLocalProxyBeforeLaunchFn = opts.checkLocalProxyBeforeLaunch;
     this.chromiumPreloadingFn = opts.chromiumPreloading;
     this.chromiumMemorySaverFn = opts.chromiumMemorySaver;
+    this.openStartPageOnLaunchFn = opts.openStartPageOnLaunch;
+    this.openStartPageFn = opts.openStartPage ?? ((ws, url) => openProfileCardTab(ws, url, { reuseBlank: true }));
     this.launchPolicy = opts.launchPolicy;
     this.readSessionFn = opts.readSession ?? readSessionInSubprocess;
     this.applySessionFn = opts.applySession ?? applySessionToEndpoint;
@@ -1239,6 +1266,32 @@ export class Launcher {
       catch (error) { this.log(`launch policy chromium args unavailable: ${error instanceof Error ? error.message : String(error)}`); }
     }
     return args;
+  }
+
+  private async maybeOpenStartPage(
+    profile: Profile,
+    userDataDir: string,
+    ws: string,
+    exitIp?: string,
+    headless = this.headless,
+  ): Promise<void> {
+    if (headless || this.openStartPageOnLaunchFn?.() !== true) return;
+    try {
+      const engineLabel = profile.engine === "firefox"
+        ? "Firefox"
+        : profile.chromiumRuntime
+          ? "Chromium 155"
+          : "CloakBrowser 146";
+      const startUrl = await writeProfileStartPage(userDataDir, {
+        profile,
+        serial: this.store.getSerial(profile.id),
+        exitIp,
+        engineLabel,
+      });
+      await this.openStartPageFn(ws, startUrl);
+    } catch (error) {
+      this.log(`start page failed for ${profile.id} (continuing): ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   async navigate(ws: string, urls: string[], replacePages = false): Promise<void> {
@@ -2142,6 +2195,9 @@ export class Launcher {
             this.log(`startup navigation failed for ${profileId} (continuing): ${err instanceof Error ? err.message : err}`);
           }
         }
+        if (startupUrls.length === 0) {
+          await this.maybeOpenStartPage(profile, userDataDir, ws, webRtcIp, headless);
+        }
       }
 
       // The Windows session helper fills proc.pid asynchronously. CDP can be
@@ -2478,6 +2534,9 @@ export class Launcher {
           await this.navigate(launch.ws, urls).catch(() => {
             this.log(`${profileId}: startup navigation failed; open the site manually`);
           });
+          if (startupUrls.length === 0) {
+            await this.maybeOpenStartPage(profile, userDataDir, launch.ws, webRtcIp, headless);
+          }
         }
       }
       this.requireUnchangedProfile(profileId, snapshot, "Firefox launch commit");
@@ -3371,7 +3430,7 @@ export class Launcher {
   }
 
   /** Best-effort Local export/managed-close snapshot. Never opens a browser. */
-  async captureLocalSession(profileId: string): Promise<boolean> {
+  async captureLocalSession(profileId: string, options?: CaptureLocalSessionOptions): Promise<boolean> {
     const launch = this.store.getLaunch(profileId);
     if (!launch) return false;
     const unchanged = () => this.launchGenerationMatches(profileId, launch)
@@ -3381,16 +3440,22 @@ export class Launcher {
     try {
       if (!unchanged() || !await this.certifiedActive(profileId) || !unchanged()) return false;
       const previous = this.store.getSessionBundle(profileId) ?? "";
+      const seed = sessionCaptureSeed(previous);
       let bundle = await this.readSessionFn(launch.ws, {
-        captureSeed: sessionCaptureSeed(previous),
+        captureSeed: options?.openTabsOnly ? { ...seed, openTabsOnly: true } : seed,
+        ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+        ...(options?.connectTimeoutMs !== undefined ? { connectTimeoutMs: options.connectTimeoutMs } : {}),
+        ...(options?.originReadTimeoutMs !== undefined ? { originReadTimeoutMs: options.originReadTimeoutMs } : {}),
+        ...(options?.originsBudgetMs !== undefined ? { originsBudgetMs: options.originsBudgetMs } : {}),
+        ...(options?.disconnectTimeoutMs !== undefined ? { disconnectTimeoutMs: options.disconnectTimeoutMs } : {}),
       });
       const captured = parseCapturedSessionBundle(bundle);
       if (captured.tabs === undefined) bundle = JSON.stringify({ ...captured, tabs: this.closedFirefoxTabs(profileId, launch) ?? bundleTabUrls(previous) });
       if (!unchanged() || !await this.active(profileId) || !unchanged()) return false;
       this.store.saveSessionBundle(profileId, bundle);
       return true;
-    } catch {
-      this.log(`${profileId}: session snapshot unavailable; keeping the last saved state`);
+    } catch (err) {
+      this.log(`${profileId}: session snapshot unavailable (${err instanceof Error ? err.message : String(err)}); keeping the last saved state`);
       return false;
     }
   }
@@ -4133,7 +4198,7 @@ export class Launcher {
         }
         const operationallyVerified = liveness.cdpAlive
           && (!!trackedProc || liveness.process === "alive");
-        if (!operationallyVerified) {
+        if (!operationallyVerified && !this.stopsInFlight.has(launch.profileId)) {
           const reason = liveness.process === "recovering"
             ? "PID recovery grace"
             : liveness.process === "unknown"

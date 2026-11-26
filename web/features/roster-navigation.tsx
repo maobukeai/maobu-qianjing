@@ -2,10 +2,12 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { RosterScope } from "../../profile-view-state.ts";
 import { useTranslation } from "../i18n.tsx";
 import { useSlidingIndicator } from "../navigation-motion.ts";
-import { AppIcon } from "../ui-primitives.tsx";
+import { AppIcon, type IconName } from "../ui-primitives.tsx";
 import "./roster-navigation.css";
 
 export interface RosterNavigationGroup { name: string; label: string; depth: number; count: number }
+
+const groupIcon = (name: string): IconName => (name === "all" ? "folders" : name === "" ? "inbox" : "folder");
 
 /** A single collection navigator moves into a flyout when the rail is compact. */
 export function RosterNavigation({ compact, active, scope, onScope, group, groups, total, ungrouped, onGroup, children }: {
@@ -70,6 +72,7 @@ export function RosterNavigation({ compact, active, scope, onScope, group, group
             <button
               type="button"
               key={item.name}
+              data-sidebar-group={item.name}
               className="roster-compact-item"
               aria-current={group === item.name ? "true" : undefined}
               aria-label={tip}
@@ -77,7 +80,7 @@ export function RosterNavigation({ compact, active, scope, onScope, group, group
               data-tip={tip}
               onClick={() => onGroup(item.name)}
             >
-              <AppIcon name="folder" className="sm" />
+              <AppIcon name={groupIcon(item.name)} className="sm" />
             </button>
           );
         })}
@@ -89,9 +92,10 @@ export function RosterNavigation({ compact, active, scope, onScope, group, group
         <span className="sliding-indicator roster-group-pill" ref={groupIndicator.indicatorRef} aria-hidden="true" />
         <span className="roster-navigation-heading">{t("Groups")}</span>
         {[{ name: "all", label: t("All groups"), depth: 0, count: total }, { name: "", label: t("Ungrouped"), depth: 0, count: ungrouped }, ...groups].map(item => <button type="button" key={item.name}
+          data-sidebar-group={item.name}
           className="roster-group-link" aria-current={group === item.name ? "true" : undefined} title={item.label}
           style={{ paddingInlineStart: 10 + item.depth * 12 }} onClick={() => { onGroup(item.name); if (compact) { setOpen(false); trigger.current?.focus(); } }}>
-          <AppIcon name="folder" className="sm" /><span>{item.label}</span><small>{item.count}</small>
+          <AppIcon name={groupIcon(item.name)} className="sm" /><span>{item.label}</span><small>{item.count}</small>
         </button>)}
       </nav>
     </div>

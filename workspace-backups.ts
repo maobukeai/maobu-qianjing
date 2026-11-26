@@ -13,7 +13,7 @@ import { parseAppSettings } from "./app-settings.ts";
 import { ASSISTANT_MODEL_SERVICES_FILE, ASSISTANT_MODEL_SERVICES_FILE_LIMIT, AssistantModelServices } from "./assistant-model-services.ts";
 import { deriveWorkspacePasswordKey } from "./encrypted-sync.ts";
 import { PROFILE_TEMPLATES_FILE, PROFILE_TEMPLATE_LIMITS, ProfileTemplateStore } from "./profile-templates.ts";
-import { WorkspaceCatalog, WORKSPACE_COLORS, WORKSPACE_ICONS, assertNoWorkspaceLinks, plainDirectory, workspaceEntryExists, writeWorkspaceJson } from "./workspaces.ts";
+import { WorkspaceCatalog, WORKSPACE_COLORS, assertNoWorkspaceLinks, isValidWorkspaceIcon, plainDirectory, workspaceEntryExists, writeWorkspaceJson } from "./workspaces.ts";
 
 const MAGIC = Buffer.from("MAOBU-WORKSPACE-BACKUP\0v1\n");
 const ENCRYPTED_MAGIC = Buffer.from("MAOBU-ENCRYPTED-BACKUP\0v1\n");
@@ -203,7 +203,7 @@ function validateManifest(value: unknown, limits: BackupLimits): Manifest {
   const manifest = value as Manifest;
   if (!manifest || manifest.version !== 1 || typeof manifest.appVersion !== "string" || !Number.isSafeInteger(manifest.createdAt) || manifest.createdAt < 0
     || !manifest.workspace || typeof manifest.workspace.name !== "string" || !manifest.workspace.name.trim() || Array.from(manifest.workspace.name).length > 40
-    || !(WORKSPACE_COLORS as readonly string[]).includes(manifest.workspace.color) || !(WORKSPACE_ICONS as readonly string[]).includes(manifest.workspace.icon)
+    || !(WORKSPACE_COLORS as readonly string[]).includes(manifest.workspace.color) || !isValidWorkspaceIcon(manifest.workspace.icon)
     || !Number.isSafeInteger(manifest.profileCount) || manifest.profileCount < 0 || !Array.isArray(manifest.files) || !Array.isArray(manifest.directories)
     || manifest.files.length + manifest.directories.length > limits.maxFiles) throw new Error("Invalid workspace backup manifest");
   const entries = new Set<string>(), files = new Set<string>();

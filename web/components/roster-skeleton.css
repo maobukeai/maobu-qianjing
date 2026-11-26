@@ -1,20 +1,22 @@
 /* Column-aligned roster loading skeleton.
    Shimmer runs exclusively on a GPU-composited pseudo-element (`transform: translateX`). */
 .roster-skeleton-row > td.roster-skeleton-cell {
-  height: 52px;
-  padding-top: 6px;
-  padding-bottom: 6px;
+  height: 48px;
+  padding-top: 4px;
+  padding-bottom: 4px;
   border-bottom: 1px solid var(--line-soft);
   vertical-align: middle;
   pointer-events: none;
 }
 .roster-skeleton-row[data-skeleton-density="standard"] > td.roster-skeleton-cell {
-  height: 48px;
-}
-.roster-skeleton-row[data-skeleton-density="compact"] > td.roster-skeleton-cell {
   height: 44px;
   padding-top: 2px;
   padding-bottom: 2px;
+}
+.roster-skeleton-row[data-skeleton-density="compact"] > td.roster-skeleton-cell {
+  height: 36px;
+  padding-top: 1px;
+  padding-bottom: 1px;
 }
 .roster-skeleton-row:hover > td.roster-skeleton-cell {
   background: transparent;

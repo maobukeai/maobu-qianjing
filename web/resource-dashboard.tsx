@@ -287,7 +287,7 @@ export function ResourceDashboardDrawer({
   const wmLevel = snapshot?.watermark.level ?? "normal";
 
   return (
-    <MotionPresence present={open} kind="panel">
+    <MotionPresence present={open} kind="panel" exitMs={155}>
       <div
         className="resdash-backdrop"
         onClick={(event) => {

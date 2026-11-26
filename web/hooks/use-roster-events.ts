@@ -121,7 +121,9 @@ function parseDownloadsEvent(data: unknown): RuntimeDownload[] | null {
       !Number.isSafeInteger(item.receivedBytes) ||
       item.receivedBytes < 0 ||
       !Number.isSafeInteger(item.totalBytes) ||
-      item.totalBytes < 0
+      item.totalBytes < 0 ||
+      (item.status !== undefined && item.status !== "downloading" && item.status !== "paused") ||
+      (item.bytesPerSec !== undefined && (typeof item.bytesPerSec !== "number" || !Number.isFinite(item.bytesPerSec) || item.bytesPerSec < 0))
     ) {
       return null;
     }

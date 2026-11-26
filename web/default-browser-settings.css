@@ -1,0 +1,291 @@
+.default-browser-card > header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.db-status-pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.db-status-pill.tone-ok {
+  border-color: var(--success-line);
+  background: var(--success-soft);
+  color: var(--success-ink);
+}
+
+.db-status-pill.tone-warn {
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+}
+
+.db-header-refresh {
+  padding: 3px 6px;
+}
+
+.db-card-body {
+  gap: 10px !important;
+}
+
+.db-compact-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.db-divider {
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.db-sub-row {
+  padding: 6px 10px;
+  border-radius: var(--r-md);
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-soft);
+}
+
+.db-row-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 210px;
+  flex: 1 1 260px;
+}
+
+.db-row-label strong {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.db-row-label small {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.db-inline-handler {
+  color: var(--faint);
+}
+
+.db-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.db-segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--surface-sunken);
+  flex-shrink: 0;
+}
+
+.db-seg-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: calc(var(--r-md) - 2px);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.db-seg-btn:hover {
+  color: var(--ink);
+}
+
+.db-seg-btn.is-active {
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.db-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 34px;
+  height: 19px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--surface-active);
+  border: 1px solid var(--line-strong);
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.db-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform 150ms ease;
+}
+
+.db-switch:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.db-switch:checked::after {
+  transform: translateX(15px);
+}
+
+.db-fixed-select {
+  min-width: 220px;
+  max-width: 320px;
+  height: 28px;
+  font-size: 12px;
+}
+
+.db-rules-disclosure {
+  display: flex;
+  flex-direction: column;
+}
+
+.db-rules-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  list-style: none;
+  cursor: pointer;
+  padding: 2px 0;
+  user-select: none;
+}
+
+.db-rules-summary::-webkit-details-marker {
+  display: none;
+}
+
+.db-rules-summary-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+
+.db-rules-summary-title::before {
+  content: "▸";
+  font-size: 10px;
+  color: var(--muted);
+  transition: transform 140ms ease;
+}
+
+.db-rules-disclosure[open] .db-rules-summary-title::before {
+  transform: rotate(90deg);
+}
+
+.db-rules-count {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.db-rules-summary-hint {
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+.db-rules-content {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.db-rule-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.db-rule-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 9px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--surface-sunken);
+}
+
+.db-rule-domain {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-ink);
+}
+
+.db-rule-arrow {
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.db-rule-profile {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.db-rule-profile.is-missing {
+  color: var(--warn-ink);
+}
+
+.db-rule-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.db-rule-form .input {
+  flex: 1 1 180px;
+  min-width: 150px;
+  height: 29px;
+}
+
+.db-rule-form .select {
+  flex: 1 1 160px;
+  min-width: 140px;
+  height: 29px;
+}

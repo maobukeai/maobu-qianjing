@@ -3,7 +3,7 @@ import { isRosterDensity, parseRosterDensity, ROSTER_DENSITY_KEY, ROSTER_DENSITY
 
 test("density stores one explicit workspace value and preserves the existing default", () => {
   expect(ROSTER_DENSITY_KEY).toBe("aliasmode.roster.density");
-  expect(ROSTER_DENSITY_ROW_HEIGHT).toEqual({ compact: 44, standard: 48, comfortable: 52 });
+  expect(ROSTER_DENSITY_ROW_HEIGHT).toEqual({ compact: 36, standard: 44, comfortable: 48 });
   for (const value of ["comfortable", "standard", "compact"] as const) {
     expect(isRosterDensity(value)).toBe(true);
     expect(parseRosterDensity(value)).toBe(value);

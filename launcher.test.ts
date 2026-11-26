@@ -45,7 +45,7 @@ import { matchFirefoxProcesses } from "./firefox-lifecycle.ts";
 import { parseExport } from "./parse.ts";
 import { buildNewProfile } from "./create.ts";
 import { aliasmodeChromiumExecutable } from "./aliasmode-chromium.ts";
-import { SessionRestoreError } from "./session.ts";
+import { SessionRestoreError, type readSessionInSubprocess } from "./session.ts";
 import type { FingerprintSample } from "./diagnose.ts";
 import { handleUiRequest } from "./ui.ts";
 import { fingerprintLaunchDigest } from "./fingerprint-source.ts";
@@ -569,6 +569,41 @@ test("unavailable imported tabs do not replay successfully restored storage on e
     await launcher.start(id);
     expect(attempts).toBe(1);
   } finally { await launcher.stop(id); store.close(); rmSync(launcher.userDataDir(id), { recursive: true, force: true }); }
+});
+
+test("captureLocalSession forwards bounded close options without overwriting unrelated exports", async () => {
+  const { CLOSE_SESSION_CAPTURE_OPTIONS } = await import("./launcher.ts");
+  const store = seeded();
+  makeDirect(store);
+  const id = "k1d0cd11";
+  const previous = JSON.stringify({ cookies: [], origins: [{ origin: "https://example.com", localStorage: [] }] });
+  store.saveSessionBundle(id, previous);
+  const calls: Array<Parameters<typeof readSessionInSubprocess>[1]> = [];
+  const launcher = newLauncher(store, fleet(), [], undefined, undefined, {
+    readSession: async (_ws, options) => {
+      calls.push(options);
+      return previous;
+    },
+    log: () => {},
+  });
+  try {
+    await launcher.start(id);
+    expect(await launcher.captureLocalSession(id, CLOSE_SESSION_CAPTURE_OPTIONS)).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      timeoutMs: CLOSE_SESSION_CAPTURE_OPTIONS.timeoutMs,
+      connectTimeoutMs: CLOSE_SESSION_CAPTURE_OPTIONS.connectTimeoutMs,
+      originReadTimeoutMs: CLOSE_SESSION_CAPTURE_OPTIONS.originReadTimeoutMs,
+      originsBudgetMs: CLOSE_SESSION_CAPTURE_OPTIONS.originsBudgetMs,
+      disconnectTimeoutMs: CLOSE_SESSION_CAPTURE_OPTIONS.disconnectTimeoutMs,
+    });
+    expect(calls[0]?.captureSeed?.openTabsOnly).toBe(true);
+    expect(calls[0]?.captureSeed?.origins).toEqual(["https://example.com"]);
+  } finally {
+    await launcher.stop(id);
+    store.close();
+    rmSync(launcher.userDataDir(id), { recursive: true, force: true });
+  }
 });
 
 test("Local snapshots capture only a verified unchanged live generation and retain the previous bundle on failure", async () => {

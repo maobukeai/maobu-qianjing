@@ -1,6 +1,14 @@
 import { rmSync, statSync } from "node:fs";
 import { open, truncate } from "node:fs/promises";
-import { writeDownloadChunk } from "./runtime-download.ts";
+import {
+  isRuntimeDownloadCancelled,
+  isRuntimeDownloadPaused,
+  notifyRuntimeDownloadProgress,
+  registerRuntimeDownloadAbort,
+  RuntimeDownloadCancelledError,
+  RuntimeDownloadPausedError,
+  writeDownloadChunk,
+} from "./runtime-download.ts";
 
 export const CURL_ATTEMPT_TIMEOUT_MS = 10 * 60_000;
 const EXIT_CLEANUP_MS = 5_000;
@@ -73,8 +81,11 @@ export async function downloadBoundedCurl(url: string, output: string, options: 
     rmSync(output, { force: true });
     have = 0;
   }
+  notifyRuntimeDownloadProgress(output, have);
   // The installer's SHA-256 check still verifies a complete saved archive.
   if (options.exactSize && have === maxBytes) return;
+  if (isRuntimeDownloadCancelled(output)) throw new RuntimeDownloadCancelledError();
+  if (isRuntimeDownloadPaused(output)) throw new RuntimeDownloadPausedError();
 
   // Give curl a little time to report a normal timeout and its final status
   // before the parent deadline has to terminate it.
@@ -100,6 +111,15 @@ export async function downloadBoundedCurl(url: string, output: string, options: 
     controller.abort(new Error("curl download timed out"));
     stop();
   }, timeoutMs);
+  let pauseRequested = false;
+  let cancelRequested = false;
+  const unregisterAbort = registerRuntimeDownloadAbort(output, (reason) => {
+    clearTimeout(timer);
+    if (reason instanceof RuntimeDownloadCancelledError) cancelRequested = true;
+    else if (reason instanceof RuntimeDownloadPausedError) pauseRequested = true;
+    controller.abort(reason);
+    stop();
+  });
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   let file: Awaited<ReturnType<typeof open>> | undefined;
   let written = have;
@@ -127,6 +147,7 @@ export async function downloadBoundedCurl(url: string, output: string, options: 
       tail = Buffer.from(data.subarray(length));
       if (length > 0) await writeDownloadChunk(writer, data.subarray(0, length), count => {
         written += count;
+        notifyRuntimeDownloadProgress(output, written);
         controller.signal.throwIfAborted();
       });
     }
@@ -153,6 +174,7 @@ export async function downloadBoundedCurl(url: string, output: string, options: 
     if (options.exactSize && written !== maxBytes) throw new Error("curl archive ended before its pinned size");
     complete = true;
   } finally {
+    unregisterAbort();
     clearTimeout(timer);
     if (!complete) {
       stop();
@@ -163,13 +185,29 @@ export async function downloadBoundedCurl(url: string, output: string, options: 
     try { reader?.releaseLock(); } catch (error) { cleanupError = error; }
     try { if (!processExited) await waitForExit(exited); } catch (error) { cleanupError ??= error; }
     // A full byte count without a successful transfer must not become a cached
-    // success. Only retain new bytes after curl confirms the response status.
-    if (!complete && (written === maxBytes && !unexpectedExit || (have === 0 && !preserve && file))) discard = true;
+    // success. Only retain new bytes after curl confirms the response status,
+    // or when paused mid-stream so a Range request can resume later.
+    if (cancelRequested) {
+      discard = true;
+    } else if (pauseRequested && !complete) {
+      if (written === maxBytes || written === 0) discard = true;
+      else preserve = true;
+    } else if (!complete && (written === maxBytes && !unexpectedExit || (have === 0 && !preserve && file))) {
+      discard = true;
+    }
     try {
       await file?.close();
-      if (discard) rmSync(output, { force: true });
+      if (discard) {
+        rmSync(output, { force: true });
+        notifyRuntimeDownloadProgress(output, 0);
+      }
       // Roll back an unconfirmed response after releasing the output handle.
-      else if (file && !complete && !preserve) await truncate(output, have);
+      else if (file && !complete && !preserve) {
+        await truncate(output, have);
+        notifyRuntimeDownloadProgress(output, have);
+      } else if (pauseRequested && !complete && preserve) {
+        notifyRuntimeDownloadProgress(output, written);
+      }
     } catch (error) { cleanupError ??= error; }
     if (cleanupError) throw new CurlCleanupError("curl download cleanup failed", { cause: cleanupError });
   }

@@ -470,6 +470,44 @@ test("installGlobalSlidingIndicators equips existing and future toggle groups wi
       await Promise.resolve();
       expect(multiGroup.getAttribute("data-global-sliding-visible")).toBeNull();
 
+      // Transformed ancestor (e.g. entering scale(0.72, 0.26) on CommandPalette) still yields unscaled CSS layout pill metrics
+      const scaledGroup = dom.document.createElement("div");
+      scaledGroup.setAttribute("role", "tablist");
+      scaledGroup.dataset.scaled = "true";
+      Object.defineProperties(scaledGroup, {
+        offsetWidth: { value: 220, configurable: true },
+        offsetHeight: { value: 40, configurable: true },
+        clientLeft: { value: 1, configurable: true },
+        clientTop: { value: 1, configurable: true },
+      });
+      const sb1 = dom.document.createElement("button");
+      sb1.dataset.scaledBtn = "1";
+      sb1.setAttribute("aria-selected", "true");
+      const sb2 = dom.document.createElement("button");
+      sb2.dataset.scaledBtn = "2";
+      sb2.setAttribute("aria-selected", "false");
+      scaledGroup.append(sb1, sb2);
+      Object.defineProperty(scaledGroup, "getBoundingClientRect", {
+        configurable: true,
+        value: () => ({ left: 100, top: 50, width: 220 * 0.72, height: 40 * 0.26 }),
+      });
+      Object.defineProperty(sb1, "getBoundingClientRect", {
+        configurable: true,
+        value: () => ({ left: 100 + 4 * 0.72, top: 50 + 4 * 0.26, width: 64 * 0.72, height: 32 * 0.26 }),
+      });
+      Object.defineProperty(sb2, "getBoundingClientRect", {
+        configurable: true,
+        value: () => ({ left: 100 + 70 * 0.72, top: 50 + 4 * 0.26, width: 72 * 0.72, height: 32 * 0.26 }),
+      });
+      container.appendChild(scaledGroup as unknown as Node);
+      await Promise.resolve();
+      await Promise.resolve();
+      const scaledPill = scaledGroup.querySelector(".global-sliding-pill") as { style: CSSStyleDeclaration } | null;
+      expect(scaledPill).toBeTruthy();
+      expect(scaledPill!.style.width).toBe("64px");
+      expect(scaledPill!.style.height).toBe("32px");
+      expect(scaledPill!.style.transform).toBe("translate3d(3px, 3px, 0)");
+
       dispose();
     });
   } finally {

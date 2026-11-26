@@ -680,14 +680,14 @@ test("10,000 synthetic profiles in virtual scroll mode keep mounted tr[data-prof
     const beforeScrollTop = tablewrap().scrollTop;
     expect(beforeScrollTop).toBe(2000);
 
-    // Simulate ResizeObserver reporting row p_0 (above current scrollTop) expanded from 74px -> 114px (+40px delta)
+    // Simulate ResizeObserver reporting row p_0 (above current scrollTop) expanded from 70px -> 110px (+40px delta)
     const rowObserver = observers.find((obs) => obs.targets.has(row0 as unknown as Element))!;
     expect(rowObserver).toBeTruthy();
     await act(async () => {
       rowObserver.callback([
         {
           target: row0 as unknown as Element,
-          borderBoxSize: [{ blockSize: 114, inlineSize: 800 }],
+          borderBoxSize: [{ blockSize: 110, inlineSize: 800 }],
         },
       ]);
     });

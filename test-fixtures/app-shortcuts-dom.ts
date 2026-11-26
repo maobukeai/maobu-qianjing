@@ -44,7 +44,7 @@ async function run(scenario: string) {
   const animationGlobals = new Map(["requestAnimationFrame", "cancelAnimationFrame"].map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
   Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: dom.window.requestAnimationFrame.bind(dom.window) });
   Object.defineProperty(globalThis, "cancelAnimationFrame", { configurable: true, value: dom.window.cancelAnimationFrame.bind(dom.window) });
-  if (desktop) Object.defineProperty(dom.window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke: async (command: string) => { native.push(command); if (command === "agent_runtime_ready") return null; throw new Error(`Unexpected native invocation: ${command}`); } } });
+  if (desktop) Object.defineProperty(dom.window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke: async (command: string) => { native.push(command); if (command === "agent_runtime_ready") return null; if (command === "default_browser_take_pending_urls") return []; throw new Error(`Unexpected native invocation: ${command}`); } } });
   dom.container.id = "root";
   Object.defineProperty(dom.window, "fetch", { configurable: true, value: () => { unexpected.push("window.fetch"); throw new Error("Window resource networking is disabled"); } });
   let root: Root | null = null;
@@ -177,7 +177,13 @@ async function run(scenario: string) {
   } finally {
     try { if (root) await act(async () => { root!.unmount(); }); await dom.cleanup(); }
     finally { for (const [name, previous] of animationGlobals) { if (previous) Object.defineProperty(globalThis, name, previous); else Reflect.deleteProperty(globalThis, name); } }
-    assert.deepEqual(unexpected, []); assert.deepEqual(native, desktop ? ["agent_runtime_ready"] : [], "Only the existing startup readiness signal may use native IPC; shortcuts must not invoke window commands");
+    assert.deepEqual(unexpected, []);
+    if (desktop) {
+      assert.ok(native.includes("agent_runtime_ready"), "Expected startup readiness signal on desktop");
+      assert.ok(native.every((cmd) => cmd === "agent_runtime_ready" || cmd === "default_browser_take_pending_urls"), "Only startup readiness and pending external URL checks may use native IPC; shortcuts must not invoke window commands");
+    } else {
+      assert.deepEqual(native, [], "Browser mode must not invoke native IPC");
+    }
     assert.ok(requests.every(request => request.startsWith("GET ") || request === "POST /ui/api/workspace/preferences"), "Shortcut navigation must not create or launch environments");
   }
 }
