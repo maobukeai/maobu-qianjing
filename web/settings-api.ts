@@ -1,4 +1,5 @@
 import type { AppSettings, NetworkSettings, SignedUpdateSettings } from "../app-settings.ts";
+import { notifyAppLockedFromResponse, notifyUnauthorizedResponse, withStandaloneAuthHeaders } from "./api.ts";
 import type { IntegrationInfo } from "../agent/integration-info.ts";
 import type { IntegrationProbeResult } from "../agent/integration-probe.ts";
 import type { SyncFileRecord, SyncPreview } from "../encrypted-sync.ts";
@@ -161,12 +162,23 @@ function runtimeInventory(value: unknown, checked: boolean): boolean {
 async function request<T>(path: string, method = "GET", value?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`/ui/api/settings${path}`, {
     method, credentials: "same-origin", cache: "no-store",
-    headers: { "X-Maobu-Settings": "1", Accept: "application/json", ...(method !== "GET" ? { "Content-Type": "application/json" } : {}) },
+    headers: withStandaloneAuthHeaders({ "X-Maobu-Settings": "1", Accept: "application/json", ...(method !== "GET" ? { "Content-Type": "application/json" } : {}) }),
     ...(method !== "GET" ? { body: JSON.stringify(value ?? {}) } : {}),
     ...(signal ? { signal } : {}),
   });
-  const result = await response.json().catch(() => { throw new Error("The local service returned an invalid response"); });
-  if (!object(result)) throw new Error("The local service returned an invalid response");
+  const result = await response.json().catch(() => {
+    notifyUnauthorizedResponse(response.status, `/ui/api/settings${path}`);
+    throw new Error("The local service returned an invalid response");
+  });
+  if (!object(result)) {
+    notifyUnauthorizedResponse(response.status, `/ui/api/settings${path}`);
+    throw new Error("The local service returned an invalid response");
+  }
+  if (response.status === 401) {
+    notifyUnauthorizedResponse(401, `/ui/api/settings${path}`, text(result.error) ? result.error : "");
+  } else if (response.status === 423) {
+    notifyAppLockedFromResponse(423, result);
+  }
   if (!response.ok || result.ok !== true) throw new Error(text(result.error) ? result.error : "Settings request failed");
   return result as T;
 }

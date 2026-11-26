@@ -4,7 +4,7 @@ import { I18nProvider, translate } from "../web/i18n.tsx";
 import { buildFingerprintAssistantBrief } from "../web/fingerprint-assistant-brief.ts";
 import { LocalAssistantPage, type AssistantDraftSuggestion, type AssistantTaskSource } from "../web/local-assistant.tsx";
 import { createWebDomHarness } from "./web-dom.ts";
-import type { HTMLInputElement, HTMLDivElement } from "happy-dom";
+import type { HTMLButtonElement, HTMLDetailsElement, HTMLDivElement, HTMLInputElement } from "happy-dom";
 
 function deferred<T>() {
   let resolve!: (value: T) => void, reject!: (reason: unknown) => void;
@@ -78,6 +78,20 @@ async function run(scenario: string) {
       assert.equal(dom.container.querySelector<HTMLDivElement>(".assistant-connection")!.hidden, false);
       assert.equal(dom.window.document.activeElement, dom.container.querySelector(".assistant-connection input"));
       assert.equal(calls.length, 0, "Opening model settings must not connect");
+      const privacy = dom.container.querySelector<HTMLDetailsElement>(".assistant-privacy")!;
+      assert.equal(privacy.open, false, "Sharing terms are available on demand");
+      await act(async () => privacy.querySelector("summary")!.click());
+      assert.equal(privacy.open, true);
+      assert.equal(privacy.querySelectorAll("input[aria-describedby]").length, 2, "Both opt-ins retain their terms");
+      const close = dom.container.querySelector<HTMLButtonElement>(".assistant-settings-close")!;
+      await act(async () => close.click());
+      assert.equal(button("Model settings").getAttribute("aria-expanded"), "false");
+      assert.equal(dom.window.document.activeElement, button("Model settings"), "Closing settings returns to its entry point");
+      await click("Model settings");
+      await act(async () => dom.window.document.activeElement!.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+      assert.equal(button("Model settings").getAttribute("aria-expanded"), "false");
+      assert.equal(dom.window.document.activeElement, button("Model settings"));
+      await click("Model settings");
       await click("Model settings");
       assert.equal(button("Model settings").getAttribute("aria-expanded"), "false");
       assert.equal(textarea().value, "Keep my local draft.");
@@ -230,7 +244,7 @@ async function run(scenario: string) {
     await connect();
     assert.equal(calls.length, 1);
     assert.ok(text().includes("1 remote models excluded"));
-    await click("Understand fingerprint checks↗");
+    await click("Understand fingerprint checks");
     const originalDraft = textarea().value;
     assert.ok(originalDraft.length > 20);
     if (scenario === "context-and-memory") {

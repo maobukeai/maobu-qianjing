@@ -44,3 +44,9 @@
 测试入口为 `ui-roster-etag.test.ts`、`web/profile-roster-etag.test.ts`，客户端夹具为 `test-fixtures/profile-roster-etag-client.ts`。详细结果见 `node_modules/.cache/roster-conditional-get-round6-tests.log`。测试另覆盖运行/停止状态、tags/extensions、新增/删除、未知 folder 字段、强 tag 完整 body hash、错误保留最近成功快照、origin 隔离及乱序响应；真实 loopback 测试验证正确 tag 不能绕过外部 Origin/Referer/Sec-Fetch-Site 拒绝。
 
 最终相关服务端/UI/API 与真实 App 创建、批量、快捷键、收藏视图合跑 9 个测试文件：180 通过、0 失败，TypeScript `--noEmit` 通过。日志为 `roster-conditional-get-round6-focused-tests.log` 和 `roster-conditional-get-round6-final-typecheck.log`。编辑器新增 dirty guard 的旧夹具断言另由其负责人更新，不用回退产品行为。
+
+## 2026-11-23 的后续优化
+
+桌面服务在完成运行状态核对后，会用 SQLite 的连接内写入计数、跨连接数据版本和 schema 版本判断列表是否变动。条件请求的标签与当前版本都匹配时，直接返回无响应体的 304。缓存仅保留版本和标签。版本变化时重新读取数据库快照，按实际 JSON 计算标签。读取期间发生的其他连接提交会使本次标签无法进入缓存。[SQLite 数据版本](https://www.sqlite.org/pragma.html#pragma_data_version) · [SQLite 写入计数](https://www.sqlite.org/c3ref/total_changes.html)
+
+`bun test --no-env-file ui-roster-etag.test.ts` 可复现合成对照。在本机 50,000 条环境的测试中，未变列表的服务端处理耗时从约 72 毫秒降到 0.2 毫秒，命中后没有重新映射环境。数据来自合成夹具，运行状态核对使用桩服务，耗时不包含 HTTP 往返或真实浏览器进程探测。真正的 SQLite 双连接回归覆盖了读取期间和读取之后的外部提交。

@@ -25,7 +25,7 @@ export interface WorkspaceSwitcherProps {
 }
 export type WorkspacePageIntent = { mode: "manage" | "create" | "switch" | "backups"; workspaceId?: string };
 export type WorkspacePageRequest = WorkspacePageIntent & { id: number };
-interface WorkspaceActivityState { job: WorkspaceJob | null; dirty: boolean; }
+interface WorkspaceActivityState { job: WorkspaceJob | null; dirty: boolean; statusUnavailable?: boolean; }
 interface WorkspaceManagementPageProps { active: boolean; request: WorkspacePageRequest; onBack: () => void; onShowRunning: () => void; onShowBatchTask?: () => void; renderIcon?: WorkspaceSwitcherProps["renderIcon"]; }
 export interface DevicePanelProps {
   variant?: "sidebar" | "header" | "rail";
@@ -64,11 +64,11 @@ function Icon({ name, render }: { name: string; render?: WorkspaceSwitcherProps[
     briefcase: <><rect x="3" y="7" width="18" height="14" rx="2" /><path d="M8 7V3h8v4M3 12h18M10 12v3h4v-3" /></>, globe: <><circle cx="12" cy="12" r="9" /><ellipse cx="12" cy="12" rx="4" ry="9" /><path d="M3 12h18" /></>,
     star: <path d="m12 3 2.8 5.8 6.4.9-4.6 4.5 1.1 6.4-5.7-3-5.7 3 1.1-6.4L2.8 9.7l6.4-.9Z" />, layers: <><path d="m12 3 10 5-10 5L2 8Z" /><path d="m2 12 10 5 10-5M2 16l10 5 10-5" /></>,
     back: <path d="m12 5-7 7 7 7M5 12h15" />, search: <><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></>,
-    plus: <path d="M12 5v14M5 12h14" />, close: <path d="m6 6 12 12M6 18 18 6" />, check: <path d="m5 12 4 4L19 6" />, chevronDown: <path d="m6 9 6 6 6-6" />,
+    plus: <path d="M12 5v14M5 12h14" />, close: <path d="m6 6 12 12M6 18 18 6" />, check: <path d="m5 12 4 4L19 6" />, chevronDown: <path d="m6 9 6 6 6-6" />, chevronsUpDown: <path d="M7 15l5 5 5-5M7 9l5-5 5 5" />,
     refresh: <><path d="M20 11a8 8 0 10-2.3 5.7" /><path d="M20 4v7h-7" /></>, archive: <><rect x="3" y="3" width="18" height="4" rx="1" /><path d="M5 7v14h14V7M10 11h4" /></>,
     download: <><path d="M12 3v12m-4-4 4 4 4-4M4 17v4h16v-4" /></>, upload: <><path d="M12 16V4m-4 4 4-4 4 4M4 17v4h16v-4" /></>, open: <><path d="M14 3h7v7m0-7L10 14" /><path d="M10 3H3v18h18v-7" /></>,
     logs: <><path d="M14 2H4v20h16V8Z" /><path d="M14 2v6h6M8 13h8M8 17h6" /></>, settings: <><path d="M3 7h11m4 0h3M3 17h5m4 0h9" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" /></>, sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5" /></>,
-    moon: <path d="M21 13A9 9 0 1111 3a7 7 0 0010 10Z" />, drive: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 13h18m-4 3h1m-4 0h1" /></>, alert: <><circle cx="12" cy="12" r="9" /><path d="M12 7v6m0 3v1" /></>,
+    moon: <path d="M21 13A9 9 0 1111 3a7 7 0 0010 10Z" />, drive: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 13h18m-4 3h1m-4 0h1" /></>, alert: <><circle cx="12" cy="12" r="9" /><path d="M12 7v6m0 3v1" /></>, info: <><circle cx="12" cy="12" r="9" /><path d="M12 16v-4M12 8h.01" /></>,
   };
   return <svg className="wm-icon" viewBox="0 0 24 24" aria-hidden="true">{paths[name] ?? paths.laptop}</svg>;
 }
@@ -177,12 +177,23 @@ function usePopover(
   const { placement, ...style } = position;
   return { placement, style };
 }
-function WorkspaceBadge({ workspace, icon, render }: { workspace?: WorkspaceRecord | WorkspaceMetadata; icon?: WorkspaceIcon; render?: WorkspaceSwitcherProps["renderIcon"] }) { return <span className="wm-workspace-badge" style={{ "--workspace-color": workspace?.color ?? WORKSPACE_COLORS[0] } as CSSProperties}><Icon name={icon ?? workspace?.icon ?? "laptop"} render={render} /></span>; }
+function WorkspaceBadge({ workspace, icon, monogram, render }: { workspace?: WorkspaceRecord | WorkspaceMetadata; icon?: WorkspaceIcon; monogram?: string; render?: WorkspaceSwitcherProps["renderIcon"] }) {
+  if (monogram) return <span className="wm-workspace-badge is-monogram" aria-hidden="true">{monogram}</span>;
+  return <span className="wm-workspace-badge" style={{ "--workspace-color": workspace?.color ?? WORKSPACE_COLORS[0] } as CSSProperties}><Icon name={icon ?? workspace?.icon ?? "laptop"} render={render} /></span>;
+}
 
 /** Backups always use the running workspace, independently of the metadata editor. */
 export function WorkspaceBackupIntro({ renderIcon }: { renderIcon?: WorkspaceSwitcherProps["renderIcon"] }) {
   const { t } = useTranslation(), { currentWorkspace } = useWorkspaceCatalog();
-  return <div className="wm-backup-intro"><h2>{t("Full workspace backups")}</h2><div className="wm-backup-source"><WorkspaceBadge workspace={currentWorkspace} render={renderIcon} /><span>{t("Current backup workspace: {name}", { name: currentWorkspace?.name ?? t("Loading workspace…") })}</span></div><p>{t("Includes browser data, login sessions, groups, scripts, extensions, and Trash. Downloadable browser engines are excluded.")}</p><p className="wm-small wm-backup-security">{t("New backups are encrypted with a password. Older backups may be unencrypted.")}</p><p className="wm-small">{t("System protection may require you to sign in again after restoring on another computer.")}</p></div>;
+  return <div className="wm-backup-intro">
+    <div className="wm-backup-source"><WorkspaceBadge workspace={currentWorkspace} render={renderIcon} /><strong>{t("Current backup workspace: {name}", { name: currentWorkspace?.name ?? t("Loading workspace…") })}</strong></div>
+    <p className="wm-backup-security">{t("New backups are encrypted with a password. Older backups may be unencrypted.")}</p>
+    <details className="wm-backup-scope">
+      <summary>{t("Full workspace backups")}</summary>
+      <p>{t("Includes browser data, login sessions, groups, scripts, extensions, and Trash. Downloadable browser engines are excluded.")}</p>
+      <p>{t("System protection may require you to sign in again after restoring on another computer.")}</p>
+    </details>
+  </div>;
 }
 
 type PreparedWorkspaceSwitch = { expected: string; target: string };
@@ -210,15 +221,41 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
   const actionName = rail ? t("Switch workspace: {name}", { name }) : t("Open workspace switcher");
   const triggerClass = context ? "wm-workspace-trigger is-context" : rail ? "wm-workspace-trigger is-rail" : "sidebar-workspace wm-workspace-trigger";
   function open(intent: WorkspacePageIntent) { setMenuOpen(false); trigger.current?.focus({ preventScroll: true }); props.onOpenManagement?.(intent); }
-  useEffect(() => {
-    if (!menuOpen || !menu.current) return;
-    const checked = rail ? menu.current.querySelector<HTMLButtonElement>('button[aria-checked="true"]:not(:disabled)') : null;
-    (checked ?? menu.current.querySelector<HTMLButtonElement>('button:not(:disabled)'))?.focus({ preventScroll: true });
-  }, [menuOpen, rail]);
+  const focusMenuEntry = useCallback(() => {
+    const panel = menu.current;
+    if (!panel) return;
+    const checked = rail ? panel.querySelector<HTMLButtonElement>('button[aria-checked="true"]:not(:disabled)') : null;
+    (checked ?? controls(panel)[0] ?? panel).focus();
+  }, [rail]);
+  useLayoutEffect(() => {
+    if (menuOpen) focusMenuEntry();
+  }, [menuOpen, focusMenuEntry]);
+  useLayoutEffect(() => {
+    const panel = menu.current;
+    if (!menuOpen || !panel || typeof ResizeObserver !== "function") return;
+    // The rail can narrow the menu after opening, causing taller rows to cover the focused entry.
+    const observer = new ResizeObserver(() => {
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && active !== panel && panel.contains(active)) {
+        active.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
+    });
+    observer.observe(panel);
+    return () => observer.disconnect();
+  }, [menuOpen]);
+  useLayoutEffect(() => {
+    if (menuOpen && !loading && document.activeElement === menu.current) focusMenuEntry();
+  }, [menuOpen, loading, catalog, error, focusMenuEntry]);
+  const monogram = [...name.trim()][0]?.toUpperCase() || "W";
+  const subtitle = note
+    ? t(note)
+    : rail
+      ? (props.connection ? t("{profiles} profiles · {running} running", { profiles: props.profileCount, running: props.runningCount }) : t("Switch workspace"))
+      : t("Independent local workspace");
   return <div className={context ? "wm-context-switcher" : rail ? "wm-rail-switcher" : "wm-sidebar-switcher"} data-compact={rail && props.compact ? "true" : undefined}>
     {context && <span className="wm-context-label">{t("Workspaces")}</span>}
     <button type="button" className={`${triggerClass}${props.managementActive ? " is-current-page" : ""}`} ref={trigger} aria-haspopup="menu" aria-expanded={menuOpen} aria-controls={menuOpen ? menuId : undefined} aria-describedby={rail && note ? noteId : undefined} title={rail ? actionName : current?.name ?? t("Workspaces")} aria-label={actionName} onClick={() => setMenuOpen(value => !value)} onKeyDown={event => { if (event.key === "ArrowDown") { event.preventDefault(); setMenuOpen(true); } }}>
-      <WorkspaceBadge workspace={current} icon={rail ? "folder" : undefined} render={render} /><span className="wm-trigger-copy"><strong>{name}</strong>{(!context || note) && <small>{t(note ?? (rail ? "Switch workspace" : "Independent local workspace"))}</small>}</span><Icon name="chevronDown" render={render} />
+      <WorkspaceBadge workspace={current} icon={rail ? "folder" : undefined} monogram={rail ? monogram : undefined} render={render} /><span className="wm-trigger-copy"><strong>{name}</strong>{(!context || note) && <small>{subtitle}</small>}</span><Icon name={rail ? "chevronsUpDown" : "chevronDown"} render={render} />
     </button>
     {rail && note && <span className="wm-sr-only" id={noteId}>{t(note)}</span>}
     {context && props.onOpenManagement && <button type="button" className={`wm-context-manage${props.managementActive ? " is-current-page" : ""}`} aria-current={props.managementActive ? "page" : undefined} onClick={() => open({ mode: "manage" })}>{t("Manage workspaces")}</button>}
@@ -230,6 +267,7 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
           id={menuId}
           ref={menu}
           role="menu"
+          tabIndex={-1}
           aria-label={t("Workspaces")}
           style={style}
           onKeyDown={event => {
@@ -241,10 +279,11 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
             if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
             event.preventDefault();
             const items = controls(menu.current!);
+            if (items.length === 0) return;
             const index = items.indexOf(document.activeElement as HTMLElement);
             const targetIndex = event.key === "Home"
               ? 0
-              : event.key === "End"
+              : event.key === "End" || (event.key === "ArrowUp" && index === -1)
                 ? items.length - 1
                 : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
             items[targetIndex]?.focus();
@@ -274,7 +313,10 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
           {error && (
             <div className="wm-error" role="alert">
               <span>{t(error)}</span>
-              <button type="button" onClick={() => void refresh()}>{t("Retry")}</button>
+              <button type="button" role="menuitem" disabled={loading} onClick={() => {
+                menu.current?.focus({ preventScroll: true });
+                void refresh();
+              }}>{t("Retry")}</button>
             </div>
           )}
           {catalog?.workspaces.filter(w => !w.archived).map(w => (
@@ -318,9 +360,11 @@ export function WorkspaceActivity({ hidden, onOpen }: { hidden: boolean; onOpen:
   const pending = !!catalog && catalog.currentId !== catalog.activeId;
   const job = activity.job;
   if (hidden || !pending && (!job || job.status === "succeeded")) return null;
+  const unavailable = !pending && activity.statusUnavailable;
+  const percent = !unavailable && job && workspaceJobActive(job) ? workspaceJobPercent(job) : null;
   return <div className={`wm-activity${job?.status === "failed" && !pending ? " is-failed" : ""}`} role="status">
-    <Icon name={pending ? "refresh" : job?.status === "failed" ? "alert" : "archive"} />
-    <div><strong>{t(pending ? "Restart required" : job?.kind === "backup" ? "Backup task" : "Restore task")}</strong><span>{t(pending ? "A workspace switch is prepared. Restart to finish switching." : job?.status === "failed" ? "Failed" : PHASE_LABELS[job?.phase ?? ""] ?? "In progress")}{job && workspaceJobActive(job) && workspaceJobPercent(job) !== null ? ` · ${workspaceJobPercent(job)}%` : ""}</span></div>
+    <Icon name={pending ? "refresh" : unavailable || job?.status === "failed" ? "alert" : "archive"} />
+    <div><strong>{t(pending ? "Restart required" : job?.kind === "backup" ? "Backup task" : "Restore task")}</strong><span>{t(pending ? "A workspace switch is prepared. Restart to finish switching." : unavailable ? "Task status unavailable. Retrying automatically…" : job?.status === "failed" ? "Failed" : PHASE_LABELS[job?.phase ?? ""] ?? "In progress")}{percent !== null ? ` · ${percent}%` : ""}</span></div>
     <button type="button" className="btn ghost xs" onClick={onOpen}>{t("View task")}<Icon name="open" /></button>
   </div>;
 }
@@ -337,7 +381,12 @@ export function WorkspaceManagementPage(props: WorkspaceManagementPageProps) {
   const [overview, setOverview] = useState<WorkspaceOverview | null>(null), [overviewError, setOverviewError] = useState<string | null>(null), [history, setHistory] = useState<WorkspaceBackups>({ backups: [], jobs: [] }), [historyError, setHistoryError] = useState<string | null>(null), [historyLoading, setHistoryLoading] = useState(false);
   const [operation, setOperation] = useState(""), [error, setError] = useState<string | null>(null), [notice, setNotice] = useState<string | null>(null), [confirmation, setConfirmation] = useState<Confirmation | null>(null), [closeRunning, setCloseRunning] = useState(false);
   const [backupPassword, setBackupPassword] = useState(""), [repeatedPassword, setRepeatedPassword] = useState("");
-  const [job, setJobState] = useState<WorkspaceJob | null>(null), [pollError, setPollError] = useState<string | null>(null), [pollVersion, setPollVersion] = useState(0), [retrySource, setRetrySource] = useState<BackupConfirmation | null>(null), [retrySourceJobId, setRetrySourceJobId] = useState<string | null>(null), [pendingRestart, setPendingRestart] = useState<PreparedWorkspaceSwitch | null>(null);
+  const [job, setJobState] = useState<WorkspaceJob | null>(null), [retrySource, setRetrySource] = useState<BackupConfirmation | null>(null), [retrySourceJobId, setRetrySourceJobId] = useState<string | null>(null), [pendingRestart, setPendingRestart] = useState<PreparedWorkspaceSwitch | null>(null);
+  const [statusRetry, setStatusRetry] = useState<{ jobId: string; checking: boolean } | null>(null);
+  const checkTaskStatus = useRef<(() => void) | null>(null), taskPanel = useRef<HTMLElement>(null), statusRetryButton = useRef<HTMLButtonElement>(null);
+  const taskHeadingId = useId();
+  const editorTitle = useRef<HTMLHeadingElement>(null);
+  const focusRestoredEditor = useRef(false);
   const latestJob = useRef<WorkspaceJob | null>(null);
   const overviewRevision = useRef(0), historyRevision = useRef(0);
   function setJob(next: WorkspaceJob | null) { latestJob.current = next; setJobState(next); }
@@ -353,13 +402,14 @@ export function WorkspaceManagementPage(props: WorkspaceManagementPageProps) {
   const restartDraftLabels = new Set<DesktopDraftLabel>(desktopDrafts.dirty);
   if (dirty) restartDraftLabels.add("workspace-metadata");
   const activeJob = !!job && workspaceJobActive(job), pending = pendingRestart ?? (catalog && catalog.currentId !== catalog.activeId ? { expected: catalog.currentId, target: catalog.activeId } : null);
+  const statusUnavailable = activeJob && statusRetry?.jobId === job.id;
   const maintenance = activeJob || !!overview?.backupBusy || !!pending;
   const batchActive = snapshot.operation?.kind === "profile-batch", importActive = snapshot.operation?.kind === "profile-import", moveActive = snapshot.operation?.kind === "profile-move", cookieActive = snapshot.operation?.kind === "profile-cookies", fileUpdateActive = snapshot.operation?.kind === "profile-file-update", trashActive = snapshot.operation?.kind === "profile-trash", proxyActive = snapshot.operation?.kind === "profile-proxies", profileTaskActive = batchActive || importActive || moveActive || cookieActive || fileUpdateActive || trashActive || proxyActive, transitionBlocked = snapshot.blocked;
   const restartBlocked = !!snapshot.operation || !!snapshot.workspaceJob || snapshot.nativeUpdateBusy || !snapshot.workspaceId;
   const retryJobSource: BackupConfirmation | null = job?.kind === "backup" ? { kind: "backup" } : retrySourceJobId === job?.id ? retrySource : null;
   useDesktopCloseDraft("workspace-metadata", { dirty, busy: metadataWrite });
   useLayoutEffect(() => { if (editing && !dirty) setEditor(previous => followWorkspaceMetadata(previous, editing)); }, [editing, dirty]);
-  useEffect(() => { setActivity({ job, dirty }); }, [job, dirty, setActivity]);
+  useEffect(() => { setActivity({ job, dirty, statusUnavailable }); }, [job, dirty, statusUnavailable, setActivity]);
   useEffect(() => { setPendingRestart(catalog && catalog.currentId !== catalog.activeId ? { expected: catalog.currentId, target: catalog.activeId } : null); }, [catalog?.currentId, catalog?.activeId]);
   async function refreshOverview(signal?: AbortSignal) { const revision = ++overviewRevision.current; try { const next = await fetchWorkspaceOverview(signal); if (!signal?.aborted && revision === overviewRevision.current) { setOverview(next); setOverviewError(null); } return next; } catch (e) { if (!signal?.aborted && revision === overviewRevision.current) setOverviewError(errorMessage(e)); return null; } }
   async function refreshHistory(signal?: AbortSignal) { const revision = ++historyRevision.current; setHistoryLoading(true); try { const next = await fetchWorkspaceBackups(signal); if (!signal?.aborted && revision === historyRevision.current) { const resolved = workspaceHistoryJob(next.jobs, latestJob.current); if (resolved && workspaceJobActive(resolved)) coordinator.observeWorkspaceJob(resolved); else { const tracked = coordinator.getSnapshot().workspaceJob; if (tracked?.phase === "running" && resolved?.id === tracked.id) await coordinator.finishWorkspaceJob(tracked.id, () => Promise.all([refreshCatalog(), refreshOverview()])); } if (!signal?.aborted && revision === historyRevision.current) { setHistory(next); setHistoryError(null); setJob(resolved); } } } catch (e) { if (!signal?.aborted && revision === historyRevision.current) setHistoryError(errorMessage(e)); } finally { if (!signal?.aborted && revision === historyRevision.current) setHistoryLoading(false); } }
@@ -389,11 +439,41 @@ export function WorkspaceManagementPage(props: WorkspaceManagementPageProps) {
   }, [props.active, props.request.id, catalog, operation]);
   useEffect(() => {
     if (!job || !workspaceJobActive(job)) return;
-    const controller = new AbortController(); let timer: ReturnType<typeof setTimeout>;
+    const { id, kind } = job, controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined, checking = false, failures = 0;
+    const stillTracking = () => !controller.signal.aborted && latestJob.current?.id === id && workspaceJobActive(latestJob.current);
     coordinator.observeWorkspaceJob(job);
-    const poll = async () => { try { const next = await fetchWorkspaceJob(job.id, controller.signal); if (controller.signal.aborted) return; setPollError(null); if (workspaceJobActive(next)) { setJob(next); timer = setTimeout(poll, 1200); } else { try { await coordinator.finishWorkspaceJob(next.id, () => Promise.all([refreshCatalog(), refreshOverview(), refreshHistory()])); } finally { setJob(next); } } } catch (e) { if (!controller.signal.aborted) setPollError(errorMessage(e)); } };
-    timer = setTimeout(poll, 800); return () => { controller.abort(); clearTimeout(timer); };
-  }, [job?.id, job?.status, pollVersion]);
+    const poll = async () => {
+      if (checking || !stillTracking()) return;
+      checking = true;
+      clearTimeout(timer);
+      if (failures) setStatusRetry({ jobId: id, checking: true });
+      try {
+        const next = await fetchWorkspaceJob(id, controller.signal);
+        if (!stillTracking()) return;
+        if (next.kind !== kind) throw new Error("Workspace response was incomplete.");
+        failures = 0;
+        if (statusRetryButton.current && document.activeElement === statusRetryButton.current) taskPanel.current?.focus({ preventScroll: true });
+        setStatusRetry(null);
+        if (workspaceJobActive(next)) {
+          setJob(next);
+          timer = setTimeout(poll, 1200);
+        } else {
+          try { await coordinator.finishWorkspaceJob(id, () => Promise.all([refreshCatalog(), refreshOverview(), refreshHistory()])); }
+          finally { if (stillTracking()) setJob(next); }
+        }
+      } catch {
+        if (!stillTracking()) return;
+        setStatusRetry({ jobId: id, checking: false });
+        timer = setTimeout(poll, Math.min(15_000, 1200 * 2 ** Math.min(failures++, 4)));
+      } finally {
+        checking = false;
+      }
+    };
+    checkTaskStatus.current = () => { void poll(); };
+    timer = setTimeout(poll, 800);
+    return () => { controller.abort(); clearTimeout(timer); checkTaskStatus.current = null; };
+  }, [job?.id, job?.status]);
   function selectEditor(workspace: WorkspaceRecord | null) {
     if (!workspace) focusName.current = true;
     setEditor(createWorkspaceMetadataDraft(workspace));
@@ -412,7 +492,12 @@ export function WorkspaceManagementPage(props: WorkspaceManagementPageProps) {
   }
   function discardThen(action: () => void) { if (dirty) setConfirmation({ kind: "discard", action }); else action(); }
   useLayoutEffect(() => {
-    if (props.active && tab === "workspaces" && focusName.current && nameInput.current) {
+    if (!props.active || tab !== "workspaces") return;
+    if (focusRestoredEditor.current && editorTitle.current) {
+      focusRestoredEditor.current = false;
+      editorTitle.current.focus({ preventScroll: true });
+      editorTitle.current.scrollIntoView({ block: "nearest", inline: "nearest" });
+    } else if (focusName.current && nameInput.current) {
       focusName.current = false;
       nameInput.current.focus({ preventScroll: true });
     }
@@ -551,7 +636,7 @@ export function WorkspaceManagementPage(props: WorkspaceManagementPageProps) {
   async function beginJob(source: BackupConfirmation) {
     const password = backupPassword || undefined;
     await perform("job", async () => {
-      setPollError(null); setRetrySource(source); setRetrySourceJobId(null);
+      setStatusRetry(null); setRetrySource(source); setRetrySourceJobId(null);
       const next = source.kind === "backup" ? await startWorkspaceBackup(password) : await restoreWorkspace(source.source, password);
       coordinator.observeWorkspaceJob(next); setRetrySourceJobId(next.id); setJob(next); clearBackupPassword(); setConfirmation(null);
       if (!workspaceJobActive(next)) await coordinator.finishWorkspaceJob(next.id, () => Promise.all([refreshCatalog(), refreshOverview(), refreshHistory()]));
@@ -589,93 +674,213 @@ export function WorkspaceManagementPage(props: WorkspaceManagementPageProps) {
   return <>
     <section className="workspace wm-page" hidden={!props.active} aria-labelledby="wm-page-title">
       <div className="wm-page-inner">
-        <header className="page-heading wm-page-heading"><div><h1 id="wm-page-title" ref={heading} tabIndex={-1}>{t("Workspace management")}</h1><p>{t("A dedicated space for every project.")}</p></div><div className="page-actions"><button type="button" className="btn ghost" onClick={props.onBack}><Icon name="back" render={render} />{t("Back to environments")}</button><button type="button" className="btn primary" disabled={!!operation || maintenance} onClick={newWorkspace}><Icon name="plus" render={render} />{t("New workspace")}</button></div></header>
-        <div className="wm-current-summary"><div className="wm-current-identity"><WorkspaceBadge workspace={current} render={render} /><div><small>{t("Current workspace")}</small><strong>{current?.name ?? t("Loading workspace…")}</strong></div><span className="wm-status-pill">{t("Local workspace")}</span></div><div className="wm-summary-metrics"><div><strong>{overview?.profileCount ?? "—"}</strong><span>{t("Environments")}</span></div><button type="button" disabled={!overview} onClick={props.onShowRunning}><strong>{overview?.runningCount ?? "—"}</strong><span><i className="wm-running-dot" />{t("Running environments")}</span></button><div><strong>{bytes(overview?.bytes ?? null)}</strong><span>{t("Workspace storage")}</span></div><div><strong>{historyError || historyLoading && !history.backups.length ? "—" : history.backups.length}</strong><span>{t("Backup history")}</span></div></div></div>
-        <nav className="wm-page-tabs" role="tablist" aria-label={t("Workspace sections")} onKeyDown={event => { if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return; event.preventDefault(); const next = event.key === "Home" ? "workspaces" : event.key === "End" ? "backups" : tab === "workspaces" ? "backups" : "workspaces"; changeTab(next); event.currentTarget.querySelector<HTMLButtonElement>(`#wm-tab-${next}`)?.focus(); }}><button id="wm-tab-workspaces" type="button" role="tab" aria-selected={tab === "workspaces"} aria-controls="wm-panel-workspaces" tabIndex={tab === "workspaces" ? 0 : -1} onClick={() => changeTab("workspaces")}><Icon name="layers" render={render} />{t("Workspaces")}<span>{catalog?.workspaces.filter(w => !w.archived).length ?? 0}</span></button><button id="wm-tab-backups" type="button" role="tab" aria-selected={tab === "backups"} aria-controls="wm-panel-backups" tabIndex={tab === "backups" ? 0 : -1} onClick={() => changeTab("backups")}><Icon name="archive" render={render} />{t("Backup and restore")}</button>{dirty && <span className="wm-draft-indicator">{t("Unsaved changes")}</span>}</nav>
+        <header className="page-heading wm-page-heading">
+          <div className="wm-page-heading-left">
+            <h1 id="wm-page-title" ref={heading} tabIndex={-1}>{t("Workspace management")}</h1>
+            {current && <span className="wm-head-pill accent"><span className="wm-head-pill-dot" style={{ backgroundColor: current.color }} aria-hidden="true" />{current.name}</span>}
+            {dirty && <span className="wm-draft-indicator">{t("Unsaved changes")}</span>}
+          </div>
+          <div className="page-actions">
+            <button type="button" className="btn" onClick={props.onBack}><Icon name="back" render={render} />{t("Back to environments")}</button>
+            <button type="button" className="btn primary" disabled={!!operation || maintenance} onClick={newWorkspace}><Icon name="plus" render={render} />{t("New workspace")}</button>
+          </div>
+        </header>
+        <div className="wm-current-summary">
+          <div className="wm-current-identity">
+            <WorkspaceBadge workspace={current} render={render} />
+            <div className="wm-kpi-meta"><small>{t("Current workspace")}</small><strong>{current?.name ?? t("Loading workspace…")}</strong></div>
+          </div>
+          <div className="wm-summary-metrics">
+            <div className="wm-summary-metric"><span>{t("Environments")}</span><strong>{overview?.profileCount ?? "—"}</strong></div>
+            <button type="button" className="wm-summary-metric" disabled={!overview} onClick={props.onShowRunning}>
+              <span><i className="wm-running-dot" aria-hidden="true" />{t("Running environments")}</span>
+              <strong>{overview?.runningCount ?? "—"}</strong>
+            </button>
+            <div className="wm-summary-metric"><span>{t("Workspace storage")}</span><strong>{bytes(overview?.bytes ?? null)}</strong></div>
+          </div>
+        </div>
+        <div className="wm-tabs-bar">
+          <nav className="wm-page-tabs" role="tablist" aria-label={t("Workspace sections")} onKeyDown={event => { if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return; event.preventDefault(); const next = event.key === "Home" ? "workspaces" : event.key === "End" ? "backups" : tab === "workspaces" ? "backups" : "workspaces"; changeTab(next); event.currentTarget.querySelector<HTMLButtonElement>(`#wm-tab-${next}`)?.focus(); }}><button id="wm-tab-workspaces" type="button" role="tab" aria-selected={tab === "workspaces"} aria-controls="wm-panel-workspaces" tabIndex={tab === "workspaces" ? 0 : -1} onClick={() => changeTab("workspaces")}><Icon name="layers" render={render} />{t("Workspaces")}<span className="wm-tab-count">{catalog?.workspaces.filter(w => !w.archived).length ?? 0}</span></button><button id="wm-tab-backups" type="button" role="tab" aria-selected={tab === "backups"} aria-controls="wm-panel-backups" tabIndex={tab === "backups" ? 0 : -1} onClick={() => changeTab("backups")}><Icon name="archive" render={render} />{t("Backup and restore")}{history.backups.length > 0 && <span className="wm-tab-count">{history.backups.length}</span>}</button></nav>
+        </div>
         <div className="wm-page-body">
           {error && !confirmation && <div className="wm-error" role="alert">{t(error)}</div>}{notice && <div className="wm-success" role="status"><Icon name="check" render={render} />{t(notice)}</div>}
           {(profileTaskActive || snapshot.nativeUpdateBusy) && <div className="wm-callout wm-batch-callout" role="status"><Icon name="layers" render={render} /><div><strong>{t(proxyActive ? "Proxy assignment in progress" : trashActive ? "Recycle bin operation in progress" : fileUpdateActive ? "File update in progress" : cookieActive ? "Cookie import in progress" : moveActive ? "Environment move in progress" : importActive ? "Environment import in progress" : batchActive ? "Environment batch task in progress" : "App update in progress")}</strong><p>{t(workspaceOperationMessage(snapshot))}</p><small>{t("You can keep browsing and editing workspace details.")}</small></div>{batchActive && props.onShowBatchTask && <button type="button" className="btn ghost xs" onClick={props.onShowBatchTask}>{t("View environment task")}</button>}</div>}
           {pending && <div className="wm-callout wm-pending"><Icon name="refresh" render={render} /><div><strong>{current?.name} → {catalog?.workspaces.find(w => w.id === pending.target)?.name ?? t("Workspace unavailable")}</strong><p>{t("A workspace switch is prepared. Restart to finish switching.")}</p></div><button type="button" className="btn" disabled={!!operation || restartBlocked || !workspaceDesktopAvailable()} onClick={() => { setError(null); setConfirmation({ kind: "restart", pending }); }}>{t("Retry restart")}</button><button type="button" className="btn ghost" disabled={!!operation} onClick={() => void perform("cancel", async () => { await cancelActivation(); if (catalog) acceptActiveId(catalog.currentId); setPendingRestart(null); setError(null); await refreshCatalog(); setNotice("Workspace switch cancelled."); })}>{t("Cancel workspace switch")}</button>{!workspaceDesktopAvailable() && <small>{t("Switching workspaces requires the desktop app.")}</small>}</div>}
           {maintenance && !pending && tab === "workspaces" && <div className="wm-callout"><Icon name="archive" render={render} /><span>{t("Wait for the workspace backup or restore task to finish before making changes.")}</span><button type="button" className="btn ghost xs" onClick={() => changeTab("backups")}>{t("View task")}</button></div>}
           <div id="wm-panel-workspaces" role="tabpanel" aria-labelledby="wm-tab-workspaces" hidden={tab !== "workspaces"} className="wm-workspaces-layout">
-            <aside className="wm-catalog wm-card"><div className="wm-card-heading"><h2>{t("Your workspaces")}</h2><span className="wm-count">{visibleWorkspaces.length}</span></div><label className="wm-search"><Icon name="search" render={render} /><input type="search" aria-label={t("Search workspaces")} placeholder={t("Search workspaces")} value={search} onChange={event => setSearch(event.target.value)} /></label><label className="wm-check wm-archive-filter"><input type="checkbox" checked={showArchived} onChange={event => setShowArchived(event.target.checked)} />{t("Show archived")}</label>
-              {catalogError && <div className="wm-error" role="alert">{t(catalogError)}<button type="button" onClick={() => void refreshCatalog()}>{t("Retry")}</button></div>}{loading && !catalog && <p className="wm-small" role="status">{t("Loading workspaces…")}</p>}
-              <div className="wm-catalog-list">{visibleWorkspaces.map(w => <button type="button" className={`wm-catalog-item${editingId === w.id ? " active" : ""}`} key={w.id} aria-pressed={editingId === w.id} disabled={!!operation} onClick={() => discardThen(() => selectEditor(w))}><WorkspaceBadge workspace={w} render={render} /><span><strong>{w.name}</strong><small>{t(w.archived ? "Archived" : w.id === catalog?.currentId ? "Current workspace" : "Local workspace")}</small></span>{w.id === catalog?.currentId && <span className="wm-current-dot" aria-hidden="true" />}</button>)}</div>
-              {!loading && !catalogError && !visibleWorkspaces.length && <div className="wm-empty wm-search-empty"><Icon name="search" render={render} /><strong>{t("No matching workspaces.")}</strong><p>{t("Try another name, or show archived workspaces.")}</p><button type="button" className="btn ghost xs" onClick={() => { setSearch(""); setShowArchived(true); }}>{t("Reset filters")}</button></div>}
-              <div className="wm-catalog-foot"><Icon name="drive" render={render} /><span>{t("Workspace data stays on this computer.")}</span></div>
+            <aside className="wm-catalog wm-card">
+              <div className="wm-card-heading"><div className="wm-card-title"><Icon name="layers" render={render} /><h2>{t("Your workspaces")}</h2></div><span className="wm-count">{visibleWorkspaces.length}</span></div>
+              <div className="wm-card-body">
+                <label className="wm-search"><Icon name="search" render={render} /><input type="search" aria-label={t("Search workspaces")} placeholder={t("Search workspaces")} value={search} onChange={event => setSearch(event.target.value)} /></label>
+                <label className="wm-check wm-archive-filter"><input type="checkbox" checked={showArchived} onChange={event => setShowArchived(event.target.checked)} /><span>{t("Show archived")}</span></label>
+                {catalogError && <div className="wm-error" role="alert">{t(catalogError)}<button type="button" onClick={() => void refreshCatalog()}>{t("Retry")}</button></div>}{loading && !catalog && <p className="wm-small" role="status">{t("Loading workspaces…")}</p>}
+                <div className="wm-catalog-list">{visibleWorkspaces.map(w => <button type="button" className={`wm-catalog-item${editingId === w.id ? " active" : ""}`} key={w.id} aria-pressed={editingId === w.id} disabled={!!operation} onClick={() => discardThen(() => selectEditor(w))}>
+                  <WorkspaceBadge workspace={w} render={render} />
+                  <span><strong>{w.name}</strong>{w.archived ? <small>{t("Archived")}</small> : w.id === catalog?.currentId && <small>{t("Current workspace")}</small>}</span>
+                  {w.id === catalog?.currentId && <span className="wm-current-dot" aria-hidden="true" />}
+                </button>)}</div>
+                {!loading && !catalogError && !visibleWorkspaces.length && <div className="wm-empty wm-search-empty"><Icon name="search" render={render} /><strong>{t("No matching workspaces.")}</strong><p>{t("Try another name, or show archived workspaces.")}</p><button type="button" className="btn ghost xs" onClick={() => { setSearch(""); setShowArchived(true); }}>{t("Reset filters")}</button></div>}
+              </div>
             </aside>
             <div className="wm-editor">
-              <section className="wm-card wm-identity-card"><form onSubmit={event => { event.preventDefault(); void saveMetadata(); }}><div className="wm-editor-title"><WorkspaceBadge workspace={draft} render={render} /><div><h2>{editingId ? draft.name.trim() || base.name : t("Create a workspace")}</h2><p>{t(editingId ? "Workspace details" : "Choose a name and a visual identity for this workspace.")}</p></div>{editing && <span className="wm-status-pill">{t(editing.archived ? "Archived" : editing.id === catalog?.currentId ? "Current workspace" : "Local workspace")}</span>}</div>
-                <label className="fld"><span>{t("Workspace name")}</span><input ref={nameInput} value={draft.name} maxLength={40} disabled={!!operation} required placeholder={t("For example: Client A or Personal projects")} onChange={event => changeDraft({ name: event.target.value })} /></label>
-                <div className="wm-identity-options"><fieldset className="wm-choice-field"><legend>{t("Workspace icon")}</legend><div className="wm-icon-choices">{WORKSPACE_ICONS.map(icon => <button type="button" key={icon} disabled={!!operation} aria-pressed={draft.icon === icon} aria-label={t(ICON_LABELS[icon])} onClick={() => changeDraft({ icon })}><Icon name={icon} render={render} /></button>)}</div></fieldset><fieldset className="wm-choice-field"><legend>{t("Workspace color")}</legend><div className="wm-color-choices">{WORKSPACE_COLORS.map(color => <button type="button" key={color} style={{ backgroundColor: color }} disabled={!!operation} aria-pressed={draft.color === color} aria-label={t(COLOR_LABELS[color] ?? "Purple")} onClick={() => changeDraft({ color })}>{draft.color === color && <Icon name="check" render={render} />}</button>)}</div></fieldset></div>
-                {missingEditor && <div className="wm-warning" role="status">{t("The workspace is unavailable. Choose another workspace to continue.")}</div>}
-                {metadataReview && latestMetadata && needsReview && <section className="wm-metadata-review" aria-labelledby="wm-metadata-review-title">
-                  <div role="status"><h3 id="wm-metadata-review-title">{t("Workspace details changed")}</h3><p>{t("Review the saved details before saving your draft.")}</p></div>
-                  <dl>{metadataReview.changedFields.map(field => <div key={field}>
-                    <dt>{t(METADATA_LABELS[field])}</dt>
-                    <dd>{field === "name" ? latestMetadata.name : field === "icon" ? t(ICON_LABELS[latestMetadata.icon]) : t(COLOR_LABELS[latestMetadata.color] ?? "Purple")}</dd>
-                    {metadataReview.conflicts.includes(field) && <dd className="wm-metadata-conflict">{t("This field also changed in your draft.")}</dd>}
-                  </div>)}</dl>
-                  <div className="wm-metadata-review-actions"><button type="button" className="btn ghost" disabled={!!operation} onClick={() => reviewMetadata(false)}>{t("Use saved details")}</button><button type="button" className="btn" disabled={!!operation} onClick={() => reviewMetadata(true)}>{t("Keep my edits")}</button></div>
-                </section>}
-                <div className="wm-form-actions"><span className="wm-save-hint">{t(dirty ? "Your draft is kept when you leave this page." : "Each workspace has separate environments, groups, scripts, and extensions.")}</span>{dirty && !needsReview && !missingEditor && <button type="button" className="btn ghost" disabled={!!operation} onClick={() => { selectEditor(editing ?? null); focusName.current = true; }}>{t("Reset changes")}</button>}<button type="submit" className="btn primary" disabled={savingDisabled}>{t(operation === "save" ? "Saving…" : editingId ? "Save changes" : "Create workspace")}</button></div>
+              <section className="wm-card wm-identity-card"><form onSubmit={event => { event.preventDefault(); void saveMetadata(); }}>
+                <div className="wm-card-heading">
+                  <div className="wm-editor-title"><WorkspaceBadge workspace={draft} render={render} /><h2 ref={editorTitle} tabIndex={-1}>{editingId ? draft.name.trim() || base.name : t("Create a workspace")}</h2>{editing?.id === catalog?.currentId && <span className="wm-status-pill accent">{t("Current workspace")}</span>}{editing?.archived && <span className="wm-status-pill">{t("Archived")}</span>}</div>
+                  <div className="wm-form-actions">{dirty && !needsReview && !missingEditor && <button type="button" className="btn xs ghost" disabled={!!operation} onClick={() => { selectEditor(editing ?? null); focusName.current = true; }}>{t("Reset changes")}</button>}<button type="submit" className="btn xs primary" disabled={savingDisabled}>{t(operation === "save" ? "Saving…" : editingId ? "Save changes" : "Create workspace")}</button></div>
+                </div>
+                <div className="wm-card-body">
+                  <label className="fld"><span>{t("Workspace name")}</span><input ref={nameInput} value={draft.name} maxLength={40} disabled={!!operation} required placeholder={t("For example: Client A or Personal projects")} onChange={event => changeDraft({ name: event.target.value })} /></label>
+                  <div className="wm-identity-options"><fieldset className="wm-choice-field"><legend>{t("Workspace icon")}</legend><div className="wm-icon-choices">{WORKSPACE_ICONS.map(icon => <button type="button" key={icon} disabled={!!operation} aria-pressed={draft.icon === icon} aria-label={t(ICON_LABELS[icon])} onClick={() => changeDraft({ icon })}><Icon name={icon} render={render} /></button>)}</div></fieldset><fieldset className="wm-choice-field"><legend>{t("Workspace color")}</legend><div className="wm-color-choices">{WORKSPACE_COLORS.map(color => <button type="button" key={color} style={{ backgroundColor: color }} disabled={!!operation} aria-pressed={draft.color === color} aria-label={t(COLOR_LABELS[color] ?? "Purple")} onClick={() => changeDraft({ color })}>{draft.color === color && <Icon name="check" render={render} />}</button>)}</div></fieldset></div>
+                  {missingEditor && <div className="wm-warning" role="status">{t("The workspace is unavailable. Choose another workspace to continue.")}</div>}
+                  {metadataReview && latestMetadata && needsReview && <section className="wm-metadata-review" aria-labelledby="wm-metadata-review-title">
+                    <div role="status"><h3 id="wm-metadata-review-title">{t("Workspace details changed")}</h3><p>{t("Review the saved details before saving your draft.")}</p></div>
+                    <dl>{metadataReview.changedFields.map(field => <div key={field}>
+                      <dt>{t(METADATA_LABELS[field])}</dt>
+                      <dd>{field === "name" ? latestMetadata.name : field === "icon" ? t(ICON_LABELS[latestMetadata.icon]) : t(COLOR_LABELS[latestMetadata.color] ?? "Purple")}</dd>
+                      {metadataReview.conflicts.includes(field) && <dd className="wm-metadata-conflict">{t("This field also changed in your draft.")}</dd>}
+                    </div>)}</dl>
+                    <div className="wm-metadata-review-actions"><button type="button" className="btn ghost" disabled={!!operation} onClick={() => reviewMetadata(false)}>{t("Use saved details")}</button><button type="button" className="btn" disabled={!!operation} onClick={() => reviewMetadata(true)}>{t("Keep my edits")}</button></div>
+                  </section>}
+                  {dirty && <div className="wm-note-box"><Icon name="info" render={render} /><span className="wm-save-hint">{t("Your draft is kept when you leave this page.")}</span></div>}
+                </div>
               </form></section>
-              {editing && <><section className="wm-card wm-data-card"><div className="wm-card-heading"><h2>{t(editing.id === catalog?.currentId ? "Current workspace data" : "Independent local workspace")}</h2>{editing.id !== catalog?.currentId && !editing.archived && <button type="button" className="btn" disabled={!!operation || maintenance || transitionBlocked} onClick={() => void prepareActivation(editing)}><Icon name="open" render={render} />{t("Switch to this workspace")}</button>}</div>
-                <div className="wm-record-meta"><span><small>{t("Created")}</small><strong>{date(editing.createdAt)}</strong></span><span><small>{t("Last opened")}</small><strong>{date(editing.lastOpenedAt)}</strong></span></div>
-                {editing.id === catalog?.currentId ? <>{overviewError && <div className="wm-error" role="alert">{t(overviewError)}<button type="button" onClick={() => void refreshOverview()}>{t("Retry")}</button></div>}{!overview && !overviewError && <p className="wm-small" role="status">{t("Calculating storage…")}</p>}{overview && <><div className="wm-storage-row"><div><span>{t("In Trash")}</span><strong>{overview.trashCount}</strong></div><div><span>{t("Disk space available")}</span><strong>{bytes(overview.freeBytes)}</strong></div></div><div className="wm-folder-row"><div><Icon name="folder" render={render} /><span className="wm-path" title={overview.root}>{overview.root}</span></div><button type="button" className="btn xs" onClick={() => void location("data")} disabled={!!operation}>{t("Open data folder")}<Icon name="open" render={render} /></button></div></>}</> : <p className="wm-card-description">{t("Each workspace has separate environments, groups, scripts, and extensions.")}</p>}
-              </section><section className="wm-card wm-archive-control"><div><h3>{t(editing.archived ? "Unarchive workspace" : "Archive workspace")}</h3><p>{t(editing.id === "default" ? "The initial workspace preserves existing data and cannot be archived." : editing.id === catalog?.currentId ? "Switch to another workspace before archiving this one." : "Archiving keeps all workspace data. You can unarchive it later.")}</p></div><button type="button" className="btn" disabled={!!operation || maintenance || editing.id === "default" || editing.id === catalog?.currentId || editing.id === catalog?.activeId} onClick={() => discardThen(() => void archiveRecord(editing))}><Icon name="archive" render={render} />{t(editing.archived ? "Unarchive workspace" : "Archive workspace")}</button></section></>}
+              {editing && <><section className="wm-card wm-data-card">
+                <div className="wm-card-heading">
+                  <div className="wm-card-title"><Icon name="folder" render={render} /><h2>{t(editing.id === catalog?.currentId ? "Current workspace data" : "Independent local workspace")}</h2></div>
+                  {editing.id === catalog?.currentId && overview && <button type="button" className="btn xs" onClick={() => void location("data")} disabled={!!operation}>{t("Open data folder")}<Icon name="open" render={render} /></button>}
+                  {editing.id !== catalog?.currentId && !editing.archived && <button type="button" className="btn xs primary" disabled={!!operation || maintenance || transitionBlocked} onClick={() => void prepareActivation(editing)}><Icon name="open" render={render} />{t("Switch to this workspace")}</button>}
+                </div>
+                <div className="wm-card-body">
+                  <div className="wm-record-meta">
+                    <span className="wm-meta-tile"><small>{t("Created")}</small><strong>{date(editing.createdAt)}</strong></span>
+                    <span className="wm-meta-tile"><small>{t("Last opened")}</small><strong>{date(editing.lastOpenedAt)}</strong></span>
+                    {editing.id === catalog?.currentId && overview && <>
+                      <span className="wm-meta-tile"><small>{t("In Trash")}</small><strong>{overview.trashCount}</strong></span>
+                      <span className="wm-meta-tile"><small>{t("Disk space available")}</small><strong>{bytes(overview.freeBytes)}</strong></span>
+                    </>}
+                  </div>
+                  {editing.id === catalog?.currentId ? <>
+                    {overviewError && <div className="wm-error" role="alert">{t(overviewError)}<button type="button" onClick={() => void refreshOverview()}>{t("Retry")}</button></div>}
+                    {!overview && !overviewError && <p className="wm-small" role="status">{t("Calculating storage…")}</p>}
+                    {overview && <div className="wm-folder-row"><div><Icon name="folder" render={render} /><span className="wm-path" title={overview.root}>{overview.root}</span></div><span className="wm-status-pill">{bytes(overview.bytes)}</span></div>}
+                  </> : <div className="wm-note-box"><Icon name="info" render={render} /><span className="wm-card-description">{t("Each workspace has separate environments, groups, scripts, and extensions.")}</span></div>}
+                </div>
+              </section><section className="wm-card wm-archive-control">
+                <div className="wm-card-heading">
+                  <div>
+                    <div className="wm-card-title"><Icon name="archive" render={render} /><h3>{t(editing.archived ? "Unarchive workspace" : "Archive workspace")}</h3></div>
+                    <p className="wm-card-description">{t(editing.id === "default" ? "The initial workspace preserves existing data and cannot be archived." : editing.id === catalog?.currentId ? "Switch to another workspace before archiving this one." : "Archiving keeps all workspace data. You can unarchive it later.")}</p>
+                  </div>
+                  <button type="button" className="btn" disabled={!!operation || maintenance || editing.id === "default" || editing.id === catalog?.currentId || editing.id === catalog?.activeId} onClick={() => discardThen(() => void archiveRecord(editing))}><Icon name="archive" render={render} />{t(editing.archived ? "Unarchive workspace" : "Archive workspace")}</button>
+                </div>
+              </section></>}
             </div>
           </div>
           <div id="wm-panel-backups" role="tabpanel" aria-labelledby="wm-tab-backups" hidden={tab !== "backups"} className="wm-backup-layout">
-            <div className="wm-backup-main"><div className="wm-backup-action-grid">
-              <section className="wm-card wm-backup-action"><span className="wm-action-icon"><Icon name="download" render={render} /></span><h2>{t("Backup your workspace")}</h2><p>{t("Create an encrypted copy of your current workspace.")}</p><button type="button" className="btn primary" disabled={backupBlocked} onClick={() => showBackupConfirmation({ kind: "backup" })}>{t("Create full backup")}</button></section>
-              <section className="wm-card wm-backup-action"><span className="wm-action-icon is-restore"><Icon name="upload" render={render} /></span><h2>{t("Restore a workspace")}</h2><p>{t("Import a backup into a new, independent workspace.")}</p><button type="button" className="btn" disabled={!!operation || maintenance || transitionBlocked} onClick={() => { setError(null); fileInput.current?.click(); }}>{t("Restore from file")}</button><input ref={fileInput} type="file" accept=".mqbackup,application/octet-stream" hidden onChange={event => { const file = event.target.files?.[0]; if (file) showBackupConfirmation({ kind: "restore", source: file, name: file.name }); event.target.value = ""; }} /></section>
-            </div>
-              {overviewError && <div className="wm-error">{t(overviewError)}<button type="button" onClick={() => void refreshOverview()}>{t("Retry")}</button></div>}{overview && (overview.runningCount > 0 || overview.scriptRunning) && <div className="wm-callout"><Icon name="alert" render={render} /><span>{t("Stop running browsers and scripts before creating a full backup.")}</span><button type="button" className="btn ghost xs" onClick={props.onShowRunning}>{t("View running environments")}</button></div>}
-              {job && <section className={`wm-job wm-job-${job.status}`} aria-live="polite"><div className="wm-job-heading"><strong>{t(job.kind === "backup" ? "Backup task" : "Restore task")}</strong><span>{t(job.status === "succeeded" ? "Completed" : job.status === "failed" ? "Failed" : job.status === "queued" ? "Waiting to start" : "In progress")}</span></div>{workspaceJobActive(job) && <><p>{t(PHASE_LABELS[job.phase] ?? "In progress")}</p>{workspaceJobPercent(job) === null ? <progress max={100} aria-label={t("Workspace task progress")} /> : <progress max={100} value={workspaceJobPercent(job)!} aria-label={t("Workspace task progress")} />}<small>{workspaceJobPercent(job) === null ? t("Preparing…") : `${workspaceJobPercent(job)}%`}</small></>}{job.status === "failed" && <><p>{t(job.error ?? "Workspace request failed.")}</p>{retryJobSource && <button type="button" className="btn" disabled={!!operation || transitionBlocked} onClick={() => showBackupConfirmation(retryJobSource)}>{t("Retry task")}</button>}{!retryJobSource && <p>{t("Choose the backup file again to retry restoration.")}</p>}</>}{job.status === "succeeded" && <p>{t(job.kind === "restore" ? "Restored as a new workspace. Your current workspace was not changed." : "Backup created and verified.")}</p>}{restoredWorkspace && <button type="button" className="btn" onClick={() => discardThen(() => { selectEditor(restoredWorkspace); setTab("workspaces"); })}>{t("View restored workspace")}</button>}{pollError && <div className="wm-error">{t(pollError)}<button type="button" onClick={() => { setPollError(null); setPollVersion(value => value + 1); }}>{t("Retry status check")}</button></div>}</section>}
-              <section className="wm-card wm-history-card"><div className="wm-history-heading"><div><h2>{t("Backup history")}</h2><span className="wm-count">{history.backups.length}</span></div><button type="button" className="btn ghost xs" disabled={historyLoading} onClick={() => void refreshHistory()}><Icon name="refresh" render={render} />{t("Refresh")}</button></div>{historyError && <div className="wm-error" role="alert">{t(historyError)}<button type="button" onClick={() => void refreshHistory()}>{t("Retry")}</button></div>}{historyLoading && !history.backups.length && <p className="wm-small" role="status">{t("Loading backup history…")}</p>}{!historyLoading && !historyError && !history.backups.length && <div className="wm-empty"><span className="wm-empty-tile"><Icon name="archive" render={render} /></span><strong>{t("No backups yet")}</strong><p>{t("Create a full backup to keep a recoverable copy of this workspace.")}</p></div>}
-                <div className="wm-backup-history">{history.backups.map(backup => <article className="wm-backup-row" key={backup.id}><span className="wm-backup-file-icon"><Icon name="archive" render={render} /></span><div><strong>{backup.name}</strong><small>{date(backup.createdAt)} · {bytes(backup.bytes)} · {t("{count} environments", { count: backup.profileCount })} · {t(backup.encrypted ? "Encrypted backup" : "Unencrypted backup")}</small></div><div className="wm-backup-row-actions"><button type="button" className="btn xs" disabled={!!operation} onClick={() => void perform("download", async () => { const result = await downloadWorkspaceBackup(backup.id); setNotice(result === "saved" ? "Backup saved." : result === "cancelled" ? "Save cancelled." : "Download requested."); })}><Icon name="download" render={render} />{t("Download")}</button><button type="button" className="btn xs" disabled={!!operation || maintenance || transitionBlocked} onClick={() => showBackupConfirmation({ kind: "restore", source: { backupId: backup.id }, name: backup.name, encrypted: backup.encrypted === true })}>{t("Restore as new")}</button></div></article>)}</div>
+            <div className="wm-backup-main">
+              {overviewError && <div className="wm-error">{t(overviewError)}<button type="button" onClick={() => void refreshOverview()}>{t("Retry")}</button></div>}{overview && (overview.runningCount > 0 || overview.scriptRunning) && <div className="wm-callout"><Icon name="alert" render={render} /><span>{t("Stop running browsers and scripts before creating a full backup.")}</span><button type="button" className="btn xs" onClick={props.onShowRunning}>{t("View running environments")}</button></div>}
+              <div className="wm-backup-action-grid">
+              <section className="wm-card wm-backup-action">
+                <div className="wm-card-heading"><div className="wm-card-title"><span className="wm-action-icon"><Icon name="download" render={render} /></span><h2>{t("Backup your workspace")}</h2></div></div>
+                <div className="wm-card-body">
+                  <p>{t("Create an encrypted copy of your current workspace.")}</p>
+                  <div><button type="button" className="btn primary" disabled={backupBlocked} onClick={() => showBackupConfirmation({ kind: "backup" })}>{t("Create full backup")}</button></div>
+                </div>
               </section>
-            </div><aside className="wm-card wm-backup-guide"><WorkspaceBackupIntro renderIcon={render} /><button type="button" className="btn ghost" disabled={!!operation} onClick={() => void location("backups")}><Icon name="folder" render={render} />{t("Open backup folder")}<Icon name="open" render={render} /></button></aside>
+              <section className="wm-card wm-backup-action">
+                <div className="wm-card-heading"><div className="wm-card-title"><span className="wm-action-icon is-restore"><Icon name="upload" render={render} /></span><h2>{t("Restore a workspace")}</h2></div></div>
+                <div className="wm-card-body">
+                  <p>{t("Import a backup into a new, independent workspace.")}</p>
+                  <div><button type="button" className="btn" disabled={!!operation || maintenance || transitionBlocked} onClick={() => { setError(null); fileInput.current?.click(); }}>{t("Restore from file")}</button></div>
+                  <input ref={fileInput} type="file" accept=".mqbackup,application/octet-stream" hidden onChange={event => { const file = event.target.files?.[0]; if (file) showBackupConfirmation({ kind: "restore", source: file, name: file.name }); event.target.value = ""; }} />
+                </div>
+              </section>
+            </div>
+              {job && <section ref={taskPanel} tabIndex={-1} className={`wm-job wm-job-${job.status}`} aria-live="polite" aria-labelledby={taskHeadingId}>
+                <div className="wm-job-heading">
+                  <span className="wm-job-icon"><Icon name={job.status === "succeeded" ? "check" : job.status === "failed" || statusUnavailable ? "alert" : "archive"} render={render} /></span>
+                  <h2 id={taskHeadingId}>{t(job.kind === "backup" ? "Backup task" : "Restore task")}</h2>
+                  <span className="wm-job-status">{t(statusUnavailable ? "Unavailable" : job.status === "succeeded" ? "Completed" : job.status === "failed" ? "Failed" : job.status === "queued" ? "Waiting to start" : "In progress")}</span>
+                </div>
+                {activeJob && !statusUnavailable && <>
+                  <p>{t(PHASE_LABELS[job.phase] ?? "In progress")}</p>
+                  <progress max={100} value={workspaceJobPercent(job) ?? undefined} aria-label={t("Workspace task progress")} />
+                  <small>{workspaceJobPercent(job) === null ? t("Preparing…") : `${workspaceJobPercent(job)}%`}</small>
+                </>}
+                {statusUnavailable && <div className="wm-error">
+                  <span>{t("Task status unavailable. Retrying automatically…")}</span>
+                  <button ref={statusRetryButton} type="button" aria-disabled={statusRetry?.checking || undefined} onClick={() => checkTaskStatus.current?.()}>{t("Retry status check")}</button>
+                </div>}
+                {job.status === "failed" && <>
+                  <p>{t(job.error ?? "Workspace request failed.")}</p>
+                  {retryJobSource
+                    ? <button type="button" className="btn wm-job-action" disabled={!!operation || transitionBlocked} onClick={() => showBackupConfirmation(retryJobSource)}>{t("Retry task")}</button>
+                    : <p>{t("Choose the backup file again to retry restoration.")}</p>}
+                </>}
+                {restoredWorkspace && <strong className="wm-job-result-name">{restoredWorkspace.name}</strong>}
+                {job.status === "succeeded" && <p>{t(job.kind === "restore" ? "Restored as a new workspace. Your current workspace was not changed." : "Backup created and verified.")}</p>}
+                {restoredWorkspace && <button type="button" className="btn wm-job-action" onClick={() => discardThen(() => {
+                  focusRestoredEditor.current = true;
+                  selectEditor(restoredWorkspace);
+                  setTab("workspaces");
+                })}>{t("View restored workspace")}</button>}
+              </section>}
+              <section className="wm-card wm-history-card">
+                <div className="wm-history-heading wm-card-heading"><div className="wm-card-title"><Icon name="archive" render={render} /><h2>{t("Backup history")}</h2><span className="wm-count">{history.backups.length}</span></div><button type="button" className="btn ghost xs" disabled={historyLoading} onClick={() => void refreshHistory()}><Icon name="refresh" render={render} />{t("Refresh")}</button></div>
+                <div className="wm-card-body">
+                  {historyError && <div className="wm-error" role="alert">{t(historyError)}<button type="button" onClick={() => void refreshHistory()}>{t("Retry")}</button></div>}{historyLoading && !history.backups.length && <p className="wm-small" role="status">{t("Loading backup history…")}</p>}{!historyLoading && !historyError && !history.backups.length && <div className="wm-empty"><span className="wm-empty-tile"><Icon name="archive" render={render} /></span><strong>{t("No backups yet")}</strong></div>}
+                  {history.backups.length > 0 && <div className="wm-backup-history">{history.backups.map(backup => <article className="wm-backup-row" key={backup.id}><span className="wm-backup-file-icon"><Icon name="archive" render={render} /></span><div className="wm-backup-row-copy"><strong>{backup.name}</strong><small>{date(backup.createdAt)} · {bytes(backup.bytes)} · {t("{count} environments", { count: backup.profileCount })}</small></div><div className="wm-backup-row-actions"><span className={`wm-status-pill${backup.encrypted ? " ok" : ""}`}>{t(backup.encrypted ? "Encrypted backup" : "Unencrypted backup")}</span><button type="button" className="btn xs" disabled={!!operation} onClick={() => void perform("download", async () => { const result = await downloadWorkspaceBackup(backup.id); setNotice(result === "saved" ? "Backup saved." : result === "cancelled" ? "Save cancelled." : "Download requested."); })}><Icon name="download" render={render} />{t("Download")}</button><button type="button" className="btn xs" disabled={!!operation || maintenance || transitionBlocked} onClick={() => showBackupConfirmation({ kind: "restore", source: { backupId: backup.id }, name: backup.name, encrypted: backup.encrypted === true })}>{t("Restore as new")}</button></div></article>)}</div>}
+                </div>
+              </section>
+            </div>
+            <aside className="wm-card wm-backup-guide">
+              <div className="wm-card-heading"><div className="wm-card-title"><Icon name="info" render={render} /><h2>{t("Full workspace backups")}</h2></div></div>
+              <div className="wm-card-body">
+                <WorkspaceBackupIntro renderIcon={render} />
+                <button type="button" className="btn" disabled={!!operation} onClick={() => void location("backups")}><Icon name="folder" render={render} />{t("Open backup folder")}<Icon name="open" render={render} /></button>
+              </div>
+            </aside>
           </div>
         </div>
       </div>
     </section>
     {typeof document !== "undefined" && createPortal(<MotionPresence present={props.active && !!confirmation}>{() => confirmation && <div className="wm-confirm-backdrop">
       <section className="wm-confirm" ref={confirmPanel} role="dialog" aria-modal="true" aria-labelledby="wm-confirm-title" tabIndex={-1}>
-        <h2 id="wm-confirm-title">{t(confirmation.kind === "backup" ? "Create encrypted backup" : confirmation.kind === "discard" ? "Discard unsaved changes?" : confirmation.kind === "restore" ? "Restore as a new workspace?" : confirmation.kind === "restart" ? "Restart the desktop app?" : "Switch workspace?")}</h2>
-        {confirmation.kind === "discard" && <p>{t("Your workspace changes have not been saved.")}</p>}
-        {confirmation.kind === "restore" && <><p className="wm-confirm-filename">{confirmation.name}</p><p>{t("This creates a separate workspace. Your current workspace and its data stay intact.")}</p><p className="wm-small">{t("System protection may require you to sign in again after restoring on another computer.")}</p></>}
-        {confirmation.kind === "restore" && confirmation.encrypted === false && <p className="wm-small wm-backup-security">{t("Backups contain login and account data and are not password-encrypted. Keep backup files safe.")}</p>}
-        {(confirmation.kind === "backup" || confirmation.kind === "restore" && confirmation.encrypted !== false) && <div className="wm-backup-password" onKeyDown={event => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); confirmAction(); } }}>
-          <label className="fld"><span>{t("Backup password")}</span><input type="password" autoComplete={confirmation.kind === "backup" ? "new-password" : "off"} maxLength={1024} value={backupPassword} onChange={event => setBackupPassword(event.target.value)} aria-describedby="wm-backup-password-hint" disabled={!!operation} /></label>
-          {confirmation.kind === "backup" && <label className="fld"><span>{t("Confirm backup password")}</span><input type="password" autoComplete="new-password" maxLength={1024} value={repeatedPassword} onChange={event => setRepeatedPassword(event.target.value)} aria-invalid={passwordMismatch || undefined} disabled={!!operation} /></label>}
-          <p id="wm-backup-password-hint" className="wm-small">{t(backupPassword && !passwordValid ? "Backup password must contain at least 10 characters and at most 1024 UTF-8 bytes." : confirmation.kind === "backup" ? "Use at least 10 characters. Keep your password somewhere safe." : restorePasswordRequired ? "Enter the password for this encrypted backup." : "Enter the password if this backup is encrypted.")}</p>
-          {passwordMismatch && <p className="wm-small" role="status">{t("Backup passwords do not match.")}</p>}
-        </div>}
-        {confirmation.kind === "restart" && <p>{t("Restart to finish switching to {name}.", { name: restartingTarget?.name ?? t("Workspace unavailable") })}</p>}
-        {confirmation.kind === "activate" && <>
-          <p>{t("Switch to {name} and restart the desktop app.", { name: confirmation.target.name })}</p>
-          {!confirmation.overview && !overviewError && <p role="status">{t("Checking running environments…")}</p>}
-          {overviewError && <div className="wm-error">{t(overviewError)}<button type="button" onClick={() => void prepareActivation(confirmation.target)}>{t("Retry")}</button></div>}
-          {confirmation.overview && <>
-            <p>{t("{count} browser(s) are running in the current workspace.", { count: confirmation.overview.runningCount })}</p>
-            {confirmation.overview.scriptRunning && <p>{t("One or more scripts are running.")}</p>}
-            {activationNeedsConsent && <label className="wm-check wm-switch-consent"><input type="checkbox" checked={closeRunning} onChange={event => setCloseRunning(event.target.checked)} />{t("Close running browsers and stop scripts before switching.")}</label>}
-            {confirmation.overview.backupBusy && <p className="wm-warning">{t("Wait for the workspace backup or restore task to finish before switching.")}</p>}
+        <div className="wm-confirm-head"><h2 id="wm-confirm-title">{t(confirmation.kind === "backup" ? "Create encrypted backup" : confirmation.kind === "discard" ? "Discard unsaved changes?" : confirmation.kind === "restore" ? "Restore as a new workspace?" : confirmation.kind === "restart" ? "Restart the desktop app?" : "Switch workspace?")}</h2></div>
+        <div className="wm-confirm-body">
+          {confirmation.kind === "discard" && <p>{t("Your workspace changes have not been saved.")}</p>}
+          {confirmation.kind === "restore" && <><p className="wm-confirm-filename">{confirmation.name}</p><p>{t("This creates a separate workspace. Your current workspace and its data stay intact.")}</p><p className="wm-small">{t("System protection may require you to sign in again after restoring on another computer.")}</p></>}
+          {confirmation.kind === "restore" && confirmation.encrypted === false && <p className="wm-warning">{t("Backups contain login and account data and are not password-encrypted. Keep backup files safe.")}</p>}
+          {(confirmation.kind === "backup" || confirmation.kind === "restore" && confirmation.encrypted !== false) && <div className="wm-backup-password" onKeyDown={event => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); confirmAction(); } }}>
+            <label className="fld"><span>{t("Backup password")}</span><input type="password" autoComplete={confirmation.kind === "backup" ? "new-password" : "off"} maxLength={1024} value={backupPassword} onChange={event => setBackupPassword(event.target.value)} aria-describedby="wm-backup-password-hint" disabled={!!operation} /></label>
+            {confirmation.kind === "backup" && <label className="fld"><span>{t("Confirm backup password")}</span><input type="password" autoComplete="new-password" maxLength={1024} value={repeatedPassword} onChange={event => setRepeatedPassword(event.target.value)} aria-invalid={passwordMismatch || undefined} disabled={!!operation} /></label>}
+            <p id="wm-backup-password-hint" className="wm-small">{t(backupPassword && !passwordValid ? "Backup password must contain at least 10 characters and at most 1024 UTF-8 bytes." : confirmation.kind === "backup" ? "Use at least 10 characters. Keep your password somewhere safe." : restorePasswordRequired ? "Enter the password for this encrypted backup." : "Enter the password if this backup is encrypted.")}</p>
+            {passwordMismatch && <p className="wm-small" role="status">{t("Backup passwords do not match.")}</p>}
+          </div>}
+          {confirmation.kind === "restart" && <p>{t("Restart to finish switching to {name}.", { name: restartingTarget?.name ?? t("Workspace unavailable") })}</p>}
+          {confirmation.kind === "activate" && <>
+            <p>{t("Switch to {name} and restart the desktop app.", { name: confirmation.target.name })}</p>
+            {!confirmation.overview && !overviewError && <p role="status">{t("Checking running environments…")}</p>}
+            {overviewError && <div className="wm-error">{t(overviewError)}<button type="button" onClick={() => void prepareActivation(confirmation.target)}>{t("Retry")}</button></div>}
+            {confirmation.overview && <>
+              <p>{t("{count} browser(s) are running in the current workspace.", { count: confirmation.overview.runningCount })}</p>
+              {confirmation.overview.scriptRunning && <p>{t("One or more scripts are running.")}</p>}
+              {activationNeedsConsent && <label className="wm-check wm-switch-consent"><input type="checkbox" checked={closeRunning} onChange={event => setCloseRunning(event.target.checked)} /><span>{t("Close running browsers and stop scripts before switching.")}</span></label>}
+              {confirmation.overview.backupBusy && <p className="wm-warning">{t("Wait for the workspace backup or restore task to finish before switching.")}</p>}
+            </>}
+            {!workspaceDesktopAvailable() && <p className="wm-warning">{t("Switching workspaces requires the desktop app.")}</p>}
           </>}
-          {!workspaceDesktopAvailable() && <p className="wm-warning">{t("Switching workspaces requires the desktop app.")}</p>}
-        </>}
-        {restartReview && restartDraftLabels.size > 0 && <div className="wm-restart-drafts wm-warning" role="status">
-          <p>{t("Restarting the app clears these unsaved drafts.")}</p>
-          <ul>{[...restartDraftLabels].map(label => <li key={label}>{t(DESKTOP_DRAFT_LABELS[label])}</li>)}</ul>
-        </div>}
-        {restartDraftBusy && !operation && <p className="wm-warning" role="status">{t("Wait for the current changes to finish before restarting.")}</p>}
-        {profileTaskActive && confirmation.kind !== "discard" && <p className="wm-warning" role="status">{t(workspaceOperationMessage(snapshot))}</p>}
-        {error && <div className="wm-error" role="alert">{t(error)}</div>}
-        <div className="wm-confirm-actions">
-          <button type="button" className="btn" disabled={!!operation} onClick={closeConfirmation}>{t(confirmation.kind === "discard" ? "Keep editing" : "Cancel")}</button>
-          <button type="button" className="btn primary" disabled={confirmationDisabled} onClick={confirmAction}>{t(operation ? "Working…" : confirmation.kind === "backup" ? "Create encrypted backup" : confirmation.kind === "discard" ? "Discard changes" : confirmation.kind === "restore" ? "Restore as new workspace" : confirmation.kind === "restart" ? "Restart desktop app" : "Switch and restart")}</button>
+          {restartReview && restartDraftLabels.size > 0 && <div className="wm-restart-drafts wm-warning" role="status">
+            <p>{t("Restarting the app clears these unsaved drafts.")}</p>
+            <ul>{[...restartDraftLabels].map(label => <li key={label}>{t(DESKTOP_DRAFT_LABELS[label])}</li>)}</ul>
+          </div>}
+          {restartDraftBusy && !operation && <p className="wm-warning" role="status">{t("Wait for the current changes to finish before restarting.")}</p>}
+          {profileTaskActive && confirmation.kind !== "discard" && <p className="wm-warning" role="status">{t(workspaceOperationMessage(snapshot))}</p>}
+          {error && <div className="wm-error" role="alert">{t(error)}</div>}
+          <div className="wm-confirm-actions">
+            <button type="button" className="btn" disabled={!!operation} onClick={closeConfirmation}>{t(confirmation.kind === "discard" ? "Keep editing" : "Cancel")}</button>
+            <button type="button" className="btn primary" disabled={confirmationDisabled} onClick={confirmAction}>{t(operation ? "Working…" : confirmation.kind === "backup" ? "Create encrypted backup" : confirmation.kind === "discard" ? "Discard changes" : confirmation.kind === "restore" ? "Restore as new workspace" : confirmation.kind === "restart" ? "Restart desktop app" : "Switch and restart")}</button>
+          </div>
         </div>
       </section>
     </div>}</MotionPresence>, document.body)}
@@ -710,7 +915,8 @@ export function DevicePanel(props: DevicePanelProps) {
   function togglePanel() { const next = !open; if (next) window.dispatchEvent(new CustomEvent("maobu:device-panel-open", { detail: panelId })); setOpen(next); }
   async function action(run: () => void | Promise<void>) { if (!openRef.current || actionInFlight.current) return; actionInFlight.current = true; setBusy(true); setError(null); try { await run(); } catch (e) { setError(errorMessage(e)); } finally { actionInFlight.current = false; setBusy(false); } }
   function navigate(run: () => void) { if (!openRef.current) return; trigger.current?.focus({ preventScroll: true }); setOpen(false); run(); }
-  return <><button type="button" className={`wm-device-trigger is-${variant}${variant === "sidebar" ? " sidebar-identity" : ""}`} ref={trigger} title={variant === "sidebar" ? currentName || t("This device") : `${t("This device")} · ${t(connectionText)}`} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? panelId : undefined} aria-describedby={statusId} aria-label={t("Open device panel")} onClick={togglePanel}><span className={variant === "sidebar" ? "sidebar-avatar" : "wm-device-icon"}><Icon name="laptop" render={render} /></span>{variant === "sidebar" ? <span className="wm-trigger-copy"><strong>{currentName || t("This device")}</strong><small id={statusId}>{t(connectionText)}</small></span> : <><span className="wm-device-label">{t("This device")}</span><span className="wm-sr-only" id={statusId}>{t(connectionText)}</span></>}<span className={connectionClass} aria-hidden="true" /></button>
+  const railLabel = connecting ? t("Connecting to the local service…") : props.connection ? t("Local encrypted ready · 127.0.0.1") : t("Connection interrupted");
+  return <><button type="button" className={`wm-device-trigger is-${variant}${variant === "sidebar" ? " sidebar-identity" : ""}`} ref={trigger} title={variant === "sidebar" ? currentName || t("This device") : `${t("This device")} · ${t(connectionText)}`} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? panelId : undefined} aria-describedby={statusId} aria-label={t("Open device panel")} onClick={togglePanel}><span className={variant === "sidebar" ? "sidebar-avatar" : "wm-device-icon"}><Icon name="laptop" render={render} /></span>{variant === "sidebar" ? <span className="wm-trigger-copy"><strong>{currentName || t("This device")}</strong><small id={statusId}>{t(connectionText)}</small></span> : <><span className="wm-device-label">{variant === "rail" ? railLabel : t("This device")}</span><span className="wm-sr-only" id={statusId}>{t(connectionText)}</span></>}<span className={connectionClass} aria-hidden="true" /></button>
     {typeof document !== "undefined" && createPortal(<MotionPresence present={open} kind="popover"><section className={`wm-device-popover${variant === "rail" ? " is-rail" : ""}`} id={panelId} ref={panel} role="dialog" aria-labelledby={headingId} tabIndex={-1} style={position}><header><div><h2 id={headingId}>{t("This device")}</h2><small>{t("Local runtime and quick preferences")}</small></div><button type="button" className="iconbtn" aria-label={t("Close device panel")} onClick={() => setOpen(false)}><Icon name="close" render={render} /></button></header>{error && <div className="wm-error" role="alert">{t(error)}</div>}
       <div className="wm-device-status" role="status" aria-live="polite" aria-busy={connecting}><span className={connectionClass} /><span>{t(connectionText)}</span>{props.onRetryConnection && !props.connection && !connecting && <button type="button" className="btn xs" disabled={busy} onClick={() => void action(props.onRetryConnection!)}>{t("Retry")}</button>}</div>
       <button type="button" className="wm-running-link" disabled={connecting} onClick={() => navigate(props.onShowRunning)}><span>{t(connecting || props.connection ? "Running environments" : "Last known running environments")}</span><strong>{connecting ? "—" : props.runningCount}</strong><Icon name="open" render={render} /></button>

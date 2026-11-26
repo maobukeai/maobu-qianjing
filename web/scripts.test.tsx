@@ -11,7 +11,7 @@ test("scripts page exposes local file import without hosted catalog or publishin
   try {
     const html = renderToStaticMarkup(<I18nProvider><ScriptsPage onViewRun={() => {}} /></I18nProvider>);
     expect(html).toContain("Import script");
-    expect(html).toContain("Scripts, runs, and logs stay on this computer.");
+    expect(html).toContain("No scripts yet.");
     expect(html).toContain(".js,.mjs,.py");
     for (const removed of ["Public library", "Publish", "Cloud", "Sign in"]) expect(html).not.toContain(removed);
   } finally {

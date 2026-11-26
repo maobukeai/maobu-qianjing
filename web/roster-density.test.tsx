@@ -4,14 +4,17 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { I18nProvider } from "./i18n.tsx";
 import { RosterDensityControl } from "./roster-density.tsx";
 
-test("density has a named radio group with one selection and distinct descriptions", () => {
+test("density radio groups and the compact selector expose the same setting name", () => {
   const html = renderToStaticMarkup(<I18nProvider><RosterDensityControl value="comfortable" onChange={() => {}} /><RosterDensityControl value="compact" variant="settings" onChange={() => {}} /></I18nProvider>);
   expect(html.match(/role="radiogroup"/g)).toHaveLength(2);
-  expect(html.match(/aria-label="Environment list density"/g)).toHaveLength(2);
+  expect(html.match(/aria-label="Environment list density"/g)).toHaveLength(3);
+  expect(html).toMatch(/<select[^>]*class="select settings-compact-choice roster-density-select"[^>]*aria-label="Environment list density"/);
   expect(html.match(/aria-checked="true"/g)).toHaveLength(2);
   expect(html.match(/tabindex="0"/g)).toHaveLength(2);
-  const describedBy = html.match(/aria-describedby="([^"]+)"/)?.[1]; expect(describedBy).toBeTruthy();
-  expect(html).toContain(`id="${describedBy}"`);
+  const descriptions = [...html.matchAll(/aria-describedby="([^"]+)"/g)].map((match) => match[1]);
+  expect(descriptions).toHaveLength(2);
+  expect(descriptions[0]).toBe(descriptions[1]);
+  expect(html).toContain(`id="${descriptions[0]}"`);
 });
 
 for (const scenario of ["keyboard", "busy-disabled", "compact-css", "coarse-targets", "reduced-motion", "instance-scope"]) {

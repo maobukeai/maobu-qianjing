@@ -84,8 +84,8 @@ async function run(scenario: string) {
     const result = [...dom.container.querySelectorAll<HTMLButtonElement>("button")].find(item => item.textContent?.trim() === label);
     assert.ok(result, `Missing button ${label}`); return result;
   };
-  const tab = (kind: string) => {
-    const result = [...dom.container.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")].find(item => item.textContent?.startsWith(kind));
+  const tab = (kind: "check" | "replace") => {
+    const result = dom.container.querySelector<HTMLButtonElement>(`.tools-tabs button[data-proxy-tab="${kind}"]`);
     assert.ok(result, `Missing tool ${kind}`); return result;
   };
   const click = (label: string) => act(async () => { button(label).click(); });
@@ -100,7 +100,7 @@ async function run(scenario: string) {
     assert.equal(calls.length, 0, "Opening a proxy workspace must not start checks");
     if (scenario === "workflow-navigation") {
       assert.equal(dom.container.querySelector('.proxy-workflow-navigation'), null, "Replacement steps belong to the replacement workflow only");
-      await act(async () => tab("Replace proxies").click());
+      await act(async () => tab("replace").click());
       const navigation = dom.container.querySelector('.proxy-workflow-navigation')!;
       const step = (key: string) => navigation.querySelector<HTMLButtonElement>(`[data-proxy-workflow-step="${key}"]`)!;
       assert.equal(navigation.querySelectorAll('button').length, 4);
@@ -159,7 +159,7 @@ async function run(scenario: string) {
       assert.equal(dom.container.querySelector(".proxy-input-panel"), null);
       assert.equal(button("Preview failed rows again").disabled, false);
       assert.equal(changed, 1);
-      await act(async () => tab("Check proxies").click());
+      await act(async () => tab("check").click());
       assert.ok(button("Return to replacement receipt"));
       await click("Return to replacement receipt");
       await click("Back to proxy checks");
@@ -184,9 +184,9 @@ async function run(scenario: string) {
       return;
     }
     if (scenario === "targeted-replacement") {
-      await act(async () => tab("Replace proxies").click());
+      await act(async () => tab("replace").click());
       await setValue(input(), "manual.example:9090");
-      await act(async () => tab("Check proxies").click());
+      await act(async () => tab("check").click());
       await click("Check proxies");
       const repairSource = () => dom.container.querySelector<HTMLButtonElement>('[data-proxy-repair-source="p1"]');
       assert.ok(repairSource());
@@ -208,7 +208,7 @@ async function run(scenario: string) {
       await click("Preview changes");
       assert.equal(button("Apply 1 changes").disabled, false);
       assert.ok(dom.container.querySelector("tbody")?.textContent?.includes("Second target"));
-      await act(async () => tab("Check proxies").click());
+      await act(async () => tab("check").click());
       await click("Return to replacement draft");
       assert.equal(input().value, "new.example:8080");
       assert.equal(previewCount, 2);
@@ -218,7 +218,7 @@ async function run(scenario: string) {
       assert.ok(repairScope?.textContent?.includes("Some environments from this check are unavailable"));
       await click("Discard replacement draft");
       assert.equal(dom.window.document.activeElement, repairSource());
-      await act(async () => tab("Replace proxies").click());
+      await act(async () => tab("replace").click());
       assert.equal(input().value, "manual.example:9090");
       assert.equal(calls.filter(call => call.path.endsWith("/apply")).length, 0);
       assert.equal(changed, 0);
@@ -240,7 +240,7 @@ async function run(scenario: string) {
       return;
     }
     if (scenario === "input-validation" || scenario === "stale-preview") {
-      await act(async () => { tab("Replace proxies").click(); });
+      await act(async () => { tab("replace").click(); });
       if (scenario === "input-validation") {
         await setValue(input(), "new.example:8080:user:PRIVATE_FIXTURE_SECRET\ninvalid-line");
         assert.equal(input().getAttribute("aria-invalid"), "true");
@@ -274,7 +274,7 @@ async function run(scenario: string) {
     }
     await click("Check proxies");
     if (scenario === "operation-context") {
-      assert.equal(tab("Replace proxies").disabled, true);
+      assert.equal(tab("replace").disabled, true);
       assert.ok(dom.container.querySelector(".tools-progress")?.textContent?.includes("leave this page"));
       await render(false);
       assert.equal(calls[0]!.signal?.aborted, false, "Leaving the global page must not silently cancel the owned operation");
@@ -284,7 +284,7 @@ async function run(scenario: string) {
         stream!.close();
       });
       await dom.flush(); await render();
-      assert.equal(tab("Replace proxies").disabled, false);
+      assert.equal(tab("replace").disabled, false);
       assert.ok(dom.container.querySelector(".proxy-outcome")?.textContent?.includes("1 environments have results: 0 reachable, 1 needing review"));
       assert.equal(button("Retry failed checks").disabled, false);
       assert.equal(calls.length, 1);

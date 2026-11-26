@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { Window } from "happy-dom";
+import { Window, type HTMLButtonElement as HappyButton } from "happy-dom";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -63,7 +63,7 @@ function mountToastHost(
   function Harness() {
     const api = useToastStack(options);
     latestApi = api;
-    return <ToastStack toasts={api.toasts} onDismiss={api.dismissToast} />;
+    return <><button type="button" id="toast-origin">Workspace action</button><ToastStack toasts={api.toasts} onDismiss={api.dismissToast} /></>;
   }
 
   act(() => {
@@ -99,14 +99,14 @@ afterEach(async () => {
 });
 
 describe("ToastStack & useToastStack", () => {
-  test("SSR renders empty with no toasts and preserves .notice + role=status across all 4 semantic tones", () => {
-    expect(
-      renderToStaticMarkup(
-        <I18nProvider>
-          <ToastStack toasts={[]} onDismiss={() => {}} />
-        </I18nProvider>,
-      ),
-    ).toBe("");
+  test("SSR has one persistent announcement region and no visual stack before the first notice", () => {
+    const empty = renderToStaticMarkup(
+      <I18nProvider>
+        <ToastStack toasts={[]} onDismiss={() => {}} />
+      </I18nProvider>,
+    );
+    expect(empty).toContain('class="sr-only toast-announcements" role="status"');
+    expect(empty).not.toContain('class="toast-stack"');
 
     const sample: ToastItem[] = [
       { id: "t1", message: "Copied code", tone: "success", durationMs: 4000, createdAt: 1 },
@@ -118,7 +118,7 @@ describe("ToastStack & useToastStack", () => {
         <ToastStack toasts={sample} onDismiss={() => {}} />
       </I18nProvider>,
     );
-    expect(html).toContain('role="status"');
+    expect(html.match(/role="status"/g)).toHaveLength(1);
     expect(html).toContain("toast-item notice is-success");
     expect(html).toContain("toast-item notice is-info");
     expect(html).toContain("toast-item notice is-warn");
@@ -129,6 +129,8 @@ describe("ToastStack & useToastStack", () => {
   test("caps stack at 3 visible toasts, evicts oldest, ignores blank text, and supports tone shorthands", () => {
     const mounted = mountToastHost({ defaultDurationMs: 0 }, "reduced");
     cleanup = mounted.restore;
+    const announcements = mounted.container.querySelector('.toast-announcements[role="status"]');
+    expect(announcements).toBeTruthy();
 
     act(() => {
       expect(mounted.getApi().pushToast("   ")).toBe("");
@@ -146,8 +148,12 @@ describe("ToastStack & useToastStack", () => {
       ["Fourth error", "error"],
     ]);
 
-    const statusNodes = mounted.container.querySelectorAll('.notice[role="status"]');
-    expect(statusNodes).toHaveLength(3);
+    expect(mounted.container.querySelector('.toast-announcements[role="status"]')).toBe(announcements);
+    expect(announcements?.children).toHaveLength(3);
+    expect(mounted.container.querySelectorAll(".toast-item")).toHaveLength(3);
+    const dismiss = mounted.container.querySelector(".toast-dismiss");
+    const described = mounted.dom.document.getElementById(dismiss!.getAttribute("aria-describedby")!);
+    expect(described?.textContent).toBe("Second info");
   });
 
   test("auto-dismisses after duration and pauses countdown on pointer hover, resuming on leave", async () => {
@@ -158,7 +164,7 @@ describe("ToastStack & useToastStack", () => {
       mounted.getApi().pushToast("Copied to clipboard", { tone: "success", durationMs: 120 });
     });
 
-    const toastEl = mounted.container.querySelector<HTMLElement>('.notice[role="status"]');
+    const toastEl = mounted.container.querySelector<HTMLElement>(".toast-item");
     expect(toastEl).toBeTruthy();
 
     // Hover immediately (commit pause state first) -> timer pauses past durationMs
@@ -180,7 +186,7 @@ describe("ToastStack & useToastStack", () => {
       await new Promise((resolve) => setTimeout(resolve, 190));
     });
     expect(mounted.getApi().toasts).toHaveLength(0);
-    expect(mounted.container.querySelector('.notice[role="status"]')).toBeNull();
+    expect(mounted.container.querySelector(".toast-item")).toBeNull();
   });
 
   test("keyboard focus inside a toast pauses auto-dismiss until blur", async () => {
@@ -191,7 +197,7 @@ describe("ToastStack & useToastStack", () => {
       mounted.getApi().pushToast("Focus pause test", { tone: "info", durationMs: 120 });
     });
 
-    const toastEl = mounted.container.querySelector<HTMLElement>('.notice[role="status"]')!;
+    const toastEl = mounted.container.querySelector<HTMLElement>(".toast-item")!;
     const dismissBtn = toastEl.querySelector<HTMLButtonElement>(".toast-dismiss")!;
 
     act(() => {
@@ -214,6 +220,42 @@ describe("ToastStack & useToastStack", () => {
     expect(mounted.getApi().toasts).toHaveLength(0);
   });
 
+  test("backgrounded pages keep notices until their remaining visible time elapses", async () => {
+    const mounted = mountToastHost({ defaultDurationMs: 120 }, "reduced");
+    cleanup = mounted.restore;
+    const setHidden = (hidden: boolean) => act(() => {
+      Object.defineProperty(mounted.dom.document, "hidden", { configurable: true, value: hidden });
+      mounted.dom.document.dispatchEvent(new mounted.dom.Event("visibilitychange"));
+    });
+    act(() => { mounted.getApi().pushToast("Completed while away", "success"); });
+    setHidden(true);
+    expect(mounted.container.querySelector<HTMLElement>(".toast-item")?.dataset.paused).toBe("true");
+    await act(async () => { await Bun.sleep(180); });
+    expect(mounted.getApi().toasts).toHaveLength(1);
+
+    setHidden(false);
+    expect(mounted.container.querySelector<HTMLElement>(".toast-item")?.dataset.paused).toBeUndefined();
+    await act(async () => { await Bun.sleep(190); });
+    expect(mounted.getApi().toasts).toHaveLength(0);
+  });
+
+  test("closing a focused toast transfers focus to a remaining toast and then the original control", () => {
+    const mounted = mountToastHost({ defaultDurationMs: 0 }, "reduced");
+    cleanup = mounted.restore;
+    const doc = mounted.dom.document;
+    const origin = doc.querySelector<HappyButton>("#toast-origin")!;
+    act(() => {
+      mounted.getApi().pushToast("First notice", { id: "one" });
+      mounted.getApi().pushToast("Next notice", { id: "two" });
+    });
+    const first = doc.querySelector<HappyButton>('[data-toast-id="one"] .toast-dismiss')!;
+    const next = doc.querySelector<HappyButton>('[data-toast-id="two"] .toast-dismiss')!;
+    act(() => { origin.focus(); first.focus(); first.click(); });
+    expect(doc.activeElement).toBe(next);
+    act(() => { next.click(); });
+    expect(doc.activeElement).toBe(origin);
+  });
+
   test("manual dismiss animates 120ms inert exit in full motion and removes immediately in reduced motion", async () => {
     const fullMounted = mountToastHost({ defaultDurationMs: 0 }, "full");
     cleanup = fullMounted.restore;
@@ -227,9 +269,9 @@ describe("ToastStack & useToastStack", () => {
       dismissBtn.click();
     });
 
-    // Live toast list is empty immediately, exiting DOM is inert & has no role="status"
+    // The notice leaves the announceable list before its inert visual exit.
     expect(fullMounted.getApi().toasts).toHaveLength(0);
-    expect(fullMounted.container.querySelector('[role="status"]')).toBeNull();
+    expect(fullMounted.container.querySelector('.toast-announcements[role="status"]')?.textContent).toBe("");
     const exiting = fullMounted.container.querySelector<HTMLElement>('[data-motion-phase="exiting"]');
     expect(exiting).toBeTruthy();
     expect(exiting?.getAttribute("aria-hidden")).toBe("true");

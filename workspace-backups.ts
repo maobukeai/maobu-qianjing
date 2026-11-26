@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
-import { createReadStream, createWriteStream, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statfsSync } from "node:fs";
+import { createReadStream, createWriteStream, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statfsSync, writeFileSync } from "node:fs";
 import { lstat, mkdir, open, readdir } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Readable, Transform } from "node:stream";
@@ -20,7 +20,10 @@ const ENCRYPTED_MAGIC = Buffer.from("MAOBU-ENCRYPTED-BACKUP\0v1\n");
 const SALT_BYTES = 16, NONCE_PREFIX_BYTES = 8, AUTH_TAG_BYTES = 16, FRAME_BYTES = 256 * 1024;
 const BACKUP_ID = /^bak_[0-9a-f]{32}$/;
 const JOB_ID = /^job_[0-9a-f]{32}$/;
-const ROOT_FILES = new Set(["profiles.sqlite", "config.json", "app-settings.json", PROFILE_TEMPLATES_FILE, ASSISTANT_MODEL_SERVICES_FILE, "shell.json", "workspace.json", "workspace-settings.json"]);
+const APP_SETTINGS_FILE = "app-settings.json";
+const APP_SETTINGS_LIMIT = 64 * 1024;
+const INVALID_APP_SETTINGS = "Backup application settings are invalid or unsupported";
+const ROOT_FILES = new Set(["profiles.sqlite", "config.json", APP_SETTINGS_FILE, PROFILE_TEMPLATES_FILE, ASSISTANT_MODEL_SERVICES_FILE, "shell.json", "workspace.json", "workspace-settings.json"]);
 const ROOT_DIRECTORIES = new Set(["profiles", "extensions", "custom-scripts"]);
 export interface BackupLimits { maxArchiveBytes: number; maxUnpackedBytes: number; maxFileBytes: number; maxFiles: number; maxManifestBytes: number }
 const DEFAULT_LIMITS: BackupLimits = { maxArchiveBytes: 64 * 1024 ** 3, maxUnpackedBytes: 128 * 1024 ** 3, maxFileBytes: 64 * 1024 ** 3, maxFiles: 500_000, maxManifestBytes: 64 * 1024 ** 2 };
@@ -161,22 +164,27 @@ function sufficientSpace(path: string, bytes: number): void {
   const stats = statfsSync(path);
   if (stats.bavail * stats.bsize < bytes + 100 * 1024 ** 2) throw new Error("Not enough free space for a complete workspace backup or restore");
 }
-/** Keep recovered preferences and leave automatic network actions off until reviewed. */
-function prepareRestoredAppSettings(root: string): void {
-  const path = join(root, "app-settings.json");
-  if (!workspaceEntryExists(path)) return;
-  const stat = lstatSync(path);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 64 * 1024) throw new Error("Backup application settings are invalid or unsupported");
+/** Validate the same portable preferences when packing and restoring. */
+function readBackupAppSettings(path: string) {
   try {
-    const raw = JSON.parse(readFileSync(path, "utf8"));
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > APP_SETTINGS_LIMIT) throw new Error(INVALID_APP_SETTINGS);
+    const bytes = readFileSync(path);
+    if (bytes.length > APP_SETTINGS_LIMIT) throw new Error(INVALID_APP_SETTINGS);
+    const raw = JSON.parse(bytes.toString("utf8"));
     if (!raw || typeof raw !== "object" || Array.isArray(raw) || !raw.sync || typeof raw.sync !== "object" || Array.isArray(raw.sync) || typeof raw.sync.enabled !== "boolean") throw new Error("invalid");
     // Disable before host-dependent path validation, preserving a Windows path
     // when restoring on macOS/Linux (and vice versa) without making it active.
-    const settings = parseAppSettings({ ...raw, sync: { ...raw.sync, enabled: false } });
-    settings.updates.checkOnStartup = false;
-    settings.signedUpdates = { checkOnStartup: false };
-    writeWorkspaceJson(path, settings);
-  } catch { throw new Error("Backup application settings are invalid or unsupported"); }
+    const restored = parseAppSettings({ ...raw, sync: { ...raw.sync, enabled: false } });
+    restored.updates.checkOnStartup = false;
+    restored.signedUpdates = { checkOnStartup: false };
+    return { bytes, restored };
+  } catch { throw new Error(INVALID_APP_SETTINGS); }
+}
+/** Keep recovered preferences and leave automatic network actions off until reviewed. */
+function prepareRestoredAppSettings(root: string): void {
+  const path = join(root, APP_SETTINGS_FILE);
+  if (workspaceEntryExists(path)) writeWorkspaceJson(path, readBackupAppSettings(path).restored);
 }
 /** Only the strict, non-secret template format can enter a restored workspace. */
 function prepareRestoredProfileTemplates(root: string): void {
@@ -212,6 +220,7 @@ function validateManifest(value: unknown, limits: BackupLimits): Manifest {
     if (entries.has(key)) throw new Error("Duplicate backup entry");
     entries.add(key); files.add(key);
     if (!Number.isSafeInteger(file.bytes) || file.bytes < 0 || file.bytes > limits.maxFileBytes || !/^[0-9a-f]{64}$/.test(file.sha256)) throw new Error("Invalid backup file metadata");
+    if (file.path === APP_SETTINGS_FILE && file.bytes > APP_SETTINGS_LIMIT) throw new Error(INVALID_APP_SETTINGS);
     if (file.path === PROFILE_TEMPLATES_FILE && file.bytes > PROFILE_TEMPLATE_LIMITS.fileBytes) throw new Error("Backup profile templates are invalid or unsupported");
     if (file.path === ASSISTANT_MODEL_SERVICES_FILE && file.bytes > ASSISTANT_MODEL_SERVICES_FILE_LIMIT) throw new Error("Backup model services are invalid or unsupported.");
     total += file.bytes;
@@ -433,6 +442,14 @@ export class WorkspaceBackupService {
       rewriteExtensions(snapshot, root);
       const profileCount = inspectDatabase(snapshot);
       const directories: string[] = [], sources = new Map<string, string>([["profiles.sqlite", snapshot]]);
+      const settingsPath = join(root, APP_SETTINGS_FILE);
+      if (workspaceEntryExists(settingsPath)) {
+        // Archive the exact bytes that passed the restore rules, even if the
+        // workspace settings change while the other files are being packed.
+        const copy = join(staging, APP_SETTINGS_FILE);
+        writeFileSync(copy, readBackupAppSettings(settingsPath).bytes, { flag: "wx", mode: 0o600 });
+        sources.set(APP_SETTINGS_FILE, copy);
+      }
       if (workspaceEntryExists(join(root, PROFILE_TEMPLATES_FILE))) {
         // Capture validated settings once. A later template edit cannot change this archive's copy.
         const templates = new ProfileTemplateStore(join(root, PROFILE_TEMPLATES_FILE)).read();

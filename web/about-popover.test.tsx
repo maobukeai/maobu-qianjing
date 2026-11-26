@@ -176,6 +176,7 @@ describe("AboutPopover", () => {
   test("opens from .desktop-brand, copies version, switches channel, checks GitHub with fallback repo, and closes on Esc", async () => {
     let settings = baseSettings();
     let lastUpdate: UpdateResult | null = null;
+    let settingsReads = 0;
     const patches: unknown[] = [];
     const copiedValues: string[] = [];
     let openedFullSettings = 0;
@@ -190,7 +191,12 @@ describe("AboutPopover", () => {
         const path = String(input);
         const method = init?.method ?? "GET";
         if (path === "/ui/api/shell-language") return Response.json({ ok: true, language: "en-US" });
-        if (path === "/ui/api/settings" && method === "GET") return Response.json({ ok: true, settings });
+        if (path === "/ui/api/settings" && method === "GET") {
+          settingsReads++;
+          return settingsReads === 1
+            ? Response.json({ ok: false, error: "Settings request failed" }, { status: 503 })
+            : Response.json({ ok: true, settings });
+        }
         if (path === "/ui/api/settings" && method === "PATCH") {
           const patch = JSON.parse(String(init?.body ?? "{}")) as {
             updates?: Partial<ResolvedAppSettings["updates"]>;
@@ -269,6 +275,21 @@ describe("AboutPopover", () => {
     expect(dialog.textContent).toContain("Community local build");
     expect(dialog.textContent).toContain("Xreacher (AliasMode)");
 
+    // Recover the settings read without retrying the desktop channel or reopening.
+    const channelSelect = dialog.querySelector(".about-channel-select") as HTMLSelectElement;
+    const retry = dialog.querySelector(".about-update-capsule .about-alert button") as HTMLButtonElement;
+    expect(channelSelect.disabled).toBe(true);
+    expect(retry.textContent).toBe("Try again");
+    await act(async () => {
+      retry.focus();
+      retry.click();
+    });
+    await flush();
+    expect(settingsReads).toBe(2);
+    expect(dialog.querySelector(".about-update-capsule .about-alert")).toBeNull();
+    expect(mounted.dom.document.activeElement as unknown).toBe(dialog.querySelector(".about-primary-cta"));
+    expect(channelSelect.disabled).toBe(false);
+
     // Copy version
     const copyButton = dialog.querySelector(".about-copy-btn") as HTMLButtonElement;
     await act(async () => {
@@ -279,7 +300,6 @@ describe("AboutPopover", () => {
     expect(copyButton.textContent).toBe("Copied ✓");
 
     // Switch channel to beta
-    const channelSelect = dialog.querySelector(".about-channel-select") as HTMLSelectElement;
     await act(async () => {
       channelSelect.value = "beta";
       channelSelect.dispatchEvent(new mounted.dom.Event("change", { bubbles: true }) as unknown as Event);
@@ -380,6 +400,7 @@ describe("AboutPopover", () => {
     let finishInstall!: () => void;
     let emitProgress!: (event: SignedUpdateProgress) => void;
     let checkCount = 0;
+    let failStatusRead = false;
 
     const mounted = setupDom({
       desktop: true,
@@ -392,11 +413,12 @@ describe("AboutPopover", () => {
           return Response.json({
             ok: true,
             update: {
-              checkedAt: "2026-11-14T00:00:00.000Z",
+              checkedAt: Date.UTC(2026, 10, 14),
               repository: DEFAULT_GITHUB_REPOSITORY,
               channel: "stable",
               currentVersion: "1.0.0",
               status: "up-to-date",
+              cached: false,
             },
           });
         }
@@ -406,7 +428,10 @@ describe("AboutPopover", () => {
     activeCleanup = mounted.cleanup;
 
     mockIPC((command, payload) => {
-      if (command === "signed_update_status") return currentSignedStatus;
+      if (command === "signed_update_status") {
+        if (failStatusRead) throw new Error("Status disconnected");
+        return currentSignedStatus;
+      }
       if (command === "signed_update_check") {
         checkCount++;
         currentSignedStatus = availableSignedStatus;
@@ -491,15 +516,37 @@ describe("AboutPopover", () => {
     expect(dialog.textContent).toContain("Update available");
     expect(dialog.textContent).toContain("1.0.0 → 1.2.3");
 
-    const notesToggle = dialog.querySelector(".about-notes-toggle") as HTMLButtonElement;
+    // A failed status refresh after reopening cannot leave a cached install action live.
+    const trigger = mounted.container.querySelector(".desktop-brand") as HTMLButtonElement;
+    await act(async () => {
+      (dialog.querySelector(".about-close") as HTMLButtonElement).click();
+    });
+    await flush();
+    failStatusRead = true;
+    await act(async () => {
+      trigger.click();
+    });
+    await flush();
+    const refreshedDialog = mounted.container.querySelector("#about-popover-dialog") as HTMLElement;
+    expect(refreshedDialog.textContent).toContain("Status unavailable");
+    expect(refreshedDialog.textContent).not.toContain("Install verified update");
+    await act(async () => {
+      failStatusRead = false;
+      (refreshedDialog.querySelector(".about-update-capsule .about-alert button") as HTMLButtonElement).click();
+    });
+    await flush();
+    expect(refreshedDialog.querySelector(".about-update-capsule .about-alert")).toBeNull();
+    expect(refreshedDialog.textContent).toContain("Install verified update");
+
+    const notesToggle = refreshedDialog.querySelector(".about-notes-toggle") as HTMLButtonElement;
     await act(async () => {
       notesToggle.click();
     });
     await flush();
-    expect(dialog.textContent).toContain("Security & engine updates.");
+    expect(refreshedDialog.textContent).toContain("Security & engine updates.");
 
     // Install verified update -> opens SignedUpdateDraftDialog because of dirty draft
-    const installBtn = Array.from(dialog.querySelectorAll("button")).find((btn) =>
+    const installBtn = Array.from(refreshedDialog.querySelectorAll("button")).find((btn) =>
       btn.textContent?.includes("Install verified update"),
     ) as HTMLButtonElement;
     await act(async () => {
@@ -530,6 +577,6 @@ describe("AboutPopover", () => {
       finishInstall();
     });
     await flush();
-    expect(dialog.textContent).toContain("Update installed. Restart requested.");
+    expect(refreshedDialog.textContent).toContain("Update installed. Restart requested.");
   });
 });

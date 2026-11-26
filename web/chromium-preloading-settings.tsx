@@ -46,15 +46,25 @@ export function ChromiumPreloadingSettings() {
       if (state.active && generation === state.generation) setError("Page preloading settings could not be saved. Reload or try again.");
     } finally { if (state.active && generation === state.generation) { state.busy = false; setBusy(false); } }
   }
-  return <section className="feature-card" aria-label={t("Page preloading")}>
-    <div className="feature-card-title"><div><h3>{t("Page preloading")}</h3><p>{t("Reduce speculative connections and page loading ahead of time. Some pages may open more slowly.")}</p></div></div>
-    <label className="fld"><span>{t("Preloading behavior")}</span><select value={value} disabled={busy || saved === null} aria-describedby={hint} onChange={event => {
-      const next = event.target.value;
-      if (next === "browser-default" || next === "disabled") { setValue(next); setNotice(""); setError(""); }
-    }}><option value="browser-default">{t("Keep browser default")}</option><option value="disabled">{t("Disable preloading")}</option></select></label>
-    <p id={hint} className="feature-inline-note">{t("Applies to managed Chromium 155 on the next fresh launch. Running browsers are left as they are. Firefox and CloakBrowser do not receive this policy. Websites and other browser services can still connect.")}</p>
-    <p className="feature-inline-note">{t("Keep browser default restores your previous browser preference when this app changed it, while preserving later manual changes.")}</p>
-    {error && <p className="feature-alert" role="alert">{t(error)}</p>}{notice && <p className="feature-success" role="status">{t(notice)}</p>}
-    <div className="feature-actions">{saved === null ? <button type="button" className="btn" disabled={busy} onClick={() => void load()}>{t(busy ? "Loading…" : "Try again")}</button> : <button type="button" className="btn primary" disabled={busy || value === saved} aria-busy={busy} onClick={() => void save()}>{t(busy ? "Saving…" : "Save preloading preference")}</button>}</div>
+  return <section className="feature-card feature-card-split" aria-label={t("Page preloading")}>
+    <div className="feature-card-title">
+      <div className="feature-card-head-main">
+        <h3>{t("Page preloading")}</h3>
+      </div>
+      <span className={`feature-badge ${value === "disabled" ? "is-accent" : ""}`}>
+        {t(value === "disabled" ? "Disable preloading" : "Keep browser default")}
+      </span>
+    </div>
+    <div className="feature-card-body">
+      <p>{t("Reduce speculative connections and page loading ahead of time. Some pages may open more slowly.")}</p>
+      <label className="fld"><span>{t("Preloading behavior")}</span><select value={value} disabled={busy || saved === null} aria-describedby={hint} onChange={event => {
+        const next = event.target.value;
+        if (next === "browser-default" || next === "disabled") { setValue(next); setNotice(""); setError(""); }
+      }}><option value="browser-default">{t("Keep browser default")}</option><option value="disabled">{t("Disable preloading")}</option></select></label>
+      <p id={hint} className="feature-inline-note">{t("Applies to managed Chromium 155 on the next fresh launch. Running browsers are left as they are. Firefox and CloakBrowser do not receive this policy. Websites and other browser services can still connect.")}</p>
+      <p className="feature-inline-note">{t("Keep browser default restores your previous browser preference when this app changed it, while preserving later manual changes.")}</p>
+      {error && <p className="feature-alert" role="alert">{t(error)}</p>}{notice && <p className="feature-success" role="status">{t(notice)}</p>}
+      <div className="feature-actions feature-card-footer-actions">{saved === null ? <button type="button" className="btn" disabled={busy} onClick={() => void load()}>{t(busy ? "Loading…" : "Try again")}</button> : <button type="button" className="btn primary" disabled={busy || value === saved} aria-busy={busy} onClick={() => void save()}>{t(busy ? "Saving…" : "Save preloading preference")}</button>}</div>
+    </div>
   </section>;
 }

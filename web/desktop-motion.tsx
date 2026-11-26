@@ -105,22 +105,30 @@ export function DesktopMotionSettings({ value, onChange }: {
   const { t } = useTranslation();
   const id = useId();
   const options = [
-    { key: "system", label: "Follow system", description: "Use the motion settings of this computer." },
-    { key: "reduced", label: "Reduced motion", description: "Show changes immediately with less movement." },
-    { key: "full", label: "Full motion", description: "Use smooth page, menu and dialog transitions." },
+    { key: "system", label: "Follow system" },
+    { key: "reduced", label: "Reduced motion" },
+    { key: "full", label: "Full motion" },
   ] as const;
-  return <section className="settings-card desktop-motion-settings">
-    <header><h2>{t("Interface motion")}</h2></header>
-    <div className="card-body"><p>{t("Choose how pages, menus and dialogs move while you work.")}</p>
-      <fieldset aria-describedby={`${id}-note`}><legend className="sr-only">{t("Interface motion")}</legend>
-        <div className="desktop-motion-options">{options.map(option => <label key={option.key} className={`desktop-motion-option${value === option.key ? " selected" : ""}`}>
-          <input type="radio" name={`${id}-motion`} value={option.key} checked={value === option.key} onChange={() => onChange(option.key)} />
-          <span><strong>{t(option.label)}</strong><small>{t(option.description)}</small></span>
-        </label>)}</div>
-      </fieldset>
-      <p id={`${id}-note`} className="desktop-motion-note">{t("The system's reduced-motion preference always takes priority.")}</p>
+  return (
+    <div className="desktop-motion-settings">
+      <div className="desktop-motion-copy">
+        <span id={`${id}-label`}>{t("Interface motion")}</span>
+        <p id={`${id}-note`}>{t("System reduced motion takes priority.")}</p>
+      </div>
+      <div className="desktop-motion-options" role="radiogroup" aria-labelledby={`${id}-label`} aria-describedby={`${id}-note`}>
+        {options.map(option => (
+          <label key={option.key} className={`desktop-motion-option${value === option.key ? " selected" : ""}`}>
+            <input className="sr-only" type="radio" name={`${id}-motion`} value={option.key} checked={value === option.key} onChange={() => onChange(option.key)} />
+            <span>{t(option.label)}</span>
+          </label>
+        ))}
+      </div>
+      <select className="select settings-compact-choice" aria-labelledby={`${id}-label`} aria-describedby={`${id}-note`} value={value}
+        onChange={event => { const next = event.target.value; if (validDesktopMotionPreference(next)) onChange(next); }}>
+        {options.map(option => <option key={option.key} value={option.key}>{t(option.label)}</option>)}
+      </select>
     </div>
-  </section>;
+  );
 }
 
 export interface MotionPresenceProps {

@@ -426,12 +426,12 @@ describe("ProxyVaultPanel & API", () => {
 
     const tabs = [...h.container.querySelectorAll<HTMLButtonElement>(".tools-tabs button")];
     expect(tabs).toHaveLength(3);
-    expect(tabs[0]?.textContent).toContain("Check proxies");
-    expect(tabs[1]?.textContent).toContain("Replace proxies");
-    expect(tabs[2]?.textContent).toContain("Proxy vault");
+    expect(tabs[0]?.textContent).toContain("Proxy vault");
+    expect(tabs[1]?.getAttribute("aria-pressed")).toBe("true");
+    expect(tabs[2]?.textContent).toContain("Replace proxies");
     expect(paths.filter((p) => p === "/ui/api/proxy-vault")).toHaveLength(0);
 
-    await act(async () => { tabs[2]!.click(); });
+    await act(async () => { tabs[0]!.click(); });
     await h.flush();
     expect(paths.filter((p) => p === "/ui/api/proxy-vault")).toHaveLength(1);
     expect(h.container.querySelector("[data-proxy-vault-panel]")).toBeTruthy();

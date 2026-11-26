@@ -1,4 +1,5 @@
 import type { LocalAssistantChatInput, LocalAssistantChatResult, LocalModelCatalog } from "../local-assistant.ts";
+import { notifyAppLockedFromResponse, notifyUnauthorizedResponse, withStandaloneAuthHeaders } from "./api.ts";
 import type {
   AnomalyCriterion,
   CompiledProposalItemView,
@@ -85,17 +86,24 @@ export function stripProposalFence(content: string): string {
 }
 
 async function request<T>(path: string, value: unknown, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(`/ui/api/settings/assistant/${path}`, {
+  const fullPath = `/ui/api/settings/assistant/${path}`;
+  const response = await fetch(fullPath, {
     method: "POST",
     credentials: "same-origin",
     cache: "no-store",
     signal,
-    headers: { "Content-Type": "application/json", "X-Maobu-Settings": "1", Accept: "application/json" },
+    headers: withStandaloneAuthHeaders({ "Content-Type": "application/json", "X-Maobu-Settings": "1", Accept: "application/json" }),
     body: JSON.stringify(value),
   });
   const result = await response.json().catch(() => {
+    notifyUnauthorizedResponse(response.status, fullPath);
     throw new Error("The local assistant returned an invalid response.");
   });
+  if (response.status === 401) {
+    notifyUnauthorizedResponse(401, fullPath, typeof result?.error === "string" ? result.error : "");
+  } else if (response.status === 423) {
+    notifyAppLockedFromResponse(423, result);
+  }
   if (!response.ok || result?.ok !== true) {
     throw new AssistantRequestError(
       typeof result?.error === "string" ? result.error : "The local assistant request failed.",
@@ -194,21 +202,27 @@ export async function executeAssistantProposal(
   onEvent: (event: ProposalStreamEvent) => void,
   signal?: AbortSignal,
 ): Promise<ProposalExecutionSnapshot | null> {
-  const response = await fetch(`/ui/api/assistant/proposals/${encodeURIComponent(proposalId)}/execute`, {
+  const execPath = `/ui/api/assistant/proposals/${encodeURIComponent(proposalId)}/execute`;
+  const response = await fetch(execPath, {
     method: "POST",
     credentials: "same-origin",
     cache: "no-store",
     signal,
-    headers: {
+    headers: withStandaloneAuthHeaders({
       "Content-Type": "application/json",
       "X-Maobu-Settings": "1",
       Accept: "application/x-ndjson, application/json",
-    },
+    }),
     body: JSON.stringify(input),
   });
 
   if (!response.ok) {
     const failed = await response.json().catch(() => null);
+    if (response.status === 401) {
+      notifyUnauthorizedResponse(401, execPath, typeof failed?.error === "string" ? failed.error : "");
+    } else if (response.status === 423) {
+      notifyAppLockedFromResponse(423, failed);
+    }
     throw new AssistantRequestError(
       typeof failed?.error === "string" ? failed.error : "Proposal execution failed.",
       typeof failed?.code === "string" ? failed.code : "proposal_execute_failed",
@@ -271,21 +285,28 @@ export async function executeAssistantProposal(
 export async function abortAssistantProposal(
   proposalId: string,
 ): Promise<{ aborted: boolean; status: string; snapshot: ProposalExecutionSnapshot }> {
-  const response = await fetch(`/ui/api/assistant/proposals/${encodeURIComponent(proposalId)}/abort`, {
+  const abortPath = `/ui/api/assistant/proposals/${encodeURIComponent(proposalId)}/abort`;
+  const response = await fetch(abortPath, {
     method: "POST",
     credentials: "same-origin",
     cache: "no-store",
     signal: AbortSignal.timeout(5000),
-    headers: {
+    headers: withStandaloneAuthHeaders({
       "Content-Type": "application/json",
       "X-Maobu-Settings": "1",
       Accept: "application/json",
-    },
+    }),
     body: "{}",
   });
   const result = await response.json().catch(() => {
+    notifyUnauthorizedResponse(response.status, abortPath);
     throw new Error("Proposal abort returned an invalid response.");
   });
+  if (response.status === 401) {
+    notifyUnauthorizedResponse(401, abortPath, typeof result?.error === "string" ? result.error : "");
+  } else if (response.status === 423) {
+    notifyAppLockedFromResponse(423, result);
+  }
   if (!response.ok || result?.ok !== true || typeof result.aborted !== "boolean" || !isValidExecutionSnapshot(result.snapshot)) {
     throw new AssistantRequestError(
       typeof result?.error === "string" ? result.error : "Could not stop proposal execution.",
@@ -304,19 +325,26 @@ export async function fetchAssistantProposalSnapshot(
   proposalId: string,
   signal?: AbortSignal,
 ): Promise<{ proposal: CompiledProposalView; execution: ProposalExecutionSnapshot; expired: boolean }> {
-  const response = await fetch(`/ui/api/assistant/proposals/${encodeURIComponent(proposalId)}`, {
+  const snapPath = `/ui/api/assistant/proposals/${encodeURIComponent(proposalId)}`;
+  const response = await fetch(snapPath, {
     method: "GET",
     credentials: "same-origin",
     cache: "no-store",
     signal,
-    headers: {
+    headers: withStandaloneAuthHeaders({
       "X-Maobu-Settings": "1",
       Accept: "application/json",
-    },
+    }),
   });
   const result = await response.json().catch(() => {
+    notifyUnauthorizedResponse(response.status, snapPath);
     throw new Error("Proposal status returned an invalid response.");
   });
+  if (response.status === 401) {
+    notifyUnauthorizedResponse(401, snapPath, typeof result?.error === "string" ? result.error : "");
+  } else if (response.status === 423) {
+    notifyAppLockedFromResponse(423, result);
+  }
   if (
     !response.ok ||
     result?.ok !== true ||

@@ -1,5 +1,5 @@
 /** Typed client for the local Proxy Vault (`/ui/api/proxy-vault*`) endpoints. */
-import { getStandaloneSessionToken } from "./api.ts";
+import { getStandaloneSessionToken, notifyAppLockedFromResponse, notifyUnauthorizedResponse } from "./api.ts";
 
 export type ProxyVaultProtocol = "http" | "https" | "socks5";
 export type ProxyVaultStatus =
@@ -387,6 +387,7 @@ async function parseJsonEnvelope(response: Response): Promise<Record<string, unk
   try {
     body = await response.json();
   } catch {
+    notifyUnauthorizedResponse(response.status, "/ui/api/proxy-vault");
     throw new ProxyVaultError(
       response.status === 404 || response.status === 501 || response.status === 503
         ? "Proxy vault is not available on this server."
@@ -395,7 +396,13 @@ async function parseJsonEnvelope(response: Response): Promise<Record<string, unk
     );
   }
   if (!isRecord(body)) {
+    notifyUnauthorizedResponse(response.status, "/ui/api/proxy-vault");
     throw new ProxyVaultError("Proxy vault returned an invalid response.", { status: response.status });
+  }
+  if (response.status === 401) {
+    notifyUnauthorizedResponse(401, "/ui/api/proxy-vault", typeof body.error === "string" ? body.error : "");
+  } else if (response.status === 423) {
+    notifyAppLockedFromResponse(423, body);
   }
   if (!response.ok || body.ok === false) {
     const code = typeof body.code === "string" ? body.code : undefined;

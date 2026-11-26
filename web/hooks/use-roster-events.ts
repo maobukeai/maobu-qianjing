@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  isAppLockedError,
   isUnauthorizedError,
   openUiEventStream,
   type ProfileLifecycleEvent,
@@ -33,6 +34,10 @@ export interface UseRosterEventsOptions extends UseRosterPollingOptions {
   reconnectMaxDelayMs?: number;
   /** Symmetrical jitter ratio applied to reconnect backoff (default 0.2 for +/-20%). */
   reconnectJitterRatio?: number;
+  /** Maximum wait for the initial connected frame (default 10s). */
+  streamConnectTimeoutMs?: number;
+  /** Maximum silence after the handshake, including keepalive comments (default 40s). */
+  streamIdleTimeoutMs?: number;
 }
 
 export interface UseRosterEventsResult extends UseRosterPollingResult {
@@ -44,6 +49,9 @@ const DEFAULT_STEADY_SAFETY_REFRESH_MS = 60_000;
 const DEFAULT_RECONNECT_BASE_MS = 1_000;
 const DEFAULT_RECONNECT_MAX_MS = 30_000;
 const DEFAULT_RECONNECT_JITTER = 0.2;
+const DEFAULT_STREAM_CONNECT_TIMEOUT_MS = 10_000;
+// The local stream sends a keepalive every 15s.
+const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 40_000;
 
 export function computeReconnectDelayMs(
   attempt: number,
@@ -143,6 +151,8 @@ export function useRosterEvents({
   reconnectBaseDelayMs = DEFAULT_RECONNECT_BASE_MS,
   reconnectMaxDelayMs = DEFAULT_RECONNECT_MAX_MS,
   reconnectJitterRatio = DEFAULT_RECONNECT_JITTER,
+  streamConnectTimeoutMs = DEFAULT_STREAM_CONNECT_TIMEOUT_MS,
+  streamIdleTimeoutMs = DEFAULT_STREAM_IDLE_TIMEOUT_MS,
 }: UseRosterEventsOptions): UseRosterEventsResult {
   const [streamState, setStreamState] = useState<StreamState>(() =>
     enabled && sseEnabled ? "connecting" : "idle",
@@ -176,6 +186,7 @@ export function useRosterEvents({
   const pollRosterRef = useRef(polling.pollRoster);
   pollRosterRef.current = polling.pollRoster;
   const lastRosterResultRef = polling.lastRosterResult;
+  const { load, isRosterLoading } = polling;
 
   useEffect(() => {
     if (!sseActive) {
@@ -222,12 +233,12 @@ export function useRosterEvents({
         attempt = 0;
         lastSyncAtRef.current = Date.now();
         setStreamState("sse");
-        pollRosterRef.current();
+        void load();
         return;
       }
       if (event.type === "roster.changed") {
         lastSyncAtRef.current = Date.now();
-        pollRosterRef.current();
+        void load();
         return;
       }
       if (event.type === "profile.lifecycle") {
@@ -241,11 +252,10 @@ export function useRosterEvents({
         }
         if (onLifecyclePatchRef.current) {
           onLifecyclePatchRef.current(patch);
-          if (!patched?.matched) {
-            pollRosterRef.current();
-          }
+          // A read started before the event could contain the old state.
+          if (!patched?.matched || isRosterLoading()) void load();
         } else {
-          pollRosterRef.current();
+          void load();
         }
         return;
       }
@@ -280,31 +290,50 @@ export function useRosterEvents({
       while (alive) {
         const controller = new AbortController();
         activeAbort = controller;
+        let connected = false;
+        let timedOut = false;
+        let watchdog: ReturnType<typeof setTimeout> | undefined;
+        const armWatchdog = (ms: number) => {
+          clearTimeout(watchdog);
+          watchdog = setTimeout(() => {
+            timedOut = true;
+            controller.abort();
+          }, ms);
+        };
+        armWatchdog(streamConnectTimeoutMs);
         try {
           await openUiEventStream({
             lastEventId: lastEventIdRef.current,
             signal: controller.signal,
-            onOpen: () => {
-              if (!alive) return;
-              attempt = 0;
-              setStreamState("sse");
+            onActivity: () => {
+              if (connected) armWatchdog(streamIdleTimeoutMs);
             },
-            onEvent: handleStreamEvent,
+            onEvent: (event) => {
+              if (event.type === "connected") {
+                connected = true;
+                armWatchdog(streamIdleTimeoutMs);
+              }
+              if (connected) handleStreamEvent(event);
+            },
           });
-          if (!alive || controller.signal.aborted) break;
         } catch (error) {
-          if (!alive || controller.signal.aborted) break;
+          if (!alive) break;
           if (isUnauthorizedError(error)) {
             setStreamState("unauthorized");
             return;
           }
+          if (isAppLockedError(error)) {
+            return;
+          }
         } finally {
+          clearTimeout(watchdog);
           if (activeAbort === controller) {
             activeAbort = null;
           }
         }
-        if (!alive) break;
+        if (!alive || (controller.signal.aborted && !timedOut)) break;
         setStreamState("reconnecting");
+        pollRosterRef.current();
         const delayMs = computeReconnectDelayMs(
           attempt,
           reconnectBaseDelayMs,
@@ -335,7 +364,11 @@ export function useRosterEvents({
     reconnectBaseDelayMs,
     reconnectMaxDelayMs,
     reconnectJitterRatio,
+    streamConnectTimeoutMs,
+    streamIdleTimeoutMs,
     lastRosterResultRef,
+    load,
+    isRosterLoading,
   ]);
 
   // Low-frequency safety reconciliation while SSE is steadily connected.

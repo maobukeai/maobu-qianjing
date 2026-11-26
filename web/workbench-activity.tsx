@@ -2,6 +2,7 @@ import { useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { MotionPresence } from "./desktop-motion.tsx";
 import { useTranslation } from "./i18n.tsx";
+import { AppIcon } from "./ui-primitives.tsx";
 import "./workbench-activity.css";
 
 export interface WorkbenchActivityItem {
@@ -29,7 +30,7 @@ function visible(node: HTMLElement): boolean {
 
 /** A view of existing task owners. This component never starts, polls or dismisses a task. */
 export function WorkbenchActivity({ items }: WorkbenchActivityProps) {
-  const { t } = useTranslation(), id = useId(), titleId = `${id}-title`, descriptionId = `${id}-description`;
+  const { t, language } = useTranslation(), id = useId(), titleId = `${id}-title`, summaryId = `${id}-summary`;
   const [open, setOpen] = useState(false), [position, setPosition] = useState({ top: 0, left: 0, maxHeight: 480 });
   const trigger = useRef<HTMLButtonElement>(null), panel = useRef<HTMLElement>(null);
   const latestItems = useRef(items), openRef = useRef(false), ownsFocus = useRef(false);
@@ -40,6 +41,7 @@ export function WorkbenchActivity({ items }: WorkbenchActivityProps) {
   const running = items.filter(item => item.state === "running").length;
   const attention = items.filter(item => item.state === "attention").length;
   const complete = items.length - running - attention;
+  const hasSummary = items.length > 1;
 
   function rememberFallback() {
     const entry = trigger.current;
@@ -117,9 +119,12 @@ export function WorkbenchActivity({ items }: WorkbenchActivityProps) {
 
   return <>
     {items.length > 0 && <button type="button" className="workbench-activity-trigger" ref={trigger} aria-haspopup="dialog" aria-expanded={present} aria-controls={present ? id : undefined} aria-label={t("Background activity, {count} tasks", { count: items.length })} title={t("Background activity")} onClick={toggle} onFocus={() => { ownsFocus.current = true; rememberFallback(); }} onBlur={event => { if (event.relatedTarget && !panel.current?.contains(event.relatedTarget as Node)) ownsFocus.current = false; }} onKeyDown={event => { if (event.key === "ArrowDown") { event.preventDefault(); if (!openRef.current) toggle(); else viewButtons()[0]?.focus(); } }}>
-      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true"><path d="M3 10h3l2-6 4 12 2-6h3" /></svg><span className="workbench-activity-copy">{t("Activity")}</span><span className="workbench-activity-count">{items.length}</span>{running > 0 && <span className="workbench-activity-running" aria-hidden="true" />}
+      <AppIcon name="activity" />
+      <span className="workbench-activity-copy">{t("Activity")}</span>
+      <span className="workbench-activity-count">{items.length.toLocaleString(language)}</span>
+      {running > 0 && <span className="workbench-activity-running" aria-hidden="true" />}
     </button>}
-    {typeof document !== "undefined" && createPortal(<MotionPresence present={present} kind="popover">{() => <section className="workbench-activity-popover" id={id} ref={panel} role="dialog" aria-labelledby={titleId} aria-describedby={descriptionId} tabIndex={-1} style={position} onFocusCapture={event => {
+    {typeof document !== "undefined" && createPortal(<MotionPresence present={present} kind="popover">{() => <section className="workbench-activity-popover" id={id} ref={panel} role="dialog" aria-labelledby={titleId} aria-describedby={hasSummary ? summaryId : undefined} tabIndex={-1} style={position} onFocusCapture={event => {
       ownsFocus.current = true;
       const target = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-activity-view]");
       focusedItem.current = target ? { id: target.dataset.activityView!, index: viewButtons().indexOf(target) } : null;
@@ -128,11 +133,33 @@ export function WorkbenchActivity({ items }: WorkbenchActivityProps) {
       event.preventDefault(); const buttons = viewButtons(), index = buttons.indexOf(event.target as HTMLButtonElement);
       buttons[event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length]?.focus();
     }}>
-      <header><div><h2 id={titleId}>{t("Background activity")}</h2><p id={descriptionId}>{t("Open a task to see its details.")}</p></div><button type="button" className="iconbtn" aria-label={t("Close activity")} onClick={() => close(true)}><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m5 5 10 10M5 15 15 5" /></svg></button></header>
-      <div className="workbench-activity-summary">{running > 0 && <span>{t("{count} running", { count: running })}</span>}{attention > 0 && <span>{t("{count} need attention", { count: attention })}</span>}{complete > 0 && <span>{t("{count} complete", { count: complete })}</span>}</div>
+      <header>
+        <h2 id={titleId}>{t("Background activity")}</h2>
+        <button type="button" className="iconbtn" aria-label={t("Close activity")} onClick={() => close(true)}><AppIcon name="close" className="sm" /></button>
+      </header>
+      {hasSummary && <div className="workbench-activity-summary" id={summaryId}>
+        {running > 0 && <span data-state="running">{t("{count} running", { count: running.toLocaleString(language) })}</span>}
+        {attention > 0 && <span data-state="attention">{t("{count} need attention", { count: attention.toLocaleString(language) })}</span>}
+        {complete > 0 && <span>{t("{count} complete", { count: complete.toLocaleString(language) })}</span>}
+      </div>}
       <ul className="workbench-activity-list">{ordered.map(item => {
         const progress = item.progress && Number.isFinite(item.progress.done) && Number.isFinite(item.progress.total) && item.progress.done >= 0 && item.progress.total > 0 ? item.progress : null;
-        return <li key={item.id} className={`workbench-activity-item is-${item.state}`}><div className="workbench-activity-item-main"><span className="workbench-activity-state"><i aria-hidden="true" />{t(STATE_LABEL[item.state])}</span><h3>{item.title}</h3>{item.description && <p>{item.description}</p>}{progress && <div className="workbench-activity-progress"><progress max={progress.total} value={Math.min(progress.done, progress.total)} aria-label={t("Progress for {task}", { task: item.title })} /><small>{t("{done} of {total}", { done: progress.done, total: progress.total })}</small></div>}</div><button type="button" className="btn xs ghost workbench-activity-view" data-activity-view={item.id} aria-label={t("View {task}", { task: item.title })} onClick={() => viewTask(item.id)}>{t("View task")}</button></li>;
+        return <li key={item.id} className={`workbench-activity-item is-${item.state}`}>
+          <div className="workbench-activity-item-main">
+            <h3>{item.title}</h3>
+            <div className="workbench-activity-meta">
+              <span className="workbench-activity-state">{t(STATE_LABEL[item.state])}</span>
+              {item.description && <span className="workbench-activity-description">{item.description}</span>}
+            </div>
+            {progress && <div className="workbench-activity-progress">
+              <progress max={progress.total} value={Math.min(progress.done, progress.total)} aria-label={t("Progress for {task}", { task: item.title })} />
+              <small>{t("{done} of {total}", { done: progress.done.toLocaleString(language), total: progress.total.toLocaleString(language) })}</small>
+            </div>}
+          </div>
+          <button type="button" className="iconbtn workbench-activity-view" data-activity-view={item.id} aria-label={t("View {task}", { task: item.title })} onClick={() => viewTask(item.id)}>
+            <AppIcon name="chevronRight" className="sm" />
+          </button>
+        </li>;
       })}</ul>
     </section>}</MotionPresence>, document.body)}
   </>;

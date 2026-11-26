@@ -4,6 +4,7 @@ import type { HTMLElement, HTMLButtonElement, HTMLInputElement, HTMLTextAreaElem
 import { I18nProvider } from "../web/i18n.tsx";
 import { createDesktopCloseRegistry, DesktopCloseRegistryProvider } from "../web/desktop-close.tsx";
 import { LocalAssistantPage, type AssistantDraftSuggestion, type AssistantTaskSource } from "../web/local-assistant.tsx";
+import type { CompiledProposalView } from "../web/local-assistant-api.ts";
 import { createWorkspaceOperationCoordinator, WorkspaceOperationsProvider } from "../web/workspace-operations.tsx";
 import { createWebDomHarness } from "./web-dom.ts";
 
@@ -329,6 +330,46 @@ async function run(scenario: string) {
       assert.equal(clipboard.length, 3, "A stale workspace control cannot copy after the active workspace changes");
       assert.deepEqual(messages(), []);
       assert.equal(chats.length, 2, "Copy does not send or replay requests");
+      return;
+    }
+    if (scenario === "proposal-prose") {
+      const clipboard: string[] = [];
+      Object.defineProperty(dom.window.navigator, "clipboard", { configurable: true, value: { async writeText(value: string) { clipboard.push(value); } } });
+      const prose = "Review these checks.\n\n```text\nVisible example\n```";
+      const proposalFence = '```maobu-proposal\n{"internalId":"HIDDEN_STRUCTURED_PAYLOAD"}\n```';
+      const resolveProposal = async (index: number, content: string) => {
+        const chat = chats[index]!;
+        const action: CompiledProposalView["action"] = { type: "filter_anomalous_profiles", criteria: ["no_proxy"] };
+        const proposal: CompiledProposalView = {
+          proposalId: `fixture-${index}`, planHash: "a".repeat(64), workspaceId: "one", createdAt: 1, expiresAt: 2,
+          title: "Synthetic review card", summary: "Only a review fixture.", actionType: action.type,
+          action, risk: "read-only",
+          requiresSecondaryConfirm: false, mutatesWorkspace: false, warnings: [], counts: { total: 0, actionable: 0, skipped: 0 }, items: [],
+        };
+        const envelope = await reply(content, chat.call.body.model).json();
+        await act(async () => chat.response.resolve(json({ ...envelope, proposal })));
+      };
+      await send("Show visible response text");
+      await resolveProposal(0, `${prose}\n\n${proposalFence}`);
+      assert.deepEqual(messages(), ["Show visible response text", prose]);
+      await click("Copy");
+      await click("Copy conversation");
+      const firstTranscript = `You\nShow visible response text\n\nAssistant\n${prose}`;
+      assert.deepEqual(clipboard, [prose, firstTranscript], "A hidden proposal fence must not enter either clipboard action");
+      await type("My question");
+      await click("Use response as draft");
+      assert.equal(input().value, `My question\n\n${prose}`);
+      assert.equal(chats.length, 1, "Preparing a visible reply as draft must not send or execute it");
+
+      await send("Show only a review card");
+      await resolveProposal(1, proposalFence);
+      const cardOnly = dom.container.querySelectorAll<HTMLElement>(".assistant-message.assistant")[1]!;
+      assert.ok(cardOnly.querySelector(".proposal-card"), "A card-only response keeps its review UI");
+      assert.equal(cardOnly.querySelector(".assistant-message-content"), null);
+      assert.ok(![...cardOnly.querySelectorAll("button")].some(node => ["Copy", "Use response as draft"].includes(node.textContent?.trim() ?? "")));
+      await click("Copy conversation");
+      assert.equal(clipboard.at(-1), `${firstTranscript}\n\nYou\nShow only a review card`);
+      assert.equal(chats.length, 2);
       return;
     }
     if (scenario === "reading-focus") {

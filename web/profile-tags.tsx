@@ -4,6 +4,7 @@ import { MAX_PROFILE_TAGS, MAX_PROFILE_TAG_CHARACTERS, normalizeProfileTags, Pro
 import { useTranslation } from "./i18n.tsx";
 import { hasActiveWorkbenchModal } from "./workbench-shortcuts.ts";
 import { MotionPresence } from "./desktop-motion.tsx";
+import { AppIcon } from "./ui-primitives.tsx";
 import "./profile-tags.css";
 
 export interface ProfileTagsTarget { id: string; name: string; tags: readonly string[] }
@@ -39,7 +40,8 @@ function ProfileTagsSession({ target, open, onSave, onClose, returnFocus }: Prof
   const [original] = useState(() => [...target.tags]);
   const [tags, setTags] = useState(() => [...target.tags]), [input, setInput] = useState("");
   const [pending, setPending] = useState(false), [failure, setFailure] = useState(false), [notice, setNotice] = useState("");
-  const panel = useRef<HTMLDivElement>(null), entry = useRef<HTMLInputElement>(null);
+  const panel = useRef<HTMLDivElement>(null), entry = useRef<HTMLInputElement>(null), chipList = useRef<HTMLUListElement>(null);
+  const nextChipFocus = useRef<number | null>(null);
   const mounted = useRef(true), operating = useRef(false), close = useRef(onClose), restore = useRef(returnFocus), active = useRef(open);
   close.current = onClose; restore.current = returnFocus; active.current = open;
   const id = useId(), titleId = `${id}-title`, descriptionId = `${id}-description`, inputId = `${id}-input`, validationId = `${id}-validation`;
@@ -78,6 +80,12 @@ function ProfileTagsSession({ target, open, onSave, onClose, returnFocus }: Prof
     };
   }, [open]);
   useEffect(() => { if (!open) return; if (pending) panel.current?.focus({ preventScroll: true }); else if (failure) entry.current?.focus({ preventScroll: true }); }, [pending, failure, open]);
+  useLayoutEffect(() => {
+    if (!open || nextChipFocus.current === null) return;
+    const next = chipList.current?.querySelectorAll("button")[nextChipFocus.current];
+    nextChipFocus.current = null;
+    (next ?? entry.current)?.focus();
+  }, [open, tags]);
 
   function add() {
     if (!active.current || operating.current || !input.trim()) return;
@@ -97,21 +105,53 @@ function ProfileTagsSession({ target, open, onSave, onClose, returnFocus }: Prof
     finally { operating.current = false; if (mounted.current && active.current) setPending(false); }
   }
   function cancel() { if (active.current && !operating.current) close.current(); }
-  return createPortal(<MotionPresence present={open}>{() => <div className="profile-tags-backdrop" onPointerDown={event => { if (event.currentTarget === event.target) cancel(); }}>
+  function remove(index: number) {
+    if (!active.current || operating.current) return;
+    nextChipFocus.current = Math.min(index, tags.length - 2);
+    setTags(current => current.filter((_, position) => position !== index));
+    setFailure(false);
+    setNotice("");
+  }
+  return createPortal(<MotionPresence present={open}>{() => <div className="profile-tags-backdrop" onPointerDown={event => {
+    if (event.currentTarget !== event.target) return;
+    if (edited || operating.current) event.preventDefault();
+    else cancel();
+  }}>
     <div className="profile-tags-dialog" ref={panel} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId} aria-busy={pending} tabIndex={-1}>
-      <header><div><span className="profile-tags-eyebrow">{t("Quick organization")}</span><h2 id={titleId}>{t("Manage tags")}</h2></div><button className="iconbtn" type="button" disabled={pending} aria-label={t("Close tag editor")} onClick={cancel}><span aria-hidden="true">×</span></button></header>
-      <p id={descriptionId} className="profile-tags-description">{t("Tags for {profile}", { profile: target.name || target.id })}</p>
-      <div className="profile-tags-body"><div className="profile-tags-list-heading"><h3>{t("Environment tags")}</h3><span>{t("{count} / {limit} tags", { count: tags.length, limit: MAX_PROFILE_TAGS })}</span></div>
-        {tags.length ? <ul className="profile-tags-chips" aria-label={t("Current tags")}>{tags.map((tag, index) => <li key={index}><span>{tagLabel(tag) || t("Empty tag")}</span><button type="button" disabled={pending} aria-label={t("Remove tag {tag}", { tag: tagLabel(tag) || t("Empty tag") })} onClick={() => { if (!active.current || operating.current) return; setTags(current => current.filter((_, item) => item !== index)); setFailure(false); setNotice(""); entry.current?.focus(); }}><span aria-hidden="true">×</span></button></li>)}</ul> : <p className="profile-tags-empty">{t("No tags yet. Add a label to find this environment more easily.")}</p>}
-        <form className="profile-tags-entry" onSubmit={event => { event.preventDefault(); add(); }}><label htmlFor={inputId}>{t("Add tags")}</label><div><input className="input" id={inputId} ref={entry} value={input} disabled={pending} aria-invalid={!!validation || undefined} aria-describedby={`${id}-hint${validation ? ` ${validationId}` : ""}`} placeholder={t("For example: research, priority")} autoComplete="off" onChange={event => { setInput(event.target.value); setFailure(false); setNotice(""); }} onKeyDown={event => {
-          if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
-          if (["Enter", ",", "，"].includes(event.key)) { event.preventDefault(); event.stopPropagation(); add(); }
-        }} /><button className="btn" type="submit" disabled={pending || !input.trim()}>{t("Add")}</button></div></form>
-        <p className="profile-tags-hint" id={`${id}-hint`}>{t("Press Enter or a comma to add a tag. Up to {count} tags, {length} characters each.", { count: MAX_PROFILE_TAGS, length: MAX_PROFILE_TAG_CHARACTERS })}</p>
+      <header>
+        <div>
+          <h2 id={titleId}>{t("Manage tags")}</h2>
+          <p id={descriptionId} className="profile-tags-description" title={target.name || target.id}><bdi>{target.name || target.id}</bdi></p>
+        </div>
+        <button className="iconbtn" type="button" disabled={pending} aria-label={t("Close tag editor")} onClick={cancel}><AppIcon name="close" /></button>
+      </header>
+      <div className="profile-tags-body">
+        <form className="profile-tags-entry" onSubmit={event => { event.preventDefault(); add(); }}>
+          <label htmlFor={inputId}>{t("Add tags")}</label>
+          <div>
+            <input className="input" id={inputId} ref={entry} value={input} disabled={pending} aria-invalid={!!validation || undefined} aria-describedby={`${id}-hint${validation ? ` ${validationId}` : ""}`} placeholder={t("research, priority")} autoComplete="off" onChange={event => { setInput(event.target.value); setFailure(false); setNotice(""); }} onKeyDown={event => {
+              if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+              if (["Enter", ",", "，"].includes(event.key)) { event.preventDefault(); event.stopPropagation(); add(); }
+            }} />
+            <button className="btn" type="submit" disabled={pending || !input.trim()}>{t("Add")}</button>
+          </div>
+        </form>
+        <p className="profile-tags-hint" id={`${id}-hint`}>{t("Enter or comma to add. Up to {length} characters per tag.", { length: MAX_PROFILE_TAG_CHARACTERS })}</p>
         {validation && <p className="profile-tags-error" role="alert" id={validationId}>{t(validation)}</p>}
         {failure && <p className="profile-tags-error" role="alert">{t("Tags could not be saved. Your draft is kept; try saving again.")}</p>}
         {notice && <p className="profile-tags-feedback" role="status">{t(notice)}</p>}
-        {pending && <p className="profile-tags-feedback" role="status">{t("Saving tags… Wait for confirmation before closing this editor.")}</p>}
+        {pending && <p className="profile-tags-feedback" role="status">{t("Saving tags…")}</p>}
+        <div className="profile-tags-list-heading">
+          <h3 id={`${id}-list`}>{t("Current tags")}</h3>
+          <span>{t("{count} / {limit} tags", { count: tags.length, limit: MAX_PROFILE_TAGS })}</span>
+        </div>
+        {tags.length ? <ul className="profile-tags-chips" aria-labelledby={`${id}-list`} ref={chipList}>{tags.map((tag, index) => {
+          const label = tagLabel(tag) || t("Empty tag");
+          return <li key={index}>
+            <span>{label}</span>
+            <button type="button" disabled={pending} aria-label={t("Remove tag {tag}", { tag: label })} onClick={() => remove(index)}><AppIcon name="close" className="sm" /></button>
+          </li>;
+        })}</ul> : <p className="profile-tags-empty">{t("No tags yet")}</p>}
       </div>
       <footer><button className="btn ghost" type="button" disabled={pending} onClick={cancel}>{t("Cancel")}</button><button className="btn primary" type="button" disabled={pending || !changed || !!validation} onClick={() => void save()}>{t(pending ? "Saving…" : "Save tags")}</button></footer>
     </div>

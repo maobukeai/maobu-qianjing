@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { open, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Launcher } from "../../launcher.ts";
 import type { ProfileStore } from "../../store.ts";
@@ -25,6 +25,29 @@ import {
   type UiRuntimeOptions,
 } from "./shared.ts";
 
+const LOG_TAIL_LIMIT = 64 * 1024;
+
+async function readLogTail(path: string): Promise<string> {
+  const file = await open(path, "r");
+  try {
+    const stats = await file.stat();
+    if (!stats.isFile()) throw new Error("Invalid log file");
+    // Three UTF-8 bytes per UTF-16 code unit covers the requested suffix.
+    // The extra bytes allow decoding even when the read starts inside a character.
+    const bytes = Buffer.alloc(Math.min(stats.size, LOG_TAIL_LIMIT * 3 + 3));
+    const start = stats.size - bytes.length;
+    let length = 0;
+    while (length < bytes.length) {
+      const { bytesRead } = await file.read(bytes, length, bytes.length - length, start + length);
+      if (!bytesRead) break;
+      length += bytesRead;
+    }
+    return bytes.subarray(0, length).toString("utf8").slice(-LOG_TAIL_LIMIT);
+  } finally {
+    await file.close();
+  }
+}
+
 /** System, health, shell preferences, proxy tools, and trash UI API routes. */
 export async function handleSystemUiRoutes(
   req: Request,
@@ -44,15 +67,15 @@ export async function handleSystemUiRoutes(
     return noStoreJson({ ok: true, freeBytes, low: freeBytes !== null && freeBytes < LOW_DISK_SPACE_BYTES });
   }
   if (pathname === "/ui/api/logs" && req.method === "GET") {
-    if (!options.paths) return Response.json({ ok: false, error: "logs are unavailable" }, { status: 503 });
+    if (!options.paths) return noStoreJson({ ok: false, error: "logs are unavailable" }, 503);
     try {
       const dir = join(options.paths.root, "logs");
-      const name = readdirSync(dir).filter((f) => /^aliasmode-\d{4}-\d{2}-\d{2}\.log$/.test(f)).sort().pop();
-      if (!name) return Response.json({ ok: false, error: "no log file yet" });
-      const content = readFileSync(join(dir, name), "utf8");
-      return Response.json({ ok: true, file: name, content: content.slice(-64 * 1024) });
+      const names = await readdir(dir);
+      const name = names.filter((f) => /^aliasmode-\d{4}-\d{2}-\d{2}\.log$/.test(f)).sort().pop();
+      if (!name) return noStoreJson({ ok: false, error: "no log file yet" });
+      return noStoreJson({ ok: true, file: name, content: await readLogTail(join(dir, name)) });
     } catch {
-      return Response.json({ ok: false, error: "log file could not be read" });
+      return noStoreJson({ ok: false, error: "log file could not be read" });
     }
   }
   if (pathname === "/ui/api/app-mode" && req.method === "GET") {

@@ -19,7 +19,7 @@ async function run(scenario: string) {
     const response = deferred<Response>(); requests.push({ id: decodeURIComponent(match[1]!), body, response }); return response.promise;
   }, { preconnect: globalThis.fetch.preconnect }) });
   dom.window.document.documentElement.dataset.desktopMotion = scenario === "reduced-motion" ? "reduced" : "full";
-  const initialTags = scenario === "limits" ? Array.from({ length: 20 }, (_, index) => `tag${index}`) : scenario === "legacy-repair" ? ["normal", "x".repeat(41), "bad\u0085legacy"] : scenario === "clear" ? ["Warmup", "priority"] : ["Warmup"];
+  const initialTags = scenario === "limits" ? Array.from({ length: 20 }, (_, index) => `tag${index}`) : scenario === "legacy-repair" ? ["normal", "x".repeat(41), "bad\u0085legacy"] : scenario === "remove-focus" ? ["Warmup", "priority", "review"] : scenario === "clear" ? ["Warmup", "priority"] : ["Warmup"];
   const original: ProfileTagsTarget = { id: "tags_environment", name: "Original environment", tags: initialTags };
   // Keep these non-enumerable: React's development prop-diff logger enumerates props itself.
   for (const key of ["password", "proxy", "username", "emailPassword", "twofa", "fingerprintSeed"]) Object.defineProperty(original, key, { enumerable: false, get() { throw new Error("Private profile fields must never be read by tag management"); } });
@@ -90,6 +90,18 @@ async function run(scenario: string) {
       assert.deepEqual(chips(), ["normal", "x".repeat(41), "bad⟦U+0085⟧legacy"]); assert.ok(dialog()!.querySelector('[role="alert"]'));
       await click(`Remove tag ${"x".repeat(41)}`); assert.ok(dialog()!.querySelector('[role="alert"]')); await click("Remove tag bad⟦U+0085⟧legacy");
       assert.equal(dialog()!.querySelector('[role="alert"]'), null); await click("Save tags"); assert.deepEqual(requests[0]!.body, { set: { tags: ["normal"] } }); await respond(0); await waitFor(() => !dialog()); return;
+    }
+    if (scenario === "remove-focus") {
+      await click("Remove tag priority");
+      assert.deepEqual(chips(), ["Warmup", "review"]);
+      assert.equal(dom.window.document.activeElement, button("Remove tag review"));
+      await click("Remove tag review");
+      assert.equal(dom.window.document.activeElement, button("Remove tag Warmup"));
+      await click("Remove tag Warmup");
+      assert.deepEqual(chips(), []);
+      assert.equal(dom.window.document.activeElement, input());
+      assert.equal(requests.length, 0);
+      return;
     }
     if (scenario === "clear") {
       await click("Remove tag Warmup"); await click("Remove tag priority"); assert.deepEqual(chips(), []); await click("Save tags"); assert.deepEqual(requests[0]!.body, { set: { tags: [] } }); await respond(0); await waitFor(() => !dialog()); return;

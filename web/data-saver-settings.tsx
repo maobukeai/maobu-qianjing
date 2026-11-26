@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useDesktopCloseDraft } from "./desktop-close.tsx";
 import { useTranslation } from "./i18n.tsx";
+import { AppIcon } from "./ui-primitives.tsx";
 import {
   DEFAULT_BATCH_LAUNCH_MEMORY_GUARD,
   DEFAULT_DATA_SAVER_SETTINGS,
@@ -163,205 +164,13 @@ export function DataSaverSettings({ initialSettings }: { initialSettings?: Resol
   return (
     <section className="feature-card" aria-label={t("Resource & data saver")}>
       <div className="feature-card-title">
-        <div>
-          <h3>{t("Resource & data saver")}</h3>
+        <div className="feature-card-head-main">
+          <div className="feature-card-heading">
+            <AppIcon name="activity" className="sm" />
+            <h3>{t("Resource & data saver")}</h3>
+          </div>
           <p>{t("Reduce browser RAM usage, proxy bandwidth traffic, and memory spikes during batch launches.")}</p>
         </div>
-      </div>
-
-      <label className="feature-toggle" style={{ marginTop: 0, paddingTop: 0, borderTop: 0 }}>
-        <span>
-          <strong>{t("Firefox memory saver")}</strong>
-          <small>{t("Limit Firefox content processes and unload background tabs under memory pressure. Applies on next launch.")}</small>
-        </span>
-        <input
-          type="checkbox"
-          role="switch"
-          checked={draft.firefoxMemorySaver}
-          disabled={disabled}
-          onChange={(e) => {
-            setDraft((cur) => ({ ...cur, firefoxMemorySaver: e.target.checked }));
-            setNotice("");
-            setError("");
-          }}
-        />
-      </label>
-
-      <label className="feature-toggle">
-        <span>
-          <strong>{t("Bandwidth data saver mode")}</strong>
-          <small>{t("Reduce residential/metered proxy traffic by skipping heavy static assets on fresh launches.")}</small>
-        </span>
-        <input
-          type="checkbox"
-          role="switch"
-          checked={draft.dataSaver.enabled}
-          disabled={disabled}
-          onChange={(e) => {
-            const on = e.target.checked;
-            setDraft((cur) => ({
-              ...cur,
-              dataSaver: {
-                ...cur.dataSaver,
-                enabled: on,
-                ...(on && !cur.dataSaver.blockImages && !cur.dataSaver.blockMedia && !cur.dataSaver.blockFonts
-                  ? { blockImages: true, blockMedia: true }
-                  : {}),
-              },
-            }));
-            setNotice("");
-            setError("");
-          }}
-        />
-      </label>
-
-      {draft.dataSaver.enabled && (
-        <div className="feature-grid" style={{ marginTop: "8px" }}>
-          <label className="fld" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: "8px" }}>
-            <input
-              type="checkbox"
-              style={{ width: "auto" }}
-              checked={draft.dataSaver.blockImages}
-              disabled={disabled}
-              onChange={(e) => {
-                setDraft((cur) => ({ ...cur, dataSaver: { ...cur.dataSaver, blockImages: e.target.checked } }));
-                setNotice("");
-              }}
-            />
-            <span>{t("Block images")}</span>
-          </label>
-          <label className="fld" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: "8px" }}>
-            <input
-              type="checkbox"
-              style={{ width: "auto" }}
-              checked={draft.dataSaver.blockMedia}
-              disabled={disabled}
-              onChange={(e) => {
-                setDraft((cur) => ({ ...cur, dataSaver: { ...cur.dataSaver, blockMedia: e.target.checked } }));
-                setNotice("");
-              }}
-            />
-            <span>{t("Block media autoplay & preload")}</span>
-          </label>
-          <label className="fld" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: "8px" }}>
-            <input
-              type="checkbox"
-              style={{ width: "auto" }}
-              checked={draft.dataSaver.blockFonts}
-              disabled={disabled}
-              onChange={(e) => {
-                setDraft((cur) => ({ ...cur, dataSaver: { ...cur.dataSaver, blockFonts: e.target.checked } }));
-                setNotice("");
-              }}
-            />
-            <span>{t("Block remote web fonts")}</span>
-          </label>
-        </div>
-      )}
-
-      <p className="feature-inline-note">
-        {t("Off by default. Blocking images, media, or remote fonts saves metered proxy traffic without MITM extensions, but may alter media/font detection signals on strict websites.")}
-      </p>
-
-      <label className="feature-toggle">
-        <span>
-          <strong>{t("Batch launch memory watermark guard")}</strong>
-          <small>{t("Automatically throttle or pause concurrent browser starts when host RAM crosses safe thresholds. Stop and cleanup actions are never throttled.")}</small>
-        </span>
-        <input
-          type="checkbox"
-          role="switch"
-          checked={draft.batchLaunchMemoryGuard.enabled}
-          disabled={disabled}
-          onChange={(e) => {
-            setDraft((cur) => ({
-              ...cur,
-              batchLaunchMemoryGuard: { ...cur.batchLaunchMemoryGuard, enabled: e.target.checked },
-            }));
-            setNotice("");
-            setError("");
-          }}
-        />
-      </label>
-
-      {draft.batchLaunchMemoryGuard.enabled && (
-        <div className="feature-grid" style={{ marginTop: "8px" }}>
-          <label className="fld">
-            <span>{t("Soft watermark (%)")}</span>
-            <input
-              type="number"
-              min={30}
-              max={95}
-              step={1}
-              value={draft.batchLaunchMemoryGuard.softWatermarkPercent}
-              disabled={disabled}
-              onChange={(e) => {
-                const value = Number.parseInt(e.target.value, 10);
-                setDraft((cur) => ({
-                  ...cur,
-                  batchLaunchMemoryGuard: {
-                    ...cur.batchLaunchMemoryGuard,
-                    softWatermarkPercent: Number.isFinite(value) ? value : 75,
-                  },
-                }));
-                setNotice("");
-                setError("");
-              }}
-            />
-          </label>
-          <label className="fld">
-            <span>{t("Hard watermark (%)")}</span>
-            <input
-              type="number"
-              min={40}
-              max={99}
-              step={1}
-              value={draft.batchLaunchMemoryGuard.hardWatermarkPercent}
-              disabled={disabled}
-              onChange={(e) => {
-                const value = Number.parseInt(e.target.value, 10);
-                setDraft((cur) => ({
-                  ...cur,
-                  batchLaunchMemoryGuard: {
-                    ...cur.batchLaunchMemoryGuard,
-                    hardWatermarkPercent: Number.isFinite(value) ? value : 88,
-                  },
-                }));
-                setNotice("");
-                setError("");
-              }}
-            />
-          </label>
-          <label className="fld">
-            <span>{t("Minimum free memory (MB)")}</span>
-            <input
-              type="number"
-              min={128}
-              max={65536}
-              step={128}
-              value={draft.batchLaunchMemoryGuard.minAvailableMb}
-              disabled={disabled}
-              onChange={(e) => {
-                const value = Number.parseInt(e.target.value, 10);
-                setDraft((cur) => ({
-                  ...cur,
-                  batchLaunchMemoryGuard: {
-                    ...cur.batchLaunchMemoryGuard,
-                    minAvailableMb: Number.isFinite(value) ? value : 1536,
-                  },
-                }));
-                setNotice("");
-                setError("");
-              }}
-            />
-          </label>
-        </div>
-      )}
-
-      {error && <p className="feature-alert" role="alert" style={{ marginTop: "12px" }}>{t(error)}</p>}
-      {notice && <p className="feature-success" role="status" style={{ marginTop: "12px" }}>{t(notice)}</p>}
-
-      <div className="feature-actions">
         {saved === null ? (
           <button type="button" className="btn" disabled={busy} onClick={() => void load(true)}>
             {t(busy ? "Loading…" : "Try again")}
@@ -377,6 +186,199 @@ export function DataSaverSettings({ initialSettings }: { initialSettings?: Resol
             {t(busy ? "Saving…" : "Save resource preferences")}
           </button>
         )}
+      </div>
+      <div className="feature-card-body">
+        <label className="feature-toggle">
+          <span>
+            <strong>{t("Firefox memory saver")}</strong>
+            <small>{t("Limit Firefox content processes and unload background tabs under memory pressure. Applies on next launch.")}</small>
+          </span>
+          <input
+            type="checkbox"
+            role="switch"
+            checked={draft.firefoxMemorySaver}
+            disabled={disabled}
+            onChange={(e) => {
+              setDraft((cur) => ({ ...cur, firefoxMemorySaver: e.target.checked }));
+              setNotice("");
+              setError("");
+            }}
+          />
+        </label>
+
+        <label className="feature-toggle">
+          <span>
+            <strong>{t("Bandwidth data saver mode")}</strong>
+            <small>{t("Reduce residential/metered proxy traffic by skipping heavy static assets on fresh launches.")}</small>
+          </span>
+          <input
+            type="checkbox"
+            role="switch"
+            checked={draft.dataSaver.enabled}
+            disabled={disabled}
+            onChange={(e) => {
+              const on = e.target.checked;
+              setDraft((cur) => ({
+                ...cur,
+                dataSaver: {
+                  ...cur.dataSaver,
+                  enabled: on,
+                  ...(on && !cur.dataSaver.blockImages && !cur.dataSaver.blockMedia && !cur.dataSaver.blockFonts
+                    ? { blockImages: true, blockMedia: true }
+                    : {}),
+                },
+              }));
+              setNotice("");
+              setError("");
+            }}
+          />
+        </label>
+
+        {draft.dataSaver.enabled && (
+          <div className="feature-grid">
+            <label className="fld" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: "8px" }}>
+              <input
+                type="checkbox"
+                style={{ width: "auto" }}
+                checked={draft.dataSaver.blockImages}
+                disabled={disabled}
+                onChange={(e) => {
+                  setDraft((cur) => ({ ...cur, dataSaver: { ...cur.dataSaver, blockImages: e.target.checked } }));
+                  setNotice("");
+                }}
+              />
+              <span>{t("Block images")}</span>
+            </label>
+            <label className="fld" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: "8px" }}>
+              <input
+                type="checkbox"
+                style={{ width: "auto" }}
+                checked={draft.dataSaver.blockMedia}
+                disabled={disabled}
+                onChange={(e) => {
+                  setDraft((cur) => ({ ...cur, dataSaver: { ...cur.dataSaver, blockMedia: e.target.checked } }));
+                  setNotice("");
+                }}
+              />
+              <span>{t("Block media autoplay & preload")}</span>
+            </label>
+            <label className="fld" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: "8px" }}>
+              <input
+                type="checkbox"
+                style={{ width: "auto" }}
+                checked={draft.dataSaver.blockFonts}
+                disabled={disabled}
+                onChange={(e) => {
+                  setDraft((cur) => ({ ...cur, dataSaver: { ...cur.dataSaver, blockFonts: e.target.checked } }));
+                  setNotice("");
+                }}
+              />
+              <span>{t("Block remote web fonts")}</span>
+            </label>
+          </div>
+        )}
+
+        <p className="feature-inline-note">
+          {t("Off by default. Blocking images, media, or remote fonts saves metered proxy traffic without MITM extensions, but may alter media/font detection signals on strict websites.")}
+        </p>
+
+        <label className="feature-toggle">
+          <span>
+            <strong>{t("Batch launch memory watermark guard")}</strong>
+            <small>{t("Automatically throttle or pause concurrent browser starts when host RAM crosses safe thresholds. Stop and cleanup actions are never throttled.")}</small>
+          </span>
+          <input
+            type="checkbox"
+            role="switch"
+            checked={draft.batchLaunchMemoryGuard.enabled}
+            disabled={disabled}
+            onChange={(e) => {
+              setDraft((cur) => ({
+                ...cur,
+                batchLaunchMemoryGuard: { ...cur.batchLaunchMemoryGuard, enabled: e.target.checked },
+              }));
+              setNotice("");
+              setError("");
+            }}
+          />
+        </label>
+
+        {draft.batchLaunchMemoryGuard.enabled && (
+          <div className="feature-grid">
+            <label className="fld">
+              <span>{t("Soft watermark (%)")}</span>
+              <input
+                type="number"
+                min={30}
+                max={95}
+                step={1}
+                value={draft.batchLaunchMemoryGuard.softWatermarkPercent}
+                disabled={disabled}
+                onChange={(e) => {
+                  const value = Number.parseInt(e.target.value, 10);
+                  setDraft((cur) => ({
+                    ...cur,
+                    batchLaunchMemoryGuard: {
+                      ...cur.batchLaunchMemoryGuard,
+                      softWatermarkPercent: Number.isFinite(value) ? value : 75,
+                    },
+                  }));
+                  setNotice("");
+                  setError("");
+                }}
+              />
+            </label>
+            <label className="fld">
+              <span>{t("Hard watermark (%)")}</span>
+              <input
+                type="number"
+                min={40}
+                max={99}
+                step={1}
+                value={draft.batchLaunchMemoryGuard.hardWatermarkPercent}
+                disabled={disabled}
+                onChange={(e) => {
+                  const value = Number.parseInt(e.target.value, 10);
+                  setDraft((cur) => ({
+                    ...cur,
+                    batchLaunchMemoryGuard: {
+                      ...cur.batchLaunchMemoryGuard,
+                      hardWatermarkPercent: Number.isFinite(value) ? value : 88,
+                    },
+                  }));
+                  setNotice("");
+                  setError("");
+                }}
+              />
+            </label>
+            <label className="fld">
+              <span>{t("Minimum free memory (MB)")}</span>
+              <input
+                type="number"
+                min={128}
+                max={65536}
+                step={128}
+                value={draft.batchLaunchMemoryGuard.minAvailableMb}
+                disabled={disabled}
+                onChange={(e) => {
+                  const value = Number.parseInt(e.target.value, 10);
+                  setDraft((cur) => ({
+                    ...cur,
+                    batchLaunchMemoryGuard: {
+                      ...cur.batchLaunchMemoryGuard,
+                      minAvailableMb: Number.isFinite(value) ? value : 1536,
+                    },
+                  }));
+                  setNotice("");
+                  setError("");
+                }}
+              />
+            </label>
+          </div>
+        )}
+
+        {error && <p className="feature-alert" role="alert">{t(error)}</p>}
+        {notice && <p className="feature-success" role="status">{t(notice)}</p>}
       </div>
     </section>
   );

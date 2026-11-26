@@ -76,11 +76,35 @@ async function run(scenario: string) {
       await choose(`saved:${serverView.id}`); assert.deepEqual(applied, [serverView]); assert.equal(saved.length + removed.length, 0);
       props = { ...props, current: structuredClone(serverView.filters) }; props.current.hiddenColumns.reverse(); await render();
       assert.equal(select(), originalSelect); assert.equal(select().value, `saved:${serverView.id}`, "An applied saved view remains selected even when equivalent columns are reordered");
-      await click("Manage saved views"); await click(serverView.name); assert.equal(applied.length, 2);
+      await click("Manage saved views");
+      assert.equal(button(serverView.name).getAttribute("aria-current"), "true");
+      await click(serverView.name); assert.equal(applied.length, 2);
       await choose("attention"); assert.deepEqual(scopes, ["attention"]);
+    } else if (scenario === "keyboard-panels") {
+      const escape = async () => act(async () => {
+        const event = new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+        dom.window.document.activeElement?.dispatchEvent(event);
+        assert.equal(event.defaultPrevented, true, "The surrounding navigation must not handle this Escape");
+      });
+      await click("Manage saved views");
+      const manage = button("Manage saved views");
+      const managed = dom.window.document.getElementById(manage.getAttribute("aria-controls")!);
+      assert.ok(managed?.classList.contains("roster-view-manager"));
+      assert.equal(dom.window.document.activeElement, button(serverView.name));
+      await escape();
+      assert.equal(manage.getAttribute("aria-expanded"), "false");
+      assert.equal(dom.window.document.activeElement, manage);
+      await openSave("Unsubmitted draft");
+      await escape();
+      assert.equal(dom.window.document.activeElement, button("Save current view"));
+      assert.equal(dom.container.querySelector(".roster-view-editor"), null);
+      await click("Save current view");
+      assert.equal(input().value, "Unsubmitted draft");
+      assert.equal(saved.length + removed.length + applied.length, 0);
     } else if (scenario === "delete-undo" || scenario === "undo-retry") {
       const original = structuredClone(serverView), filters = structuredClone(props.current);
       await removeFirst(); assert.equal(props.views.length, 0); assert.ok(button("Undo"));
+      assert.equal(dom.container.querySelector(".roster-view-manager"), null);
       assert.equal(dom.window.document.activeElement, button("Save current view"), "Removing the final saved view must focus an enabled fallback control");
       await click("Undo"); assert.deepEqual(saved[0], original, "Undo must restore the exact saved ID and filter snapshot");
       if (scenario === "undo-retry") {

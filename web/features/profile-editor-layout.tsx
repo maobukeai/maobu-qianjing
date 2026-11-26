@@ -1,16 +1,41 @@
-import { createContext, useContext, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useTranslation } from "../i18n.tsx";
+import { AppIcon, type IconName } from "../ui-primitives.tsx";
 import "./profile-editor-layout.css";
 
 export interface ProfileEditorSectionLink {
   /** Stable within this editor, e.g. basic, proxy, account, fingerprint, extensions. */
   id: string;
   label: ReactNode;
+  icon?: IconName;
+}
+
+export interface ProfileEditorPreviewItem {
+  key: string;
+  label: ReactNode;
+  value: ReactNode;
+  muted?: boolean;
+  mono?: boolean;
+}
+
+export interface ProfileEditorPreviewCardProps {
+  title?: ReactNode;
+  heading: ReactNode;
+  subheading?: ReactNode;
+  badgeText?: ReactNode;
+  avatarText?: string;
+  statusLabel?: ReactNode;
+  statusTone?: "neutral" | "success" | "warn";
+  items: readonly ProfileEditorPreviewItem[];
+  footnote?: ReactNode;
 }
 
 export interface ProfileEditorLayoutProps {
   label: string;
   sections: readonly ProfileEditorSectionLink[];
   children: ReactNode;
+  /** Optional right-rail live summary panel rendered alongside continuous sections. */
+  preview?: ReactNode;
   /** Disable navigation until asynchronous detail fields are mounted. Never moves focus on load. */
   ready?: boolean;
   /** Reset the current section when the parent starts another editing session. */
@@ -53,7 +78,82 @@ function scrollContainer(root: HTMLElement): HTMLElement | null {
  * unmounted. Field values, validation, drafts, submit and close stay with the parent.
  * Place this inside the existing scrollable modal body; keep the footer outside it.
  */
-export function ProfileEditorLayout({ label, sections, children, ready = true, sessionKey, scrollBehavior = "auto", className = "" }: ProfileEditorLayoutProps) {
+export function ProfileEditorPreviewCard({
+  title,
+  heading,
+  subheading,
+  badgeText,
+  avatarText,
+  statusLabel,
+  statusTone = "neutral",
+  items,
+  footnote,
+}: ProfileEditorPreviewCardProps) {
+  const { t } = useTranslation();
+  const prevValuesRef = useRef<Map<string, string> | null>(null);
+  const [flashKeys, setFlashKeys] = useState<string[]>([]);
+
+  useEffect(() => {
+    const nextMap = new Map<string, string>();
+    nextMap.set("__heading", typeof heading === "string" || typeof heading === "number" ? String(heading) : "");
+    for (const item of items) {
+      nextMap.set(item.key, typeof item.value === "string" || typeof item.value === "number" ? String(item.value) : "");
+    }
+    const prevMap = prevValuesRef.current;
+    prevValuesRef.current = nextMap;
+    if (!prevMap) return;
+
+    const changed: string[] = [];
+    for (const [k, v] of nextMap.entries()) {
+      if (prevMap.get(k) !== v) changed.push(k);
+    }
+    if (changed.length === 0) return;
+
+    const motionReduced = typeof document !== "undefined" &&
+      (document.documentElement.dataset.motion === "reduced" ||
+        window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
+    if (motionReduced) return;
+
+    setFlashKeys(changed);
+    const timer = window.setTimeout(() => setFlashKeys([]), 480);
+    return () => window.clearTimeout(timer);
+  }, [heading, items]);
+
+  const glyph = (avatarText ?? "").trim().slice(0, 2).toUpperCase() || "MB";
+
+  return (
+    <section className="profile-editor-preview-card" aria-label={typeof title === "string" ? title : t("Live summary")}>
+      <div className="profile-editor-preview-head">
+        <span className="profile-editor-preview-kicker">{title ?? t("Live summary")}</span>
+        {statusLabel != null && (
+          <span className={`profile-editor-preview-status is-${statusTone}`}>
+            <span className="profile-editor-preview-dot" aria-hidden="true" />
+            <span>{statusLabel}</span>
+          </span>
+        )}
+      </div>
+      <div className={`profile-editor-preview-hero${flashKeys.includes("__heading") ? " is-flash" : ""}`}>
+        <div className="profile-editor-preview-avatar" aria-hidden="true">{glyph}</div>
+        <div className="profile-editor-preview-identity">
+          <div className="profile-editor-preview-name">{heading}</div>
+          {subheading != null && <div className="profile-editor-preview-sub">{subheading}</div>}
+        </div>
+        {badgeText != null && <span className="profile-editor-preview-badge">{badgeText}</span>}
+      </div>
+      <dl className="profile-editor-preview-rows">
+        {items.map((item) => (
+          <div key={item.key} className={`profile-editor-preview-row${flashKeys.includes(item.key) ? " is-flash" : ""}`}>
+            <dt>{item.label}</dt>
+            <dd className={`${item.muted ? "is-muted " : ""}${item.mono ? "is-mono" : ""}`.trim()}>{item.value}</dd>
+          </div>
+        ))}
+      </dl>
+      {footnote != null && <div className="profile-editor-preview-foot">{footnote}</div>}
+    </section>
+  );
+}
+
+export function ProfileEditorLayout({ label, sections, children, preview, ready = true, sessionKey, scrollBehavior = "auto", className = "" }: ProfileEditorLayoutProps) {
   const instanceId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(sections[0]?.id ?? "");
@@ -169,16 +269,17 @@ export function ProfileEditorLayout({ label, sections, children, ready = true, s
           revealProfileEditorTarget(target);
         });
       }}>
-      <div className="profile-editor-layout-grid">
-        <nav className="profile-editor-section-nav" aria-label={label}>
-          {sections.map((section, index) => <button key={section.id} type="button" className="profile-editor-section-link"
+      <div className={`profile-editor-layout-grid${preview ? " has-preview" : ""}`}>
+        <nav className="profile-editor-section-nav" aria-label={label} data-sliding-group data-sliding-axis="vertical" data-sliding-accent-bar="true">
+          {sections.map((section) => <button key={section.id} type="button" className="profile-editor-section-link"
             disabled={!ready} aria-current={activeId === section.id ? "location" : undefined} aria-controls={sectionId(section.id)}
             onClick={() => navigate(section.id)}>
-            <span className="profile-editor-section-number" aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>
+            {section.icon && <AppIcon name={section.icon} />}
             <span>{section.label}</span>
           </button>)}
         </nav>
         <div className="profile-editor-sections">{children}</div>
+        {preview != null && <aside className="profile-editor-preview-slot">{preview}</aside>}
       </div>
     </div>
   </SectionContext.Provider>;

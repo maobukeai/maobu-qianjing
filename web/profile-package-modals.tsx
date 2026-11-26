@@ -5,6 +5,7 @@ import {
   importProfilePackage,
   isMqProfileFile,
   previewProfilePackage,
+  ProfilePackageImportError,
   type ProfilePackageConflictReason,
   type ProfilePackageConflictStrategy,
   type ProfilePackageExportProgress,
@@ -17,6 +18,7 @@ import "./profile-package-modals.css";
 
 const MIN_PASSWORD_BYTES = 10;
 const MAX_PASSWORD_BYTES = 1024;
+const RECEIPT_PAGE_SIZE = 50;
 
 function utf8ByteLength(value: string): number {
   return new TextEncoder().encode(value).length;
@@ -37,6 +39,7 @@ export function ProfilePackageExportModal({
   onExported,
 }: ProfilePackageExportModalProps) {
   const { t } = useTranslation();
+  const activeExport = useRef<symbol | null>(null);
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -57,6 +60,7 @@ export function ProfilePackageExportModal({
       setProgress(null);
       setError(null);
     }
+    return () => { activeExport.current = null; };
   }, [open]);
 
   const passwordBytes = useMemo(() => utf8ByteLength(password), [password]);
@@ -65,7 +69,9 @@ export function ProfilePackageExportModal({
   const canSubmit = !busy && selectedIds.length > 0 && passwordValid && passwordsMatch;
 
   async function handleExport() {
-    if (!canSubmit) return;
+    if (!canSubmit || activeExport.current !== null) return;
+    const request = Symbol();
+    activeExport.current = request;
     setBusy(true);
     setError(null);
     setProgress({ completed: 0, total: selectedIds.length });
@@ -77,14 +83,18 @@ export function ProfilePackageExportModal({
           includeSecrets,
           includeSessions,
         },
-        (next) => setProgress(next),
+        (next) => { if (activeExport.current === request) setProgress(next); },
       );
+      if (activeExport.current !== request) return;
       onExported?.(summary);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (activeExport.current === request) setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setBusy(false);
+      if (activeExport.current === request) {
+        activeExport.current = null;
+        setBusy(false);
+      }
     }
   }
 
@@ -92,9 +102,11 @@ export function ProfilePackageExportModal({
     <ModalDialog
       open={open}
       onClose={onClose}
+      closeOnBackdrop={false}
       busy={busy}
       size="md"
-      title={t("Export encrypted profile package (.mqprofile)")}
+      className="profile-package-dialog"
+      title={<><span className="modal-title-icon"><AppIcon name="lock" /></span>{t("Export encrypted profile package (.mqprofile)")}</>}
       footer={
         <>
           <button type="button" className="btn ghost" onClick={onClose} disabled={busy}>
@@ -113,12 +125,6 @@ export function ProfilePackageExportModal({
       }
     >
       <div className="pkg-modal-stack">
-        <p className="pkg-modal-intro">
-          {t("Protect {count} selected environment(s) with AES-256-GCM encryption for portable transfer.", {
-            count: selectedIds.length,
-          })}
-        </p>
-
         <div className="pkg-field">
           <label className="pkg-field-label" htmlFor="pkg-export-password">
             {t("Encryption password")}
@@ -130,7 +136,8 @@ export function ProfilePackageExportModal({
               value={password}
               disabled={busy}
               autoComplete="new-password"
-              placeholder={t("At least 10 characters")}
+              aria-describedby="pkg-export-password-hint"
+              aria-invalid={password.length > 0 && !passwordValid || undefined}
               onChange={(event) => {
                 setPassword(event.target.value);
                 setError(null);
@@ -140,12 +147,13 @@ export function ProfilePackageExportModal({
               type="button"
               className="btn ghost xs"
               disabled={busy}
+              aria-controls="pkg-export-password pkg-export-confirm"
               onClick={() => setShowPassword((prev) => !prev)}
             >
               {t(showPassword ? "Hide" : "Show")}
             </button>
           </div>
-          <span className={`pkg-field-hint${password.length > 0 && !passwordValid ? " is-error" : ""}`}>
+          <span id="pkg-export-password-hint" className={`pkg-field-hint${password.length > 0 && !passwordValid ? " is-error" : ""}`}>
             {t("Password must be 10–1024 UTF-8 bytes ({bytes} bytes).", { bytes: passwordBytes })}
           </span>
         </div>
@@ -160,29 +168,30 @@ export function ProfilePackageExportModal({
             value={confirmPassword}
             disabled={busy}
             autoComplete="new-password"
-            placeholder={t("Re-enter encryption password")}
+            aria-invalid={confirmPassword.length > 0 && !passwordsMatch || undefined}
+            aria-describedby={confirmPassword.length > 0 && !passwordsMatch ? "pkg-export-confirm-hint" : undefined}
             onChange={(event) => {
               setConfirmPassword(event.target.value);
               setError(null);
             }}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && canSubmit) {
+              if (event.key === "Enter" && !event.nativeEvent.isComposing && canSubmit) {
                 event.preventDefault();
                 void handleExport();
               }
             }}
           />
           {confirmPassword.length > 0 && !passwordsMatch && (
-            <span className="pkg-field-hint is-error">{t("Passwords do not match.")}</span>
+            <span id="pkg-export-confirm-hint" className="pkg-field-hint is-error">{t("Passwords do not match.")}</span>
           )}
         </div>
 
-        <div className="pkg-options">
+        <fieldset className="pkg-options" disabled={busy}>
+          <legend>{t("Include in package")}</legend>
           <label className="pkg-checkbox">
             <input
               type="checkbox"
               checked={includeSecrets}
-              disabled={busy}
               onChange={(event) => setIncludeSecrets(event.target.checked)}
             />
             <span>{t("Include credentials & proxy authentication")}</span>
@@ -191,12 +200,11 @@ export function ProfilePackageExportModal({
             <input
               type="checkbox"
               checked={includeSessions}
-              disabled={busy}
               onChange={(event) => setIncludeSessions(event.target.checked)}
             />
             <span>{t("Include saved browser sessions (captures open browsers first)")}</span>
           </label>
-        </div>
+        </fieldset>
 
         {busy && progress && (
           <div className="pkg-progress" role="status">
@@ -256,73 +264,99 @@ export function ProfilePackageImportModal({
 }: ProfilePackageImportModalProps) {
   const { t, language } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const passwordInputRef = useRef<HTMLInputElement>(null);
+  const reviewHeadingRef = useRef<HTMLHeadingElement>(null);
+  const receiptHeadingRef = useRef<HTMLHeadingElement>(null);
+  const retryRef = useRef<HTMLButtonElement>(null);
+  const selectAllRef = useRef<HTMLInputElement>(null);
+  const pendingFocus = useRef<"password" | "review" | "retry" | "receipt" | null>(null);
+  const activeRequest = useRef<symbol | null>(null);
   const [file, setFile] = useState<File | null>(initialFile);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [preview, setPreview] = useState<ProfilePackagePreview | null>(null);
+  const [previewStale, setPreviewStale] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [strategy, setStrategy] = useState<ProfilePackageConflictStrategy>("skip");
   const [confirmOverwrite, setConfirmOverwrite] = useState(false);
   const [receipt, setReceipt] = useState<ProfilePackageImportResult | null>(null);
+  const [receiptLimit, setReceiptLimit] = useState(RECEIPT_PAGE_SIZE);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
 
   useEffect(() => {
-    if (open) {
-      setFile(initialFile ?? null);
-      setPassword("");
-      setShowPassword(false);
-      setPreview(null);
-      setSelectedIds(new Set());
-      setStrategy("skip");
-      setConfirmOverwrite(false);
-      setReceipt(null);
-      setBusy(false);
-      setError(null);
-      setDragActive(false);
-    }
+    setFile(open ? initialFile : null);
+    setPassword("");
+    setShowPassword(false);
+    setPreview(null);
+    setPreviewStale(false);
+    setSelectedIds(new Set());
+    setStrategy("skip");
+    setConfirmOverwrite(false);
+    setReceipt(null);
+    setReceiptLimit(RECEIPT_PAGE_SIZE);
+    setBusy(false);
+    setError(null);
+    setDragActive(false);
+    return () => {
+      activeRequest.current = null;
+      pendingFocus.current = null;
+    };
   }, [open, initialFile]);
+
+  const passwordBytes = utf8ByteLength(password);
+  const validPassword = passwordBytes >= MIN_PASSWORD_BYTES && passwordBytes <= MAX_PASSWORD_BYTES;
+  const closeImport = () => { if (activeRequest.current === null) onClose(); };
 
   const handleSelectFile = useCallback(
     (next: File | null) => {
-      if (!next) return;
+      if (!next || activeRequest.current !== null) return;
       if (!isMqProfileFile(next)) {
         setError(t("Choose a .mqprofile encrypted environment package."));
         return;
       }
       setFile(next);
       setPreview(null);
+      setPreviewStale(false);
       setReceipt(null);
       setError(null);
+      passwordInputRef.current?.focus();
     },
     [t],
   );
 
   async function handleDecryptPreview() {
-    if (!file || busy) return;
-    if (utf8ByteLength(password) < MIN_PASSWORD_BYTES) {
-      setError(t("Password must be 10–1024 UTF-8 bytes ({bytes} bytes).", { bytes: utf8ByteLength(password) }));
-      return;
-    }
+    if (!file || !validPassword || activeRequest.current !== null) return;
+    const request = Symbol();
+    activeRequest.current = request;
     setBusy(true);
+    setDragActive(false);
     setError(null);
     try {
       const nextPreview = await previewProfilePackage(file, password);
+      if (activeRequest.current !== request) return;
+      pendingFocus.current = "review";
       setPreview(nextPreview);
-      setSelectedIds(new Set(nextPreview.profiles.map((item) => item.id)));
-      setStrategy(nextPreview.conflictCount > 0 ? "clone_new_id" : "skip");
+      setPreviewStale(false);
+      setSelectedIds(new Set(nextPreview.profiles.filter((item) => !previewStale || selectedIds.has(item.id)).map((item) => item.id)));
+      setStrategy(nextPreview.conflictCount > 0 ? (previewStale ? strategy : "clone_new_id") : "skip");
       setConfirmOverwrite(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (activeRequest.current === request) setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setBusy(false);
+      if (activeRequest.current === request) {
+        activeRequest.current = null;
+        setBusy(false);
+      }
     }
   }
 
   async function handleImportCommit() {
-    if (!preview || busy || selectedIds.size === 0) return;
+    if (!preview || previewStale || activeRequest.current !== null || selectedIds.size === 0) return;
     if (strategy === "overwrite_closed" && !confirmOverwrite) return;
+    const request = Symbol();
+    activeRequest.current = request;
     setBusy(true);
     setError(null);
     try {
@@ -333,124 +367,184 @@ export function ProfilePackageImportModal({
         selectedIds: Array.from(selectedIds),
         ...(strategy === "overwrite_closed" ? { confirmOverwrite: true } : {}),
       });
+      if (activeRequest.current !== request) return;
+      pendingFocus.current = "receipt";
+      setFile(null);
+      setPassword("");
+      setPreview(null);
       setReceipt(result);
+      setReceiptLimit(RECEIPT_PAGE_SIZE);
       onImported?.(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (activeRequest.current !== request) return;
+      if (err instanceof ProfilePackageImportError && (err.code === "invalid_preview" || err.code === "preview_target_changed")) {
+        pendingFocus.current = "retry";
+        setPreviewStale(true);
+        setConfirmOverwrite(false);
+        setError(t("This package preview is no longer available. Review it again before importing."));
+      } else {
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
-      setBusy(false);
+      if (activeRequest.current === request) {
+        activeRequest.current = null;
+        setBusy(false);
+      }
     }
   }
 
   const allSelected = !!preview && preview.profiles.length > 0 && selectedIds.size === preview.profiles.length;
   const overwriteBlocked = strategy === "overwrite_closed" && !confirmOverwrite;
+  const phase = receipt ? "receipt" : previewStale ? "retry" : preview ? "review" : "password";
+
+  useEffect(() => {
+    if (!open || busy || !pendingFocus.current) return;
+    const controls = { password: passwordInputRef, review: reviewHeadingRef, retry: retryRef, receipt: receiptHeadingRef };
+    controls[pendingFocus.current].current?.focus();
+    pendingFocus.current = null;
+  }, [busy, open, phase]);
+
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = selectedIds.size > 0 && !allSelected;
+  }, [allSelected, preview, selectedIds.size]);
 
   return (
     <ModalDialog
       open={open}
-      onClose={onClose}
+      onClose={closeImport}
+      closeOnBackdrop={false}
       busy={busy}
       size={preview ? "lg" : "md"}
-      title={t("Import encrypted profile package (.mqprofile)")}
+      className="profile-package-dialog"
+      title={<><span className="modal-title-icon"><AppIcon name="lock" /></span>{t("Import encrypted profile package (.mqprofile)")}</>}
       footer={
-        receipt ? (
-          <button type="button" className="btn primary" onClick={onClose}>
-            {t("Done")}
-          </button>
-        ) : preview ? (
-          <>
-            <button
-              type="button"
-              className="btn ghost"
-              disabled={busy}
-              onClick={() => {
-                setPreview(null);
-                setError(null);
-              }}
-            >
-              {t("Back")}
+        <>
+          {error && <p className="pkg-error" role="alert">{error}</p>}
+          {preview && !previewStale && strategy === "overwrite_closed" && (
+            <label className="pkg-overwrite-confirm">
+              <input
+                type="checkbox"
+                checked={confirmOverwrite}
+                disabled={busy}
+                aria-describedby="pkg-overwrite-guidance"
+                onChange={(event) => setConfirmOverwrite(event.target.checked)}
+              />
+              <span>{t("I confirm replacing closed environments with the same ID.")}</span>
+            </label>
+          )}
+          {receipt ? (
+            <button type="button" className="btn primary" onClick={closeImport} disabled={busy}>
+              {t("Done")}
             </button>
-            <button
-              type="button"
-              className={strategy === "overwrite_closed" ? "btn danger" : "btn primary"}
-              disabled={busy || selectedIds.size === 0 || overwriteBlocked}
-              onClick={() => void handleImportCommit()}
-            >
-              <AppIcon name="fileImport" className="sm" />
-              {busy
-                ? t("Importing package…")
-                : t("Import {count} environments", { count: selectedIds.size })}
-            </button>
-          </>
-        ) : (
-          <>
-            <button type="button" className="btn ghost" onClick={onClose} disabled={busy}>
-              {t("Cancel")}
-            </button>
-            <button
-              type="button"
-              className="btn primary"
-              disabled={busy || !file || utf8ByteLength(password) < MIN_PASSWORD_BYTES}
-              onClick={() => void handleDecryptPreview()}
-            >
-              <AppIcon name="key" className="sm" />
-              {busy ? t("Decrypting…") : t("Decrypt & preview")}
-            </button>
-          </>
-        )
+          ) : preview ? (
+            <>
+              <button
+                type="button"
+                className="btn ghost"
+                disabled={busy}
+                onClick={() => {
+                  if (activeRequest.current !== null) return;
+                  pendingFocus.current = "password";
+                  setPreview(null);
+                  setPreviewStale(false);
+                  setError(null);
+                }}
+              >
+                {t("Back")}
+              </button>
+              <button
+                ref={previewStale ? retryRef : undefined}
+                type="button"
+                className={!previewStale && strategy === "overwrite_closed" ? "btn danger" : "btn primary"}
+                disabled={busy || (previewStale ? !file || !validPassword : selectedIds.size === 0 || overwriteBlocked)}
+                onClick={() => void (previewStale ? handleDecryptPreview() : handleImportCommit())}
+              >
+                <AppIcon name={previewStale ? "key" : "fileImport"} className="sm" />
+                {previewStale ? t(busy ? "Decrypting…" : "Decrypt & preview")
+                  : busy ? t("Importing package…") : t("Import {count} environments", { count: selectedIds.size })}
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" className="btn ghost" onClick={closeImport} disabled={busy}>
+                {t("Cancel")}
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={busy || !file || !validPassword}
+                onClick={() => void handleDecryptPreview()}
+              >
+                <AppIcon name="key" className="sm" />
+                {busy ? t("Decrypting…") : t("Decrypt & preview")}
+              </button>
+            </>
+          )}
+        </>
       }
     >
       <div className="pkg-modal-stack">
         {receipt ? (
-          <div className="pkg-receipt" role="status">
-            <div className="pkg-summary-grid">
+          <section className="pkg-receipt" aria-labelledby="pkg-receipt-heading">
+            <h4 className="pkg-subheading" ref={receiptHeadingRef} id="pkg-receipt-heading" tabIndex={-1}>{t("Package imported")}</h4>
+            <dl className="pkg-summary-grid">
               <div className="pkg-stat">
-                <span>{t("Imported")}</span>
-                <strong>{receipt.importedCount}</strong>
+                <dt>{t("Imported")}</dt>
+                <dd>{receipt.importedCount}</dd>
               </div>
               <div className="pkg-stat">
-                <span>{t("Cloned")}</span>
-                <strong>{receipt.clonedCount}</strong>
+                <dt>{t("Cloned")}</dt>
+                <dd>{receipt.clonedCount}</dd>
               </div>
               <div className="pkg-stat">
-                <span>{t("Overwritten")}</span>
-                <strong>{receipt.overwrittenCount}</strong>
+                <dt>{t("Overwritten")}</dt>
+                <dd>{receipt.overwrittenCount}</dd>
               </div>
               <div className="pkg-stat">
-                <span>{t("Skipped")}</span>
-                <strong>{receipt.skippedCount}</strong>
+                <dt>{t("Skipped")}</dt>
+                <dd>{receipt.skippedCount}</dd>
               </div>
-            </div>
-            <ul className="pkg-receipt-list">
-              {receipt.items.slice(0, 50).map((item) => (
+            </dl>
+            {receipt.items.length > 0 && <ul className="pkg-receipt-list" tabIndex={0}>
+              {receipt.items.slice(0, receiptLimit).map((item) => (
                 <li key={`${item.sourceId}-${item.targetId ?? "skip"}`}>
-                  <span className="pkg-mono">{item.targetId ?? item.sourceId}</span>
-                  <span className="pkg-receipt-name">{item.name}</span>
+                  <span className="pkg-receipt-environment">
+                    <strong>{item.name || item.targetId || item.sourceId}</strong>
+                    {item.name && <span className="pkg-mono">{item.targetId ?? item.sourceId}</span>}
+                  </span>
                   <span className={`pkg-badge is-${item.action}`}>{t(item.action)}</span>
                 </li>
               ))}
-            </ul>
-          </div>
+            </ul>}
+            {receipt.items.length > receiptLimit && (
+              <button type="button" className="btn ghost xs" onClick={() => {
+                if (receipt.items.length <= receiptLimit + RECEIPT_PAGE_SIZE) receiptHeadingRef.current?.focus();
+                setReceiptLimit((limit) => limit + RECEIPT_PAGE_SIZE);
+              }}>
+                {t("Show {count} more results", { count: Math.min(RECEIPT_PAGE_SIZE, receipt.items.length - receiptLimit) })}
+              </button>
+            )}
+          </section>
         ) : preview ? (
           <>
-            <div className="pkg-summary-grid">
+            <dl className="pkg-summary-grid">
               <div className="pkg-stat">
-                <span>{t("Total in package")}</span>
-                <strong>{preview.profileCount}</strong>
+                <dt>{t("Total in package")}</dt>
+                <dd>{preview.profileCount}</dd>
               </div>
               <div className="pkg-stat">
-                <span>{t("New")}</span>
-                <strong>{preview.newCount}</strong>
+                <dt>{t("New")}</dt>
+                <dd>{preview.newCount}</dd>
               </div>
               <div className="pkg-stat">
-                <span>{t("Conflicts")}</span>
-                <strong>{preview.conflictCount}</strong>
+                <dt>{t("Conflicts")}</dt>
+                <dd>{preview.conflictCount}</dd>
               </div>
               <div className="pkg-stat">
-                <span>{t("Saved sessions")}</span>
-                <strong>{preview.sessionCount}</strong>
+                <dt>{t("Saved sessions")}</dt>
+                <dd>{preview.sessionCount}</dd>
               </div>
-            </div>
+            </dl>
 
             <div className="pkg-meta-line">
               <span>
@@ -461,8 +555,76 @@ export function ProfilePackageImportModal({
               </span>
             </div>
 
+            <section className="pkg-preview-section" aria-labelledby="pkg-review-heading">
+              <h4 id="pkg-review-heading" ref={reviewHeadingRef} className="pkg-subheading" tabIndex={-1}>{t("Environments in package")}</h4>
+              <div className="pkg-preview-table-wrap" tabIndex={0} role="region" aria-labelledby="pkg-review-heading">
+                <table className="pkg-preview-table" aria-labelledby="pkg-review-heading">
+                  <thead>
+                    <tr>
+                      <th scope="col" className="pkg-col-check">
+                        <input
+                          ref={selectAllRef}
+                          type="checkbox"
+                          aria-label={t("Select all package environments")}
+                          checked={allSelected}
+                          disabled={busy || previewStale}
+                          onChange={(event) => setSelectedIds(event.target.checked
+                            ? new Set(preview.profiles.map((item) => item.id))
+                            : new Set())}
+                        />
+                      </th>
+                      <th scope="col">{t("Name")}</th>
+                      <th scope="col" className="pkg-col-status">{t("Status")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.profiles.map((item) => {
+                      const checked = selectedIds.has(item.id);
+                      const name = item.name || item.id;
+                      return (
+                        <tr key={item.id}>
+                          <td className="pkg-col-check">
+                            <input
+                              type="checkbox"
+                              aria-label={t("Select {profile}", { profile: name })}
+                              checked={checked}
+                              disabled={busy || previewStale}
+                              onChange={(event) => {
+                                setSelectedIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (event.target.checked) next.add(item.id);
+                                  else next.delete(item.id);
+                                  return next;
+                                });
+                              }}
+                            />
+                          </td>
+                          <td className="pkg-environment-cell">
+                            <div className="pkg-name-cell">
+                              <strong>{name}</strong>
+                              {item.hasSession && <span className="pkg-pill">{t("Session")}</span>}
+                            </div>
+                            {name !== item.id && <span className="pkg-profile-id pkg-mono">{item.id}</span>}
+                            <div className="pkg-profile-details">
+                              <span><AppIcon name="folder" className="sm" /><span className="sr-only">{t("Group")} </span>{item.group || t("Ungrouped")}</span>
+                              <span><AppIcon name="activity" className="sm" /><span className="sr-only">{t("Proxy")} </span>{item.proxyDisplay || t("None")}</span>
+                            </div>
+                          </td>
+                          <td>
+                            <span className={`pkg-badge is-${item.conflictReason ?? "new"}`}>
+                              {t(conflictLabel(item.conflictReason))}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
             {preview.conflictCount > 0 && (
-              <fieldset className="pkg-strategy-group">
+              <fieldset className="pkg-strategy-group" disabled={busy || previewStale}>
                 <legend>{t("Conflict resolution strategy")}</legend>
                 <label className={`pkg-strategy-option${strategy === "skip" ? " is-selected" : ""}`}>
                   <input
@@ -478,7 +640,7 @@ export function ProfilePackageImportModal({
                   />
                   <div>
                     <strong>{t("Skip conflicts")}</strong>
-                    <span>{t("Keep existing environments untouched and import only new IDs.")}</span>
+                    <span>{t("Import only new IDs.")}</span>
                   </div>
                 </label>
                 <label className={`pkg-strategy-option${strategy === "clone_new_id" ? " is-selected" : ""}`}>
@@ -495,7 +657,7 @@ export function ProfilePackageImportModal({
                   />
                   <div>
                     <strong>{t("Clone with new ID (Recommended)")}</strong>
-                    <span>{t("Allocate new IDs and remap sessions so existing environments stay safe.")}</span>
+                    <span>{t("Copy matching environments and sessions to new IDs.")}</span>
                   </div>
                 </label>
                 <label className={`pkg-strategy-option is-danger${strategy === "overwrite_closed" ? " is-selected" : ""}`}>
@@ -509,135 +671,65 @@ export function ProfilePackageImportModal({
                   />
                   <div>
                     <strong>{t("Overwrite closed profiles")}</strong>
-                    <span>{t("Replace matching closed environments. Running and trashed profiles are always skipped.")}</span>
+                    <span id="pkg-overwrite-guidance">{t("Replace closed environments with the same ID. Running and trashed environments are skipped.")}</span>
                   </div>
                 </label>
 
-                {strategy === "overwrite_closed" && (
-                  <label className="pkg-overwrite-confirm">
-                    <input
-                      type="checkbox"
-                      checked={confirmOverwrite}
-                      disabled={busy}
-                      onChange={(event) => setConfirmOverwrite(event.target.checked)}
-                    />
-                    <span>
-                      {t("I confirm overwriting closed environments with package data (running and trashed environments are still skipped).")}
-                    </span>
-                  </label>
-                )}
               </fieldset>
             )}
 
-            <div className="pkg-preview-table-wrap">
-              <table className="pkg-preview-table">
-                <thead>
-                  <tr>
-                    <th className="pkg-col-check">
-                      <input
-                        type="checkbox"
-                        aria-label={t("Select all package environments")}
-                        checked={allSelected}
-                        disabled={busy}
-                        onChange={(event) =>
-                          setSelectedIds(
-                            event.target.checked
-                              ? new Set(preview.profiles.map((item) => item.id))
-                              : new Set(),
-                          )
-                        }
-                      />
-                    </th>
-                    <th>{t("Name")}</th>
-                    <th>ID</th>
-                    <th>{t("Group")}</th>
-                    <th>{t("Proxy")}</th>
-                    <th>{t("Status")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {preview.profiles.map((item) => {
-                    const checked = selectedIds.has(item.id);
-                    return (
-                      <tr key={item.id}>
-                        <td className="pkg-col-check">
-                          <input
-                            type="checkbox"
-                            aria-label={t("Select {profile}", { profile: item.name || item.id })}
-                            checked={checked}
-                            disabled={busy}
-                            onChange={(event) => {
-                              setSelectedIds((prev) => {
-                                const next = new Set(prev);
-                                if (event.target.checked) next.add(item.id);
-                                else next.delete(item.id);
-                                return next;
-                              });
-                            }}
-                          />
-                        </td>
-                        <td>
-                          <div className="pkg-name-cell">
-                            <span>{item.name || item.id}</span>
-                            {item.hasSession && <span className="pkg-pill">{t("Session")}</span>}
-                          </div>
-                        </td>
-                        <td className="pkg-mono">{item.id}</td>
-                        <td>{item.group || t("Ungrouped")}</td>
-                        <td className="pkg-mono">{item.proxyDisplay || t("None")}</td>
-                        <td>
-                          <span className={`pkg-badge is-${item.conflictReason ?? "new"}`}>
-                            {t(conflictLabel(item.conflictReason))}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
           </>
         ) : (
           <>
-            <div
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".mqprofile"
+              hidden
+              disabled={busy}
+              onChange={(event) => {
+                handleSelectFile(event.currentTarget.files?.[0] ?? null);
+                event.currentTarget.value = "";
+              }}
+            />
+            <button
+              type="button"
+              disabled={busy}
               className={`pkg-dropzone${dragActive ? " is-drag" : ""}${file ? " has-file" : ""}`}
+              aria-label={t(file ? "Change file" : "Choose or drop files")}
+              aria-describedby="pkg-source-details"
+              onClick={() => fileInputRef.current?.click()}
               onDragOver={(event) => {
                 event.preventDefault();
-                setDragActive(true);
+                if (activeRequest.current === null) setDragActive(true);
               }}
               onDragLeave={() => setDragActive(false)}
               onDrop={(event) => {
                 event.preventDefault();
+                event.stopPropagation();
                 setDragActive(false);
                 const dropped = event.dataTransfer.files?.[0] ?? null;
                 handleSelectFile(dropped);
               }}
             >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".mqprofile"
-                hidden
-                onChange={(event) => handleSelectFile(event.target.files?.[0] ?? null)}
-              />
-              <AppIcon name="lock" className="pkg-drop-icon" />
+              <span className="modal-title-icon"><AppIcon name="fileImport" /></span>
               {file ? (
-                <div className="pkg-selected-file">
+                <>
+                <span className="pkg-selected-file" id="pkg-source-details">
                   <strong>{file.name}</strong>
-                  <span>{`${Math.max(1, Math.round(file.size / 1024))} KiB`}</span>
-                </div>
+                  <span>{file.size < 1024
+                    ? `${file.size.toLocaleString(language)} B`
+                    : `${Math.round(file.size / 1024).toLocaleString(language)} KiB`}</span>
+                </span>
+                <span className="pkg-source-change">{t("Change file")}</span>
+                </>
               ) : (
-                <p>{t("Drop a .mqprofile file here or browse to select one.")}</p>
+                <span className="pkg-empty-file">
+                  <strong>{t("Choose or drop files")}</strong>
+                  <span className="pkg-format" id="pkg-source-details">.mqprofile</span>
+                </span>
               )}
-              <button
-                type="button"
-                className="btn xs"
-                disabled={busy}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                {t(file ? "Change file" : "Choose .mqprofile file")}
-              </button>
-            </div>
+            </button>
 
             <div className="pkg-field">
               <label className="pkg-field-label" htmlFor="pkg-import-password">
@@ -645,18 +737,20 @@ export function ProfilePackageImportModal({
               </label>
               <div className="pkg-password-row">
                 <input
+                  ref={passwordInputRef}
                   id="pkg-import-password"
                   type={showPassword ? "text" : "password"}
                   value={password}
                   disabled={busy}
                   autoComplete="current-password"
-                  placeholder={t("Enter the password used during export")}
+                  aria-invalid={password.length > 0 && !validPassword || undefined}
+                  aria-describedby={password.length > 0 && !validPassword ? "pkg-import-password-hint" : undefined}
                   onChange={(event) => {
                     setPassword(event.target.value);
                     setError(null);
                   }}
                   onKeyDown={(event) => {
-                    if (event.key === "Enter" && file && utf8ByteLength(password) >= MIN_PASSWORD_BYTES) {
+                    if (event.key === "Enter" && !event.nativeEvent.isComposing && file && validPassword) {
                       event.preventDefault();
                       void handleDecryptPreview();
                     }
@@ -666,20 +760,19 @@ export function ProfilePackageImportModal({
                   type="button"
                   className="btn ghost xs"
                   disabled={busy}
+                  aria-controls="pkg-import-password"
                   onClick={() => setShowPassword((prev) => !prev)}
                 >
                   {t(showPassword ? "Hide" : "Show")}
                 </button>
               </div>
+              {password.length > 0 && !validPassword && (
+                <span id="pkg-import-password-hint" className="pkg-field-hint is-error">{t("Password must be 10–1024 UTF-8 bytes ({bytes} bytes).", { bytes: passwordBytes })}</span>
+              )}
             </div>
           </>
         )}
 
-        {error && (
-          <p className="pkg-error" role="alert">
-            {error}
-          </p>
-        )}
       </div>
     </ModalDialog>
   );

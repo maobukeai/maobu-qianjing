@@ -4,6 +4,7 @@ import { act, createElement } from "react";
 import type { Root } from "react-dom/client";
 import type { HTMLElement, HTMLButtonElement, HTMLInputElement, HTMLSelectElement } from "happy-dom";
 import type { DesktopCloseIntent, DesktopCloseNative, DesktopCloseResolved } from "../web/desktop-close-state.ts";
+import type { AppLockStatus } from "../web/app-lock-api.ts";
 import { getBrowserRuntimeInventory } from "../runtime-inventory.ts";
 import { createWebDomHarness } from "./web-dom.ts";
 
@@ -15,7 +16,12 @@ async function run(scenario: string) {
   const profile = (profileId: string, group: string, extensions: string[], serial: number) => ({ id: profileId, name: profileId === id ? detail.name : "Other close fixture", engine: "chromium", chromiumRuntime: "aliasmode", group, platform: "", tags: [], extensions, proxy: null, timezone: "UTC", cookieCount: 0, seeded: true, screen: "1920x1080", has2fa: false, serial, createdAt: 1, lastOpenAt: 0, customNo: "", running: false, mobilePersona: false });
   const profiles = [profile(id, groupNames[0]!, ["alpha"], 1), profile("close_two", groupNames[1]!, ["gamma"], 2)];
   const settings = { version: 1, updates: { repository: "saved/announcements", channel: "stable", checkOnStartup: false }, sync: { enabled: true, folder: "C:/inert-close-snapshots", retainSnapshots: 10 }, network: { checkLocalProxyBeforeLaunch: false } };
-  const appMode = { ok: true, localOnly: true, version: 1, mode: "local", localAnalytics: false, defaultEngine: "chromium", defaultChromiumRuntime: "aliasmode" };
+  const appLockScenario = scenario.startsWith("app-lock-");
+  const appMode = { ok: true, localOnly: true, version: 1, mode: "local", localAnalytics: false, defaultEngine: "chromium", defaultChromiumRuntime: "aliasmode", appLockAvailable: appLockScenario };
+  const lockStatus: AppLockStatus = {
+    configured: true, enabled: true, locked: false, lockOnStartup: true, idleTimeoutMinutes: 15,
+    failedAttempts: 0, cooldownUntil: 0, retryAfterMs: 0, lastActivityAt: 0, updatedAt: null, corrupt: false,
+  };
   const heldMode = deferred<Response>();
   const writes: Array<{ path: string; body: unknown; response: ReturnType<typeof deferred<Response>> }> = [];
   const requests: Array<{ path: string; method: string }> = [], unexpected: string[] = [];
@@ -24,6 +30,11 @@ async function run(scenario: string) {
     const path = String(input), method = options?.method ?? "GET";
     requests.push({ path, method });
     if (method === "POST" && (path === "/ui/api/profiles" || path === `/ui/api/profiles/${id}/update`)) {
+      const response = deferred<Response>(); writes.push({ path, body: JSON.parse(String(options?.body)), response }); return response.promise;
+    }
+    if (appLockScenario && path === "/ui/api/app-lock/status" && method === "GET") return json({ ok: true, status: lockStatus });
+    if (appLockScenario && path === "/ui/api/app-lock/activity" && method === "POST") return json({ ok: true, status: lockStatus });
+    if (appLockScenario && path === "/ui/api/app-lock/configure" && method === "POST") {
       const response = deferred<Response>(); writes.push({ path, body: JSON.parse(String(options?.body)), response }); return response.promise;
     }
     if (path === "/ui/api/workspace/preferences" && ["GET", "POST"].includes(method)) return json({ ok: true, preferences: {} });
@@ -166,6 +177,55 @@ async function run(scenario: string) {
       assert.equal(startupCheck(), checkbox); assert.equal(checkbox.checked, true); assert.equal(select.value, "browser-default");
       assert.equal(requests.filter(item => item.path === "/ui/api/settings" && item.method === "GET").length, 3, "Returning to Network must preserve all network owners without reloading their drafts");
       assert.equal(writesBesidesPreferences().length, 0, "Editing network preferences must not scan, save, check proxies or launch anything"); return;
+    }
+    if (appLockScenario) {
+      const save = scenario === "app-lock-saving";
+      const secret = "SYNTHETIC_APP_LOCK_PASSWORD";
+      await click(button("Settings", dom.container));
+      const select = visible<HTMLSelectElement>("[data-app-lock-settings] select")[0];
+      assert.ok(select);
+      const card = visible<HTMLElement>("[data-app-lock-settings]")[0]!;
+      const currentPassword = field("Current master password (required for changes)", card);
+      await act(async () => { select.value = "30"; select.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
+      await type(currentPassword, secret);
+      if (save) {
+        await click(button("Save lock settings", card));
+        await waitFor(() => writes.length === 1, "App-lock settings must start one configuration write");
+        assert.deepEqual(writes[0]!.body, { currentPassword: secret, idleTimeoutMinutes: 30, lockOnStartup: true });
+      } else {
+        await requestClose();
+        assertLabels(["App master password lock"]);
+        assert.ok(!closeDialog()!.outerHTML.includes(secret));
+        await keep();
+        assert.equal(currentPassword.value, secret, "Cancelling native close must preserve the active form");
+      }
+      await click(tab("network"));
+      assert.equal(visible("[data-app-lock-settings]").length, 0);
+      await requestClose();
+      assertLabels(["App master password lock"]);
+      assert.ok(!closeDialog()!.outerHTML.includes(secret));
+      assert.equal(nativeCalls.filter(item => item.decision === "proceed").length, 0);
+      if (save) {
+        assert.ok(closeDialog()?.textContent?.includes("A change is still in progress"));
+        assert.equal(closeDialog()?.querySelectorAll("button").length, 1);
+        lockStatus.idleTimeoutMinutes = 30;
+        await act(async () => writes[0]!.response.resolve(json({ ok: true, status: lockStatus })));
+        await waitFor(() => !closeDialog()?.textContent?.includes("A change is still in progress"), "Completed settings release their close barrier");
+        assert.equal(nativeCalls.filter(item => item.decision === "proceed").length, 0, "Settling a save must not automatically close the app");
+      }
+      await keep();
+      await click(tab("account"));
+      assert.equal(visible("[data-app-lock-settings]")[0], card);
+      assert.equal(select.value, "30");
+      assert.equal(currentPassword.value, "", "Leaving the lock form must clear its transient password");
+      assert.equal(writes.length, save ? 1 : 0);
+      if (!save) {
+        await act(async () => { select.value = "15"; select.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
+      }
+      await requestClose();
+      assert.equal(nativeCalls.at(-1)?.decision, "proceed", "A clean form must release the close guard");
+      await cancelNative();
+      return;
     }
     await click(button("Manage extensions", dom.container));
     await waitFor(() => visible(".extensions-default-choice").length === 3 && visible<HTMLElement>(".extensions-workspace")[0]?.getAttribute("aria-busy") === "false", "Actual extension owner must finish its complete read");

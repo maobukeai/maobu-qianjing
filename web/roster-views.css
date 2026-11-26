@@ -5,19 +5,33 @@
 .roster-view-select .select { min-width: 180px; max-width: min(380px, 100%); background-color: var(--surface); font-size: 12px; }
 .roster-view-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; flex-shrink: 0; }
 .roster-view-actions .iconbtn { width: 30px; height: 30px; border-color: transparent; }
-.roster-view-note, .roster-view-error { margin: 7px 0 0; font-size: 11.5px; line-height: 1.7; color: var(--muted); }
+.roster-view-actions [aria-expanded="true"] { color: var(--accent-ink); background: var(--accent-soft); border-color: var(--accent-line); }
+.roster-view-note, .roster-view-error { margin: 7px 0 0; font-size: var(--t-xs); line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
 .roster-view-error { color: var(--danger-ink); }
-.roster-view-editor { display: flex; align-items: center; gap: 10px; padding: 14px 16px; margin-top: 10px; border: 1px solid var(--accent-line); border-radius: 8px; background: var(--surface-sunken); }
-.roster-view-editor > div { flex: 1; min-width: 0; }
+.roster-view-editor, .roster-view-manager { min-width: 0; margin-top: 8px; padding: 8px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-sunken); }
+.roster-view-editor { display: grid; gap: 6px; border-color: var(--accent-line); }
 .roster-view-editor .fld { margin: 0; }
-.roster-view-editor .input { width: 100%; max-width: 420px; }
-.roster-view-editor p { font-size: 11px; line-height: 1.6; margin: 6px 0 0; color: var(--muted); }
-.roster-view-manager { max-width: 640px; max-height: 240px; overflow-y: auto; margin-top: 10px; padding: 4px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
-.roster-view-manager > header, .roster-view-manager > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-block: 7px; }
-.roster-view-manager > header { color: var(--muted); font-size: 11.5px; }
-.roster-view-manager > div { border-top: 1px solid var(--line-soft); }
-.roster-view-name { padding: 4px 0; min-width: 0; color: var(--ink-soft); border: 0; background: none; font: 12px/1.6 var(--font); text-align: left; overflow-wrap: anywhere; }
-.roster-view-name:hover { color: var(--accent-ink); }
+.roster-view-editor .input { min-width: 0; width: 100%; }
+.roster-view-editor-hint { margin: 0; color: var(--muted); font-size: var(--t-xs); line-height: 1.5; }
+.roster-view-editor .roster-view-error { margin: 0; padding: 5px 6px; border-radius: var(--r-sm); background: var(--danger-soft); }
+.roster-view-editor-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.roster-view-editor-actions .btn, .roster-view-remove { min-height: 28px; }
+.roster-view-manager > header { display: flex; align-items: center; justify-content: space-between; gap: 5px; margin-bottom: 4px; }
+.roster-view-manager h3 { min-width: 0; margin: 0; padding-inline-start: 4px; color: var(--ink); font-size: var(--t-sm); font-weight: 620; overflow-wrap: anywhere; }
+.roster-view-manager .iconbtn { flex: 0 0 28px; height: 28px; padding: 0; border-color: transparent; background: transparent; }
+.roster-view-manager .iconbtn:hover { background: var(--surface-hover); }
+.roster-view-list { display: grid; gap: 4px; max-height: min(176px, 34dvh); margin: 0; padding: 2px; overflow-y: auto; list-style: none; }
+.roster-view-list > li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 3px; min-width: 0; padding: 3px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); }
+.roster-view-list > li.is-current { color: var(--accent-ink); border-color: var(--accent-line); background: var(--accent-soft); }
+.roster-view-name { display: flex; align-items: center; gap: 5px; min-width: 0; min-height: 28px; padding: 3px; border: 0; border-radius: var(--r-sm); background: transparent; color: inherit; font: var(--t-xs)/1.45 var(--font); text-align: start; }
+.roster-view-name bdi { min-width: 0; overflow-wrap: anywhere; }
+.roster-view-name .icon { flex: none; color: inherit; }
+.roster-view-name:hover { color: var(--accent-ink); background: var(--accent-soft); }
+.roster-view-name:focus-visible { outline-offset: -1px; }
+.roster-view-remove:hover:not(:disabled) { color: var(--danger-ink); background: var(--danger-soft); }
+.roster-view-feedback { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-top: 5px; padding-inline: 5px; color: var(--muted); font-size: var(--t-xs); }
+.roster-view-feedback p { margin: 0; }
+.roster-view-feedback .btn { color: var(--accent-ink); }
 .profile-name-line { display: flex; align-items: center; min-width: 0; max-width: 100%; gap: 3px; }
 .profile-name-line .profile-name-button { flex: 0 1 auto; min-width: 0; }
 .profile-favorite { display: grid; place-items: center; width: 25px; height: 25px; margin-left: -4px; padding: 3px; flex: 0 0 auto; border: 0; border-radius: 5px; background: transparent; color: var(--faint); opacity: .6; transition: background-color 120ms, color 120ms, opacity 120ms; }
@@ -33,5 +47,5 @@
 .profile-tags-preview > small { font-size: inherit; }
 .profile-tags-preview:hover > span { background: var(--accent-soft); color: var(--accent-ink); }
 .profile-tags-preview:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 3px; border-radius: 4px; }
-@media (max-width: 700px) { .roster-view-bar { flex-wrap: wrap; gap: 5px 10px; } .roster-view-select { flex: 1; } .roster-view-select .select { min-width: 0; width: 100%; } .roster-view-actions { margin-left: 0; } .roster-view-editor { flex-wrap: wrap; } .roster-view-editor > div { flex-basis: 100%; } }
-@media (pointer: coarse) { .profile-favorite { width: 40px; height: 40px; opacity: 1; } .profile-name-line + .sub { margin-left: 39px; } .roster-view-name, .roster-view-actions .btn { min-height: 40px; } }
+@media (max-width: 700px) { .roster-view-bar { flex-wrap: wrap; gap: 5px 10px; } .roster-view-select { flex: 1; } .roster-view-select .select { min-width: 0; width: 100%; } .roster-view-actions { margin-left: 0; } }
+@media (pointer: coarse) { .profile-favorite { width: 40px; height: 40px; opacity: 1; } .profile-name-line + .sub { margin-left: 39px; } .roster-view-name, .roster-view-actions .btn, .roster-view-editor-actions .btn, .roster-view-remove { min-height: 40px; } }

@@ -25,5 +25,23 @@
 .profile-editor-status-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .profile-editor-status.has-problem .profile-editor-status-action { color: var(--danger, #b84a62); }
 @media (max-width: 540px) {
-  .profile-editor-status-footer > .profile-editor-status { flex-basis: 100%; }
+  .profile-editor .modal-foot.profile-editor-status-footer {
+    padding: 9px 14px;
+    row-gap: 5px;
+  }
+  .profile-editor-status-footer > .profile-editor-status {
+    flex-basis: 100%;
+    line-height: 1.45;
+  }
+  .profile-editor-status-footer > .btn {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+@media (pointer: coarse) {
+  .profile-editor-status-footer > .btn,
+  .profile-editor-status-action {
+    min-height: 44px;
+  }
 }

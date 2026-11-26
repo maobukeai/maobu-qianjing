@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 
-for (const scenario of ["favorite-confirm-failure", "preference-loading-guard", "preference-read-retry", "sidebar-boot-preference", "saved-view-write", "saved-view-apply", "missing-group-recovery", "recent-flat-order", "empty-recovery", "group-filter-hierarchy", "palette-saved-views"]) {
+for (const scenario of ["favorite-confirm-failure", "preference-loading-guard", "preference-read-retry", "sidebar-boot-preference", "saved-view-write", "saved-view-apply", "missing-group-recovery", "recent-flat-order", "empty-recovery", "group-filter-hierarchy", "palette-saved-views", "roster-recovery"]) {
   test(`actual App roster views: ${scenario} (isolated DOM)`, async () => {
     const child = Bun.spawn([process.execPath, "--no-env-file", resolve(import.meta.dir, "../test-fixtures/app-roster-views-dom.ts"), scenario], { cwd: resolve(import.meta.dir, ".."), stdout: "pipe", stderr: "pipe" });
     const timer = setTimeout(() => child.kill(), 12_000);

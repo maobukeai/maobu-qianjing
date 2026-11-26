@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 
-for (const scenario of ["save-snapshot", "failure-retry", "apply-view", "delete-undo", "undo-retry", "duplicate-submit", "loading-guard", "name-validation", "view-limit", "unmount-pending"]) {
+for (const scenario of ["save-snapshot", "failure-retry", "apply-view", "keyboard-panels", "delete-undo", "undo-retry", "duplicate-submit", "loading-guard", "name-validation", "view-limit", "unmount-pending"]) {
   test(`saved environment views: ${scenario} (isolated real DOM)`, async () => {
     const child = Bun.spawn([process.execPath, "--no-env-file", resolve(import.meta.dir, "../test-fixtures/roster-views-dom.tsx"), scenario], { cwd: resolve(import.meta.dir, ".."), stdout: "pipe", stderr: "pipe" });
     const timer = setTimeout(() => child.kill(), 12_000);

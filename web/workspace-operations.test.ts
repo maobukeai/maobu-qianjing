@@ -96,7 +96,7 @@ describe("workspace operation ownership", () => {
   });
 });
 
-for (const scenario of ["batch-blocks-maintenance", "same-frame-switch", "same-frame-backup", "job-refresh", "restore-refresh", "install-unmount", "external-install", "terminal-refresh-failure", "job-unmount-recover", "stale-job-history", "stale-catalog-response"]) {
+for (const scenario of ["batch-blocks-maintenance", "same-frame-switch", "same-frame-backup", "job-refresh", "restore-refresh", "restore-receipt-focus", "install-unmount", "external-install", "terminal-refresh-failure", "job-poll-reconnect", "job-poll-manual-retry", "job-unmount-recover", "stale-job-history", "stale-catalog-response"]) {
   test(`workspace operation components: ${scenario}`, async () => {
     const child = Bun.spawn([process.execPath, "--no-env-file", resolve(import.meta.dir, "../test-fixtures/workspace-operations-dom.tsx"), scenario], { cwd: resolve(import.meta.dir, ".."), stdout: "pipe", stderr: "pipe" });
     const timer = setTimeout(() => child.kill(), 10_000);

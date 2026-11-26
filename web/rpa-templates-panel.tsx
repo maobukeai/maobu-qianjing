@@ -198,22 +198,37 @@ export function RpaTemplatesPanel({
     );
   }
 
+  if (!loading && templates.length === 0) {
+    return (
+      <div className="emptystate scripts-empty">
+        {error && <div className="modal-err" role="alert">{error}</div>}
+      </div>
+    );
+  }
+
   return (
     <div className="rpa-templates-grid">
-      <aside className="rpa-templates-list" aria-label={t("Built-in RPA templates")}>
+      <aside
+        className="rpa-templates-list"
+        aria-label={t("Built-in RPA templates")}
+        data-sliding-group
+        data-sliding-axis="vertical"
+        data-sliding-accent-bar="true"
+      >
         {templates.map((template) => (
           <button
             key={template.id}
             type="button"
             className={`rpa-template-card${selected?.id === template.id ? " active" : ""}`}
             data-template-id={template.id}
+            aria-pressed={selected?.id === template.id}
             onClick={() => setSelectedId(template.id)}
           >
             <div className="rpa-template-card-head">
               <strong>{t(template.name)}</strong>
-              <span className="rpa-strategy-tag">{template.language === "javascript" ? "JS" : "PY"}</span>
+              <span className="rpa-lang-pill" data-lang={template.language}>{template.language === "javascript" ? "JS" : "PY"}</span>
             </div>
-            <p>{t(template.description)}</p>
+            <small className="rpa-template-card-desc">{t(template.description)}</small>
           </button>
         ))}
       </aside>
@@ -223,6 +238,7 @@ export function RpaTemplatesPanel({
           <header>
             <div>
               <h3>{t(selected.name)}</h3>
+              <p className="rpa-template-description">{t(selected.description)}</p>
             </div>
             <div className="page-actions">
               <button type="button" className="btn xs ghost" onClick={toggleJsonMode}>

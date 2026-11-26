@@ -31,6 +31,7 @@ const GITHUB_REPO_URL = "https://github.com/maobukeai/maobu-qianjing";
 const STATUS_ERROR = "Could not read the desktop update channel.";
 const DRAFT_BUSY = "Wait for ongoing changes to finish before installing.";
 const UPDATE_CHANGED = "The update changed. Check the signed publisher again before installing.";
+const POPOVER_MARGIN = 8;
 
 interface InstallConfirmation {
   version: string;
@@ -56,7 +57,7 @@ function focusableControls(container: HTMLElement): HTMLElement[] {
     container.querySelectorAll<HTMLElement>(
       'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), summary, [tabindex="0"]',
     ),
-  ).filter((element) => !element.closest('[inert], [hidden], [aria-hidden="true"]'));
+  ).filter((element) => element.tabIndex >= 0 && !element.closest('[inert], [hidden], [aria-hidden="true"]'));
 }
 
 export function AboutPopover({
@@ -73,11 +74,14 @@ export function AboutPopover({
   const generatedId = useId();
   const resolvedDialogId = dialogId ?? `${generatedId}-dialog`;
   const headingId = `${generatedId}-title`;
+  const notesId = `${generatedId}-notes`;
 
   const panelRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const primaryActionButtonRef = useRef<HTMLButtonElement>(null);
   const signedErrorRef = useRef<HTMLDivElement>(null);
+  const retryButtonRef = useRef<HTMLButtonElement>(null);
+  const retryHadFocus = useRef(false);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
 
@@ -100,6 +104,7 @@ export function AboutPopover({
 
   const [signedStatus, setSignedStatus] = useState<SignedUpdateStatus | null>(null);
   const [signedLoading, setSignedLoading] = useState(false);
+  const [signedReadFailed, setSignedReadFailed] = useState(false);
   const [signedError, setSignedError] = useState("");
   const [signedOperation, setSignedOperation] = useState<"check" | "install" | null>(null);
   const [progress, setProgress] = useState<SignedUpdateProgress | null>(null);
@@ -123,11 +128,15 @@ export function AboutPopover({
   const [githubError, setGithubError] = useState<string | null>(null);
   const [signedPreferenceBusy, setSignedPreferenceBusy] = useState(false);
   const settingsRevision = useRef(0);
+  const settingsReadController = useRef<AbortController | null>(null);
 
   const signedBusy = signedOperation !== null;
   const nativeBusy = !!signedStatus && ["checking", "downloading", "installing"].includes(signedStatus.status);
   const startupChecking = signedUpdateStartup?.checking === true;
   const startupError = signedUpdateStartup?.error === STATUS_ERROR && signedStatus ? null : signedUpdateStartup?.error;
+  const retrySignedStatus = signedReadFailed || startupError === STATUS_ERROR;
+  const retryRead = retrySignedStatus || !!settingsError;
+  const settingsReady = settings !== null && !settingsError && !settingsLoading;
   const modalPaused = !!confirmation || installDialog;
   const desktopMode = desktopUpdaterAvailable();
 
@@ -150,10 +159,13 @@ export function AboutPopover({
       const value = await fetchSignedUpdateStatus();
       if (statusRevision.current === revision) {
         coordinator?.setNativeUpdateBusy(value.status === "downloading" || value.status === "installing");
-        if (mounted.current) setSignedStatus(value);
+        if (mounted.current) {
+          setSignedStatus(value);
+          setSignedReadFailed(false);
+        }
       }
     } catch {
-      if (reportError && mounted.current && statusRevision.current === revision) setSignedError(STATUS_ERROR);
+      if (reportError && mounted.current && statusRevision.current === revision) setSignedReadFailed(true);
     } finally {
       statusReadInFlight.current = false;
       if (mounted.current) setSignedLoading(false);
@@ -163,7 +175,6 @@ export function AboutPopover({
   async function loadSettingsAndGithub(signal?: AbortSignal) {
     const revision = ++settingsRevision.current;
     setSettingsLoading(true);
-    setSettingsError(null);
     setGithubError(null);
     const [settingsOutcome, historyOutcome] = await Promise.allSettled([
       fetchSettings(signal),
@@ -172,6 +183,7 @@ export function AboutPopover({
     if (!mounted.current || settingsRevision.current !== revision || signal?.aborted) return;
     if (settingsOutcome.status === "fulfilled") {
       setSettings(settingsOutcome.value);
+      setSettingsError(null);
     } else {
       setSettingsError(settingsOutcome.reason instanceof Error ? settingsOutcome.reason.message : String(settingsOutcome.reason));
     }
@@ -189,10 +201,12 @@ export function AboutPopover({
       return;
     }
     const controller = new AbortController();
+    settingsReadController.current = controller;
     void loadSignedStatus(true);
     void loadSettingsAndGithub(controller.signal);
     return () => {
       controller.abort();
+      settingsReadController.current = null;
       settingsRevision.current++;
     };
   }, [open]);
@@ -205,6 +219,7 @@ export function AboutPopover({
     coordinator?.setNativeUpdateBusy(value.status === "downloading" || value.status === "installing");
     statusRevision.current++;
     setSignedStatus(value);
+    setSignedReadFailed(false);
     setSignedError("");
   }, [signedUpdateStartup?.status]);
 
@@ -243,11 +258,11 @@ export function AboutPopover({
     if (!open) return;
     const place = () => {
       const rect = anchorRef.current?.getBoundingClientRect();
-      const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 1280;
-      const popoverWidth = Math.min(432, Math.max(280, viewportWidth - 24));
+      const viewportWidth = window.innerWidth;
+      const popoverWidth = panelRef.current?.offsetWidth || Math.min(420, viewportWidth - 2 * POPOVER_MARGIN);
       if (rect && (rect.width > 0 || rect.height > 0)) {
         const top = Math.max(8, Math.round(rect.bottom + 8));
-        const left = Math.max(12, Math.min(Math.round(rect.left), Math.max(12, viewportWidth - popoverWidth - 12)));
+        const left = Math.max(POPOVER_MARGIN, Math.min(Math.round(rect.left), viewportWidth - popoverWidth - POPOVER_MARGIN));
         setPosition((previous) => (previous.top === top && previous.left === left ? previous : { top, left }));
       }
     };
@@ -267,13 +282,13 @@ export function AboutPopover({
       if (anchorRef.current?.isConnected) anchorRef.current.focus({ preventScroll: true });
     };
     const onPointerDown = (event: PointerEvent) => {
-      if (modalPaused) return;
+      if (modalPaused || event.defaultPrevented) return;
       const target = event.target as Node | null;
       if (target && (panelRef.current?.contains(target) || anchorRef.current?.contains(target))) return;
       onCloseRef.current();
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (modalPaused) return;
+      if (modalPaused || event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
@@ -292,10 +307,10 @@ export function AboutPopover({
         const active = document.activeElement;
         if (event.shiftKey && (active === first || active === panelRef.current || !panelRef.current.contains(active))) {
           event.preventDefault();
-          last.focus({ preventScroll: true });
+          last.focus();
         } else if (!event.shiftKey && (active === last || !panelRef.current.contains(active))) {
           event.preventDefault();
-          first.focus({ preventScroll: true });
+          first.focus();
         }
       }
     };
@@ -355,7 +370,7 @@ export function AboutPopover({
   }
 
   function canRequestInstall() {
-    return signedStatus?.configured === true && !nativeBusy && !startupChecking && !installed && !operationInFlight.current;
+    return signedStatus?.configured === true && !retrySignedStatus && !signedLoading && !nativeBusy && !startupChecking && !installed && !operationInFlight.current;
   }
 
   function requestInstall() {
@@ -445,6 +460,13 @@ export function AboutPopover({
     return closeButtonRef.current;
   }
 
+  useLayoutEffect(() => {
+    if (retryRead && open) return;
+    const shouldRestore = retryHadFocus.current;
+    retryHadFocus.current = false;
+    if (open && shouldRestore && document.activeElement === document.body) returnDialogFocus()?.focus();
+  }, [open, retryRead]);
+
   async function handleCopyVersion(versionText: string) {
     if (!versionText) return;
     try {
@@ -464,7 +486,7 @@ export function AboutPopover({
   }
 
   async function handleChannelChange(channel: "stable" | "beta") {
-    if (!settings || githubBusy) return;
+    if (!settings || !settingsReady || githubBusy) return;
     setGithubBusy(true);
     setGithubError(null);
     try {
@@ -479,7 +501,7 @@ export function AboutPopover({
   }
 
   async function handleGithubCheck() {
-    if (!settings || githubBusy) return;
+    if (!settings || !settingsReady || githubBusy) return;
     setGithubBusy(true);
     setGithubChecking(true);
     setGithubError(null);
@@ -506,13 +528,13 @@ export function AboutPopover({
 
   async function handleUnifiedCheck() {
     const tasks: Array<Promise<unknown>> = [];
-    if (signedStatus?.configured) tasks.push(handleCheckSigned());
-    if (settings && !githubBusy) tasks.push(handleGithubCheck());
+    if (signedStatus?.configured && !retrySignedStatus && !signedLoading) tasks.push(handleCheckSigned());
+    if (settingsReady && !githubBusy) tasks.push(handleGithubCheck());
     await Promise.allSettled(tasks);
   }
 
   async function handleGithubStartupToggle(enabled: boolean) {
-    if (!settings || githubBusy) return;
+    if (!settings || !settingsReady || githubBusy) return;
     setGithubBusy(true);
     setGithubError(null);
     try {
@@ -533,7 +555,7 @@ export function AboutPopover({
       await signedUpdateStartup.savePreference(enabled);
       return;
     }
-    if (!settings || signedPreferenceBusy) return;
+    if (!settings || !settingsReady || signedPreferenceBusy) return;
     setSignedPreferenceBusy(true);
     try {
       const saved = await patchSettings({ signedUpdates: { checkOnStartup: enabled } });
@@ -563,7 +585,7 @@ export function AboutPopover({
         (!signedStatus?.configured && !signedUpdateStartup.preference) ||
         !!confirmation ||
         signedOperation === "install"
-      : !desktopMode || !settings || signedPreferenceBusy || (!signedStatus?.configured && !settings?.signedUpdates.checkOnStartup);
+      : !desktopMode || !settingsReady || signedPreferenceBusy || (!signedStatus?.configured && !settings?.signedUpdates.checkOnStartup);
 
   const effectiveRepoLabel = settings?.updates.repository.trim() || DEFAULT_GITHUB_REPOSITORY;
 
@@ -571,6 +593,8 @@ export function AboutPopover({
   const isInstalling = signedOperation === "install" || signedStatus?.status === "downloading" || signedStatus?.status === "installing";
   const hasSignedUpdate = Boolean(signedStatus?.configured && signedStatus.update && !installed);
   const hasGithubUpdate = Boolean(matchingGithubResult?.status === "available" && matchingGithubResult.latest);
+  const canCheckSigned = signedStatus?.configured === true && !retrySignedStatus && !signedLoading;
+  const canCheckGithub = settingsReady && !githubBusy;
 
   let badgeLabel = "Ready to check";
   let badgeTone: "neutral" | "positive" | "accent" = "neutral";
@@ -582,8 +606,10 @@ export function AboutPopover({
     badgeTone = "accent";
   } else if (isChecking) {
     badgeLabel = "Checking…";
+  } else if (retrySignedStatus && hasSignedUpdate) {
+    badgeLabel = "Status unavailable";
   } else if (hasSignedUpdate || hasGithubUpdate) {
-    badgeLabel = "Update available";
+    badgeLabel = hasSignedUpdate ? "Update available" : "New GitHub release";
     badgeTone = "accent";
   } else if (signedStatus?.status === "up-to-date" || matchingGithubResult?.status === "up-to-date") {
     badgeLabel = "Up to date";
@@ -597,6 +623,8 @@ export function AboutPopover({
     capsuleTitle = t("Update installed. Restart requested.");
   } else if (isInstalling) {
     capsuleTitle = t("Installing signed update…");
+  } else if (retrySignedStatus && hasSignedUpdate) {
+    capsuleTitle = t("Check again");
   } else if (hasSignedUpdate && signedStatus?.update) {
     capsuleTitle = `${t("Update available")}: ${signedStatus.currentVersion || displayVersion} → ${signedStatus.update.version}`;
   } else if (hasGithubUpdate && matchingGithubResult?.latest) {
@@ -614,6 +642,8 @@ export function AboutPopover({
   let capsuleDetail = t("Signed desktop channel + GitHub Releases.");
   if (isInstalling) {
     capsuleDetail = t("Keep the app open until installation finishes.");
+  } else if (retrySignedStatus && hasSignedUpdate) {
+    capsuleDetail = "";
   } else if (hasSignedUpdate) {
     capsuleDetail = t("Saves and closes open browser sessions before restarting.");
   } else if (hasGithubUpdate && matchingGithubResult?.latest) {
@@ -633,8 +663,15 @@ export function AboutPopover({
       ? t("No newer release notes on the signed channel.")
       : t("Check for updates to load the latest release notes."));
 
-  const combinedError = signedError || startupError || settingsError || githubError || matchingGithubResult?.error || null;
+  const combinedError = (retrySignedStatus ? STATUS_ERROR : null) || settingsError || signedError || startupError || githubError || matchingGithubResult?.error || null;
   const showNotesLink = matchingGithubResult?.latest?.url ?? null;
+
+  function retryReadingStatus() {
+    if (signedLoading || settingsLoading) return;
+    retryHadFocus.current = document.activeElement === retryButtonRef.current;
+    if (retrySignedStatus) void loadSignedStatus(true);
+    if (settingsError) void loadSettingsAndGithub(settingsReadController.current?.signal);
+  }
 
   function closeFromButton() {
     onClose();
@@ -651,7 +688,7 @@ export function AboutPopover({
           role="dialog"
           aria-labelledby={headingId}
           tabIndex={-1}
-          style={{ top: position.top, left: position.left }}
+          style={{ top: position.top, left: position.left, maxHeight: `min(680px, calc(100dvh - ${position.top + POPOVER_MARGIN}px))` }}
           onMouseDown={(event) => event.stopPropagation()}
         >
           {/* 顶部品牌头 */}
@@ -694,11 +731,11 @@ export function AboutPopover({
             </button>
           </header>
 
-          {/* 更新胶囊与开关区 */}
+          <div className="about-popover-body">
           <div className="about-section-block">
             <div className="about-update-capsule">
               <div className="about-capsule-top">
-                <span className={`about-status-badge is-${badgeTone}${isChecking ? " is-checking" : ""}`}>
+                <span className={`about-status-badge is-${badgeTone}${isChecking ? " is-checking" : ""}`} role="status">
                   {isChecking && <span className="about-badge-spinner" aria-hidden="true" />}
                   {!isChecking && (hasSignedUpdate || hasGithubUpdate || badgeTone === "positive") && (
                     <span className="about-badge-dot" aria-hidden="true" />
@@ -709,7 +746,7 @@ export function AboutPopover({
                   className="select about-channel-select"
                   aria-label={t("Release channel")}
                   value={settings?.updates.channel ?? "stable"}
-                  disabled={!settings || githubBusy || settingsLoading || isInstalling}
+                  disabled={!settingsReady || githubBusy || isInstalling}
                   onChange={(event) => void handleChannelChange(event.target.value as "stable" | "beta")}
                 >
                   <option value="stable">{t("Stable releases")}</option>
@@ -719,7 +756,7 @@ export function AboutPopover({
 
               <div className="about-capsule-copy">
                 <div className="about-update-title">{capsuleTitle}</div>
-                <p className="about-update-subtitle">{capsuleDetail}</p>
+                {capsuleDetail && <p className="about-update-subtitle">{capsuleDetail}</p>}
               </div>
 
               {progress && <SignedUpdateProgressView progress={progress} />}
@@ -728,17 +765,15 @@ export function AboutPopover({
               )}
 
               {combinedError && (
-                <div className="about-alert" role="alert" ref={signedErrorRef} tabIndex={-1}>
-                  <span>{t(combinedError)}</span>
-                  {!signedStatus && (
+                <div className="about-alert" ref={signedErrorRef} tabIndex={-1}>
+                  <span role="alert">{t(combinedError)}</span>
+                  {retryRead && (
                     <button
+                      ref={retryButtonRef}
                       type="button"
                       className="btn xs"
-                      disabled={signedLoading}
-                      onClick={() => {
-                        setSignedError("");
-                        void loadSignedStatus(true);
-                      }}
+                      aria-disabled={signedLoading || settingsLoading}
+                      onClick={retryReadingStatus}
                     >
                       {t("Try again")}
                     </button>
@@ -747,12 +782,12 @@ export function AboutPopover({
               )}
 
               <div className="about-capsule-actions">
-                {hasSignedUpdate ? (
+                {hasSignedUpdate && !retrySignedStatus ? (
                   <button
                     ref={primaryActionButtonRef}
                     type="button"
                     className="btn sm primary about-primary-cta"
-                    disabled={signedBusy || nativeBusy || startupChecking || !!installationBlock}
+                    disabled={signedBusy || signedLoading || nativeBusy || startupChecking || !!installationBlock}
                     onClick={requestInstall}
                   >
                     {t("Install verified update")}
@@ -762,7 +797,7 @@ export function AboutPopover({
                     ref={primaryActionButtonRef}
                     type="button"
                     className="btn sm primary about-primary-cta"
-                    disabled={isChecking || isInstalling || (!signedStatus?.configured && (!settings || githubBusy || settingsLoading))}
+                    disabled={isChecking || isInstalling || (!canCheckSigned && !canCheckGithub)}
                     onClick={() => void handleUnifiedCheck()}
                   >
                     {t(isChecking ? "Checking…" : "Check for updates")}
@@ -772,6 +807,7 @@ export function AboutPopover({
                   type="button"
                   className={`btn sm about-notes-toggle${notesExpanded ? " is-open" : ""}`}
                   aria-expanded={notesExpanded}
+                  aria-controls={notesId}
                   onClick={() => setNotesExpanded((previous) => !previous)}
                 >
                   <span>{t(notesExpanded ? "Hide release notes" : "Release notes")}</span>
@@ -782,13 +818,14 @@ export function AboutPopover({
               </div>
 
               <div
+                id={notesId}
                 className={`about-notes-accordion${notesExpanded ? " is-open" : ""}`}
                 data-open={notesExpanded ? "true" : "false"}
                 aria-hidden={!notesExpanded}
               >
                 <div className="about-notes-accordion-inner">
                   <div className="about-notes-drawer">
-                    <pre className="release-notes">{releaseNotesText}</pre>
+                    <pre className="release-notes" tabIndex={notesExpanded ? 0 : -1} role="region" aria-label={t("Release notes")}>{releaseNotesText}</pre>
                     {showNotesLink && (
                       <a
                         className="about-link"
@@ -829,7 +866,7 @@ export function AboutPopover({
                   type="checkbox"
                   role="switch"
                   checked={settings?.updates.checkOnStartup ?? false}
-                  disabled={!settings || githubBusy || settingsLoading}
+                  disabled={!settingsReady || githubBusy}
                   onChange={(event) => void handleGithubStartupToggle(event.target.checked)}
                 />
               </label>
@@ -852,31 +889,18 @@ export function AboutPopover({
             )}
           </div>
 
-          {/* 精简简介与作者致谢 */}
           <div className="about-intro-block">
-            <div className="about-intro-head">
-              <h3>{t("About 猫步·千境")}</h3>
-              <button
-                type="button"
-                className="btn xs ghost about-settings-shortcut"
-                onClick={() => {
-                  onClose();
-                  onOpenUpdateSettings();
-                }}
-              >
-                <span>{t("Update settings")}</span>
-                <span className="about-arrow-nudge" aria-hidden="true">→</span>
-              </button>
-            </div>
-            <p className="about-intro-copy">
-              {t("Local-first isolated browser where profiles, proxies, and encrypted snapshots stay on your device.")}
-            </p>
-            <div className="about-chip-row" aria-label={t("Core capabilities")}>
-              <span className="about-chip">Chromium 155</span>
-              <span className="about-chip">Firefox 156</span>
-              <span className="about-chip">CloakBrowser</span>
-              <span className="about-chip">{t("AI / MCP")}</span>
-            </div>
+            <button
+              type="button"
+              className="btn xs ghost about-settings-shortcut"
+              onClick={() => {
+                onClose();
+                onOpenUpdateSettings();
+              }}
+            >
+              <span>{t("Update settings")}</span>
+              <span className="about-arrow-nudge" aria-hidden="true">→</span>
+            </button>
             <div className="about-author-card">
               <div className="about-author-copy">
                 <strong>{t("Open-source credits")}</strong>
@@ -887,6 +911,7 @@ export function AboutPopover({
                 <span className="about-arrow-diagonal" aria-hidden="true">↗</span>
               </a>
             </div>
+          </div>
           </div>
 
           <SignedUpdateDraftDialog

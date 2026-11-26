@@ -11,6 +11,7 @@ export type ProfileGroupSection<T extends GroupProfile> = {
   matches: T[];
   running: number;
 };
+type ProfileGroupMatch<T extends GroupProfile> = Pick<ProfileGroupSection<T>, "matches" | "orderIndex" | "running">;
 
 function parseDisclosure(value: unknown): GroupDisclosure | null {
   if (typeof value !== "string" || value.length > MAX_JSON_LENGTH) return null;
@@ -41,17 +42,46 @@ export function serializeGroupDisclosure(value: GroupDisclosure): string {
   return JSON.stringify(entries);
 }
 
-/** Group only this page's rows; counts and group selection retain the full filter scope. */
+/** Index the full filtered set once so counts and group selection survive page changes. */
+export function indexProfileGroups<T extends GroupProfile>(matches: readonly T[], groupOrder: readonly string[]): Map<string, ProfileGroupMatch<T>> {
+  const index = new Map<string, ProfileGroupMatch<T>>();
+  for (const name of groupOrder) {
+    if (!index.has(name)) index.set(name, { orderIndex: index.size, matches: [], running: 0 });
+  }
+  for (const profile of matches) {
+    let group = index.get(profile.group);
+    if (!group) {
+      group = { orderIndex: index.size, matches: [], running: 0 };
+      index.set(profile.group, group);
+    }
+    group.matches.push(profile);
+    if (profile.running) group.running++;
+  }
+  return index;
+}
+
+export function pageProfileGroupSections<T extends GroupProfile>(page: readonly T[], index: ReadonlyMap<string, ProfileGroupMatch<T>>, includeEmpty = false): ProfileGroupSection<T>[] {
+  const sections = new Map<string, ProfileGroupSection<T>>();
+  let nextOrderIndex = index.size;
+  for (const profile of page) {
+    let section = sections.get(profile.group);
+    if (!section) {
+      const group = index.get(profile.group) ?? { orderIndex: nextOrderIndex++, matches: [], running: 0 };
+      section = { name: profile.group, profiles: [], ...group };
+      sections.set(profile.group, section);
+    }
+    section.profiles.push(profile);
+  }
+  if (includeEmpty) {
+    for (const [name, group] of index) {
+      if (!sections.has(name) && !group.matches.length) sections.set(name, { name, profiles: [], ...group });
+    }
+  }
+  return [...sections.values()].sort((left, right) => left.orderIndex - right.orderIndex);
+}
+
 export function profileGroupSections<T extends GroupProfile>(page: readonly T[], matches: readonly T[], groupOrder: readonly string[], includeEmpty = false): ProfileGroupSection<T>[] {
-  const order = [...new Set([...groupOrder, ...matches.map(profile => profile.group), ...page.map(profile => profile.group)])];
-  const pageGroups = new Map<string, T[]>(), matchGroups = new Map<string, T[]>();
-  for (const profile of page) { const rows = pageGroups.get(profile.group) ?? []; rows.push(profile); pageGroups.set(profile.group, rows); }
-  for (const profile of matches) { const rows = matchGroups.get(profile.group) ?? []; rows.push(profile); matchGroups.set(profile.group, rows); }
-  return order.flatMap((name, orderIndex) => {
-    const profiles = pageGroups.get(name) ?? [], groupMatches = matchGroups.get(name) ?? [];
-    if (!profiles.length && !(includeEmpty && !groupMatches.length)) return [];
-    return [{ name, orderIndex, profiles, matches: groupMatches, running: groupMatches.filter(profile => profile.running).length }];
-  });
+  return pageProfileGroupSections(page, indexProfileGroups(matches, groupOrder), includeEmpty);
 }
 
 export function profileGroupCollapsed(section: Pick<ProfileGroupSection<GroupProfile>, "name" | "orderIndex">, disclosure: GroupDisclosure, revealMatches: boolean): boolean {

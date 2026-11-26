@@ -90,7 +90,7 @@ async function run(scenario: string) {
         const option = [...palette()!.querySelectorAll<HTMLElement>('[role="option"][data-profile-id]')].find(node => node.dataset.profileId === "Needle"); assert.ok(option);
         await act(async () => { option.click(); }); assert.equal(palette(), null);
         await waitFor(() => rows().length === 1 && rows()[0]?.dataset.profileId === "Needle" && dom.window.document.activeElement?.closest('tr[data-profile-id]')?.getAttribute("data-profile-id") === "Needle", "Locating must restore the visible roster and focus only the exact selected ID");
-        assert.equal(search().value, "id:Needle"); assert.equal(group().value, "all"); assert.equal(status("All environments").getAttribute("aria-pressed"), "true"); assert.equal(dom.container.querySelector('.page-of b')?.textContent, "1");
+        assert.equal(search().value, "id:Needle"); assert.equal(group().value, "all"); assert.equal(status("All").getAttribute("aria-pressed"), "true"); assert.equal(dom.container.querySelector('.page-of b')?.textContent, "1");
       };
       await waitFor(() => !view().disabled, "The finder must use authoritative loaded favorite metadata");
       const next = dom.container.querySelector<HTMLButtonElement>('[aria-label="Next page"]')!; await act(async () => { next.click(); }); assert.equal(dom.container.querySelector('.page-of b')?.textContent, "2");
@@ -99,7 +99,8 @@ async function run(scenario: string) {
       const proxies = [...dom.container.querySelectorAll<HTMLButtonElement>("button.navitem")].find(node => node.textContent.trim() === "Proxies"); assert.ok(proxies); await act(async () => { proxies.click(); });
       await locate();
       assert.ok([...view().options].some(option => option.value === "all"));
-      await act(async () => { button(dom.container, "Save current view").click(); });
+      const saveView = dom.container.querySelector<HTMLButtonElement>('button[aria-label="Save current view"]'); assert.ok(saveView);
+      await act(async () => { saveView.click(); });
       const name = dom.container.querySelector<HTMLInputElement>('.roster-view-editor input')!; await type(name, "Located Needle"); await act(async () => { button(dom.container, "Save view").click(); });
       await waitFor(() => preferenceWrites.some(item => item.key === SAVED_PROFILE_VIEWS_KEY), "The exact-ID query must remain an ordinary saveable view filter");
       const saved = JSON.parse(preferenceWrites.find(item => item.key === SAVED_PROFILE_VIEWS_KEY)!.value);

@@ -4,11 +4,12 @@
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   padding: 3px;
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  background: var(--surface-sunken);
+  border-radius: 11px;
+  background: var(--surface);
+  box-shadow: var(--sh-xs);
   width: fit-content;
   max-width: 100%;
 }
@@ -17,16 +18,17 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
+  min-height: 29px;
+  padding: 6.5px 12px;
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: 8px;
   background: transparent;
   color: var(--muted);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 12.5px;
+  font-weight: 550;
   cursor: pointer;
   white-space: nowrap;
-  transition: opacity 120ms ease, transform 90ms ease;
+  transition: color 140ms ease;
 }
 
 .rpa-studio-tab:hover:not(:disabled) {
@@ -34,9 +36,9 @@
 }
 
 .rpa-studio-tab.active {
-  background: var(--surface);
-  color: var(--ink);
-  box-shadow: var(--sh-xs);
+  background: transparent;
+  color: var(--accent-ink);
+  font-weight: 650;
 }
 
 .rpa-studio-tab-badge {
@@ -64,6 +66,7 @@
 
 .script-source-meta {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   color: var(--faint);
@@ -95,37 +98,41 @@
 /* Templates gallery & inspector */
 .rpa-templates-grid {
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
-  gap: 18px;
+  grid-template-columns: 268px minmax(0, 1fr);
+  gap: 16px;
   align-items: start;
   min-width: 0;
 }
 
 .rpa-templates-list {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px;
+  gap: 3px;
+  padding: 10px;
   border: 1px solid var(--line);
-  border-radius: var(--r-lg);
+  border-radius: 13px;
   background: var(--surface);
+  box-shadow: var(--sh-xs);
   min-width: 0;
 }
 
 .rpa-template-card {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 6px;
+  gap: 4px;
   width: 100%;
-  padding: 12px;
+  padding: 9px 10px 9px 15px;
   border: 1px solid transparent;
-  border-radius: var(--r-md);
+  border-radius: 9px;
   background: transparent;
   color: var(--ink-soft);
   text-align: left;
   cursor: pointer;
-  transition: opacity 120ms ease, transform 90ms ease;
+  transition: color 140ms ease, background-color 140ms ease;
 }
 
 .rpa-template-card:hover:not(:disabled) {
@@ -133,9 +140,25 @@
   color: var(--ink);
 }
 
-.rpa-template-card.active {
+.rpa-templates-list:not([data-global-sliding-visible="true"]) .rpa-template-card.active {
   background: var(--accent-soft);
   border-color: var(--accent-line);
+  color: var(--accent-ink);
+}
+
+.rpa-templates-list:not([data-global-sliding-visible="true"]) .rpa-template-card.active::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 8px;
+  bottom: 8px;
+  width: 3.5px;
+  border-radius: 99px;
+  background: var(--accent);
+  z-index: 2;
+}
+
+.rpa-template-card.active {
   color: var(--accent-ink);
 }
 
@@ -149,7 +172,7 @@
 
 .rpa-template-card-head strong {
   font-size: 12.5px;
-  font-weight: 550;
+  font-weight: 600;
   color: var(--ink);
   overflow-wrap: anywhere;
 }
@@ -158,17 +181,45 @@
   color: var(--accent-ink);
 }
 
-.rpa-template-card p {
-  margin: 0;
+.rpa-template-card-desc {
   font-size: 11px;
-  line-height: 1.55;
   color: var(--muted);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.rpa-template-card.active .rpa-template-card-desc {
+  color: var(--accent-ink);
+  opacity: 0.82;
+}
+
+.rpa-lang-pill {
+  flex: 0 0 auto;
+  padding: 1.5px 6px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 650;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.rpa-lang-pill[data-lang="python"] {
+  border-color: var(--success-line);
+  background: var(--success-soft);
+  color: var(--success-ink);
 }
 
 .rpa-template-detail {
   min-width: 0;
-  border-radius: var(--r-lg);
-  box-shadow: none;
+  border-radius: 13px;
+  border: 1px solid var(--line);
+  box-shadow: var(--sh-card);
+  overflow: hidden;
 }
 
 .rpa-template-detail > header {
@@ -177,17 +228,20 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--line-soft);
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
   background: var(--surface);
 }
 
 .rpa-template-detail > header h3 {
   margin: 0;
   font-size: 14px;
-  font-weight: 550;
+  font-weight: 600;
   color: var(--ink);
 }
+
+.rpa-template-detail > header > div:first-child { flex: 1 1 260px; min-width: 0; }
+.rpa-template-description { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
 
 .rpa-template-detail .card-body {
   display: flex;
@@ -224,9 +278,23 @@
 }
 
 .rpa-schema-field > span {
+  font-size: 11.5px;
+  font-weight: 550;
+  color: var(--muted);
+}
+
+.rpa-schema-field .input,
+.rpa-schema-field .select {
+  height: 32px;
+  border-radius: 8px;
+  background-color: var(--surface);
   font-size: 12px;
-  font-weight: 500;
-  color: var(--ink-soft);
+}
+
+.rpa-schema-field textarea.input {
+  height: auto;
+  min-height: 76px;
+  padding: 8px 10px;
 }
 
 .rpa-schema-field > small {
@@ -245,9 +313,29 @@
 }
 
 .rpa-schema-checkbox input {
-  width: 14px;
-  height: 14px;
-  accent-color: var(--accent);
+  appearance: none;
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 4.5px;
+  border: 1.5px solid var(--line-strong);
+  background: var(--surface);
+  display: inline-grid;
+  place-items: center;
+  margin: 0;
+  cursor: pointer;
+}
+.rpa-schema-checkbox input:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.rpa-schema-checkbox input:checked::after {
+  content: "";
+  width: 7px;
+  height: 4px;
+  border-left: 1.6px solid #fff;
+  border-bottom: 1.6px solid #fff;
+  transform: rotate(-45deg) translate(0.5px, -0.5px);
 }
 
 .rpa-mode-switch {
@@ -297,16 +385,42 @@
 /* Visual Recorder Panel */
 .rpa-recorder-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
-  gap: 18px;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 16px;
   align-items: start;
   min-width: 0;
 }
 
+.rpa-recorder-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.rpa-recorder-rail-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rpa-recorder-rail-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rpa-recorder-rail-actions > .btn {
+  width: 100%;
+  height: 33px;
+}
+
 .rpa-recorder-card {
   min-width: 0;
-  border-radius: var(--r-lg);
-  box-shadow: none;
+  border-radius: 13px;
+  border: 1px solid var(--line);
+  box-shadow: var(--sh-card);
+  overflow: hidden;
 }
 
 .rpa-recorder-card > header {
@@ -315,23 +429,74 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 15px 18px;
-  border-bottom: 1px solid var(--line-soft);
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line);
   background: var(--surface);
 }
 
+.rpa-recorder-code-card > header {
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-sunken);
+}
+
 .rpa-recorder-card > header h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   margin: 0;
   font-size: 13.5px;
-  font-weight: 550;
+  font-weight: 600;
   color: var(--ink);
 }
 
 .rpa-recorder-card .card-body {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 16px 18px 18px;
+  gap: 12px;
+  padding: 14px 16px 16px;
+}
+
+.rpa-recorder-code-meta {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.rpa-recorder-code-checks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  min-height: 32px;
+}
+
+.rpa-count-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.rpa-steps-empty {
+  padding: 20px 16px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface-sunken);
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  line-height: 1.6;
 }
 
 .rpa-recorder-controls {
@@ -350,7 +515,13 @@
   background: var(--surface-sunken);
   color: var(--muted);
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
+}
+
+.rpa-recorder-status-pill.ready {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
 }
 
 .rpa-recorder-status-pill.recording {
@@ -391,14 +562,15 @@
   gap: 10px;
   padding: 10px 12px;
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  background: var(--surface-sunken);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--sh-xs);
   min-width: 0;
 }
 
 .rpa-step-row.masked {
   border-color: var(--warn-line);
-  background: var(--warn-soft);
+  background: color-mix(in srgb, var(--warn) 4%, var(--surface));
 }
 
 .rpa-step-main {
@@ -418,9 +590,16 @@
 }
 
 .rpa-step-index {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
   font-family: var(--mono);
   font-size: 10.5px;
-  color: var(--faint);
+  font-weight: 700;
+  display: inline-grid;
+  place-items: center;
 }
 
 .rpa-action-tag {
@@ -527,22 +706,28 @@
 }
 
 .rpa-artifacts-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+  gap: 10px;
 }
 
 .rpa-artifact-thumb {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  width: 148px;
-  padding: 6px;
+  width: 100%;
+  padding: 0;
   border: 1px solid var(--line);
-  border-radius: var(--r-sm);
+  border-radius: 10px;
   background: var(--surface);
+  overflow: hidden;
   cursor: pointer;
   text-align: left;
+  transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+.rpa-artifact-thumb:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: var(--line-strong);
+  box-shadow: var(--sh-xs);
 }
 
 .rpa-artifact-thumb.error {
@@ -552,19 +737,19 @@
 
 .rpa-artifact-thumb img {
   width: 100%;
-  height: 84px;
+  height: 82px;
   object-fit: cover;
-  border-radius: var(--r-xs);
-  background: var(--surface-sunken);
+  border-radius: 0;
+  background: linear-gradient(135deg, var(--accent-soft), var(--surface-sunken));
 }
 
 .rpa-artifact-thumb-placeholder {
   display: grid;
   place-items: center;
   width: 100%;
-  height: 84px;
-  border-radius: var(--r-xs);
-  background: var(--surface-sunken);
+  height: 82px;
+  border-radius: 0;
+  background: linear-gradient(135deg, var(--accent-soft), var(--surface-sunken));
   color: var(--muted);
   font-size: 10.5px;
 }
@@ -573,7 +758,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 4px;
+  gap: 6px;
+  padding: 6px 9px;
+  border-top: 1px solid var(--line-soft);
   font-size: 10.5px;
   color: var(--ink-soft);
 }
@@ -590,11 +777,81 @@
   gap: 12px;
 }
 
+.rpa-runs-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 16px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface);
+  box-shadow: var(--sh-xs);
+}
+
+.rpa-runs-toolbar-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  color: var(--ink);
+}
+
+.rpa-runs-list .emptystate {
+  padding: 40px 24px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface);
+  box-shadow: var(--sh-card);
+}
+
 .rpa-run-card {
   border: 1px solid var(--line);
-  border-radius: var(--r-lg);
+  border-radius: 13px;
   background: var(--surface);
+  box-shadow: var(--sh-card);
   overflow: hidden;
+}
+
+.rpa-run-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.rpa-run-card-head .chip[data-run-status] {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 2.5px 9px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.rpa-run-card-head .chip[data-run-status]::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: 0 0 auto;
+}
+.rpa-run-card-head .chip[data-run-status="finished"] {
+  border-color: var(--success-line);
+  background: var(--success-soft);
+  color: var(--success-ink);
+}
+.rpa-run-card-head .chip:is([data-run-status="running"], [data-run-status="queued"]) {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+.rpa-run-card-head .chip[data-run-status="stopping"] {
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+  color: var(--warn-ink);
 }
 
 .rpa-run-card-head {
@@ -603,21 +860,20 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--line-soft);
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line);
 }
 
 .rpa-run-card-title {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
 }
 
 .rpa-run-card-title strong {
-  font-size: 13px;
-  font-weight: 550;
+  font-size: 13.5px;
+  font-weight: 600;
   color: var(--ink);
   overflow-wrap: anywhere;
 }
@@ -678,13 +934,25 @@
   border-radius: var(--r-md);
 }
 
+@media (max-width: 1100px) {
+  .rpa-templates-grid {
+    grid-template-columns: 225px minmax(0, 1fr);
+    gap: 12px;
+  }
+  .rpa-recorder-layout {
+    grid-template-columns: 260px minmax(0, 1fr);
+    gap: 12px;
+  }
+}
+
 @media (max-width: 960px) {
   .rpa-templates-grid,
   .rpa-recorder-layout {
     grid-template-columns: minmax(0, 1fr);
   }
   .rpa-schema-form,
-  .rpa-recorder-controls {
+  .rpa-recorder-controls,
+  .rpa-recorder-code-meta {
     grid-template-columns: minmax(0, 1fr);
   }
 }

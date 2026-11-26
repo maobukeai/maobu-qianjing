@@ -121,6 +121,17 @@ export class ProfileStore {
     return this.db;
   }
 
+  /** Opaque version for reads of the main DB, valid only on this connection. */
+  readRevision(): string | null {
+    if (this.db.inTransaction) return null;
+    // total_changes() tracks writes on this connection; data_version tracks
+    // commits elsewhere. Include schema_version for same-connection DDL.
+    return this.db.query<{ revision: string }, []>(`
+      SELECT total_changes() || '/' || (SELECT data_version FROM pragma_data_version)
+        || '/' || (SELECT schema_version FROM pragma_schema_version) AS revision
+    `).get()!.revision;
+  }
+
   /** Local at-rest secret protector shared with companion tables in profiles.sqlite. */
   secretProtector(): LocalSecretProtector {
     return this.protector;

@@ -4,6 +4,7 @@ import type { RuntimeDownload } from "../runtime-download.ts";
 import { useTranslation } from "./i18n.tsx";
 import { runtimeDownloadPercent } from "./runtime-download-progress.tsx";
 import { fetchBrowserRuntimeInventory, inspectBrowserRuntimeCache, type BrowserRuntimeInventory } from "./settings-api.ts";
+import { AppIcon } from "./ui-primitives.tsx";
 import "./browser-runtime-settings.css";
 
 const runtimeLabels: Record<RuntimeInventoryId, string> = {
@@ -90,7 +91,7 @@ function BrowserRuntimeCard({ id, inventory, downloads }: {
       <div className="browser-runtime-card-meta">
         <div>
           <h4 id={title}>{t(runtimeLabels[id])}</h4>
-          {runtime && <p>{t("Pinned version")} {runtime.pinnedVersion} · {t(runtime.hostSupported ? "Build available for this host" : "No pinned build for this host")}</p>}
+          {runtime && <p>{t("Pinned version")} <code>{runtime.pinnedVersion}</code></p>}
         </div>
         {runtime && <div className="browser-runtime-badges">
           {id === inventory?.defaultRuntime && <span className="feature-badge">{t("Default when engine is unspecified")}</span>}
@@ -98,6 +99,7 @@ function BrowserRuntimeCard({ id, inventory, downloads }: {
           <span className="feature-badge">{t(sourceLabels[runtime.source])}</span>
           {runtime.cache !== "not-applicable" && <span className="feature-badge">{t(cacheLabels[runtime.cache])}</span>}
           {(runtime.source === "configured" || runtime.source === "bundled") && <span className="feature-badge">{t("Executable version not measured")}</span>}
+          {!runtime.hostSupported && <span className="feature-badge runtime-host-warning">{t("No pinned build for this host")}</span>}
         </div>}
       </div>
       {transfers.length > 0 && <div className="browser-runtime-downloads">
@@ -161,23 +163,30 @@ export function BrowserRuntimeSettings({ downloads = [], downloadStatusUnavailab
 
   return <section className="feature-card browser-runtime-settings" aria-labelledby={heading}>
     <div className="feature-card-title">
-      <div>
-        <h3 id={heading} tabIndex={-1} data-browser-runtime-settings-heading>{t("Browser runtimes")}</h3>
-        <p>{t("View the pinned builds and check the local cache when needed.")}</p>
+      <div className="feature-card-head-main">
+        <div className="feature-card-heading">
+          <AppIcon name="window" className="sm" />
+          <h3 id={heading} tabIndex={-1} data-browser-runtime-settings-heading>{t("Browser runtimes")}</h3>
+        </div>
+        {inventory && <p className="browser-runtime-host">{platformLabels[inventory.host.platform] ?? inventory.host.platform} {inventory.host.arch}</p>}
       </div>
       <button type="button" className="btn" disabled={!!busy} aria-busy={!!busy} onClick={() => void load(inventory ? "cache" : "catalog")}>
         {t(busy === "catalog" ? "Loading…" : busy === "cache" ? "Checking cache…" : inventory ? "Refresh local cache" : "Try again")}
       </button>
     </div>
-    {error && <p className="feature-alert" role="alert">{t(error)}</p>}
-    {downloadStatusUnavailable && <p className="feature-inline-note" role="status">{t("Download status temporarily unavailable")}</p>}
-    {inventory && <p className="browser-runtime-host"><span className="feature-badge">{platformLabels[inventory.host.platform] ?? inventory.host.platform} {inventory.host.arch}</span></p>}
-    {(inventory || activeDownloads.some(download => Object.values(runtimeFamilies).includes(download?.runtime))) && (
-      <ul className="browser-runtime-cards">
-        {runtimeIds.map(id => <BrowserRuntimeCard key={id} id={id} inventory={inventory} downloads={activeDownloads} />)}
-      </ul>
-    )}
-    {inventory?.checked && <p className="feature-inline-note" role="status">{t("Showing the last local cache check.")}</p>}
-    <p className="feature-inline-note">{t("Refresh checks fixed local cache locations. Browser startup verifies executable integrity separately.")}</p>
+    <div className="feature-card-body">
+      {error && <p className="feature-alert" role="alert">{t(error)}</p>}
+      {downloadStatusUnavailable && <p className="feature-inline-note" role="status">{t("Download status temporarily unavailable")}</p>}
+      {(inventory || activeDownloads.some(download => Object.values(runtimeFamilies).includes(download?.runtime))) && (
+        <ul className="browser-runtime-cards">
+          {runtimeIds.map(id => <BrowserRuntimeCard key={id} id={id} inventory={inventory} downloads={activeDownloads} />)}
+        </ul>
+      )}
+      {inventory?.checked && <p className="browser-runtime-check-note" role="status">{t("Showing the last local cache check.")}</p>}
+      <details className="feature-details browser-runtime-help">
+        <summary>{t("Cache and integrity checks")}</summary>
+        <p>{t("Refresh checks fixed local cache locations. Browser startup verifies executable integrity separately.")}</p>
+      </details>
+    </div>
   </section>;
 }

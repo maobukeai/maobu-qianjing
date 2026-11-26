@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
@@ -7,6 +7,7 @@ import { ProfileStore } from "./store.ts";
 import { buildNewProfile } from "./create.ts";
 import { ensureStateDirectories, statePaths } from "./paths.ts";
 import { ONBOARDING_STATE_KEY, WorkspaceManagement } from "./workspace-management.ts";
+import { recoverWorkspaceUploads } from "./workspace-upload-staging.ts";
 import type { Launcher } from "./launcher.ts";
 import { ROSTER_DENSITY_KEY } from "./roster-density-state.ts";
 
@@ -142,11 +143,26 @@ test("a raw streamed upload restores a new workspace and a damaged file never pu
   const f = fixture(); await f.authorize();
   const backup = f.manager.backups.startCreate(undefined, { allowUnencrypted: true }); await f.manager.backups.wait(backup.id);
   const file = f.manager.backups.getBackupFile(f.manager.backups.listBackups()[0]!.id);
-  const uploaded = await (await f.request("/workspace/restore", "POST", Bun.file(file.path), { "Content-Type": "application/octet-stream" })).json();
+  const uploads = join(f.home, "backups", ".uploads");
+  const archives = () => [...new Bun.Glob("**/*.mqbackup").scanSync({ cwd: uploads, dot: true })];
+  const release = f.manager.acquireMutationLease();
+  let uploaded: { job: { id: string } };
+  try {
+    uploaded = await (await f.request("/workspace/restore", "POST", Bun.file(file.path), { "Content-Type": "application/octet-stream" })).json();
+    const staged = archives();
+    expect(staged).toHaveLength(1);
+    // The queued restore still owns the staged archive after the HTTP response.
+    await recoverWorkspaceUploads(f.manager.backups.directory);
+    expect(archives()).toEqual(staged);
+  } finally { release(); }
   expect((await f.manager.backups.wait(uploaded.job.id)).status).toBe("succeeded");
+  await f.manager.settled();
+  expect(readdirSync(uploads)).toEqual([]);
   const before = f.manager.catalog.list().length;
   const invalid = await (await f.request("/workspace/restore", "POST", new Blob(["not a backup"]), { "Content-Type": "application/octet-stream" })).json();
   expect((await f.manager.backups.wait(invalid.job.id)).status).toBe("failed");
+  await f.manager.settled();
+  expect(readdirSync(uploads)).toEqual([]);
   expect(f.manager.catalog.list()).toHaveLength(before);
   expect(f.store.count()).toBe(1);
   expect((await f.request("/workspace/overview")).status).toBe(200);
@@ -172,6 +188,7 @@ test("password-encrypted exports restore through both authorized routes without 
   const uploaded = await f.request("/workspace/restore", "POST", blob, { "Content-Type": "application/octet-stream", "X-Maobu-Backup-Password": encodeURIComponent(password) });
   expect(uploaded.status).toBe(202);
   expect((await f.manager.backups.wait((await uploaded.json()).job.id)).status).toBe("succeeded");
+  await f.manager.settled();
   expect(f.manager.catalog.list()).toHaveLength(3);
   expect(f.manager.currentId()).toBe("default");
   const invalid = await f.request("/workspace/restore", "POST", blob, { "Content-Type": "application/octet-stream", "X-Maobu-Backup-Password": "%invalid" });
@@ -277,6 +294,85 @@ test("an in-progress upload blocks switching and is awaited on shutdown", async 
   expect(f.manager.catalog.activeId()).toBe("default");
   expect(readdirSync(join(f.home, "backups", ".uploads"))).toEqual([]);
 });
+
+test("startup recovers a terminated process's staged upload without touching a live upload or a legacy file", async () => {
+  const f = fixture();
+  const uploads = join(f.home, "backups", ".uploads");
+  const script = `
+    import { join } from "node:path";
+    import { statSync } from "node:fs";
+    import { WorkspaceManagement } from "./workspace-management.ts";
+    import { ProfileStore } from "./store.ts";
+    import { statePaths } from "./paths.ts";
+    const home = ${JSON.stringify(f.home)};
+    const nonce = ${JSON.stringify(f.nonce)};
+    const uploads = join(home, "backups", ".uploads");
+    const paths = statePaths(home);
+    const store = new ProfileStore(paths.database);
+    const manager = new WorkspaceManagement({ home, paths, store, launcher: {}, agentNonce: nonce });
+    const body = new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array([1, 2, 3])); } });
+    const upload = manager.handle(new Request("http://127.0.0.1/ui/api/workspace/restore", {
+      method: "POST", headers: { "Content-Type": "application/octet-stream", Authorization: "Bearer " + nonce }, body
+    }));
+    const files = new Bun.Glob("**/*.mqbackup");
+    let staged;
+    for (let attempt = 0; attempt < 250 && !staged; attempt++) {
+      try {
+        staged = [...files.scanSync({ cwd: uploads, dot: true })].find(path => statSync(join(uploads, path)).size === 3);
+      } catch {}
+      if (!staged) await Bun.sleep(20);
+    }
+    if (!staged) throw new Error("The child never staged its upload");
+    process.stdout.write(JSON.stringify(staged) + "\\n");
+    const keepAlive = setInterval(() => {}, 1000);
+    await upload;
+    clearInterval(keepAlive);
+  `;
+  const child = Bun.spawn([process.execPath, "--no-env-file", "-e", script], {
+    cwd: import.meta.dir,
+    stdout: "pipe",
+    stderr: "inherit",
+    signal: AbortSignal.timeout(8_000),
+  });
+  const reader = child.stdout.getReader();
+  try {
+    const decoder = new TextDecoder();
+    let message = "";
+    while (!message.endsWith("\n")) {
+      const chunk = await reader.read();
+      if (chunk.done || message.length > 4_096) throw new Error("The child upload did not reach staging");
+      message += decoder.decode(chunk.value, { stream: true });
+    }
+    const staged = join(uploads, JSON.parse(message));
+    const legacy = join(uploads, "upload_" + "f".repeat(32) + ".mqbackup");
+    writeFileSync(legacy, "legacy workspace upload");
+    const unrelatedId = "a".repeat(32);
+    const unrelatedStage = join(uploads, `.upload-v1-${unrelatedId}`);
+    mkdirSync(unrelatedStage);
+    const unrelatedArchive = join(unrelatedStage, `upload_${unrelatedId}.mqbackup`);
+    writeFileSync(unrelatedArchive, "unidentified workspace upload");
+    writeFileSync(join(unrelatedStage, "lease.sqlite"), "");
+
+    await new WorkspaceManagement(f.manager.options).settled();
+    expect([...readFileSync(staged)]).toEqual([1, 2, 3]);
+    expect(readFileSync(legacy, "utf8")).toBe("legacy workspace upload");
+
+    child.kill(9);
+    await child.exited;
+    await Promise.all([
+      new WorkspaceManagement(f.manager.options).settled(),
+      recoverWorkspaceUploads(f.manager.backups.directory),
+    ]);
+    expect(existsSync(staged)).toBe(false);
+    expect(readFileSync(legacy, "utf8")).toBe("legacy workspace upload");
+    expect(readFileSync(unrelatedArchive, "utf8")).toBe("unidentified workspace upload");
+    expect(f.store.count()).toBe(1);
+  } finally {
+    reader.releaseLock();
+    if (child.exitCode === null) child.kill(9);
+    await child.exited;
+  }
+}, 10_000);
 
 test("a delayed JSON restore cannot take over a raw upload started while its body was arriving", async () => {
   const f = fixture(); const token = await f.authorize();

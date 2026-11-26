@@ -4,6 +4,7 @@ import { act } from "react";
 import type { Root } from "react-dom/client";
 import type { HTMLElement, HTMLButtonElement, HTMLInputElement, HTMLTextAreaElement } from "happy-dom";
 import type { WorkspaceOperationCoordinator } from "../web/workspace-operations.tsx";
+import type { AppLockStatus } from "../web/app-lock-api.ts";
 import type { DesktopCloseRegistry } from "../web/desktop-close-state.ts";
 import type { RuntimeDownload } from "../runtime-download.ts";
 import { getBrowserRuntimeInventory } from "../runtime-inventory.ts";
@@ -11,6 +12,9 @@ import { createWebDomHarness } from "./web-dom.ts";
 import { activityTrigger, viewActivityTask } from "./activity-interaction.ts";
 
 async function run(scenario: string) {
+  const lockStartup = scenario === "app-lock-startup-retry";
+  const lockStatusReads: Array<(response: Response) => void> = [];
+  const lockStatus: AppLockStatus = { configured: true, enabled: true, locked: true, lockOnStartup: true, idleTimeoutMinutes: 0, failedAttempts: 0, cooldownUntil: 0, retryAfterMs: 0, lastActivityAt: 0, updatedAt: null, corrupt: false };
   let coordinator: WorkspaceOperationCoordinator | null = null;
   let closeRegistry: DesktopCloseRegistry | null = null;
   let currentWorkspaceId = "one", preparedWorkspaceId = "one", refreshCatalog: (() => Promise<unknown>) | null = null;
@@ -24,6 +28,16 @@ async function run(scenario: string) {
   const fakeFetch = Object.assign(async (input: RequestInfo | URL, options?: RequestInit): Promise<Response> => {
     const path = String(input), method = options?.method ?? "GET", workspace = currentWorkspaceId;
     requests.push({ path, method, workspace });
+    if (lockStartup && method === "GET" && path === "/ui/api/app-lock/status") {
+      return await new Promise<Response>(resolve => lockStatusReads.push(resolve));
+    }
+    if (lockStartup && method === "POST" && path === "/ui/api/app-lock/unlock") {
+      assert.deepEqual(JSON.parse(String(options?.body)), { password: "inert-fixture-password" });
+      return Response.json({ ok: true, status: { ...lockStatus, locked: false } });
+    }
+    if (lockStartup && method === "POST" && path === "/ui/api/app-lock/activity") {
+      return Response.json({ ok: true, status: { ...lockStatus, locked: false } });
+    }
     if (scenario === "runtime-activity" && method === "GET" && path === "/ui/api/runtime-downloads") {
       if (failNextRuntimeRead) { failNextRuntimeRead = false; return Response.json({ error: "Inert transient status error" }, { status: 503 }); }
       return Response.json({ downloads: runtimeTransfers });
@@ -48,7 +62,7 @@ async function run(scenario: string) {
     const startup: Record<string, unknown> = {
       "/ui/api/profiles": { ok: true, profiles: scenario === "local-proxy-handoff" ? proxyProfiles : [], groups: scenario === "local-proxy-handoff" ? ["Drafts"] : [], folders: [] },
       "/ui/api/shell-language": { ok: true, language: "en-US" },
-      "/ui/api/app-mode": { ok: true, localOnly: true, version: 1, mode: "local", localAnalytics: false, defaultEngine: "chromium", defaultChromiumRuntime: "aliasmode" },
+      "/ui/api/app-mode": { ok: true, localOnly: true, version: 1, mode: "local", localAnalytics: false, defaultEngine: "chromium", defaultChromiumRuntime: "aliasmode", ...(lockStartup ? { appLockAvailable: true } : {}) },
       "/ui/api/health": { ok: true, version: "0.1.0-fixture", root: "inert-settings-fixture" },
       "/ui/api/extensions": { ok: true, extensions: [] },
       "/ui/api/diagnose/latest": { ok: true, report: null },
@@ -92,6 +106,33 @@ async function run(scenario: string) {
   const waitFor = async (condition: () => boolean, why: string) => { const deadline = Date.now() + 2500; while (!condition() && Date.now() < deadline) await dom.flush(); assert.ok(condition(), `${why}; unexpected=${JSON.stringify(unexpected)}`); };
   try {
     await act(async () => { await import("../web/app.tsx"); });
+    if (lockStartup) {
+      await waitFor(() => lockStatusReads.length === 1, "App lock startup status request");
+      assert.match(dom.container.querySelector('[role="status"]')?.textContent ?? "", /Checking app lock status/);
+      assert.equal(visible(".profiles-workspace").length, 0, "The workspace is still loading while the lock state is unknown");
+      const hasReadProfiles = () => requests.some(request => request.path === "/ui/api/profiles");
+      assert.equal(hasReadProfiles(), false);
+      await act(async () => { lockStatusReads[0]!(Response.json({ ok: false }, { status: 503 })); });
+      assert.equal(dom.container.querySelector('[role="alert"]')?.textContent, "Could not load app lock status.");
+      assert.equal(visible(".profiles-workspace").length, 0);
+      const retry = button("Try again");
+      retry.focus();
+      await act(async () => { retry.click(); retry.click(); });
+      assert.equal(lockStatusReads.length, 2, "Repeated retry clicks must start only one status read");
+      assert.equal(retry.getAttribute("aria-disabled"), "true");
+      assert.equal(retry.getAttribute("aria-busy"), "true");
+      await act(async () => { lockStatusReads[1]!(Response.json({ ok: true, status: lockStatus })); });
+      assert.equal(visible("[data-app-lock-screen]").length, 1);
+      assert.equal(hasReadProfiles(), false, "A recovered locked status must keep profiles unread");
+      const password = visible<HTMLInputElement>('[data-app-lock-screen] input[type="password"]')[0];
+      assert.ok(password);
+      await type(password, "inert-fixture-password");
+      await click(button("Unlock"));
+      await waitFor(() => hasReadProfiles() && visible(".profiles-workspace").length === 1 && !visible("[data-app-lock-screen]").length, "Profiles resume loading after actual unlock");
+      assert.equal(requests.filter(request => request.path === "/ui/api/app-lock/unlock").length, 1);
+      assert.deepEqual(unexpected, []);
+      return;
+    }
     await waitFor(() => !!coordinator?.getSnapshot().workspaceId && visible<HTMLElement>(".profiles-workspace").length === 1, "The full App must bootstrap its actual workspace provider");
     if (scenario === "runtime-activity") {
       await waitFor(() => !!activityTrigger(dom), "The single shell transfer reader must expose a background task");
@@ -162,7 +203,7 @@ async function run(scenario: string) {
       return;
     }
     if (scenario === "local-proxy-handoff") {
-      await click(button("Proxies")); await click(button("Replace proxies Assign new connections"));
+      await click(button("Proxies")); await click(button("Replace proxies"));
       const manual = visible<HTMLTextAreaElement>('textarea[aria-label="Replacement input"]')[0]; assert.ok(manual);
       await act(async () => {
         Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, "value")!.set!.call(manual, "manual.invalid:9090");

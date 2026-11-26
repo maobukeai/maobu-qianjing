@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 
-for (const scenario of ["switcher-exit", "device-exit", "device-pending", "workspace-exit", "extension-exit", "extension-pending", "reduced-switcher", "reduced-device", "reduced-workspace", "reduced-extension", "unmount-exit"]) {
+for (const scenario of ["switcher-exit", "switcher-retry", "device-exit", "device-pending", "workspace-exit", "extension-exit", "extension-pending", "reduced-switcher", "reduced-device", "reduced-workspace", "reduced-extension", "unmount-exit"]) {
   test(`workspace and extension presence: ${scenario}`, async () => {
     const child = Bun.spawn([process.execPath, "--no-env-file", resolve(import.meta.dir, "../test-fixtures/workspace-extension-motion-dom.tsx"), scenario], { cwd: resolve(import.meta.dir, ".."), stdout: "pipe", stderr: "pipe" });
     const timer = setTimeout(() => child.kill(), 12_000);

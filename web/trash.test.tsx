@@ -44,5 +44,5 @@ test("Trash stays mounted but hidden during page navigation", () => {
   const active = renderToStaticMarkup(createElement(I18nProvider, null, createElement(TrashPage, { active: true, onChanged: async () => {} })));
   expect(inactive).toContain('hidden=""');
   expect(active).not.toContain('hidden=""');
-  expect(active.match(/disabled=""/g)!.length).toBeGreaterThan(0);
+  expect(active).not.toContain('class="trash-search"');
 });

@@ -68,6 +68,7 @@ export function useSlidingIndicator<
 
   const containerRef = useRef<C>(null);
   const indicatorRef = useRef<I>(null);
+  const lastTransformRef = useRef<string | null>(null);
 
   const place = useCallback((forceInstant = false) => {
     const container = containerRef.current;
@@ -76,6 +77,7 @@ export function useSlidingIndicator<
     if (!indicator) return;
     const active = container.querySelector<HTMLElement>(activeSelector);
     if (!active) {
+      lastTransformRef.current = null;
       container.removeAttribute("data-indicator-visible");
       return;
     }
@@ -109,6 +111,12 @@ export function useSlidingIndicator<
         transform = `translate3d(${left}px, 0, 0) scaleX(${scale})`;
       }
     }
+
+    // Ignore redundant ResizeObserver callbacks when geometry hasn't moved so an active glide isn't killed.
+    if (forceInstant && !appearing && transform === lastTransformRef.current) {
+      return;
+    }
+    lastTransformRef.current = transform;
 
     if (instant) {
       indicator.style.transition = "none";
@@ -223,7 +231,7 @@ export function useNavigationMotion(view: WorkspaceView, ready: boolean, motionA
     const animation = page.animate([
       { opacity: 0.72, transform: `translateX(${direction * 8}px)` },
       { opacity: 1, transform: "none" },
-    ], { duration: 180, easing: "cubic-bezier(0.22, 1, 0.36, 1)" });
+    ], { duration: 180, easing: "cubic-bezier(0.16, 1, 0.3, 1)" });
     animation.id = "workspace-page-enter";
     // Rapid navigation intentionally cancels an unfinished animation. Its
     // finished promise rejects on cancellation; that is not a page failure.

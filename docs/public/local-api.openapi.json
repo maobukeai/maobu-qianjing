@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "猫步 Local API",
-    "version": "0.20.0",
+    "version": "3.0.0",
     "summary": "An AdsPower-compatible loopback HTTP API for 猫步·千境.",
     "description": "The desktop edition opens this loopback listener only when launched with `MAOBU_DESKTOP_AUTOMATION_TOKEN`, a random token of 64 lowercase hexadecimal characters. Send `Authorization: Bearer <token>` with desktop requests. A missing or invalid token returns HTTP 401 before the compatibility route runs. Source development mode serves this API on loopback when explicitly started. Keep both listeners on the local machine. A CDP WebSocket URL returned by `browserStart` or `browserActive` grants control of that browser and its logged-in sessions.\n\nThe API is a compatibility subset of the AdsPower local API with the 13 operations shown here. `browserCookies` and the `fp_verdict` and `fp_captured_at` fields of `userList` are AliasMode extensions. `userCreate` also accepts `engine` and `chromium_runtime`.\n\nRequests that reach the compatibility router return HTTP 200 with `{ code, msg, data }`. `code` is `0` on success and `-1` on failure. Browser-control routes accept either HTTP method. Group and user routes require the documented method.\n\nThe `x-aliasmode-version-introduced` values record the upstream compatibility history.",
     "license": {

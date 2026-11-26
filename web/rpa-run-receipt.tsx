@@ -249,11 +249,12 @@ export function RpaRunsQueuePanel({
 
   return (
     <div className="rpa-runs-list">
-      <div className="script-source-header">
-        <div>
+      <div className="rpa-runs-toolbar">
+        <div className="rpa-runs-toolbar-title">
           <strong>{t("Run queue & execution receipts")}</strong>
+          <span className="rpa-count-pill">{runs.length}</span>
         </div>
-        <button type="button" className="btn xs ghost" disabled={loading} onClick={() => void loadRuns(false)}>
+        <button type="button" className="btn xs" disabled={loading} onClick={() => void loadRuns(false)}>
           {loading ? t("Loading…") : t("Refresh runs")}
         </button>
       </div>
@@ -275,7 +276,6 @@ export function RpaRunsQueuePanel({
               <header className="rpa-run-card-head">
                 <div className="rpa-run-card-title">
                   <strong>{run.scriptName}</strong>
-                  <span className="chip">{runStatusLabel(run.status, t, run.queuePosition)}</span>
                   <span className="rpa-receipt-duration">
                     {t("{succeeded} ok · {failed} failed · {total} total", {
                       succeeded,
@@ -285,20 +285,23 @@ export function RpaRunsQueuePanel({
                     {run.durationMs !== undefined ? ` · ${formatDuration(run.durationMs)}` : ""}
                   </span>
                 </div>
-                {canStop && (
-                  <button
-                    type="button"
-                    className="btn xs danger"
-                    disabled={stoppingId === run.id}
-                    onClick={() => void stopRun(run.id)}
-                  >
-                    {run.status === "queued" ? t("Cancel queued batch") : t("Stop batch")}
-                  </button>
-                )}
+                <div className="rpa-run-card-actions">
+                  <span className="chip" data-run-status={run.status}>{runStatusLabel(run.status, t, run.queuePosition)}</span>
+                  {canStop && (
+                    <button
+                      type="button"
+                      className="btn xs danger"
+                      disabled={stoppingId === run.id}
+                      onClick={() => void stopRun(run.id)}
+                    >
+                      {run.status === "queued" ? t("Cancel queued batch") : t("Stop batch")}
+                    </button>
+                  )}
+                </div>
               </header>
               <div className="rpa-run-card-body">
                 {run.profiles.map((profile) => (
-                  <div key={profile.id} className="rpa-run-profile-box">
+                  <div key={profile.id} className="rpa-run-profile-box" data-profile-status={profile.status}>
                     <div className="rpa-run-profile-head">
                       <span>
                         <strong>{profile.name}</strong>

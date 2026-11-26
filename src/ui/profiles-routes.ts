@@ -54,18 +54,33 @@ export async function handleProfilesUiRoutes(
   if (pathname === "/ui/api/profiles" && req.method === "GET") {
     try {
       await launcher.reconcileOrphans();
-      const body = JSON.stringify({
+      const requestedTag = req.headers.get("If-None-Match");
+      const tags = options.rosterTags;
+      const revision = tags ? store.readRevision() : null;
+      const previous = tags?.get(store);
+      const serialize = () => JSON.stringify({
         profiles: listUiProfiles(store),
         groups: store.listGroups(),
         folders: store.listFolders(),
       });
-      const etag = `"sha256-${createHash("sha256").update(body).digest("hex")}"`;
+      let body: string | null = null;
+      let etag: string;
+      if (revision !== null && previous?.revision === revision && requestedTag === previous.etag) {
+        etag = previous.etag;
+      } else {
+        // Build a consistent SQLite snapshot. An external commit during this
+        // read invalidates reuse even if the response still represents the old snapshot.
+        body = revision === null ? serialize() : store.withTransaction(serialize);
+        etag = `"sha256-${createHash("sha256").update(body).digest("hex")}"`;
+        if (revision !== null && store.readRevision() === revision) tags?.set(store, { revision, etag });
+        else tags?.delete(store);
+      }
       const headers = {
         "Cache-Control": "no-store",
         ETag: etag,
         "Content-Type": "application/json; charset=utf-8",
       };
-      if (req.headers.get("If-None-Match") === etag) return new Response(null, { status: 304, headers });
+      if (requestedTag === etag) return new Response(null, { status: 304, headers });
       return new Response(body, { headers });
     } catch (error) {
       return noStoreJson({ ok: false, error: `profile roster failed: ${msg(error)}` }, 500);

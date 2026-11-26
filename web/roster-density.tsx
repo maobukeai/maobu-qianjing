@@ -22,6 +22,7 @@ const OPTION_META: Record<RosterDensity, { label: string; path: string }> = {
 /** Controlled by the workspace preference owner; this control never writes global storage. */
 export function RosterDensityControl({ value, onChange, variant = "toolbar", disabled = false, busy = false, className = "" }: RosterDensityControlProps) {
   const { t } = useTranslation(), descriptionId = useId();
+  const label = t("Environment list density");
   const buttons = useRef<Array<HTMLButtonElement | null>>([]);
   const selected = parseRosterDensity(value), locked = disabled || busy;
   function choose(next: RosterDensity) { if (!locked && next !== selected) onChange(next); }
@@ -36,12 +37,17 @@ export function RosterDensityControl({ value, onChange, variant = "toolbar", dis
     choose(options[next]!);
   }
   return <div className={`roster-density-control is-${variant}${className ? ` ${className}` : ""}`}>
-    <div className="roster-density-copy"><span>{t(variant === "settings" ? "Environment list density" : "Density")}</span>{variant === "settings" && <small id={descriptionId}>{t("Choose how much space each environment uses. Touch controls keep a larger size.")}</small>}</div>
-    <div className="roster-density-options" role="radiogroup" aria-label={t("Environment list density")} aria-describedby={variant === "settings" ? descriptionId : undefined} aria-busy={busy || undefined}>
+    <div className="roster-density-copy"><span>{variant === "settings" ? label : t("Density")}</span>{variant === "settings" && <small id={descriptionId}>{t("Adjusts row spacing for this workspace.")}</small>}</div>
+    <div className="roster-density-options" role="radiogroup" aria-label={label} aria-describedby={variant === "settings" ? descriptionId : undefined} aria-busy={busy || undefined}>
       {options.map((option, index) => <button key={option} ref={node => { buttons.current[index] = node; }} type="button" role="radio" aria-checked={selected === option} aria-disabled={locked || undefined} disabled={disabled} tabIndex={selected === option ? 0 : -1}
         onClick={() => choose(option)} onKeyDown={event => navigate(event, index)}>
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true"><path d={OPTION_META[option].path} /></svg><span>{t(OPTION_META[option].label)}</span>
       </button>)}
     </div>
+    {variant === "settings" && <select className="select settings-compact-choice roster-density-select" aria-label={label}
+      aria-describedby={descriptionId} aria-busy={busy || undefined} aria-disabled={locked || undefined} disabled={disabled} value={selected}
+      onChange={event => choose(parseRosterDensity(event.target.value))}>
+      {options.map(option => <option key={option} value={option}>{t(OPTION_META[option].label)}</option>)}
+    </select>}
   </div>;
 }

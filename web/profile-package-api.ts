@@ -4,7 +4,7 @@ import type {
   ProfilePackageImportResult,
   ProfilePackagePreview,
 } from "../profile-package.ts";
-import { getStandaloneSessionToken } from "./api.ts";
+import { getStandaloneSessionToken, notifyAppLockedFromResponse, notifyUnauthorizedResponse } from "./api.ts";
 
 export type {
   ProfilePackageConflictReason,
@@ -41,6 +41,13 @@ export interface ProfilePackageImportInput {
   confirmOverwrite?: boolean;
 }
 
+export class ProfilePackageImportError extends Error {
+  constructor(message: string, readonly code?: string) {
+    super(message);
+    this.name = "ProfilePackageImportError";
+  }
+}
+
 export function isMqProfileFile(file: Pick<File, "name">): boolean {
   return typeof file.name === "string" && file.name.trim().toLowerCase().endsWith(".mqprofile");
 }
@@ -60,11 +67,19 @@ function packageFetch(path: string, init?: RequestInit): Promise<Response> {
 
 async function readJsonResponse(response: Response, path: string): Promise<any> {
   const text = await response.text();
+  let parsed: any;
   try {
-    return text.trim() ? JSON.parse(text) : {};
+    parsed = text.trim() ? JSON.parse(text) : {};
   } catch {
+    notifyUnauthorizedResponse(response.status, path);
     throw new Error(`API ${path} returned non-JSON (${response.status}).`);
   }
+  if (response.status === 401) {
+    notifyUnauthorizedResponse(401, path, typeof parsed?.error === "string" ? parsed.error : "");
+  } else if (response.status === 423) {
+    notifyAppLockedFromResponse(423, parsed);
+  }
+  return parsed;
 }
 
 function triggerBlobDownload(blob: Blob, fileName: string): void {
@@ -185,7 +200,10 @@ export async function importProfilePackage(
   });
   const body = await readJsonResponse(response, path);
   if (!response.ok || body?.ok !== true || !body.result) {
-    throw new Error(typeof body?.error === "string" ? body.error : "Unable to import profile package.");
+    throw new ProfilePackageImportError(
+      typeof body?.error === "string" ? body.error : "Unable to import profile package.",
+      typeof body?.code === "string" ? body.code : undefined,
+    );
   }
   return body.result as ProfilePackageImportResult;
 }

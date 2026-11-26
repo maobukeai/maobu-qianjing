@@ -19,11 +19,13 @@ async function run(scenario: string) {
   Object.defineProperty(dom.window.HTMLElement.prototype, "getBoundingClientRect", { configurable: true, value(this: DomElement) { return this.matches(".profile-menu-trigger") ? rect(anchor.x, anchor.y, 24, 24) : rect(); } });
   function RowHarness({ revision }: { revision: number }) {
     useDesktopMotion();
+    const outside = useRef<HTMLInputElement>(null);
+    const changesWhileOpen = scenario === "row-keyboard-refresh";
     return <><ProfileActionMenu label={`Actions ${revision}`} icon={<span>Menu</span>}>
       <button role="menuitem" disabled onClick={() => actions.push("disabled")}>Disabled action</button>
-      <button role="menuitem" onClick={() => actions.push("edit")}>Edit action</button>
-      <button role="menuitem" onClick={() => actions.push("inspect")}>Inspect action</button>
-    </ProfileActionMenu><input aria-label="Outside input" /></>;
+      <button role="menuitem" onClick={() => { actions.push("edit"); if (changesWhileOpen) outside.current?.focus(); }}>Edit action</button>
+      {(!changesWhileOpen || revision === 1) && <button role="menuitem" onClick={() => actions.push("inspect")}>Inspect action</button>}
+    </ProfileActionMenu><input ref={outside} aria-label="Outside input" /></>;
   }
   function PaletteHarness() {
     useDesktopMotion();
@@ -92,7 +94,9 @@ async function run(scenario: string) {
       assert.equal(active(), null); assert.equal(dom.window.document.activeElement, outside, "Outside dismissal must not steal the clicked target's focus");
       await system(true); assert.equal(raw(), null, "Reduced motion finishes an existing visual exit immediately");
       await open(); await act(async () => { dom.window.dispatchEvent(new dom.window.Event("resize")); }); assert.equal(raw(), null);
-      await open(); await act(async () => { dom.window.dispatchEvent(new dom.window.Event("scroll")); }); assert.equal(raw(), null);
+      await open();
+      anchor = { x: 480, y: 90 };
+      await act(async () => { dom.window.dispatchEvent(new dom.window.Event("scroll")); }); assert.equal(raw(), null);
       await system(false); await open(); await key(button("Edit action"), "Escape"); assert.ok(raw());
       await dom.unmount(); await waitExit(); assert.equal(raw(), null); assert.equal(listeners.size, 0, "Unmount owns all motion subscriptions and timers");
     } else if (scenario === "row-layout-focus") {
@@ -101,16 +105,35 @@ async function run(scenario: string) {
       assert.ok(active(), "Scrolling within a long menu must not dismiss it");
       assert.equal(dom.window.document.activeElement, item);
       await act(async () => { dom.window.dispatchEvent(new dom.window.Event("scroll")); });
+      assert.ok(active(), "A delayed scroll event must not dismiss a menu already placed at the current anchor");
+      assert.equal(dom.window.document.activeElement, item);
+      anchor = { x: 490, y: 90 };
+      await act(async () => { dom.window.dispatchEvent(new dom.window.Event("scroll")); });
       assert.equal(active(), null); assert.ok(raw(), "Full motion retains only the visual exit");
       assert.equal(dom.window.document.activeElement, trigger(), "Focus must leave the menu before it becomes inert");
       await waitExit(); assert.equal(raw(), null); assert.equal(dom.window.document.activeElement, trigger());
       await open();
-      const outside = dom.container.querySelector<DomInput>('input[aria-label="Outside input"]')!; outside.focus();
+      const outside = dom.container.querySelector<DomInput>('input[aria-label="Outside input"]')!;
+      await act(async () => { outside.focus(); });
+      assert.equal(active(), null, "Moving focus outside closes the row menu");
       await act(async () => { dom.window.dispatchEvent(new dom.window.Event("resize")); });
       assert.equal(active(), null); assert.equal(dom.window.document.activeElement, outside, "Resize must not steal focus that already left the menu");
       await open();
       await act(async () => { dom.window.dispatchEvent(new dom.window.Event("resize")); });
       assert.equal(dom.window.document.activeElement, trigger());
+    } else if (scenario === "row-keyboard-refresh") {
+      await key(button("Edit action"), "Escape");
+      await key(trigger(), "ArrowUp");
+      assert.ok(active());
+      assert.equal(dom.window.document.activeElement, button("Inspect action"), "ArrowUp from the trigger opens at the last enabled item");
+      await render(2);
+      assert.ok(active());
+      const edit = button("Edit action");
+      assert.equal(dom.window.document.activeElement, edit, "A vanished action hands focus to the closest remaining item");
+      await act(async () => { edit.click(); });
+      assert.equal(active(), null);
+      assert.deepEqual(actions, ["edit"]);
+      assert.equal(dom.window.document.activeElement, dom.container.querySelector('[aria-label="Outside input"]'), "A menu action can hand off focus without being interrupted");
     } else if (scenario === "palette-exit") {
       assert.equal(dom.window.document.activeElement, search()); const panel = raw()!, item = option("Create action");
       assert.equal(isShortcutTargetAllowed(null, dom.window.document as unknown as Document), false, "An interactive modal owns Ctrl+K");
@@ -128,8 +151,11 @@ async function run(scenario: string) {
       await click("Close command palette"); await open(); assert.equal(raw(), panel); assert.equal(search().value, ""); assert.equal(dom.window.document.activeElement, search());
       await waitExit(); assert.equal(active(), panel); assert.equal(dom.window.document.querySelectorAll('[data-command-palette="true"]').length, 1);
       await act(async () => { option("Disabled action").click(); }); assert.deepEqual(actions, []); assert.ok(active());
-      await key(search(), "Tab", { shiftKey: true }); assert.equal(dom.window.document.activeElement, button("Close command palette"));
-      await key(button("Close command palette"), "Tab"); assert.equal(dom.window.document.activeElement, search());
+      const close = button("Close command palette");
+      close.focus();
+      await key(close, "Tab", { shiftKey: true }); assert.equal(dom.window.document.activeElement, search());
+      await key(search(), "Tab"); assert.equal(dom.window.document.activeElement, close);
+      search().focus();
       await key(search(), "Escape", { isComposing: true }); assert.ok(active(), "Composition must not accidentally dismiss the palette");
       await act(async () => { option("Failing action").click(); }); assert.ok(raw()!.querySelector('[role="alert"]')); assert.equal(dom.window.document.activeElement, search()); assert.equal(closes, 1);
       await key(search(), "Escape"); assert.equal(closes, 2); assert.equal(active(), null);

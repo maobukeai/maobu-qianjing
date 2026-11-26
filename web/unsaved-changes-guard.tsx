@@ -2,6 +2,7 @@ import { useCallback, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { MotionPresence } from "./desktop-motion.tsx";
 import { useTranslation } from "./i18n.tsx";
+import { AppIcon } from "./ui-primitives.tsx";
 import "./unsaved-changes-guard.css";
 
 export interface UnsavedChangesGuardOptions {
@@ -24,7 +25,7 @@ interface CloseIntent {
   fallback?: () => HTMLElement | null;
   generation: number;
 }
-const CLOSE_ERROR = "The editor could not be closed. Continue editing and try again.";
+const CLOSE_ERROR = "The editor could not be closed. Try again.";
 
 function restoreEditorFocus(intent: CloseIntent) {
   const usable = (node: HTMLElement | null | undefined): node is HTMLElement => !!node?.isConnected
@@ -146,13 +147,19 @@ function UnsavedChangesDialog({ open, label, failed, onKeepEditing, onDiscard }:
   }, [open, failed, onKeepEditing]);
   if (typeof document === "undefined") return null;
   return createPortal(<MotionPresence present={open}>{() => <div className="unsaved-changes-guard-backdrop" onPointerDown={event => event.stopPropagation()}>
-    <div className="unsaved-changes-guard" ref={panel} role="alertdialog" aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={`${id}-description${failed ? ` ${id}-error` : ""}`}>
-      <span className="unsaved-changes-guard-context">{t(label)}</span>
-      <h2 id={`${id}-title`}>{t("Discard unsaved changes?")}</h2>
-      <p id={`${id}-description`}>{t("Your changes have not been saved. You can keep editing or discard them.")}</p>
-      {failed && <p className="unsaved-changes-guard-error" id={`${id}-error`} role="alert">{t(CLOSE_ERROR)}</p>}
-      <div className="unsaved-changes-guard-actions"><button type="button" className="btn primary" ref={keep} onClick={() => onKeepEditing()}>{t("Keep editing")}</button>
-        {!failed && <button type="button" className="btn unsaved-changes-guard-discard" onClick={onDiscard}>{t("Discard changes")}</button>}</div>
+    <div className="unsaved-changes-guard" ref={panel} role="alertdialog" aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={`${id}-context${failed ? ` ${id}-error` : ""}`}>
+      <header className="unsaved-changes-guard-heading">
+        <span className="unsaved-changes-guard-icon"><AppIcon name="warning" /></span>
+        <div>
+          <h2 id={`${id}-title`}>{t("Discard unsaved changes?")}</h2>
+          <p className="unsaved-changes-guard-context" id={`${id}-context`}>{t(label)}</p>
+        </div>
+      </header>
+      {failed && <p className="unsaved-changes-guard-error" id={`${id}-error`} role="alert"><AppIcon name="alert" className="sm" />{t(CLOSE_ERROR)}</p>}
+      <footer className="unsaved-changes-guard-actions">
+        <button type="button" className="btn primary" ref={keep} onClick={() => onKeepEditing()}>{t("Keep editing")}</button>
+        {!failed && <button type="button" className="btn unsaved-changes-guard-discard" onClick={onDiscard}>{t("Discard changes")}</button>}
+      </footer>
     </div>
   </div>}</MotionPresence>, document.body);
 }

@@ -8,7 +8,7 @@ test("an unopened row menu renders an accessible trigger without a server-side p
   expect(markup).toContain('aria-haspopup="menu"'); expect(markup).toContain('aria-expanded="false"');
   expect(markup).not.toContain('role="menu"'); expect(markup).not.toContain("desktop-motion-presence");
 });
-for (const scenario of ["row-activation-exit", "row-reopen-position", "row-outside-reduce", "row-layout-focus"]) {
+for (const scenario of ["row-activation-exit", "row-reopen-position", "row-outside-reduce", "row-layout-focus", "row-keyboard-refresh"]) {
   test(`row action menu motion: ${scenario}`, async () => {
     const child = Bun.spawn([process.execPath, "--no-env-file", resolve(import.meta.dir, "../test-fixtures/menu-motion-dom.tsx"), scenario], { cwd: resolve(import.meta.dir, ".."), stdout: "pipe", stderr: "pipe" });
     const timer = setTimeout(() => child.kill(), 12_000);

@@ -1,5 +1,6 @@
 import type { AssistantModel } from "../local-assistant.ts";
 import type { AssistantServiceProvider, AssistantServiceView, AssistantServicesCatalog } from "../assistant-model-services.ts";
+import { notifyAppLockedFromResponse, notifyUnauthorizedResponse, withStandaloneAuthHeaders } from "./api.ts";
 import { AssistantRequestError } from "./local-assistant-api.ts";
 
 export type { AssistantServiceProvider, AssistantServiceView, AssistantServicesCatalog };
@@ -29,13 +30,25 @@ function serviceId(value: unknown): value is string {
 }
 
 async function request(path: string, data?: unknown, signal?: AbortSignal): Promise<Record<string, unknown>> {
-  const response = await fetch(`/ui/api/settings/assistant/services${path}`, {
+  const fullPath = `/ui/api/settings/assistant/services${path}`;
+  const response = await fetch(fullPath, {
     method: data === undefined ? "GET" : "POST", credentials: "same-origin", cache: "no-store", redirect: "error", signal,
-    headers: { "Content-Type": "application/json", "X-Maobu-Settings": "1", Accept: "application/json" },
+    headers: withStandaloneAuthHeaders({ "Content-Type": "application/json", "X-Maobu-Settings": "1", Accept: "application/json" }),
     ...(data === undefined ? {} : { body: JSON.stringify(data) }),
   });
-  const result: unknown = await response.json().catch(() => invalid());
-  if (!record(result)) return invalid();
+  const result: unknown = await response.json().catch(() => {
+    notifyUnauthorizedResponse(response.status, fullPath);
+    invalid();
+  });
+  if (!record(result)) {
+    notifyUnauthorizedResponse(response.status, fullPath);
+    return invalid();
+  }
+  if (response.status === 401) {
+    notifyUnauthorizedResponse(401, fullPath, typeof result.error === "string" ? result.error : "");
+  } else if (response.status === 423) {
+    notifyAppLockedFromResponse(423, result);
+  }
   if (!response.ok || result.ok !== true) throw new AssistantRequestError(
     typeof result.error === "string" ? result.error : "The model service request failed.",
     typeof result.code === "string" ? result.code : "request_failed", result.retryable === true,

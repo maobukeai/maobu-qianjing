@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { buildNewProfile } from "./create.ts";
-import { openProfilePackage, ProfilePackagePreviewStore } from "./profile-package.ts";
+import { createProfilePackage, openProfilePackage, ProfilePackagePreviewStore, sealProfilePackage, type ProfilePackagePreview } from "./profile-package.ts";
 import { listProfileEvents } from "./profile-timeline.ts";
 import { handleProfilePackageRoutes } from "./src/ui/profile-package-routes.ts";
 import { handleProfileTimelineRoutes } from "./src/ui/profile-timeline-routes.ts";
@@ -46,6 +46,71 @@ const SAMPLE_SESSION = JSON.stringify({
 });
 
 describe("Wave 4 workflow UX API routes", () => {
+  test("package overwrite can only replace the unchanged closed environments reviewed by the user", async () => {
+    const store = memStore();
+    const late = makeProfile("review_late", "Late original");
+    const running = makeProfile("review_running", "Running original");
+    const edited = makeProfile("review_edited", "Edited original");
+    const stableNew = makeProfile("review_new", "New import");
+    const incoming = [late, running, edited].map(profile => ({ ...profile, name: profile.name + " in package" }));
+    store.upsertProfiles([running, edited]);
+    store.recordLaunch({ profileId: running.id, pid: 12345, debugPort: 9222, ws: "", startedAt: Date.now() });
+    const password = "synthetic-review-password";
+    const bytes = await sealProfilePackage(createProfilePackage([...incoming, stableNew]), password);
+    const options = { packagePreviewStore: new ProfilePackagePreviewStore() };
+    const launcher = {} as Parameters<typeof handleProfilePackageRoutes>[2];
+    const request = (operation: string, init: RequestInit) => {
+      const path = `/ui/api/profiles/package/${operation}`;
+      return handleProfilePackageRoutes(new Request(`http://127.0.0.1${path}`, { method: "POST", ...init }), path, launcher, store, options);
+    };
+    const review = async (): Promise<ProfilePackagePreview> => {
+      const form = new FormData();
+      form.append("file", new File([new Uint8Array(bytes)], "fixture.mqprofile"));
+      form.append("password", password);
+      const response = await request("preview", { body: form });
+      expect(response?.status).toBe(200);
+      return (await response!.json()).preview;
+    };
+    const commit = (preview: ProfilePackagePreview, selectedIds: string[]) => request("import", {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        previewId: preview.previewId, previewToken: preview.previewToken,
+        strategy: "overwrite_closed", confirmOverwrite: true, selectedIds,
+      }),
+    });
+    const expectStale = async (preview: ProfilePackagePreview, selected: string, originalName: string) => {
+      const response = await commit(preview, [stableNew.id, selected]);
+      expect(response?.status).toBe(409);
+      expect((await response!.json()).code).toBe("preview_target_changed");
+      expect(store.getProfile(selected)?.name).toBe(originalName);
+      expect(store.getProfile(stableNew.id)).toBeNull();
+    };
+
+    const first = await review();
+    expect(first.profiles.find(profile => profile.id === late.id)?.conflictReason).toBeNull();
+    store.upsertProfile(late);
+    await expectStale(first, late.id, late.name);
+
+    const second = await review();
+    expect(second.profiles.find(profile => profile.id === running.id)?.conflictReason).toBe("running");
+    store.clearLaunch(running.id);
+    await expectStale(second, running.id, running.name);
+
+    const third = await review();
+    store.upsertProfile({ ...edited, notes: "Saved after package review" });
+    await expectStale(third, edited.id, edited.name);
+    expect(store.getProfile(edited.id)?.notes).toBe("Saved after package review");
+
+    const fourth = await review();
+    store.upsertProfile({ ...late, notes: "Unselected changes do not affect this import" });
+    const response = await commit(fourth, [stableNew.id, edited.id]);
+    expect(response?.status).toBe(200);
+    const body = await response!.json();
+    expect(body.result).toMatchObject({ importedCount: 1, overwrittenCount: 1, skippedCount: 2 });
+    expect(store.getProfile(edited.id)?.name).toBe(edited.name + " in package");
+    expect(store.getProfile(late.id)?.notes).toBe("Unselected changes do not affect this import");
+  });
+
   test("encrypted package export captures live sessions, previews conflicts without secrets, and imports atomically", async () => {
     const store = memStore();
     const p1 = makeProfile("wf_001", "Alpha");

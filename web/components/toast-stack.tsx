@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FocusEvent } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent } from "react";
 import { useEffectiveDesktopMotion } from "../desktop-motion.tsx";
 import { useTranslation } from "../i18n.tsx";
 import { AppIcon } from "../ui-primitives.tsx";
@@ -122,15 +122,18 @@ interface ToastRowProps {
   toast: ToastItem;
   exiting: boolean;
   reduced: boolean;
+  documentHidden: boolean;
   onDismiss: (id: string) => void;
 }
 
-function ToastRow({ toast, exiting, reduced, onDismiss }: ToastRowProps) {
+function ToastRow({ toast, exiting, reduced, documentHidden, onDismiss }: ToastRowProps) {
   const { t } = useTranslation();
+  const messageId = useId();
   const [phase, setPhase] = useState<"entering" | "present" | "exiting">(
     exiting ? "exiting" : reduced ? "present" : "entering",
   );
   const [paused, setPaused] = useState(false);
+  const countdownPaused = paused || documentHidden;
   const hoveredRef = useRef(false);
   const focusedRef = useRef(false);
   const remainingRef = useRef(toast.durationMs);
@@ -164,7 +167,7 @@ function ToastRow({ toast, exiting, reduced, onDismiss }: ToastRowProps) {
   // Pauseable countdown timer for auto-dismiss.
   useEffect(() => {
     if (exiting || toast.durationMs <= 0) return;
-    if (paused) {
+    if (countdownPaused) {
       if (startedAtRef.current !== null) {
         const elapsed = Date.now() - startedAtRef.current;
         remainingRef.current = Math.max(0, remainingRef.current - elapsed);
@@ -191,7 +194,7 @@ function ToastRow({ toast, exiting, reduced, onDismiss }: ToastRowProps) {
         startedAtRef.current = null;
       }
     };
-  }, [exiting, paused, toast.id, toast.durationMs, toast.createdAt]);
+  }, [exiting, countdownPaused, toast.id, toast.durationMs, toast.createdAt]);
 
   const syncPaused = () => {
     setPaused(hoveredRef.current || focusedRef.current);
@@ -219,11 +222,10 @@ function ToastRow({ toast, exiting, reduced, onDismiss }: ToastRowProps) {
     <div
       ref={rowRef}
       className={`toast-item notice is-${toast.tone}`}
-      role={exiting ? undefined : "status"}
       data-toast-id={toast.id}
       data-toast-tone={toast.tone}
       data-motion-phase={phase}
-      data-paused={paused || undefined}
+      data-paused={countdownPaused || undefined}
       aria-hidden={exiting || undefined}
       inert={exiting || undefined}
       onPointerEnter={exiting ? undefined : handleEnter}
@@ -234,11 +236,12 @@ function ToastRow({ toast, exiting, reduced, onDismiss }: ToastRowProps) {
       onBlur={exiting ? undefined : handleBlur}
     >
       <ToastGlyph tone={toast.tone} />
-      <span>{toast.message}</span>
+      <span id={messageId}>{toast.message}</span>
       <button
         type="button"
         className="notice-dismiss toast-dismiss"
         aria-label={t("Dismiss")}
+        aria-describedby={messageId}
         disabled={exiting}
         onClick={() => {
           if (!exiting) onDismiss(toast.id);
@@ -261,10 +264,14 @@ interface RenderedToast {
   exiting: boolean;
 }
 
+function canRestoreToastFocus(node: HTMLElement | null | undefined): node is HTMLElement {
+  return !!node?.isConnected && !node.matches(":disabled") &&
+    !node.closest('[hidden], [inert], [aria-hidden="true"]') && node.getClientRects().length > 0;
+}
+
 /**
- * Stacked micro-feedback toast container (up to 3 items).
- * Preserves `.notice` and `role="status"` semantics, pauses auto-dismiss on
- * hover/focus, and smoothly animates entrances and 120ms exits via GPU transforms.
+ * Keeps one live region mounted before the first toast and renders the visual
+ * stack separately, including short inert exit animations.
  */
 export function ToastStack({ toasts, onDismiss, className }: ToastStackProps) {
   const { t } = useTranslation();
@@ -273,7 +280,20 @@ export function ToastStack({ toasts, onDismiss, className }: ToastStackProps) {
   const [rendered, setRendered] = useState<RenderedToast[]>(() =>
     toasts.map((toast) => ({ toast, exiting: false })),
   );
+  const [documentHidden, setDocumentHidden] = useState(() => typeof document !== "undefined" && document.hidden);
+  const announcementRef = useRef<HTMLDivElement>(null);
+  const stackRef = useRef<HTMLDivElement>(null);
+  const focusOrigin = useRef<HTMLElement | null>(null);
   const exitTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  useIsomorphicLayoutEffect(() => {
+    const doc = announcementRef.current?.ownerDocument;
+    if (!doc) return;
+    const syncVisibility = () => setDocumentHidden(doc.hidden);
+    syncVisibility();
+    doc.addEventListener("visibilitychange", syncVisibility);
+    return () => doc.removeEventListener("visibilitychange", syncVisibility);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -284,6 +304,17 @@ export function ToastStack({ toasts, onDismiss, className }: ToastStackProps) {
 
   useIsomorphicLayoutEffect(() => {
     const activeById = new Map(toasts.map((item) => [item.id, item]));
+    const stack = stackRef.current;
+    const focused = stack?.ownerDocument.activeElement?.closest<HTMLElement>("[data-toast-id]");
+    if (stack && focused && stack.contains(focused) && !activeById.has(focused.dataset.toastId ?? "")) {
+      const rows = Array.from(stack.querySelectorAll<HTMLElement>("[data-toast-id]"));
+      const index = rows.indexOf(focused);
+      const neighbor = [...rows.slice(index + 1), ...rows.slice(0, index).reverse()]
+        .find(row => activeById.has(row.dataset.toastId ?? ""))?.querySelector<HTMLElement>(".toast-dismiss");
+      const pageHeadings = stack.closest('main, [role="main"]')?.querySelectorAll<HTMLElement>("h1[tabindex]") ?? [];
+      const target = [neighbor, focusOrigin.current, ...pageHeadings].find(canRestoreToastFocus);
+      target?.focus();
+    }
 
     // Cancel exit timers for any toast that re-appeared with the same id.
     for (const id of activeById.keys()) {
@@ -334,25 +365,34 @@ export function ToastStack({ toasts, onDismiss, className }: ToastStackProps) {
     });
   }, [toasts, reduced]);
 
-  if (rendered.length === 0) return null;
-
   return (
-    <div
-      className={`toast-stack${className ? ` ${className}` : ""}`}
-      role="region"
-      aria-label={t("Notifications")}
-      aria-live="polite"
-      aria-relevant="additions text"
-    >
-      {rendered.map(({ toast, exiting }) => (
-        <ToastRow
-          key={toast.id}
-          toast={toast}
-          exiting={exiting}
-          reduced={reduced}
-          onDismiss={onDismiss}
-        />
-      ))}
-    </div>
+    <>
+      <div ref={announcementRef} className="sr-only toast-announcements" role="status" aria-atomic="false" aria-relevant="additions text">
+        {toasts.map(toast => <div key={toast.id}>{toast.message}</div>)}
+      </div>
+      {rendered.length > 0 && <div
+        ref={stackRef}
+        className={`toast-stack${className ? ` ${className}` : ""}`}
+        role="region"
+        aria-label={t("Notifications")}
+        onFocusCapture={event => {
+          const origin = event.relatedTarget;
+          if (!event.currentTarget.contains(origin as Node | null)) {
+            focusOrigin.current = origin instanceof HTMLElement && origin !== origin.ownerDocument.body ? origin : null;
+          }
+        }}
+      >
+        {rendered.map(({ toast, exiting }) => (
+          <ToastRow
+            key={toast.id}
+            toast={toast}
+            exiting={exiting}
+            reduced={reduced}
+            documentHidden={documentHidden}
+            onDismiss={onDismiss}
+          />
+        ))}
+      </div>}
+    </>
   );
 }

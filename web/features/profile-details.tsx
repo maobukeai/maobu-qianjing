@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type Ref } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type Ref } from "react";
 import type { UiProfile } from "../api.ts";
 import { MotionPresence } from "../desktop-motion.tsx";
 import { useTranslation } from "../i18n.tsx";
@@ -57,15 +57,40 @@ export function ProfileDetailsPanel({
   const generatedId = useId(), headingId = `${generatedId}-heading`;
   const overviewTabId = `${generatedId}-tab-overview`;
   const timelineTabId = `${generatedId}-tab-timeline`;
+  const overviewPanelId = `${generatedId}-panel-overview`;
+  const timelinePanelId = `${generatedId}-panel-timeline`;
   const immediateExit = !hasActiveMotionHost();
-  const [activeTab, setActiveTab] = useState<ProfileDetailsTab>("overview");
+  const [selection, setSelection] = useState<{ profileId: string; tab: ProfileDetailsTab } | null>(null);
+  const [tabFocus, setTabFocus] = useState<{ profileId: string; tab: ProfileDetailsTab } | null>(null);
   const [savedNotesOverride, setSavedNotesOverride] = useState<{ id: string; value: string } | null>(null);
   const profileId = profile?.id ?? "";
+  const activeTab = selection?.profileId === profileId ? selection.tab : "overview";
+  const tabbableTab = tabFocus?.profileId === profileId ? tabFocus.tab : activeTab;
+  const content = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setActiveTab("overview");
+    setSelection(null);
+    setTabFocus(null);
     setSavedNotesOverride(null);
   }, [profileId]);
+  useEffect(() => { if (content.current) content.current.scrollTop = 0; }, [profileId, activeTab]);
+
+  function changeTab(tab: ProfileDetailsTab) {
+    setSelection({ profileId, tab });
+    setTabFocus({ profileId, tab });
+  }
+
+  function moveTabFocus(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.defaultPrevented || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey) return;
+    let next: ProfileDetailsTab;
+    if (event.key === "Home") next = "overview";
+    else if (event.key === "End") next = "timeline";
+    else if (event.key === "ArrowLeft" || event.key === "ArrowRight") next = event.target === event.currentTarget.firstElementChild ? "timeline" : "overview";
+    else return;
+    event.preventDefault();
+    setTabFocus({ profileId, tab: next });
+    event.currentTarget.ownerDocument.getElementById(next === "overview" ? overviewTabId : timelineTabId)?.focus();
+  }
 
   return (
     <MotionPresence present={!!profile} kind="panel" immediateExit={immediateExit}>
@@ -88,17 +113,20 @@ export function ProfileDetailsPanel({
             event.preventDefault(); event.stopPropagation(); onClose();
           }}>
             <header className="profile-details-header">
-              <div><span className="profile-details-eyebrow">{t("Environment details")}</span><h2 id={headingId} ref={headingRef} tabIndex={-1}>{profile.name || profile.id}</h2></div>
+              <h2 id={headingId} ref={headingRef} tabIndex={-1} title={profile.name || profile.id}>{profile.name || profile.id}</h2>
               <button type="button" className="iconbtn profile-details-close" aria-label={t("Close environment details")} onClick={onClose}><AppIcon name="close" /></button>
             </header>
-            <div className="profile-details-tabs" role="tablist" aria-label={t("Environment detail views")}>
+            <div className="profile-details-tabs" role="tablist" aria-label={t("Environment detail views")} onKeyDown={moveTabFocus}
+              onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setTabFocus(null); }}>
               <button
                 id={overviewTabId}
                 type="button"
                 role="tab"
                 className={`profile-details-tab${activeTab === "overview" ? " is-active" : ""}`}
                 aria-selected={activeTab === "overview"}
-                onClick={() => setActiveTab("overview")}
+                aria-controls={overviewPanelId}
+                tabIndex={tabbableTab === "overview" ? 0 : -1}
+                onClick={() => changeTab("overview")}
               >
                 {t("Overview")}
               </button>
@@ -108,14 +136,15 @@ export function ProfileDetailsPanel({
                 role="tab"
                 className={`profile-details-tab${activeTab === "timeline" ? " is-active" : ""}`}
                 aria-selected={activeTab === "timeline"}
-                onClick={() => setActiveTab("timeline")}
+                aria-controls={timelinePanelId}
+                tabIndex={tabbableTab === "timeline" ? 0 : -1}
+                onClick={() => changeTab("timeline")}
               >
                 {t("Activity timeline")}
               </button>
             </div>
-            <div className="profile-details-content">
-              {activeTab === "overview" ? (
-                <div role="tabpanel" aria-labelledby={overviewTabId}>
+            <div className="profile-details-content" ref={content}>
+                <div id={overviewPanelId} role="tabpanel" aria-labelledby={overviewTabId} tabIndex={0} hidden={activeTab !== "overview"}>
                   <div className={`profile-details-status profile-status${profile.running ? " is-running running" : ""}`}>{t(profile.running ? "Running" : "Stopped")}</div>
                   {profile.restartPending && <p className="profile-details-warning"><AppIcon name="refresh" className="sm" /><span>{t("Saved changes apply at the next start.")}</span></p>}
                   <section className="profile-details-section" aria-label={t("Environment identity")}>
@@ -132,6 +161,7 @@ export function ProfileDetailsPanel({
                   <section className="profile-details-section" aria-label={t("Notes")}>
                     <h3>{t("Notes")}</h3>
                     <QuickProfileNotesEditor
+                      key={profile.id}
                       profileId={profile.id}
                       profileName={profile.name || profile.id}
                       notes={currentNotes}
@@ -152,9 +182,9 @@ export function ProfileDetailsPanel({
                   </section>
                   <p className="profile-details-note">{t("Saved settings do not verify the current network or browser fingerprint.")}</p>
                 </div>
-              ) : (
-                <div role="tabpanel" aria-labelledby={timelineTabId}>
-                  <ProfileTimeline
+                <div id={timelinePanelId} role="tabpanel" aria-labelledby={timelineTabId} tabIndex={0} hidden={activeTab !== "timeline"}>
+                  {activeTab === "timeline" && <ProfileTimeline
+                    key={profile.id}
                     profileId={profile.id}
                     hasProxy={!!profile.proxy && !profile.proxyError}
                     running={profile.running}
@@ -162,9 +192,8 @@ export function ProfileDetailsPanel({
                     onOpenLogs={onOpenLogs}
                     onRetryLaunch={onRetryLaunch}
                     onEditProxy={onEditProxy ?? onEdit}
-                  />
+                  />}
                 </div>
-              )}
             </div>
             <footer className="profile-details-actions">
               <button type="button" className="btn primary" onClick={() => onEdit(profile.id)}><AppIcon name="edit" className="sm" />{t("Edit profile")}</button>

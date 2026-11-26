@@ -1,5 +1,6 @@
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
+import { ALIASMODE_VERSION } from "../../version.ts";
 import type { Launcher } from "../../launcher.ts";
 import type { ProfileStore } from "../../store.ts";
 import type { AppConfigStore } from "../../app-config.ts";
@@ -98,7 +99,11 @@ export interface UiProfile {
   fpImportComparison: FingerprintImportComparison | null;
 }
 
+/** Ephemeral validators. Keep neither roster contents nor profile secrets. */
+export type UiRosterTags = WeakMap<ProfileStore, { revision: string; etag: string }>;
+
 export interface UiRuntimeOptions {
+  rosterTags?: UiRosterTags;
   assistant?: LocalAssistantService;
   runtimeInventory?: RuntimeInventoryDeployment;
   discoverLocalProxies?: typeof discoverLocalProxies;
@@ -350,10 +355,10 @@ export function appVersion(): Promise<string> {
     appVersionPromise = (async () => {
       try {
         const file = Bun.file(join(APPLICATION_ROOT, "VERSION.txt"));
-        if (!(await file.exists())) return "dev";
-        return (await file.text()).trim() || "dev";
+        if (!(await file.exists())) return ALIASMODE_VERSION;
+        return (await file.text()).trim() || ALIASMODE_VERSION;
       } catch {
-        return "dev";
+        return ALIASMODE_VERSION;
       }
     })();
   }

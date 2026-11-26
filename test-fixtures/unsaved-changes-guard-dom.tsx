@@ -41,7 +41,10 @@ async function run(scenario: string) {
     }
     if (scenario === "frozen-intent") {
       await act(async () => { guard.requestClose({ dirty: true, onDiscard: () => actions++ }); assert.equal(guard.requestClose({ dirty: false, onDiscard: () => alternate++ }), "ignored"); });
-      await render("New profile"); assert.equal(activeDialog()!.querySelector(".unsaved-changes-guard-context")?.textContent, "Edit profile");
+      await render("New profile");
+      const dialog = activeDialog()!;
+      const context = dom.window.document.getElementById(dialog.getAttribute("aria-describedby")!);
+      assert.equal(context?.textContent, "Edit profile");
       assert.ok(!activeDialog()!.outerHTML.includes("PRIVATE_")); assert.ok(!activeDialog()!.outerHTML.includes("Private account field"));
       assert.equal(dom.container.querySelector('[role="alertdialog"]'), null, "The actual dialog must be portaled outside the editor's root");
       await click("Discard changes", true); assert.equal(actions, 1); assert.equal(alternate, 0); return;

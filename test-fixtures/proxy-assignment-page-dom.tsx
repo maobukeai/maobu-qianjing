@@ -103,7 +103,7 @@ async function run(scenario: string) {
 
   try {
     await render();
-    await act(async () => { dom.container.querySelectorAll<HTMLButtonElement>(".tools-tabs button")[1]!.click(); });
+    await act(async () => { dom.container.querySelector<HTMLButtonElement>('.tools-tabs button[data-proxy-tab="replace"]')!.click(); });
     await enter("new.invalid:8080:fixture:PRIVATE_PROXY_SECRET");
     await click("Preview changes");
     assert.equal(reviewRows().length, 2);

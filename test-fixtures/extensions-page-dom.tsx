@@ -98,6 +98,40 @@ async function run(scenario: string) {
       assert.equal(button("Install").disabled, true);
       assert.equal(dom.container.querySelector(".pagefoot"), null);
       assert.equal(applied.length + removed.length, 0);
+    } else if (scenario === "installer-recovery-focus") {
+      let attempts = 0;
+      props = { ...props, source: "Synthetic source", onInstall: async () => { attempts++; return pending.promise; } };
+      await render();
+      await click("Add extension");
+      const installer = dom.container.querySelector<HTMLElement>(".extensions-installer")!;
+      const input = () => installer.querySelector<HTMLInputElement>('input[aria-label="Chrome Web Store URL or extension ID"]')!;
+      assert.ok(dom.window.document.activeElement === input(), "Opening should focus the Store input");
+      await click("ZIP/CRX archive", installer);
+      assert.ok(dom.window.document.activeElement === button("ZIP/CRX archive", installer));
+      await click("Chrome Web Store", installer);
+      assert.ok(dom.window.document.activeElement === button("Chrome Web Store", installer));
+      await click("Install", installer);
+      await act(async () => {
+        // Chromium drops focus when the submit button becomes disabled.
+        dom.window.document.body.tabIndex = -1;
+        dom.window.document.body.focus();
+        pending.resolve(false);
+      });
+      assert.equal(attempts, 1);
+      const error = installer.querySelector('[role="alert"]');
+      assert.ok(error);
+      assert.equal(input().getAttribute("aria-describedby"), error.id);
+      assert.ok(dom.window.document.activeElement === input(), "A failed write should refocus the Store input");
+      await click("ZIP/CRX archive", installer);
+      assert.equal(installer.querySelector('[role="alert"]'), null);
+      await click("Chrome Web Store", installer);
+      assert.equal(input().value, "Synthetic source");
+      assert.ok(installer.querySelector('[role="alert"]'));
+      await act(async () => {
+        input().dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      });
+      assert.equal(installer.hidden, true);
+      assert.ok(dom.window.document.activeElement === button("Add extension"));
     } else if (scenario === "group-preview") {
       assert.equal(dom.container.querySelector('.extensions-defaults input[type="search"]'), null);
       const preview = extensionGroupPreview("Research", ["b"], props.groupDefaults, props.profiles);
@@ -197,9 +231,23 @@ async function run(scenario: string) {
       assert.equal(button("Remove extension", dialog()!).disabled, true);
       assert.ok(dialog()?.querySelector('[role="alert"]')?.textContent?.includes("Assignments changed"));
       await click("Remove extension", dialog()!); assert.equal(removed.length, 0);
-      await click("Cancel", dialog()!); await click("Remove Alpha");
+      await click("Review latest changes", dialog()!);
       assert.ok(dialog()?.textContent?.includes("2 environment assignments"));
+      assert.ok(dom.window.document.activeElement?.textContent?.includes("2 environment assignments"), "The fresh removal impact receives focus");
       assert.equal(button("Remove extension", dialog()!).disabled, false);
+      assert.equal(removed.length, 0, "Reviewing the new impact sends no write");
+      await click("Remove extension", dialog()!);
+      assert.deepEqual(removed, [["a", "Alpha"]]);
+      await act(async () => { pending.resolve(true); }); assert.equal(dialog(), null);
+    } else if (scenario === "remove-disappeared") {
+      await click("Remove Alpha");
+      props = { ...props, extensions: props.extensions.filter(item => item.id !== "a") };
+      await render();
+      assert.ok(dialog()?.querySelector('[role="alert"]')?.textContent?.includes("This extension is no longer installed."));
+      assert.ok(!dialog()?.textContent?.includes("Review latest changes"));
+      assert.equal(button("Remove extension", dialog()!).disabled, true);
+      await click("Cancel", dialog()!); assert.equal(dialog(), null);
+      assert.equal(removed.length, 0);
     } else if (scenario === "remove-retry") {
       await click("Remove Alpha"); assert.equal(removed.length, 0);
       assert.ok(dialog()?.textContent?.includes("1 environment assignments and 1 group defaults"));

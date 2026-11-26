@@ -173,12 +173,20 @@ describe("ActionDock", () => {
     expect(events).toEqual(["start", "stop", "clear", "selectAll"]);
     expect(tray?.hidden).toBe(false);
     expect(moreBtn?.getAttribute("aria-expanded")).toBe("true");
+    expect(moreBtn?.getAttribute("aria-controls")).toBe(tray?.id);
     expect(moreBtn?.textContent?.trim()).toBe("Fewer actions");
+    expect(mounted.dom.document.activeElement?.hasAttribute("data-secondary")).toBe(true);
 
     act(() => {
       mounted.container.querySelector<HTMLButtonElement>("[data-secondary]")!.click();
     });
     expect(events).toEqual(["start", "stop", "clear", "selectAll", "secondary"]);
+
+    act(() => {
+      mounted.dom.document.activeElement?.dispatchEvent(new mounted.dom.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(tray?.hidden).toBe(true);
+    expect(mounted.dom.document.activeElement?.classList.contains("bulk-tools-toggle")).toBe(true);
   });
 
   test("disables Start/Stop when busy, deleting, or blockedMessage is active", () => {

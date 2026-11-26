@@ -1,5 +1,7 @@
-import React, { type ErrorInfo, type ReactNode } from "react";
-import { useTranslation } from "./i18n";
+import React, { useId, useLayoutEffect, useRef, type ErrorInfo, type ReactNode } from "react";
+import { useTranslation } from "./i18n.tsx";
+import { AppIcon } from "./ui-primitives.tsx";
+import "./error-boundary.css";
 
 export interface ErrorBoundaryFallbackProps {
   error: Error;
@@ -34,14 +36,23 @@ function resetKeysChanged(
 }
 
 export function ErrorBoundaryFallback({
-  error,
   resetErrorBoundary,
   scope,
 }: ErrorBoundaryFallbackProps) {
   const { t } = useTranslation();
+  const titleId = useId();
+  const reloadNoteId = `${titleId}-reload-note`;
+  const retry = useRef<HTMLButtonElement>(null);
   const title = scope
-    ? t("{scope} ran into an unexpected error", { scope })
+    ? t("Could not open {scope}", { scope: t(scope) })
     : t("Something went wrong");
+
+  useLayoutEffect(() => {
+    const button = retry.current;
+    if (!button) return;
+    const { activeElement, body, documentElement } = button.ownerDocument;
+    if (!activeElement || activeElement === body || activeElement === documentElement) button.focus();
+  }, []);
 
   const reloadPage = () => {
     if (typeof window !== "undefined" && window.location?.reload) {
@@ -50,30 +61,35 @@ export function ErrorBoundaryFallback({
   };
 
   return (
-    <div className="error-boundary-fallback" role="alert">
+    <section className="error-boundary-fallback" aria-labelledby={titleId}>
       <div className="error-boundary-card">
-        <div className="error-boundary-title">{title}</div>
-        <p className="error-boundary-message">
-          {error.message || t("An unexpected rendering error occurred.")}
-        </p>
+        <div className="error-boundary-heading" role="alert">
+          <span className="error-boundary-icon"><AppIcon name="warning" /></span>
+          <div>
+            <h2 id={titleId} className="error-boundary-title">{title}</h2>
+            <p id={reloadNoteId} className="error-boundary-message">{t("Reloading may discard unsaved changes.")}</p>
+          </div>
+        </div>
         <div className="error-boundary-actions">
           <button
+            ref={retry}
             type="button"
-            className="btn primary sm"
+            className="btn primary"
             onClick={resetErrorBoundary}
           >
             {t("Try again")}
           </button>
           <button
             type="button"
-            className="btn ghost sm"
+            className="btn ghost"
+            aria-describedby={reloadNoteId}
             onClick={reloadPage}
           >
             {t("Reload")}
           </button>
         </div>
       </div>
-    </div>
+    </section>
   );
 }
 

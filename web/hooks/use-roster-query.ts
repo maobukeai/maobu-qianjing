@@ -1,7 +1,7 @@
 import { useDeferredValue, useMemo } from "react";
 import { folderScope, folderTree, type FolderInfo } from "../../folders.ts";
-import { profileGroupCollapsed, profileGroupSections, type GroupDisclosure, type ProfileGroupSection } from "../../profile-group-state.ts";
-import { inProfileScope, matchesTagFilter, type RosterScope, type TagFilterMode } from "../../profile-view-state.ts";
+import { indexProfileGroups, pageProfileGroupSections, profileGroupCollapsed, type GroupDisclosure, type ProfileGroupSection } from "../../profile-group-state.ts";
+import { createTagFilterMatcher, inProfileScope, type RosterScope, type TagFilterMode } from "../../profile-view-state.ts";
 import { ROSTER_DENSITY_ROW_HEIGHT, type RosterDensity } from "../../roster-density-state.ts";
 import type { UiProfile } from "../api.ts";
 
@@ -161,7 +161,7 @@ export function paginateRoster<T>(filtered: readonly T[], pageSize: number, prof
   return { profilePageCount, visibleProfilePage, visibleProfiles };
 }
 
-export function computeRosterPipeline<T extends RosterPipelineProfile>(options: {
+interface RosterFilterOptions<T extends RosterPipelineProfile> {
   profiles: readonly T[];
   numbering: ReadonlyMap<string, { value: string }>;
   searchIndex?: ReadonlyMap<string, string>;
@@ -170,20 +170,17 @@ export function computeRosterPipeline<T extends RosterPipelineProfile>(options: 
   selectedScope: ReadonlySet<string>;
   profileStatus: "all" | "running" | "stopped";
   sort: RosterSort;
-  pageSize: number;
-  profilePage: number;
   rosterScope: RosterScope;
   favoriteProfileIds: ReadonlySet<string>;
   selectedTags?: readonly string[];
   tagMode?: TagFilterMode;
   locatedProfileIds?: readonly string[] | null;
-}): {
+}
+
+function filterAndSortRoster<T extends RosterPipelineProfile>(options: RosterFilterOptions<T>): {
   matchingProfiles: T[];
   matchingRunningCount: number;
   filtered: T[];
-  profilePageCount: number;
-  visibleProfilePage: number;
-  visibleProfiles: T[];
 } {
   const {
     profiles,
@@ -194,8 +191,6 @@ export function computeRosterPipeline<T extends RosterPipelineProfile>(options: 
     selectedScope,
     profileStatus,
     sort,
-    pageSize,
-    profilePage,
     rosterScope,
     favoriteProfileIds,
     selectedTags,
@@ -206,6 +201,7 @@ export function computeRosterPipeline<T extends RosterPipelineProfile>(options: 
   const exactId = trimmedQ ? /^id:(\S+)$/.exec(trimmedQ) : null;
   const needle = trimmedQ && !exactId ? trimmedQ.toLowerCase() : "";
   const locatedSet = locatedProfileIds && locatedProfileIds.length > 0 ? new Set(locatedProfileIds) : null;
+  const matchesTags = selectedTags?.length ? createTagFilterMatcher(selectedTags, tagMode) : null;
 
   const matchingProfiles: T[] = [];
   let matchingRunningCount = 0;
@@ -215,7 +211,7 @@ export function computeRosterPipeline<T extends RosterPipelineProfile>(options: 
     if (locatedSet && !locatedSet.has(p.id)) continue;
     if (!inProfileScope(p, rosterScope, favoriteProfileIds)) continue;
     if (group !== "all" && !selectedScope.has(p.group)) continue;
-    if (selectedTags && selectedTags.length > 0 && !matchesTagFilter(p.tags, selectedTags, tagMode ?? "any")) continue;
+    if (matchesTags && !matchesTags(p.tags)) continue;
     if (exactId) {
       if (p.id !== exactId[1]) continue;
     } else if (needle) {
@@ -255,13 +251,12 @@ export function computeRosterPipeline<T extends RosterPipelineProfile>(options: 
     return a.id.localeCompare(b.id);
   });
 
-  const pagination = paginateRoster(matched, pageSize, profilePage);
-  return {
-    matchingProfiles,
-    matchingRunningCount,
-    filtered: matched,
-    ...pagination,
-  };
+  return { matchingProfiles, matchingRunningCount, filtered: matched };
+}
+
+export function computeRosterPipeline<T extends RosterPipelineProfile>(options: RosterFilterOptions<T> & { pageSize: number; profilePage: number }) {
+  const roster = filterAndSortRoster(options);
+  return { ...roster, ...paginateRoster(roster.filtered, options.pageSize, options.profilePage) };
 }
 
 export function buildFlatRosterItems(
@@ -380,16 +375,9 @@ export function useRosterQuery({
   /** Precomputed lowercased search strings; rebuilt only when profiles change. */
   const searchIndex = useMemo(() => buildSearchIndex(profiles, numbering), [profiles, numbering]);
 
-  const {
-    matchingProfiles,
-    matchingRunningCount,
-    filtered,
-    profilePageCount,
-    visibleProfilePage,
-    visibleProfiles,
-  } = useMemo(
+  const { matchingProfiles, matchingRunningCount, filtered } = useMemo(
     () =>
-      computeRosterPipeline({
+      filterAndSortRoster({
         profiles,
         numbering,
         searchIndex,
@@ -398,30 +386,34 @@ export function useRosterQuery({
         selectedScope,
         profileStatus,
         sort,
-        pageSize,
-        profilePage,
         rosterScope,
         favoriteProfileIds,
         selectedTags,
         tagMode,
         locatedProfileIds,
       }),
-    [profiles, numbering, searchIndex, deferredQ, group, selectedScope, profileStatus, sort, pageSize, profilePage, rosterScope, favoriteProfileIds, selectedTags, tagMode, locatedProfileIds],
+    [profiles, numbering, searchIndex, deferredQ, group, selectedScope, profileStatus, sort, rosterScope, favoriteProfileIds, selectedTags, tagMode, locatedProfileIds],
+  );
+  const { profilePageCount, visibleProfilePage, visibleProfiles } = useMemo(
+    () => paginateRoster(filtered, pageSize, profilePage),
+    [filtered, pageSize, profilePage],
   );
 
   const revealGroupMatches = !!deferredQ.trim() || profileStatus !== "all" || group !== "all" || rosterScope !== "all" || hasTagFilter || hasLocatedFilter;
+  const showEmptyGroups = visibleProfilePage === 0 && !deferredQ.trim() && profileStatus === "all" && rosterScope === "all" && !hasTagFilter && !hasLocatedFilter;
+  const groupIndex = useMemo(() => {
+    if (rosterScope === "recent") return null;
+    const groupOrder = tree.filter((folder) => group === "all" || selectedScope.has(folder.name)).map((folder) => folder.name);
+    return indexProfileGroups(filtered, groupOrder);
+  }, [filtered, tree, group, selectedScope, rosterScope]);
+  const filteredRunningCount = profileStatus === "stopped" ? 0 : matchingRunningCount;
 
   const profileSections = useMemo(
     () =>
-      rosterScope === "recent"
-        ? [{ name: "", orderIndex: 0, profiles: visibleProfiles, matches: filtered, running: filtered.filter((profile) => profile.running).length }]
-        : profileGroupSections(
-            visibleProfiles,
-            filtered,
-            tree.filter((folder) => group === "all" || selectedScope.has(folder.name)).map((folder) => folder.name),
-            visibleProfilePage === 0 && !deferredQ.trim() && profileStatus === "all" && rosterScope === "all" && !hasTagFilter && !hasLocatedFilter,
-          ),
-    [visibleProfiles, filtered, tree, group, selectedScope, visibleProfilePage, deferredQ, profileStatus, rosterScope, hasTagFilter, hasLocatedFilter],
+      groupIndex
+        ? pageProfileGroupSections(visibleProfiles, groupIndex, showEmptyGroups)
+        : [{ name: "", orderIndex: 0, profiles: visibleProfiles, matches: filtered, running: filteredRunningCount }],
+    [visibleProfiles, filtered, groupIndex, showEmptyGroups, filteredRunningCount],
   );
 
   const selectableProfiles = useMemo(

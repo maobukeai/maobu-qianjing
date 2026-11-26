@@ -134,21 +134,20 @@ describe("OnboardingChecklist", () => {
     expect<string | null>(launchedId).toBe("prof_1");
 
     // Collapse checklist -> switches to collapsed banner and persists "collapsed"
-    const collapseBtn = Array.from(h.container.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
-      b.textContent?.includes("Collapse"),
-    )!;
+    const collapseBtn = h.container.querySelector<HTMLButtonElement>('button[aria-label="Collapse"]')!;
+    const steps = h.container.querySelector(".onboarding-steps");
+    expect(collapseBtn.getAttribute("aria-controls")).toBe(steps?.id ?? null);
     await act(async () => {
       collapseBtn.click();
     });
     await h.flush();
 
     expect(h.container.querySelector("[data-onboarding-checklist='collapsed']")).not.toBeNull();
+    expect(steps?.hasAttribute("hidden")).toBe(true);
     expect(savedPrefs.at(-1)).toEqual({ key: ONBOARDING_STATE_KEY, value: "collapsed" });
 
     // Dismiss checklist -> disappears and persists "dismissed"
-    const dismissBtn = Array.from(h.container.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
-      b.textContent?.includes("Dismiss"),
-    )!;
+    const dismissBtn = h.container.querySelector<HTMLButtonElement>('button[aria-label="Dismiss"]')!;
     await act(async () => {
       dismissBtn.click();
     });
@@ -170,6 +169,7 @@ describe("OnboardingChecklist", () => {
           <OnboardingChecklist
             profiles={[]}
             state="open"
+            onLaunchFirstProfile={() => {}}
             onStateChange={(next) => {
               transitions.push(next);
             }}
@@ -179,9 +179,10 @@ describe("OnboardingChecklist", () => {
     });
     await h.flush();
 
-    const collapseBtn = Array.from(h.container.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
-      b.textContent?.includes("Collapse"),
-    )!;
+    const launchStep = h.container.querySelector('[data-onboarding-step="launch_profile"]');
+    expect(launchStep?.textContent).toContain("Create or import an environment first.");
+    expect(launchStep?.querySelector("button")).toBeNull();
+    const collapseBtn = h.container.querySelector<HTMLButtonElement>('button[aria-label="Collapse"]')!;
     await act(async () => {
       collapseBtn.click();
     });

@@ -75,7 +75,12 @@ async function run(scenario: string) {
   try {
     await act(async () => { await import("../web/app.tsx"); }); await waitFor(() => visible('tr[data-profile-id]').length === 3 && !visible<HTMLButtonElement>('[role="radio"]').find(node => node.textContent === "Compact")?.disabled, "App must load profiles and preferences");
     await click(select("file_a")); await click(button("More actions")); await click(button("Edit from file")); await pick();
-    assert.equal(body.textContent?.includes("PRIVATE"), false); assert.ok(body.textContent?.includes("The current selection does not limit this update"));
+    assert.equal(body.textContent?.includes("PRIVATE"), false);
+    const scope = visible(".profile-file-update-match")[0]?.textContent;
+    assert.match(scope ?? "", /File IDs control the update/);
+    assert.match(scope ?? "", /List selections are ignored and unmatched IDs are skipped/);
+    assert.equal(visible(".profile-file-update-impact")[0]?.textContent, "Empty cells may clear saved values.");
+    assert.equal(visible(".profile-file-update-guide")[0]?.hasAttribute("open"), false, "The warning is visible with the guide closed");
     if (scenario === "workspace-block") {
       await click(button("Close")); jobRunning = true; await openWorkspace(); await waitFor(() => requests.some(request => request.path === "/ui/api/workspace/jobs/running_job"), "The coordinator must observe real backup maintenance");
       await click(button("Back to environments")); await click(button("Edit from file")); assert.ok(visible(".profile-file-update-selection").length);

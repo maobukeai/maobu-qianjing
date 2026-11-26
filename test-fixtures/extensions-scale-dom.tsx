@@ -63,6 +63,23 @@ async function run() {
 
   try {
     await render();
+    const assignments = dom.container.querySelector(".extensions-assignment-details")!;
+    assert.match(assignments.textContent, /Assigned to 28 environments/);
+    assert.equal(assignments.querySelectorAll("li").length, 0, "Closed assignment details should not mount environment rows");
+    await act(async () => {
+      assignments.setAttribute("open", "");
+      assignments.dispatchEvent(new dom.window.Event("toggle"));
+    });
+    assert.equal(assignments.querySelectorAll("li").length, 20);
+    await click("Show 8 more assignments", assignments);
+    assert.equal(assignments.querySelectorAll("li").length, 28);
+    assert.match(dom.window.document.activeElement?.textContent ?? "", /Environment 21/, "Load more should move focus to the first newly visible assignment");
+    await act(async () => {
+      assignments.removeAttribute("open");
+      assignments.dispatchEvent(new dom.window.Event("toggle"));
+    });
+    assert.equal(assignments.querySelectorAll("li").length, 0);
+
     const defaultSearch = search(defaults());
     assert.equal(choices().length, 14);
     await type(defaultSearch, " tOoL 12 ");

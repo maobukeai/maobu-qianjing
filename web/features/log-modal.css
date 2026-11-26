@@ -1,0 +1,61 @@
+.modal.log-viewer { max-width: 720px; max-height: min(680px, calc(100dvh - 48px)); }
+.log-viewer .modal-head { padding-block: 12px; }
+.log-viewer .modal-head h3 { display: flex; align-items: center; gap: 9px; }
+.log-viewer .modal-body { gap: 0; overflow: hidden; }
+.log-viewer .modal-foot { background: rgba(244, 243, 250, 0.62); justify-content: flex-end; }
+:root[data-theme="dark"] .log-viewer .modal-foot { background: rgba(14, 17, 26, 0.56); }
+.log-viewer-reload[aria-disabled="true"] { opacity: .55; cursor: wait; }
+
+.log-viewer .modal-body > .log-viewer-file {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-sunken);
+}
+.log-viewer-filename {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-soft);
+  font: var(--t-xs)/1.5 var(--mono);
+  overflow-wrap: anywhere;
+}
+.log-viewer-filename .icon { flex: 0 0 auto; color: var(--muted); }
+.log-viewer-output {
+  min-height: 0;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  color: var(--ink);
+  font: var(--t-xs)/1.7 var(--mono);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  user-select: text;
+  tab-size: 4;
+}
+.log-viewer-output:focus-visible { outline-offset: -2px; }
+.log-viewer-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 14px 12px;
+  color: var(--muted);
+  font-size: var(--t-sm);
+}
+.log-viewer-state[role="alert"] { color: var(--danger-ink); }
+.settings-log-path { overflow-wrap: anywhere; }
+
+@media (max-width: 440px) {
+  .modal-backdrop.log-viewer-backdrop { padding: 12px; }
+  .modal.log-viewer { max-height: calc(100dvh - 24px); }
+  .log-viewer :is(.modal-head, .modal-body, .modal-foot) { padding-inline: 14px; }
+}

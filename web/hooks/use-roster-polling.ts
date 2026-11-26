@@ -13,14 +13,15 @@ export interface UseRosterPollingOptions {
 
 export interface UseRosterPollingResult {
   loaded: boolean;
+  hasRoster: boolean;
   connErr: string | null;
   connectionAlertDismissed: boolean;
   dismissConnectionAlert: () => void;
   retryConnection: () => Promise<void>;
   refreshing: boolean;
-  setRefreshing: React.Dispatch<React.SetStateAction<boolean>>;
   load: () => Promise<void>;
   pollRoster: () => void;
+  isRosterLoading: () => boolean;
   readFreshRoster: () => Promise<UiRoster>;
   rosterLoadSucceeded: React.RefObject<boolean>;
   lastRosterResult: React.RefObject<UiRoster | null>;
@@ -39,10 +40,12 @@ export function useRosterPolling({
   onRoster,
 }: UseRosterPollingOptions): UseRosterPollingResult {
   const [loaded, setLoaded] = useState(false);
+  const [hasRoster, setHasRoster] = useState(false);
   const [connErr, setConnErr] = useState<string | null>(null);
   const [connectionAlertDismissed, setConnectionAlertDismissed] =
     useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const manualRefresh = useRef<Promise<void> | null>(null);
 
   const rosterLoadSucceeded = useRef(false);
   const lastRosterResult = useRef<UiRoster | null>(null);
@@ -57,6 +60,7 @@ export function useRosterPolling({
       const roster = await fetchProfiles();
       rosterLoadSucceeded.current = true;
       lastRosterResult.current = roster;
+      setHasRoster(true);
       lastPollAtRef.current = Date.now();
       const hadError = consecutiveFailuresRef.current > 0;
       consecutiveFailuresRef.current = 0;
@@ -88,7 +92,7 @@ export function useRosterPolling({
     loaderRef.current = serialLoader(() => loadRosterRef.current());
   }
 
-  const { load, poll: pollRoster } = loaderRef.current;
+  const { load, poll: pollRoster, isLoading: isRosterLoading } = loaderRef.current;
 
   const readFreshRoster = useCallback(async () => {
     if (!bulkOwnerActiveRef.current) {
@@ -109,14 +113,15 @@ export function useRosterPolling({
     setConnectionAlertDismissed(true);
   }, []);
 
-  const retryConnection = useCallback(async () => {
+  const retryConnection = useCallback(() => {
+    if (manualRefresh.current) return manualRefresh.current;
     setConnectionAlertDismissed(false);
     setRefreshing(true);
-    try {
-      await load();
-    } finally {
+    manualRefresh.current = load().finally(() => {
+      manualRefresh.current = null;
       setRefreshing(false);
-    }
+    });
+    return manualRefresh.current;
   }, [load]);
 
   useEffect(() => {
@@ -177,14 +182,15 @@ export function useRosterPolling({
 
   return {
     loaded,
+    hasRoster,
     connErr,
     connectionAlertDismissed,
     dismissConnectionAlert,
     retryConnection,
     refreshing,
-    setRefreshing,
     load,
     pollRoster,
+    isRosterLoading,
     readFreshRoster,
     rosterLoadSucceeded,
     lastRosterResult,

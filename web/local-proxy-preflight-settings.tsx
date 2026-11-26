@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "./i18n.tsx";
 import { fetchSettings, patchSettings } from "./settings-api.ts";
 import { useDesktopCloseDraft } from "./desktop-close.tsx";
+import { AppIcon } from "./ui-primitives.tsx";
 
 /** User-controlled preference only. Opening this card never scans a port. */
 export function LocalProxyPreflightSettings() {
@@ -31,10 +32,23 @@ export function LocalProxyPreflightSettings() {
     finally { if (owner.active && owner.generation === generation) { owner.busy = false; setBusy(false); } }
   }
   return <section className="feature-card">
-    <div className="feature-card-title"><div><h3>{t("Local proxy startup check")}</h3><p>{t("Stop a new profile launch early when its configured desktop proxy is unavailable.")}</p></div></div>
-    <label className="feature-toggle"><input type="checkbox" checked={value} disabled={busy || saved === null} onChange={event => { setValue(event.target.checked); setNotice(""); }} /><span>{t("Check configured local proxies before opening profiles")}</span></label>
-    <p className="feature-inline-note">{t("Off by default. Checks only the profile's configured loopback port before a fresh launch. HTTP and HTTPS use TCP listening checks; SOCKS5 also checks method negotiation. Credentials and exit connectivity are not verified, and system proxy settings are not changed.")}</p>
-    {error && <p className="feature-alert" role="alert">{t(error)}</p>}{notice && <p className="feature-success" role="status">{t(notice)}</p>}
-    <div className="feature-actions">{saved === null ? <button type="button" className="btn" disabled={busy} onClick={() => void load()}>{t(busy ? "Loading…" : "Try again")}</button> : <button type="button" className="btn primary" disabled={busy || value === saved} aria-busy={busy} onClick={() => void save()}>{t(busy ? "Saving…" : "Save network preference")}</button>}</div>
+    <div className="feature-card-title">
+      <div className="feature-card-head-main">
+        <div className="feature-card-heading">
+          <AppIcon name="shieldCheck" className="sm" />
+          <h3>{t("Local proxy startup check")}</h3>
+        </div>
+        <p>{t("Stop a new profile launch early when its configured desktop proxy is unavailable.")}</p>
+      </div>
+      {saved === null ? <button type="button" className="btn" disabled={busy} onClick={() => void load()}>{t(busy ? "Loading…" : "Try again")}</button> : <button type="button" className="btn primary" disabled={busy || value === saved} aria-busy={busy} onClick={() => void save()}>{t(busy ? "Saving…" : "Save network preference")}</button>}
+    </div>
+    <div className="feature-card-body">
+      <label className="feature-toggle">
+        <span><strong>{t("Check configured local proxies before opening profiles")}</strong></span>
+        <input type="checkbox" role="switch" checked={value} disabled={busy || saved === null} onChange={event => { setValue(event.target.checked); setNotice(""); }} />
+      </label>
+      <p className="feature-inline-note">{t("Off by default. Checks only the profile's configured loopback port before a fresh launch. HTTP and HTTPS use TCP listening checks; SOCKS5 also checks method negotiation. Credentials and exit connectivity are not verified, and system proxy settings are not changed.")}</p>
+      {error && <p className="feature-alert" role="alert">{t(error)}</p>}{notice && <p className="feature-success" role="status">{t(notice)}</p>}
+    </div>
   </section>;
 }

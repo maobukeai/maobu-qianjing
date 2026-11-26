@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 
-for (const scenario of ["hide-and-retry", "paging-and-unknown", "close-focus-session"]) {
+for (const scenario of ["hide-and-retry", "paging-and-unknown", "close-focus-session", "format-and-rejected-draft"]) {
   test(`cookie import real DOM: ${scenario}`, async () => {
     const child = Bun.spawn([process.execPath, "--no-env-file", resolve(import.meta.dir, "../test-fixtures/cookie-import-task-dom.tsx"), scenario], { cwd: resolve(import.meta.dir, ".."), stdout: "pipe", stderr: "pipe" });
     const timer = setTimeout(() => child.kill(), 12_000);

@@ -68,7 +68,7 @@ describe("local assistant initial view", () => {
     const explanation = (await elementsIn(render(), 'details.assistant-session-guide'))[0]!;
     expect(Object.hasOwn(explanation.attrs, "open")).toBe(false);
     expect(await elementsIn(render(), '.assistant-session-guide .assistant-session-caption')).toHaveLength(1);
-    expect(await elementsIn(render(), '.assistant-session-guide .assistant-workflow-steps li')).toHaveLength(3);
+    expect(await elementsIn(render(), '.assistant-session-guide-content > p')).toHaveLength(3);
     const guide = elements.find(element => element.tag === "a")!;
     expect(guide.attrs.href).toBe("https://docs.ollama.com/faq");
     expect(guide.attrs.target).toBe("_blank");

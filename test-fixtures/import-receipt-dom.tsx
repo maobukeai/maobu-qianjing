@@ -32,7 +32,12 @@ try {
     assert.deepEqual(visible<HTMLElement>(".import-receipt-totals strong").map(item => item.textContent), ["5", "7", "65"]);
   } else if (scenario === "compact-mixed") {
     assert.deepEqual(visible<HTMLElement>(".import-receipt-totals strong").map(item => item.textContent), ["2"]);
-    await click("View import details"); assert.deepEqual(visible<HTMLElement>(".import-receipt-totals strong").map(item => item.textContent), ["2", "0", "0"]); assert.equal(visible(".import-receipt-privacy").length, 2);
+    await click("View import details"); assert.deepEqual(visible<HTMLElement>(".import-receipt-totals strong").map(item => item.textContent), ["2", "0", "0"]);
+    const notes = dom.container.querySelector(".import-receipt-explanation")!;
+    assert.equal(notes.hasAttribute("open"), false);
+    await act(async () => { notes.querySelector("summary")!.click(); });
+    assert.equal(notes.hasAttribute("open"), true);
+    assert.equal(visible(".import-receipt-privacy").length, 2);
   } else if (scenario === "actions") {
     await click("Browse all environments"); await click("View environments needing attention"); assert.equal(browsed, 1); assert.equal(attention, 1); assert.equal(dismissed, 0); await click("Dismiss import result"); assert.equal(dismissed, 1);
   } else if (scenario === "refreshing") {
@@ -43,8 +48,12 @@ try {
     if (scenario === "zero") { assert.equal(visible(".import-receipt-list li").length, 0); assert.ok(visible<HTMLElement>(".import-receipt-details")[0]?.textContent?.includes("No individual review items")); assert.deepEqual(visible<HTMLElement>(".import-receipt-totals strong").map(item => item.textContent), ["0", "0", "0"]); }
     else {
       assert.equal(visible(".import-receipt-list li").length, 50); assert.equal(button("Previous").disabled, true);
-      assert.ok(visible<HTMLElement>(".import-receipt-details")[0]?.textContent?.includes("do not establish that every invalid record was imported"));
+      assert.ok(visible<HTMLElement>(".import-receipt-details")[0]?.textContent?.includes("do not show which records were imported"));
+      const list = dom.container.querySelector<HTMLElement>(".import-receipt-list")!;
+      list.scrollTop = 80;
       await click("Next"); assert.equal(visible(".import-receipt-list li").length, 15); assert.equal(button("Next").disabled, true);
+      const nextPage = dom.container.querySelector<HTMLElement>(".import-receipt-list")!;
+      assert.equal(nextPage.scrollTop, 0); assert.equal(dom.window.document.activeElement, nextPage);
       assert.ok(visible<HTMLElement>(".import-receipt-list")[0]?.textContent?.includes("File name withheld")); assert.ok(visible<HTMLElement>(".import-receipt-list")[0]?.textContent?.includes("Record identifier unavailable"));
       if (scenario === "replace") {
         await dom.render(<Harness current={empty} />); assert.equal(visible(".import-receipt-list li").length, 0); assert.ok(!visible<HTMLElement>(".import-receipt-details")[0]?.textContent?.includes("record_50"));

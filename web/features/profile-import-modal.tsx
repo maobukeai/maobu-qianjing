@@ -1,9 +1,9 @@
-import { useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { clearPendingCookies, fetchPendingCookies, uploadExports, type UiProfile } from "../api.ts";
 import { MotionPresence } from "../desktop-motion.tsx";
 import { useTranslation } from "../i18n.tsx";
 import { createImportReceipt, ImportReceiptError, type ImportReceipt } from "../import-receipt-data.ts";
-import { AppIcon } from "../ui-primitives.tsx";
+import { AppIcon, ModalDialog, useDialogKeyboard } from "../ui-primitives.tsx";
 import { workspaceOperationMessage, type WorkspaceOperationCoordinator } from "../workspace-operations.tsx";
 import {
   countPastedRecords,
@@ -12,12 +12,13 @@ import {
   GroupPicker,
   KNOWN_PLATFORMS,
   TXT_EXAMPLE,
-  useProfileEditorFocus,
 } from "./profile-form-helpers.tsx";
+import "./profile-import-modal.css";
 
 const Icon = AppIcon;
 
 export interface PendingCookiesViewState {
+  workspaceId: string | undefined;
   profile: UiProfile;
   cookies: Array<{ domain: string; name: string }> | null;
   error: string | null;
@@ -60,14 +61,24 @@ export function useProfileImportModal({
   const [importReceiptRefreshing, setImportReceiptRefreshing] = useState(false);
   const [bulkErr, setBulkErr] = useState<string | null>(null);
   const [bulkOver, setBulkOver] = useState(false);
-  // One source at a time: two full-height inputs stacked made it ambiguous which
-  // one the Import button would actually read.
+  // Both drafts survive source switches, but an import reads only the active one.
   const [bulkSource, setBulkSource] = useState<"file" | "paste">("file");
-  const bulkEditorRef = useProfileEditorFocus(showBulk, false);
   const bulkFileRef = useRef<HTMLInputElement>(null);
   const pastedRecordCount = bulkText.trim() ? countPastedRecords(bulkText) : null;
+  const hasStagedInput = bulkSource === "file" ? bulkFiles.length > 0 : pastedRecordCount !== null;
 
-  const [pendingView, setPendingView] = useState<PendingCookiesViewState | null>(null);
+  const [pendingCookieView, setPendingCookieView] = useState<PendingCookiesViewState | null>(null);
+  const pendingView = pendingCookieView?.workspaceId === workspaceId ? pendingCookieView : null;
+  const pendingCookieRead = useRef<AbortController | null>(null);
+  const pendingCookieRemoval = useRef(false);
+
+  useEffect(() => {
+    setPendingCookieView(current => current?.workspaceId === workspaceId ? current : null);
+    return () => {
+      pendingCookieRead.current?.abort();
+      pendingCookieRead.current = null;
+    };
+  }, [workspaceId]);
 
   const importProfiles = async (
     files: File[],
@@ -92,7 +103,7 @@ export function useProfileImportModal({
       const receipt = createImportReceipt(response);
       if (!bulkOwnerActiveRef.current) return false;
       setImportReceipt(receipt);
-      setImportReceiptExpanded(receipt.issues.length > 0);
+      setImportReceiptExpanded(false);
       setImportReceiptRefreshing(true);
       workspaceCoordinator.setPhase(lease, "refreshing");
       const refreshed = await Promise.allSettled([onRefreshImportedProfiles(), workspaceCoordinator.refreshWorkspaceViews(lease)]);
@@ -131,8 +142,15 @@ export function useProfileImportModal({
     setBulkGroup("");
     setBulkPlatform("");
     setBulkErr(null);
+    setBulkOver(false);
     setBulkSource("file");
     setShowBulk(true);
+  };
+
+  const selectBulkSource = (source: typeof bulkSource) => {
+    if (importInFlight.current) return;
+    setBulkSource(source);
+    setBulkOver(false);
   };
 
   const closeBulk = () => {
@@ -144,13 +162,13 @@ export function useProfileImportModal({
   };
 
   const submitBulk = async () => {
-    if (importInFlight.current || (!bulkFiles.length && !bulkText.trim())) return;
+    if (!showBulk || importInFlight.current || !hasStagedInput) return;
     setBulkBusy(true);
     setBulkErr(null);
     try {
-      const uploads = [...bulkFiles];
-      if (bulkText.trim()) uploads.push(new File([bulkText], "pasted-adspower.txt", { type: "text/plain" }));
-      if (!uploads.length) throw new Error("no rows found in the file(s)");
+      const uploads = bulkSource === "file"
+        ? bulkFiles
+        : [new File([bulkText], "pasted-adspower.txt", { type: "text/plain" })];
       if (await importProfiles(uploads, { group: bulkGroup.trim(), platform: bulkPlatform }, setBulkErr)) closeBulk();
     } catch {
       if (bulkOwnerActiveRef.current) setBulkErr(t("The import could not be confirmed. Refresh environments before trying again."));
@@ -161,8 +179,12 @@ export function useProfileImportModal({
 
   const dismissImportReceipt = () => {
     if (!importReceiptRefreshing) {
+      const focused = document.activeElement?.closest(".import-receipt");
       setImportReceipt(null);
       setImportReceiptExpanded(false);
+      if (focused) requestAnimationFrame(() => {
+        if (document.activeElement === document.body) document.getElementById("profiles-page-title")?.focus();
+      });
     }
   };
 
@@ -173,30 +195,60 @@ export function useProfileImportModal({
   };
 
   const openPendingCookies = async (profile: UiProfile) => {
-    setPendingView({ profile, cookies: null, error: null, busy: false });
+    if (pendingCookieRemoval.current) return;
+    pendingCookieRead.current?.abort();
+    const request = new AbortController();
+    const loading = { workspaceId, profile, cookies: null, error: null, busy: false };
+    pendingCookieRead.current = request;
+    setPendingCookieView(loading);
+    let cookies: PendingCookiesViewState["cookies"] = null;
     try {
-      const result = await fetchPendingCookies(profile.id);
-      setPendingView((view) => view && { ...view, cookies: result.cookies ?? [], error: result.ok ? null : result.error ?? t("Cookies could not be loaded.") });
-    } catch (error) {
-      setPendingView((view) => view && { ...view, cookies: [], error: error instanceof Error ? error.message : t("Cookies could not be loaded.") });
-    }
+      const result = await fetchPendingCookies(profile.id, request.signal);
+      if (result.ok === true && Array.isArray(result.cookies)
+        && result.cookies.every(cookie => cookie && typeof cookie.domain === "string" && typeof cookie.name === "string")) {
+        cookies = result.cookies.map(({ domain, name }) => ({ domain, name }));
+      }
+    } catch { /* An unreadable response does not establish the contents of the queue. */ }
+    if (pendingCookieRead.current !== request || request.signal.aborted || !bulkOwnerActiveRef.current) return;
+    pendingCookieRead.current = null;
+    setPendingCookieView(current => current === loading
+      ? { ...loading, cookies, error: cookies === null ? t("Cookies could not be loaded.") : null }
+      : current);
   };
 
   const closePendingCookies = () => {
-    setPendingView((current) => (current?.busy ? current : null));
+    if (pendingCookieRemoval.current) return;
+    pendingCookieRead.current?.abort();
+    pendingCookieRead.current = null;
+    setPendingCookieView(null);
+  };
+
+  const retryPendingCookies = () => {
+    if (pendingView?.error && !pendingCookieRead.current) void openPendingCookies(pendingView.profile);
   };
 
   const removePendingCookies = async () => {
-    if (!pendingView) return;
-    setPendingView({ ...pendingView, busy: true, error: null });
+    if (!pendingView?.cookies?.length || pendingView.busy || pendingCookieRead.current || pendingCookieRemoval.current) return;
+    const removing = { ...pendingView, busy: true };
+    pendingCookieRemoval.current = true;
+    setPendingCookieView(removing);
+    let error = t("Cookie removal could not be confirmed. Check the current list before trying again.");
     try {
       const result = await clearPendingCookies(pendingView.profile.id);
-      if (!result.ok) throw new Error(result.error || t("Cookies could not be removed."));
-      setPendingView(null);
-      await onLoadRoster().catch(() => {});
-      onFlash(t("Pending cookies removed."));
-    } catch (error) {
-      setPendingView((view) => view && { ...view, busy: false, error: error instanceof Error ? error.message : t("Cookies could not be removed.") });
+      if (!bulkOwnerActiveRef.current) return;
+      if (result.ok === true && typeof result.removed === "number" && Number.isSafeInteger(result.removed) && result.removed >= 0) {
+        setPendingCookieView(current => current === removing ? null : current);
+        void onLoadRoster().catch(() => {});
+        onFlash(t(result.removed > 0 ? "Pending cookies removed." : "No cookies are queued for the next start."));
+        return;
+      }
+      if (result.ok === false) error = t("Cookies could not be removed.");
+    } catch { /* The removal may already have happened. The next action only reads the queue. */ }
+    finally {
+      pendingCookieRemoval.current = false;
+    }
+    if (bulkOwnerActiveRef.current) {
+      setPendingCookieView(current => current === removing ? { ...removing, busy: false, cookies: null, error } : current);
     }
   };
 
@@ -221,8 +273,8 @@ export function useProfileImportModal({
     bulkOver,
     setBulkOver,
     bulkSource,
-    setBulkSource,
-    bulkEditorRef,
+    selectBulkSource,
+    hasStagedInput,
     bulkFileRef,
     pastedRecordCount,
     doUpload,
@@ -234,6 +286,7 @@ export function useProfileImportModal({
     pendingView,
     openPendingCookies,
     closePendingCookies,
+    retryPendingCookies,
     removePendingCookies,
   };
 }
@@ -247,7 +300,10 @@ export function ProfileImportModal({
   controller: ProfileImportController;
   existingGroups: string[];
 }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
+  const bulkEditorRef = useRef<HTMLDivElement>(null);
+  const dropButtonRef = useRef<HTMLButtonElement>(null);
+  const bulkTitleId = useId();
   const {
     showBulk,
     bulkFiles,
@@ -264,130 +320,154 @@ export function ProfileImportModal({
     bulkOver,
     setBulkOver,
     bulkSource,
-    setBulkSource,
-    bulkEditorRef,
+    selectBulkSource,
+    hasStagedInput,
     bulkFileRef,
     pastedRecordCount,
     closeBulk,
     submitBulk,
     pendingView,
     closePendingCookies,
+    retryPendingCookies,
     removePendingCookies,
   } = controller;
+  useDialogKeyboard(bulkEditorRef, showBulk, bulkBusy ? null : closeBulk, () => dropButtonRef.current);
 
   return (
     <>
       {pendingView && (
-        <div className="modal-backdrop" onClick={closePendingCookies}>
-          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="pending-cookie-title" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-head" id="pending-cookie-title">
-              <Icon name="cookie" />{t("Cookies at next start")}<span className="mono muted">{pendingView.profile.name}</span>
-              <button type="button" className="modal-close" aria-label={t("Close")} disabled={pendingView.busy} onClick={closePendingCookies}><Icon name="close" className="sm" /></button>
-            </div>
-            <div className="modal-body">
-              {pendingView.error && <div className="modal-err"><Icon name="alert" className="sm" />{pendingView.error}</div>}
-              <p className="hint">{t("The browser sets these cookies the next time it starts, before the first page opens.")}</p>
-              {pendingView.cookies === null ? (
-                <p className="muted">{t("Loading…")}</p>
-              ) : (
-                <ul className="pending-cookies">
-                  {pendingView.cookies.map((cookie, index) => (
-                    <li key={index}><span className="mono">{cookie.domain}</span><span className="mono muted">{cookie.name}</span></li>
-                  ))}
-                </ul>
-              )}
-            </div>
-            <div className="modal-foot">
+        <ModalDialog
+          open
+          className="pending-cookie-dialog"
+          backdropClassName="profile-import-backdrop"
+          busy={pendingView.busy}
+          onClose={closePendingCookies}
+          title={<span className="pending-cookie-heading"><span className="modal-title-icon"><Icon name="cookie" /></span>{t("Cookies at next start")}</span>}
+          footer={
+            <>
               <button className="btn ghost" type="button" disabled={pendingView.busy} onClick={closePendingCookies}>{t("Close")}</button>
-              <button className="btn danger" type="button" disabled={pendingView.busy || !pendingView.cookies?.length} onClick={() => void removePendingCookies()}>
-                <Icon name="trash" className="sm" />{t("Remove pending cookies")}
-              </button>
-            </div>
+              {pendingView.error ? <button className="btn" type="button" onClick={retryPendingCookies}>{t("Retry")}</button> :
+                <button className="btn danger" type="button" disabled={pendingView.busy || !pendingView.cookies?.length} onClick={() => void removePendingCookies()}>
+                  <Icon name="trash" className="sm" />{t("Remove pending cookies")}
+                </button>}
+            </>
+          }
+        >
+          <div className="pending-cookie-profile">
+            <Icon name="profiles" className="sm" />
+            <bdi>{pendingView.profile.name}</bdi>
           </div>
-        </div>
+          {pendingView.error ? (
+            <p className="modal-err" role="alert"><Icon name="alert" className="sm" />{pendingView.error}</p>
+          ) : pendingView.cookies === null ? (
+            <p className="pending-cookie-status" role="status">{t("Loading…")}</p>
+          ) : pendingView.cookies.length === 0 ? (
+            <p className="pending-cookie-status" role="status"><Icon name="cookie" />{t("No cookies are queued for the next start.")}</p>
+          ) : (
+            <div className="pending-cookie-list">
+              <table aria-busy={pendingView.busy}>
+                <thead><tr><th scope="col">{t("Domain")}</th><th scope="col">{t("Cookie name")}</th></tr></thead>
+                <tbody>
+                  {pendingView.cookies.map((cookie, index) => (
+                    <tr key={index}><td><bdi>{cookie.domain}</bdi></td><td><bdi>{cookie.name}</bdi></td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </ModalDialog>
       )}
 
       <MotionPresence present={showBulk}>{() => (
         /* Form dialog: a stray backdrop click must not discard typed input —
            close via Cancel, the X, or Escape (the backdrop has no onClick). */
-        <div className="modal-backdrop">
-          <div className="modal" ref={bulkEditorRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={t("Import profiles")} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-backdrop profile-import-backdrop">
+          <div className="modal profile-import-dialog" ref={bulkEditorRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={bulkTitleId} aria-busy={bulkBusy}>
             <div className="modal-head">
-              <Icon name="fileImport" />{t("Import profiles")}
+              <span className="modal-title-icon"><Icon name="fileImport" /></span>
+              <h2 id={bulkTitleId}>{t("Import profiles")}</h2>
+              <span className={`profile-import-step-pill${hasStagedInput ? " is-ready" : ""}`} aria-hidden="true">
+                {hasStagedInput ? "2 / 2" : "1 / 2"}
+              </span>
               <button type="button" className="modal-close" aria-label={t("Close")} disabled={bulkBusy} onClick={closeBulk}><Icon name="close" className="sm" /></button>
             </div>
             <div className="modal-body">
               {bulkErr && <div className="modal-err" role="alert"><Icon name="alert" className="sm" />{bulkErr}</div>}
-              {bulkBusy && <p className="hint" role="status">{t("Importing the selected records. Wait for the result before changing this draft.")}</p>}
+              {bulkBusy && <span className="sr-only" role="status">{t("Importing…")}</span>}
               <fieldset className="import-draft-fields" disabled={bulkBusy} aria-busy={bulkBusy}>
                 <legend className="sr-only">{t("Import draft")}</legend>
-                <ol className="steps">
-                  <li>{t("Export profiles from your previous browser as TXT, CSV, JSON, or XLSX.")}</li>
-                  <li>{t("Add the files below and choose a destination group.")}</li>
-                  <li>{t("Click Import profiles. Only data included in the export can transfer.")}</li>
-                </ol>
-                <p className="hint">{t("Encrypted or proprietary profile archives cannot be imported. Use a readable export instead.")}</p>
-
-                <div className="segmented" role="tablist" aria-label={t("Import source")}>
-                  <button type="button" role="tab" aria-selected={bulkSource === "file"} className={bulkSource === "file" ? "active" : ""} onClick={() => { if (importInFlight.current) return; setBulkSource("file"); setBulkText(""); }}>
+                <div className="segmented profile-import-sources" role="group" aria-label={t("Import source")}>
+                  <button type="button" aria-pressed={bulkSource === "file"} className={bulkSource === "file" ? "active" : ""} onClick={() => selectBulkSource("file")}>
                     <Icon name="fileImport" className="sm" />{t("From file")}
                   </button>
-                  <button type="button" role="tab" aria-selected={bulkSource === "paste"} className={bulkSource === "paste" ? "active" : ""} onClick={() => { if (importInFlight.current) return; setBulkSource("paste"); setBulkFiles([]); }}>
+                  <button type="button" aria-pressed={bulkSource === "paste"} className={bulkSource === "paste" ? "active" : ""} onClick={() => selectBulkSource("paste")}>
                     <Icon name="copy" className="sm" />{t("Paste text")}
                   </button>
                 </div>
 
                 {bulkSource === "file" ? (
                   <>
-                    <div
-                      className={`bulkdrop${bulkOver ? " over" : ""}`}
-                      role="button"
-                      tabIndex={bulkBusy ? -1 : 0}
-                      aria-disabled={bulkBusy}
-                      onKeyDown={(e) => { if (importInFlight.current) return; if (e.key === "Enter" || e.key === " ") { e.preventDefault(); bulkFileRef.current?.click(); } }}
+                    <button
+                      ref={dropButtonRef}
+                      type="button"
+                      className={`bulkdrop${bulkFiles.length ? " is-staged" : ""}${bulkOver ? " over" : ""}`}
+                      disabled={bulkBusy}
                       onClick={() => { if (!importInFlight.current) bulkFileRef.current?.click(); }}
                       onDragOver={(e) => { e.preventDefault(); if (importInFlight.current) return; if (!bulkOver) setBulkOver(true); }}
                       onDragLeave={(e) => { e.preventDefault(); setBulkOver(false); }}
                       onDrop={(e) => { e.preventDefault(); setBulkOver(false); if (!importInFlight.current && e.dataTransfer.files?.length) setBulkFiles(Array.from(e.dataTransfer.files)); }}
                     >
-                      <Icon name="fileImport" />
-                      <b>{t("Drag & drop files, or click to choose")}</b>
-                      <div className="sub">{t("Readable TXT, CSV, JSON, or XLSX exports from AdsPower, GoLogin, Multilogin, Dolphin Anty, HideMyAcc, Incogniton, Donut, and similar browsers")}</div>
-                    </div>
+                      <span className="bulkdrop-icon"><Icon name="fileImport" /></span>
+                      <strong>{t(bulkFiles.length ? "Replace files" : "Choose or drop files")}</strong>
+                      {bulkFiles.length === 0 && <span className="bulkdrop-formats">TXT · CSV · JSON · XLSX</span>}
+                    </button>
                     {bulkFiles.length > 0 && (
-                      <div className="filelist">
-                        {bulkFiles.map((file) => (
-                          <span className="filechip" key={file.name}>
-                            <Icon name="file" className="sm" />
-                            <span className="fname">{file.name}</span>
-                            <button
-                              type="button"
-                              aria-label={`Remove ${file.name}`}
-                              onClick={() => { if (!importInFlight.current) setBulkFiles((files) => files.filter((candidate) => candidate !== file)); }}
-                            >
-                              <Icon name="close" className="sm" />
-                            </button>
-                          </span>
-                        ))}
-                        <button type="button" className="btn xs ghost" onClick={() => { if (!importInFlight.current) setBulkFiles([]); }}>{t("Clear all")}</button>
+                      <div className="profile-import-queue">
+                        <div className="profile-import-queue-head">
+                          <span role="status">{t(bulkFiles.length === 1 ? "1 file selected" : "{count} files selected", { count: bulkFiles.length.toLocaleString(language) })}</span>
+                          {bulkFiles.length > 1 && <button type="button" className="btn xs ghost" onClick={() => {
+                            if (importInFlight.current) return;
+                            setBulkFiles([]);
+                            dropButtonRef.current?.focus();
+                          }}>{t("Clear all")}</button>}
+                        </div>
+                        <ul className="filelist">
+                          {bulkFiles.map((file, index) => (
+                            <li className="profile-import-file" key={`${file.name}:${file.lastModified}:${index}`}>
+                              <Icon name="file" className="sm" />
+                              <span className="fname" title={file.name}>{file.name}</span>
+                              <button
+                                type="button"
+                                aria-label={t("Remove file {name}", { name: file.name })}
+                                onClick={() => {
+                                  if (importInFlight.current) return;
+                                  setBulkFiles((files) => files.filter((_, position) => position !== index));
+                                  dropButtonRef.current?.focus();
+                                }}
+                              >
+                                <Icon name="close" className="sm" />
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
                       </div>
                     )}
                   </>
                 ) : (
-                  <label className="fld">
+                  <label className="fld profile-import-paste">
                     <span>{t("AdsPower TXT records")}</span>
                     <textarea
-                      rows={9}
+                      rows={6}
                       value={bulkText}
                       placeholder={"id=k1example01\ngroup=Warmup\nname=alice\n…"}
                       onChange={(event) => { if (!importInFlight.current) setBulkText(event.target.value); }}
                     />
                     <small>
                       {pastedRecordCount === null
-                        ? t("Paste one or more key=value records, separated by a line of asterisks.")
+                        ? t("Separate records with a line of asterisks.")
                         : pastedRecordCount === 1
-                          ? t("1 record detected — each one starts with its own id= line.")
-                          : t("{count} records detected — each one starts with its own id= line.", { count: pastedRecordCount })}
+                          ? t("1 record detected")
+                          : t("{count} records detected", { count: pastedRecordCount })}
                     </small>
                   </label>
                 )}
@@ -398,12 +478,15 @@ export function ProfileImportModal({
                   multiple
                   accept=".csv,.txt,.json,.xlsx,text/plain,text/csv,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                   style={{ display: "none" }}
-                  onChange={(e) => { if (!importInFlight.current && e.target.files) setBulkFiles(Array.from(e.target.files)); e.target.value = ""; }}
+                  onChange={(e) => {
+                    if (showBulk && bulkSource === "file" && !importInFlight.current && e.target.files?.length) setBulkFiles(Array.from(e.target.files));
+                    e.target.value = "";
+                  }}
                 />
 
-                <div className="fld-row">
+                <div className="profile-import-assignments">
                   <label className="fld grow">
-                    <span>{t("Assign to group")}</span>
+                    <span>{t("Group")}</span>
                     <GroupPicker value={bulkGroup} onChange={(value) => { if (!importInFlight.current) setBulkGroup(value); }} groups={existingGroups} emptyLabel="Keep source groups" allowCreate />
                   </label>
                   <label className="fld grow">
@@ -413,27 +496,34 @@ export function ProfileImportModal({
                     </select>
                   </label>
                 </div>
-                <p className="formnote">
-                  {t("Keep source values to preserve each record's group and platform. Choosing a specific value applies it to every imported record. Fields absent from a same-ID update keep their saved values.")}
-                </p>
-                <details className="import-transfer-details">
-                  <summary>{t("Import rules and transferable data")}</summary>
-                  <p className="formnote">{t("Readable exports can transfer account fields, proxy settings, cookies and supported portable settings. Records with an existing ID update that environment; data missing from the export cannot be reconstructed.")}</p>
-                  <p className="formnote">{t("Explicit seed, timezone and platform_os values can update supported identity settings. Browser version, operating system and hardware still affect the resulting fingerprint. Historical fp_* measurements are review evidence, not browser configuration.")}</p>
-                </details>
+                {(bulkGroup.trim() || bulkPlatform) && <p className="profile-import-note">{t("Overrides apply to every imported record.")}</p>}
+                <div className="profile-import-rules">
+                  <p className="profile-import-impact"><Icon name="alert" className="sm" /><span>{t("Matching IDs update existing environments. Missing fields keep their saved values.")}</span></p>
+                  <div className="profile-import-help">
+                    <details className="import-transfer-details">
+                      <summary><Icon name="chevronRight" className="sm" />{t("Import rules and transferable data")}</summary>
+                      <ul>
+                        <li>{t("Use readable exports from AdsPower, GoLogin, Multilogin, Dolphin Anty, HideMyAcc, Incogniton, Donut and similar browsers. Encrypted or proprietary archives are unsupported.")}</li>
+                        <li>{t("Included accounts, proxies, cookies, and supported settings can transfer.")}</li>
+                        <li>{t("Saved seed, timezone, and OS values can apply. Browser and hardware still affect fingerprint results; historical fp_* values are for review.")}</li>
+                      </ul>
+                    </details>
+                    <div className="profile-import-templates">
+                      <button type="button" className="tlink" onClick={() => downloadText("maobu-qianjing-template.csv", CSV_TEMPLATE, "text/csv")}>
+                        <Icon name="import" className="sm" />{t("CSV template")}
+                      </button>
+                      <button type="button" className="tlink" onClick={() => downloadText("maobu-qianjing-example.txt", TXT_EXAMPLE, "text/plain")}>
+                        <Icon name="import" className="sm" />{t(".txt example")}
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </fieldset>
             </div>
-            <div className="modal-foot">
-              <button className="tlink" onClick={() => downloadText("maobu-qianjing-template.csv", CSV_TEMPLATE, "text/csv")}>
-                <Icon name="export" className="sm" />{t("CSV template")}
-              </button>
-              <button className="tlink" onClick={() => downloadText("maobu-qianjing-example.txt", TXT_EXAMPLE, "text/plain")}>
-                <Icon name="export" className="sm" />{t(".txt example")}
-              </button>
-              <span className="spacer" />
-              <button className="btn ghost" disabled={bulkBusy} onClick={closeBulk}>{t("Cancel")}</button>
-              <button className="btn primary" disabled={bulkBusy || (!bulkFiles.length && !bulkText.trim())} onClick={submitBulk}>
-                <Icon name="fileImport" className="sm" />{bulkBusy ? t("Importing…") : t("Import profiles")}
+            <div className="modal-foot profile-import-footer">
+              <button type="button" className="btn ghost" disabled={bulkBusy} onClick={closeBulk}>{t("Cancel")}</button>
+              <button type="button" className="btn primary" disabled={bulkBusy || !hasStagedInput} onClick={submitBulk}>
+                {bulkBusy ? t("Importing…") : t("Import profiles")}
               </button>
             </div>
           </div>

@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { activateWorkspace, cancelActivation, clearWorkspaceCapability, downloadWorkspaceBackup, fetchWorkspaceBackups, fetchWorkspacePreferences, fetchWorkspaces, restoreWorkspace, restartWorkspace, saveWorkspacePreference, startWorkspaceBackup, workspaceBackupDownloadUrl, workspaceHistoryJob, workspaceJobPercent, type WorkspaceJob } from "./workspaces-api.ts";
+import { activateWorkspace, cancelActivation, clearWorkspaceCapability, downloadWorkspaceBackup, fetchWorkspaceBackups, fetchWorkspaceJob, fetchWorkspacePreferences, fetchWorkspaces, restoreWorkspace, restartWorkspace, saveWorkspacePreference, startWorkspaceBackup, workspaceBackupDownloadUrl, workspaceHistoryJob, workspaceJobPercent, type WorkspaceJob } from "./workspaces-api.ts";
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; clearWorkspaceCapability(); });
 const workspace = { id: "workspace-one", name: "Research", color: "#8169c8", icon: "laptop", archived: false, createdAt: 1, updatedAt: 2, lastOpenedAt: 0 };
@@ -67,6 +67,14 @@ test("workspace job progress distinguishes unknown totals from completion and bo
   expect(workspaceJobPercent({ ...job, completed: 125, total: 100 })).toBe(100);
   expect(workspaceJobPercent({ ...job, completed: 20, total: 80 })).toBe(25);
   expect(workspaceBackupDownloadUrl("backup/one", "a&b")).toBe("/ui/api/workspace/backups/backup%2Fone/download?capability=a%26b");
+});
+
+test("a status read cannot confirm a different workspace task", async () => {
+  globalThis.fetch = (async input => String(input).endsWith("/capability")
+    ? Response.json({ ok: true, token: "token" })
+    : Response.json({ ok: true, job })) as typeof fetch;
+  expect(await fetchWorkspaceJob(job.id)).toEqual(job);
+  await expect(fetchWorkspaceJob("different-job")).rejects.toThrow("Workspace response was incomplete.");
 });
 
 test("workspace display preferences use the same capability and accept only supported keys", async () => {

@@ -114,6 +114,17 @@ export class UnauthorizedError extends Error {
 export function isUnauthorizedError(error: unknown): error is UnauthorizedError {
     return error instanceof UnauthorizedError || (typeof error === "object" && error !== null && (error as { name?: unknown }).name === "UnauthorizedError");
 }
+export class AppLockedError extends Error {
+    readonly status = 423;
+    readonly code = "app_locked";
+    constructor(message = "Application is locked. Unlock with your master password to continue.") {
+        super(message);
+        this.name = "AppLockedError";
+    }
+}
+export function isAppLockedError(error: unknown): error is AppLockedError {
+    return error instanceof AppLockedError || (typeof error === "object" && error !== null && (error as { name?: unknown }).name === "AppLockedError");
+}
 /** Extract a standalone session token from raw input or a tokenized `/?token=…` URL. */
 export function extractSessionTokenInput(raw: string): string {
     const trimmed = raw.trim();
@@ -130,6 +141,7 @@ export function extractSessionTokenInput(raw: string): string {
 }
 let standaloneSessionToken: string | null = null;
 const unauthorizedListeners = new Set<(error: UnauthorizedError) => void>();
+const appLockedListeners = new Set<() => void>();
 export function getStandaloneSessionToken(): string | null {
     return standaloneSessionToken;
 }
@@ -142,26 +154,56 @@ export function subscribeUnauthorized(listener: (error: UnauthorizedError) => vo
     unauthorizedListeners.add(listener);
     return () => { unauthorizedListeners.delete(listener); };
 }
+export function subscribeAppLocked(listener: () => void): () => void {
+    appLockedListeners.add(listener);
+    return () => { appLockedListeners.delete(listener); };
+}
+export function notifyUnauthorizedResponse(status: number, path: string, detail = ""): UnauthorizedError | null {
+    if (status !== 401) return null;
+    if (standaloneSessionToken) {
+        standaloneSessionToken = null;
+    }
+    const err = new UnauthorizedError(detail, path);
+    for (const listener of unauthorizedListeners) {
+        try { listener(err); } catch { /* Listener errors must not mask UnauthorizedError. */ }
+    }
+    return err;
+}
+export function notifyAppLockedFromResponse(status: number, body: unknown): boolean {
+    if (status !== 423 || !body || typeof body !== "object" || (body as { code?: unknown }).code !== "app_locked") {
+        return false;
+    }
+    for (const listener of appLockedListeners) {
+        try { listener(); } catch { /* Listener errors must not mask 423 handling. */ }
+    }
+    return true;
+}
+export function withStandaloneAuthHeaders(headers?: HeadersInit): HeadersInit | undefined {
+    if (!standaloneSessionToken) return headers;
+    const merged = new Headers(headers);
+    if (!merged.has("X-Maobu-Session") && !merged.has("Authorization")) {
+        merged.set("X-Maobu-Session", standaloneSessionToken);
+    }
+    return merged;
+}
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
     if (!standaloneSessionToken) {
         return init === undefined ? fetch(path) : fetch(path, init);
     }
-    const headers = new Headers(init?.headers);
-    if (!headers.has("X-Maobu-Session") && !headers.has("Authorization")) {
-        headers.set("X-Maobu-Session", standaloneSessionToken);
-    }
+    const headers = withStandaloneAuthHeaders(init?.headers);
     return fetch(path, {
         ...init,
         credentials: init?.credentials ?? "same-origin",
         headers,
     });
 }
-export async function fetchAppMode(): Promise<AppModeConfig> {
+export async function fetchAppMode(signal?: AbortSignal): Promise<AppModeConfig> {
     const path = "/ui/api/app-mode";
-    const response = await apiFetch(path);
+    const deadline = AbortSignal.timeout(10_000);
+    const response = await apiFetch(path, { cache: "no-store", signal: signal ? AbortSignal.any([signal, deadline]) : deadline });
     const body = await apiJson(response, path);
-    if (body.mode !== "local" || body.localOnly !== true) {
-        throw new Error(body.error || "This local edition requires the local-only runtime. Restart the desktop app.");
+    if (!response.ok || body?.mode !== "local" || body.localOnly !== true) {
+        throw new Error(body?.error || "This local edition requires the local-only runtime. Restart the desktop app.");
     }
     return body as AppModeConfig;
 }
@@ -199,16 +241,18 @@ export async function fetchRuntimeDownloads(): Promise<RuntimeDownload[]> {
     return body.downloads as RuntimeDownload[];
 }
 
-export async function fetchLogs(): Promise<{
+export async function fetchLogs(signal?: AbortSignal): Promise<{
     file: string;
     content: string;
-}> {
+} | null> {
     const path = "/ui/api/logs";
-    const response = await apiFetch(path);
+    const response = await apiFetch(path, { signal, cache: "no-store" });
     const body = await apiJson(response, path);
-    if (body.ok !== true)
-        throw new Error(body.error || "logs are unavailable");
-    return { file: String(body.file), content: String(body.content ?? "") };
+    if (response.ok && body?.ok === false && body.error === "no log file yet") return null;
+    if (!response.ok || body?.ok !== true || typeof body.file !== "string" || !body.file.trim() || typeof body.content !== "string") {
+        throw new Error("logs are unavailable");
+    }
+    return { file: body.file, content: body.content };
 }
 export async function fetchHealth(): Promise<HealthResult> {
     const path = "/ui/api/health";
@@ -242,17 +286,14 @@ async function apiJson(response: Response, path: string): Promise<any> {
         } catch {
             // Non-JSON 401 responses still carry actionable guidance below.
         }
-        if (standaloneSessionToken) {
-            standaloneSessionToken = null;
-        }
-        const err = new UnauthorizedError(detail, path);
-        for (const listener of unauthorizedListeners) {
-            try { listener(err); } catch { /* Listener errors must not mask UnauthorizedError. */ }
-        }
-        throw err;
+        throw notifyUnauthorizedResponse(401, path, detail) ?? new UnauthorizedError(detail, path);
     }
     try {
-        return text.trim() ? JSON.parse(text) : {};
+        const parsed = text.trim() ? JSON.parse(text) : {};
+        if (response.status === 423) {
+            notifyAppLockedFromResponse(response.status, parsed);
+        }
+        return parsed;
     }
     catch {
         const contentType = response.headers.get("content-type") || "unknown content type";
@@ -276,7 +317,7 @@ export async function fetchProfiles(): Promise<UiRoster> {
     const cached = profileRosterCache?.origin === origin ? profileRosterCache : null;
     const newer = () => profileRosterOrigin() === origin && profileRosterCache?.origin === origin && profileRosterCommitted > sequence ? profileRosterCache : null;
     try {
-        const r = await apiFetch(path, { method: "GET", credentials: "same-origin", cache: "no-store", redirect: "error", headers: {
+        const r = await apiFetch(path, { method: "GET", credentials: "same-origin", cache: "no-store", redirect: "error", signal: AbortSignal.timeout(10_000), headers: {
             Accept: "application/json", ...(cached?.etag ? { "If-None-Match": cached.etag } : {}),
         } });
         const latest = newer();
@@ -315,6 +356,7 @@ export async function fetchProfiles(): Promise<UiRoster> {
 export function serialLoader(run: () => Promise<void>): {
     load: () => Promise<void>;
     poll: () => void;
+    isLoading: () => boolean;
 } {
     let active: {
         running: Promise<void>;
@@ -327,7 +369,7 @@ export function serialLoader(run: () => Promise<void>): {
         active = { running, next: null };
         return running;
     };
-    return { load, poll: () => { if (!active)
+    return { load, isLoading: () => active !== null, poll: () => { if (!active)
             void load().catch(() => { }); } };
 }
 export interface ProfileCookieInput {
@@ -362,7 +404,7 @@ export async function addProfileCookies(ids: string[], input: ProfileCookieInput
     return apiJson(response, path);
 }
 /** Local mode: the cookies a closed profile sets at its next start (domain and name only). */
-export async function fetchPendingCookies(id: string): Promise<{
+export async function fetchPendingCookies(id: string, signal?: AbortSignal): Promise<{
     ok: boolean;
     cookies?: Array<{
         domain: string;
@@ -371,7 +413,7 @@ export async function fetchPendingCookies(id: string): Promise<{
     error?: string;
 }> {
     const path = `/ui/api/profiles/${encodeURIComponent(id)}/pending-cookies`;
-    return apiJson(await apiFetch(path), path);
+    return apiJson(await apiFetch(path, { signal }), path);
 }
 export async function clearPendingCookies(id: string): Promise<{
     ok: boolean;
@@ -392,6 +434,7 @@ export async function restartProfile(id: string): Promise<any> {
     return opened?.ok === false || opened?.warning ? opened : closed;
 }
 export const raiseProfile = (id: string) => post(`/ui/api/profiles/${encodeURIComponent(id)}/raise`);
+export const clearProfileCache = (id: string) => post(`/ui/api/profiles/${encodeURIComponent(id)}/clear-cache`);
 /** The hosted fingerprint checker is not part of the local edition. */
 export const importInbox = () => post("/ui/api/import");
 // ---- Extensions registry ----------------------------------------------------
@@ -970,7 +1013,34 @@ export interface OpenUiEventStreamOptions {
     lastEventId?: number | null;
     signal: AbortSignal;
     onOpen?: () => void;
+    onActivity?: () => void;
     onEvent: (event: UiStreamEvent) => void;
+}
+
+/** Consume an already validated SSE body, cancelling a pending read when its owner aborts. */
+export async function readSseBody(
+    body: ReadableStream<Uint8Array>,
+    { signal, onActivity, onEvent }: Pick<OpenUiEventStreamOptions, "signal" | "onActivity" | "onEvent">,
+): Promise<void> {
+    const reader = body.getReader();
+    const parser = createSseParser(onEvent);
+    const cancelRead = () => { void reader.cancel().catch(() => {}); };
+    signal.addEventListener("abort", cancelRead, { once: true });
+    try {
+        while (!signal.aborted) {
+            const { value, done } = await reader.read();
+            if (done || signal.aborted) break;
+            if (value && value.byteLength > 0) {
+                onActivity?.();
+                parser.push(value);
+            }
+        }
+        if (!signal.aborted) parser.finish();
+    } finally {
+        signal.removeEventListener("abort", cancelRead);
+        try { await reader.cancel().catch(() => {}); } catch {}
+        try { reader.releaseLock(); } catch {}
+    }
 }
 export interface SseStreamParser {
     push(chunk: Uint8Array): void;
@@ -1093,11 +1163,15 @@ export async function openUiEventStream(options: OpenUiEventStreamOptions): Prom
     }
     if (!response.ok) {
         let message = `Event stream failed (${response.status})`;
+        let body: any = null;
         try {
-            const body = await apiJson(response, path);
+            body = await apiJson(response, path);
             if (typeof body?.error === "string" && body.error.trim()) message = body.error.trim();
         } catch (error) {
             if (isUnauthorizedError(error)) throw error;
+        }
+        if (response.status === 423 && body?.code === "app_locked") {
+            throw new AppLockedError(message);
         }
         throw new Error(message);
     }
@@ -1107,17 +1181,5 @@ export async function openUiEventStream(options: OpenUiEventStreamOptions): Prom
         throw new Error(`Event stream returned unexpected content type (${contentType || "unknown"})`);
     }
     options.onOpen?.();
-    const reader = response.body.getReader();
-    const parser = createSseParser(options.onEvent);
-    try {
-        while (!options.signal.aborted) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            if (value && value.byteLength > 0) parser.push(value);
-        }
-        if (!options.signal.aborted) parser.finish();
-    } finally {
-        try { await reader.cancel().catch(() => {}); } catch {}
-        try { reader.releaseLock(); } catch {}
-    }
+    await readSseBody(response.body, options);
 }

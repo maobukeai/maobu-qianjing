@@ -211,6 +211,74 @@ describe("Resource monitoring, dashboard drawer, chips & DataSaverSettings", () 
     expect(h.container.querySelector(".profile-resource-chip.is-hibernated")?.textContent).toContain("Hibernated");
   });
 
+  test("a temporary metrics service outage reconnects instead of disabling telemetry", async () => {
+    let attempts = 0;
+    const sample = makeSnapshot();
+    const h = await createHarness((async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/ui/api/metrics/stream");
+      if (++attempts === 1) return Response.json({ ok: false }, { status: 503 });
+      const sampleFrame = new TextEncoder().encode(`event: metrics.snapshot\ndata: ${JSON.stringify(sample)}\n\n`);
+      return new Response(new ReadableStream({ start(controller) { controller.enqueue(sampleFrame); } }),
+        { headers: { "Content-Type": "text/event-stream" } });
+    }) as typeof fetch);
+    dispose = h.cleanup;
+    function Harness() {
+      const monitor = useResourceMonitor({ enabled: true, eventsStream: true, runningCount: 2, panelOpen: false });
+      return <output>{monitor.unsupported ? "unsupported" : monitor.streaming ? "live" : monitor.reconnecting ? "retrying" : "waiting"}</output>;
+    }
+    await act(async () => { h.root.render(<Harness />); });
+    expect(h.container.textContent).toBe("retrying");
+    await act(async () => { await Bun.sleep(1650); });
+    expect(attempts).toBe(2);
+    expect(h.container.textContent).toBe("live");
+  });
+
+  test("an earlier snapshot read cannot replace a newer live sample", async () => {
+    const sample = makeSnapshot({ ts: 200 });
+    let replyToRead!: (response: Response) => void;
+    const h = await createHarness((async (input: RequestInfo | URL) => {
+      if (String(input) === "/ui/api/metrics/snapshot") {
+        return new Promise<Response>(resolve => { replyToRead = resolve; });
+      }
+      expect(String(input)).toBe("/ui/api/metrics/stream");
+      const frame = new TextEncoder().encode(`event: metrics.snapshot\ndata: ${JSON.stringify(sample)}\n\n`);
+      return new Response(new ReadableStream({ start(controller) { controller.enqueue(frame); } }),
+        { headers: { "Content-Type": "text/event-stream" } });
+    }) as typeof fetch);
+    dispose = h.cleanup;
+    function Harness() {
+      const monitor = useResourceMonitor({ enabled: true, eventsStream: true, runningCount: 2, panelOpen: true });
+      return <output>{monitor.snapshot?.ts}</output>;
+    }
+    await act(async () => { h.root.render(<Harness />); });
+    expect(h.container.textContent).toBe("200");
+    expect(replyToRead).toBeDefined();
+    await act(async () => { replyToRead(Response.json({ ok: true, snapshot: makeSnapshot({ ts: 100 }) })); });
+    expect(h.container.textContent).toBe("200");
+  });
+
+  test("stream headers without a valid sample never show live telemetry and release the stalled stream", async () => {
+    let cancelled = 0;
+    const h = await createHarness((async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/ui/api/metrics/stream");
+      const stream = new ReadableStream({
+        start(controller) { controller.enqueue(new TextEncoder().encode(": keepalive\n\n")); },
+        cancel() { cancelled++; },
+      });
+      return new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
+    }) as typeof fetch);
+    dispose = h.cleanup;
+    function Harness() {
+      const monitor = useResourceMonitor({ enabled: true, eventsStream: true, runningCount: 2, panelOpen: false, sampleTimeoutMs: 110 });
+      return <output>{monitor.streaming ? "live" : monitor.reconnecting ? "retrying" : "waiting"}</output>;
+    }
+    await act(async () => { h.root.render(<Harness />); });
+    expect(h.container.textContent).toBe("waiting");
+    await act(async () => { await Bun.sleep(180); });
+    expect(cancelled).toBe(1);
+    expect(h.container.textContent).toBe("retrying");
+  });
+
   test("ResourceDashboardDrawer ranks by RAM/CPU and invokes Trim, Trim All, Hibernate, and Wake", async () => {
     const h = await createHarness();
     dispose = h.cleanup;
@@ -245,6 +313,7 @@ describe("Resource monitoring, dashboard drawer, chips & DataSaverSettings", () 
       byProfileId: new Map(sample.profiles.map((p) => [p.profileId, p])),
       hibernatedIds: new Set(sample.hibernatedProfileIds),
       streaming: true,
+      reconnecting: false,
       unsupported: false,
       refreshNow: async () => { called.push("refresh"); },
     };

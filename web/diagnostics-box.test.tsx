@@ -98,7 +98,7 @@ describe("DiagnosticsBox", () => {
           body: JSON.parse(String(init?.body ?? "{}")),
           header: headers.get("X-Maobu-Settings"),
         });
-        return Response.json({ ok: true, report: sampleReport });
+        return Response.json({ ok: true, report: sampleReport, reportId: "reviewed-report" });
       }
       if (url.pathname === "/ui/api/diagnostics/export") {
         requests.push({
@@ -141,11 +141,17 @@ describe("DiagnosticsBox", () => {
     const runBtn = Array.from(h.container.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
       b.textContent?.includes("Run diagnostics"),
     )!;
+    const exportZipBtn = h.container.querySelector<HTMLButtonElement>('button[aria-label="Export redacted ZIP"]')!;
     await act(async () => {
+      runBtn.focus();
       runBtn.click();
+      runBtn.click();
+      exportZipBtn.click();
     });
     await h.flush();
 
+    expect(h.container.ownerDocument.activeElement).toBe(runBtn);
+    expect(requests).toHaveLength(1);
     expect(runNotified).toBe(1);
     expect(requests[0]).toMatchObject({
       path: "/ui/api/diagnostics/run",
@@ -154,6 +160,7 @@ describe("DiagnosticsBox", () => {
     });
     expect(h.container.querySelectorAll("[data-diag-check]")).toHaveLength(6);
     expect(h.container.textContent).toContain("Windows 11 · WebView2 130.0.2849.68");
+    expect(h.container.querySelector("time")?.getAttribute("datetime")).toBe(sampleReport.generatedAt);
 
     // Open collapsible redacted JSON preview before export
     expect(h.container.querySelector("[data-diag-json-preview='true']")).toBeNull();
@@ -162,14 +169,16 @@ describe("DiagnosticsBox", () => {
       previewToggle.click();
     });
     await h.flush();
-    const previewPre = h.container.querySelector("[data-diag-json-preview='true']");
+    const previewPre = h.container.querySelector<HTMLElement>("[data-diag-json-preview='true']");
     expect(previewPre).not.toBeNull();
-    expect(previewPre!.textContent).toContain('"webview2_os"');
+    expect(previewPre?.tabIndex).toBe(0);
+    expect(previewToggle.getAttribute("aria-controls")).toBe(previewPre!.id);
+    expect(JSON.parse(previewPre!.textContent!)).toEqual(sampleReport);
 
-    // Click Export redacted ZIP
-    const exportZipBtn = Array.from(h.container.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
-      b.textContent?.includes("Export redacted ZIP"),
-    )!;
+    // Changing settings applies to the next run. The export still uses the displayed report.
+    await act(async () => {
+      checkboxes[0]!.click();
+    });
     await act(async () => {
       exportZipBtn.click();
     });
@@ -178,8 +187,63 @@ describe("DiagnosticsBox", () => {
     expect(requests[1]).toMatchObject({
       path: "/ui/api/diagnostics/export",
       header: "1",
-      body: { format: "zip", includeMcpProbe: true, includeLogs: true },
+      body: { format: "zip", includeLogs: true, reportId: "reviewed-report" },
     });
+    expect(requests).toHaveLength(2);
     expect(h.container.textContent).toContain("maobu-diagnostics-20261122-143000.zip");
+  });
+
+  test("an unavailable reviewed report stays visible and can be replaced by an explicit run", async () => {
+    const report = makeSampleReport();
+    const updatedAt = "2026-11-22T14:33:00.000Z";
+    const exported: string[] = [];
+    let runs = 0;
+    const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://127.0.0.1");
+      if (url.pathname === "/ui/api/shell-language") return Response.json({ language: "en-US" });
+      if (url.pathname === "/ui/api/diagnostics/run") {
+        runs++;
+        return Response.json({
+          ok: true,
+          reportId: `report-${runs}`,
+          report: { ...report, generatedAt: runs === 1 ? report.generatedAt : updatedAt },
+        });
+      }
+      if (url.pathname === "/ui/api/diagnostics/export") {
+        const { reportId } = JSON.parse(String(init?.body));
+        exported.push(reportId);
+        if (reportId === "report-1") {
+          return Response.json({
+            ok: false,
+            error: "Diagnostics report is no longer available. Run diagnostics again.",
+          }, { status: 409 });
+        }
+        return Response.json({ ...report, generatedAt: updatedAt });
+      }
+      return Response.json({ ok: false }, { status: 404 });
+    }) as typeof fetch;
+    const h = await createHarness(fakeFetch);
+    dispose = h.cleanup;
+    const click = async (label: string) => {
+      const button = Array.from(h.container.querySelectorAll<HTMLButtonElement>("button")).find(b => b.getAttribute("aria-label") === label || b.textContent?.includes(label));
+      expect(button).toBeDefined();
+      await act(async () => { button!.click(); });
+      await h.flush();
+    };
+    await act(async () => {
+      h.root.render(<I18nProvider><DiagnosticsBox /></I18nProvider>);
+    });
+
+    await click("Run diagnostics");
+    await click("Export redacted JSON");
+    expect(h.container.querySelector('[role="alert"]')?.textContent).toContain("Run diagnostics again.");
+    expect(h.container.querySelector("time")?.getAttribute("datetime")).toBe(report.generatedAt);
+    expect(runs).toBe(1);
+    await click("Run diagnostics");
+    expect(h.container.querySelector("time")?.getAttribute("datetime")).toBe(updatedAt);
+    expect(h.container.querySelector('[role="alert"]')).toBeNull();
+    await click("Export redacted JSON");
+    expect(h.container.textContent).toContain("maobu-diagnostics.json");
+    expect(exported).toEqual(["report-1", "report-2"]);
   });
 });

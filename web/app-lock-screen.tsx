@@ -1,12 +1,12 @@
 import * as React from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   AppLockApiError,
   unlockAppLock,
   type AppLockStatus,
 } from "./app-lock-api.ts";
 import { useTranslation } from "./i18n.tsx";
-import { AppIcon } from "./ui-primitives.tsx";
+import { AppIcon, useDialogKeyboard } from "./ui-primitives.tsx";
 import "./app-lock.css";
 
 export interface AppLockScreenProps {
@@ -30,7 +30,12 @@ export function AppLockScreen({ status, onUnlocked, onRefreshStatus }: AppLockSc
   const [cooldownSec, setCooldownSec] = useState(() => remainingSeconds(status.cooldownUntil));
   const [failedAttempts, setFailedAttempts] = useState(status.failedAttempts);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const passwordId = useId();
+  const errorId = useId();
+  const recoveryId = useId();
+  useDialogKeyboard(dialogRef, status.locked, null, () => inputRef.current);
 
   useEffect(() => {
     setCooldownUntil(status.cooldownUntil);
@@ -56,12 +61,13 @@ export function AppLockScreen({ status, onUnlocked, onRefreshStatus }: AppLockSc
   }, [cooldownUntil, onRefreshStatus]);
 
   useEffect(() => {
-    if (!status.corrupt && cooldownSec === 0) {
+    if (status.locked && !status.corrupt && cooldownSec === 0) {
       inputRef.current?.focus();
     }
-  }, [status.corrupt, cooldownSec]);
+  }, [status.locked, status.corrupt, cooldownSec]);
 
   if (!status.locked) return null;
+  const hasError = Boolean(error) && cooldownSec === 0;
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -95,22 +101,25 @@ export function AppLockScreen({ status, onUnlocked, onRefreshStatus }: AppLockSc
 
   return (
     <div
+      ref={dialogRef}
       className="app-lock-backdrop"
       data-app-lock-screen="true"
       role="dialog"
       aria-modal="true"
       aria-labelledby="app-lock-title"
+      aria-describedby="app-lock-boundary"
+      tabIndex={-1}
     >
       <div className="app-lock-card">
-        <div className="app-lock-badge">
-          <AppIcon name="lock" className="lg" />
-        </div>
-        <h1 id="app-lock-title" className="app-lock-title">
-          {t("Application locked")}
-        </h1>
-        <p className="app-lock-subtitle">
-          {t("Enter your local master password to resume profile management.")}
-        </p>
+        <header className="app-lock-heading">
+          <span className="app-lock-badge"><AppIcon name="lock" className="lg" /></span>
+          <div>
+            <h1 id="app-lock-title" className="app-lock-title">{t("Application locked")}</h1>
+            {!status.corrupt && (
+              <p className="app-lock-subtitle">{t("Enter your local master password to resume profile management.")}</p>
+            )}
+          </div>
+        </header>
 
         {status.corrupt ? (
           <div className="app-lock-alert danger" role="alert">
@@ -123,10 +132,11 @@ export function AppLockScreen({ status, onUnlocked, onRefreshStatus }: AppLockSc
           </div>
         ) : (
           <form className="app-lock-form" onSubmit={submit}>
-            <label className="app-lock-field">
-              <span>{t("Master password")}</span>
+            <div className="app-lock-field">
+              <label htmlFor={passwordId}>{t("Master password")}</label>
               <div className="app-lock-input-row">
                 <input
+                  id={passwordId}
                   ref={inputRef}
                   type={showPassword ? "text" : "password"}
                   className="input"
@@ -134,19 +144,20 @@ export function AppLockScreen({ status, onUnlocked, onRefreshStatus }: AppLockSc
                   value={password}
                   disabled={busy || cooldownSec > 0}
                   onChange={(event) => setPassword(event.target.value)}
-                  placeholder={t("Enter master password")}
-                  aria-label={t("Master password")}
+                  aria-invalid={hasError || undefined}
+                  aria-describedby={hasError ? errorId : undefined}
                 />
                 <button
                   type="button"
-                  className="btn ghost sm"
+                  className="btn sm app-lock-visibility"
+                  aria-controls={passwordId}
                   onClick={() => setShowPassword((value) => !value)}
-                  disabled={busy}
+                  disabled={busy || cooldownSec > 0}
                 >
                   {showPassword ? t("Hide") : t("Show")}
                 </button>
               </div>
-            </label>
+            </div>
 
             {cooldownSec > 0 && (
               <div className="app-lock-alert warn" role="alert" data-app-lock-cooldown="true">
@@ -158,10 +169,10 @@ export function AppLockScreen({ status, onUnlocked, onRefreshStatus }: AppLockSc
             )}
 
             {error && cooldownSec === 0 && (
-              <div className="app-lock-alert danger" role="alert">
+              <div id={errorId} className="app-lock-alert danger" role="alert">
                 <AppIcon name="alert" className="sm" />
                 <span>
-                  {error}
+                  {t(error)}
                   {failedAttempts > 0
                     ? ` (${t("{count} failed attempts", { count: failedAttempts })})`
                     : ""}
@@ -174,18 +185,14 @@ export function AppLockScreen({ status, onUnlocked, onRefreshStatus }: AppLockSc
               className="btn primary app-lock-submit"
               disabled={busy || cooldownSec > 0}
             >
-              <AppIcon name="lock" className="sm" />
               {busy ? t("Verifying…") : t("Unlock")}
             </button>
           </form>
         )}
 
-        <div className="app-lock-boundary">
-          <p>
-            {t(
-              "Running browser windows stay open to protect active web sessions, while dashboard actions, 2FA, and edits remain blocked.",
-            )}
-          </p>
+        <div id="app-lock-boundary" className="app-lock-boundary">
+          <AppIcon name="window" className="sm" />
+          <p>{t("Running browser windows stay open to protect active web sessions, while dashboard actions, 2FA, and edits remain blocked.")}</p>
         </div>
 
         <div className="app-lock-recovery">
@@ -193,13 +200,14 @@ export function AppLockScreen({ status, onUnlocked, onRefreshStatus }: AppLockSc
             type="button"
             className="app-lock-recovery-toggle"
             aria-expanded={recoveryOpen}
+            aria-controls={recoveryOpen ? recoveryId : undefined}
             onClick={() => setRecoveryOpen((open) => !open)}
           >
             <span>{t("Forgot master password?")}</span>
             <AppIcon name={recoveryOpen ? "chevronUp" : "chevronDown"} className="sm" />
           </button>
           {recoveryOpen && (
-            <div className="app-lock-recovery-body">
+            <div id={recoveryId} className="app-lock-recovery-body">
               <p>
                 {t(
                   "App lock is a local interactive privacy lock and does not replace Windows DPAPI + AES-256-GCM storage encryption.",

@@ -1,11 +1,12 @@
 import * as React from "react";
-import { useState } from "react";
+import { useId, useRef, useState } from "react";
 import {
   exportDiagnosticsBundle,
   runDiagnosticsCheck,
   triggerBlobDownload,
   type DiagnosticCheckResult,
   type DiagnosticStatus,
+  type DiagnosticsSnapshot,
   type SystemDiagnosticReport,
 } from "./diagnostics-api.ts";
 import { useTranslation } from "./i18n.tsx";
@@ -31,8 +32,10 @@ function statusBadgeLabel(status: DiagnosticStatus, t: (key: string) => string):
 }
 
 export function DiagnosticsBox({ onDiagnosticsRun }: DiagnosticsBoxProps) {
-  const { t } = useTranslation();
-  const [report, setReport] = useState<SystemDiagnosticReport | null>(null);
+  const { t, language } = useTranslation();
+  const id = useId();
+  const [snapshot, setSnapshot] = useState<DiagnosticsSnapshot | null>(null);
+  const report = snapshot?.report;
   const [includeMcpProbe, setIncludeMcpProbe] = useState(false);
   const [includeLogs, setIncludeLogs] = useState(true);
   const [running, setRunning] = useState(false);
@@ -41,23 +44,30 @@ export function DiagnosticsBox({ onDiagnosticsRun }: DiagnosticsBoxProps) {
   const [exportNotice, setExportNotice] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [expandedChecks, setExpandedChecks] = useState<Record<string, boolean>>({});
+  const operation = useRef(false);
+  const busy = running || exporting !== null;
 
   const handleRun = async () => {
+    if (operation.current) return;
+    operation.current = true;
     setRunning(true);
     setError(null);
     setExportNotice(null);
     try {
       const next = await runDiagnosticsCheck({ includeMcpProbe });
-      setReport(next);
-      onDiagnosticsRun?.(next);
+      setSnapshot(next);
+      onDiagnosticsRun?.(next.report);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("Diagnostics run failed."));
+      setError(err instanceof Error ? err.message : "Diagnostics run failed.");
     } finally {
+      operation.current = false;
       setRunning(false);
     }
   };
 
   const handleExport = async (format: "zip" | "json") => {
+    if (operation.current) return;
+    operation.current = true;
     setExporting(format);
     setError(null);
     setExportNotice(null);
@@ -66,6 +76,7 @@ export function DiagnosticsBox({ onDiagnosticsRun }: DiagnosticsBoxProps) {
         format,
         includeMcpProbe,
         includeLogs,
+        reportId: snapshot?.reportId,
       });
       triggerBlobDownload(result.blob, result.fileName);
       setExportNotice(
@@ -75,8 +86,9 @@ export function DiagnosticsBox({ onDiagnosticsRun }: DiagnosticsBoxProps) {
         }),
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("Diagnostics export failed."));
+      setError(err instanceof Error ? err.message : "Diagnostics export failed.");
     } finally {
+      operation.current = false;
       setExporting(null);
     }
   };
@@ -86,10 +98,10 @@ export function DiagnosticsBox({ onDiagnosticsRun }: DiagnosticsBoxProps) {
   };
 
   return (
-    <section className="settings-card diagnostics-box" data-diagnostics-box="true">
+    <section className="settings-card diagnostics-box" aria-labelledby={`${id}-heading`} data-diagnostics-box="true">
       <header>
-        <AppIcon name="activity" className="sm" />
-        <h2>{t("One-click system diagnostics")}</h2>
+        <AppIcon name="terminal" className="sm" />
+        <h2 id={`${id}-heading`}>{t("One-click system diagnostics")}</h2>
         {report && (
           <span className={`chip diag-status-${report.overallStatus}`}>
             {statusBadgeLabel(report.overallStatus, t)}
@@ -97,75 +109,37 @@ export function DiagnosticsBox({ onDiagnosticsRun }: DiagnosticsBoxProps) {
         )}
       </header>
       <div className="card-body">
-        <p className="diag-subtitle">
-          {t(
-            "Verify WebView2 & OS, loopback ports, SQLite integrity, browser kernel SHA-256 hashes, disk space, and MCP readiness.",
-          )}
-        </p>
-
-        <div className="diag-privacy-banner">
-          <AppIcon name="lock" className="sm" />
-          <span>
-            {t(
-              "Strict redaction: exports never include profile records, passwords, cookies, proxy credentials, public IPs, CDP URLs, or local usernames.",
-            )}
-          </span>
-        </div>
-
-        <div className="diag-controls">
+        <div className="diag-controls diag-run-controls">
           <button
             type="button"
             className="btn primary"
-            disabled={running || exporting !== null}
+            aria-disabled={busy || undefined}
             onClick={() => void handleRun()}
           >
             <AppIcon name="refresh" className="sm" />
             {running ? t("Running 6 checks…") : t("Run diagnostics")}
           </button>
-          <button
-            type="button"
-            className="btn"
-            disabled={running || exporting !== null}
-            onClick={() => void handleExport("zip")}
-          >
-            <AppIcon name="export" className="sm" />
-            {exporting === "zip" ? t("Exporting ZIP…") : t("Export redacted ZIP")}
-          </button>
-          <button
-            type="button"
-            className="btn ghost"
-            disabled={running || exporting !== null}
-            onClick={() => void handleExport("json")}
-          >
-            {exporting === "json" ? t("Exporting JSON…") : t("Export redacted JSON")}
-          </button>
-        </div>
-
-        <div className="diag-options">
           <label className="diag-option">
             <input
               type="checkbox"
               checked={includeMcpProbe}
-              disabled={running || exporting !== null}
+              disabled={busy}
               onChange={(event) => setIncludeMcpProbe(event.target.checked)}
             />
             <span>{t("Include read-only MCP handshake (up to 8s)")}</span>
           </label>
-          <label className="diag-option">
-            <input
-              type="checkbox"
-              checked={includeLogs}
-              disabled={running || exporting !== null}
-              onChange={(event) => setIncludeLogs(event.target.checked)}
-            />
-            <span>{t("Include redacted sidecar & panic log tails in ZIP (<= 2 MiB)")}</span>
-          </label>
+        </div>
+
+        <div className="sr-only" role="status">
+          {running ? t("Running 6 checks…")
+            : exporting ? t(exporting === "zip" ? "Exporting ZIP…" : "Exporting JSON…")
+            : report && !error && !exportNotice ? t("Diagnostics complete.") : ""}
         </div>
 
         {error && (
           <div className="diag-alert fail" role="alert">
             <AppIcon name="alert" className="sm" />
-            <span>{error}</span>
+            <span>{t(error)}</span>
           </div>
         )}
         {exportNotice && (
@@ -175,19 +149,54 @@ export function DiagnosticsBox({ onDiagnosticsRun }: DiagnosticsBoxProps) {
           </div>
         )}
 
+        {report && <div className="diag-summary-bar" data-diag-summary="true">
+          <div className="diag-summary-counts">
+            <span>{t("Passed: {count}", { count: report.summary.pass })}</span>
+            <span className={report.summary.warn ? "diag-count-warn" : undefined}>{t("Warnings: {count}", { count: report.summary.warn })}</span>
+            <span className={report.summary.fail ? "diag-count-fail" : undefined}>{t("Failed: {count}", { count: report.summary.fail })}</span>
+            <span>{t("Skipped: {count}", { count: report.summary.skipped })}</span>
+          </div>
+          <div className="diag-summary-meta">
+            <time dateTime={report.generatedAt}>
+              {t("Last checked {time}", {
+                time: new Date(report.generatedAt).toLocaleString(language, { dateStyle: "medium", timeStyle: "medium" }),
+              })}
+            </time>
+            <span className="diag-version-meta">v{report.appVersion}</span>
+          </div>
+        </div>}
+
+        <div className="diag-export-area">
+          <fieldset className="diag-export">
+            <legend><AppIcon name="lock" className="sm" />{t("Redacted export")}</legend>
+            <div className="diag-controls">
+              <button type="button" className="btn" aria-label={t("Export redacted ZIP")} aria-disabled={busy || undefined} onClick={() => void handleExport("zip")}>
+                <AppIcon name="import" className="sm" />
+                {exporting === "zip" ? t("Exporting ZIP…") : "ZIP"}
+              </button>
+              <button type="button" className="btn" aria-label={t("Export redacted JSON")} aria-disabled={busy || undefined} onClick={() => void handleExport("json")}>
+                <AppIcon name="import" className="sm" />
+                {exporting === "json" ? t("Exporting JSON…") : "JSON"}
+              </button>
+            </div>
+            <label className="diag-option">
+              <input type="checkbox" checked={includeLogs} disabled={busy} onChange={(event) => setIncludeLogs(event.target.checked)} />
+              <span>{t("Include redacted sidecar & panic log tails in ZIP (<= 2 MiB)")}</span>
+            </label>
+          </fieldset>
+          <details className="diag-scope">
+            <summary>{t("Checks and export privacy")}</summary>
+            <p>{t("Verify WebView2 & OS, loopback ports, SQLite integrity, browser kernel SHA-256 hashes, disk space, and MCP readiness.")}</p>
+            <p>{t("Strict redaction: exports never include profile records, passwords, cookies, proxy credentials, public IPs, CDP URLs, or local usernames.")}</p>
+          </details>
+        </div>
+
         {report && (
           <>
-            <div className="diag-summary-bar" data-diag-summary="true">
-              <span>{t("Passed: {count}", { count: report.summary.pass })}</span>
-              <span>{t("Warnings: {count}", { count: report.summary.warn })}</span>
-              <span>{t("Failed: {count}", { count: report.summary.fail })}</span>
-              <span>{t("Skipped: {count}", { count: report.summary.skipped })}</span>
-              <span className="diag-version-meta">v{report.appVersion}</span>
-            </div>
-
             <ul className="diag-check-list" role="list">
               {report.checks.map((check: DiagnosticCheckResult) => {
                 const expanded = !!expandedChecks[check.id];
+                const detailId = `${id}-${check.id}-details`;
                 return (
                   <li
                     key={check.id}
@@ -195,22 +204,23 @@ export function DiagnosticsBox({ onDiagnosticsRun }: DiagnosticsBoxProps) {
                     data-diag-check={check.id}
                   >
                     <div className="diag-check-head">
-                      <span className={`diag-pill diag-status-${check.status}`}>
-                        {statusBadgeLabel(check.status, t)}
-                      </span>
                       <div className="diag-check-copy">
                         <strong>{t(check.title)}</strong>
                         <p>{check.summary}</p>
                       </div>
-                      <span className="diag-duration">{check.durationMs}ms</span>
-                      <button
-                        type="button"
-                        className="btn xs ghost"
-                        aria-expanded={expanded}
-                        onClick={() => toggleCheck(check.id)}
-                      >
-                        {expanded ? t("Hide details") : t("Details")}
-                      </button>
+                      <div className="diag-check-meta">
+                        <span className={`diag-pill diag-status-${check.status}`}>{statusBadgeLabel(check.status, t)}</span>
+                        <span className="diag-duration">{check.durationMs} ms</span>
+                        <button
+                          type="button"
+                          className="btn xs ghost"
+                          aria-expanded={expanded}
+                          aria-controls={expanded ? detailId : undefined}
+                          onClick={() => toggleCheck(check.id)}
+                        >
+                          {expanded ? t("Hide details") : t("Details")}
+                        </button>
+                      </div>
                     </div>
                     {check.recommendations && check.recommendations.length > 0 && (
                       <ul className="diag-recs">
@@ -220,7 +230,7 @@ export function DiagnosticsBox({ onDiagnosticsRun }: DiagnosticsBoxProps) {
                       </ul>
                     )}
                     {expanded && (
-                      <pre className="diag-detail-pre">
+                      <pre id={detailId} className="diag-detail-pre" tabIndex={0} role="region" aria-label={t(check.title)}>
                         {JSON.stringify(check.details, null, 2)}
                       </pre>
                     )}
@@ -234,13 +244,14 @@ export function DiagnosticsBox({ onDiagnosticsRun }: DiagnosticsBoxProps) {
                 type="button"
                 className="diag-preview-toggle"
                 aria-expanded={previewOpen}
+                aria-controls={previewOpen ? `${id}-preview` : undefined}
                 onClick={() => setPreviewOpen((open) => !open)}
               >
                 <span>{t("Preview redacted JSON before export")}</span>
                 <AppIcon name={previewOpen ? "chevronUp" : "chevronDown"} className="sm" />
               </button>
               {previewOpen && (
-                <pre className="diag-preview-pre" data-diag-json-preview="true">
+                <pre id={`${id}-preview`} className="diag-preview-pre" tabIndex={0} role="region" aria-label={t("Preview redacted JSON before export")} data-diag-json-preview="true">
                   {JSON.stringify(report, null, 2)}
                 </pre>
               )}

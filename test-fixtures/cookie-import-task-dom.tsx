@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { act, useState, useSyncExternalStore } from "react";
 import type { HTMLButtonElement, HTMLInputElement, HTMLTextAreaElement } from "happy-dom";
-import { createCookieImportTask, postCookieImport } from "../web/cookie-import-task.ts";
+import { createCookieImportTask } from "../web/cookie-import-task.ts";
 import { CookieImportTaskDialog, CookieImportTaskPanel } from "../web/cookie-import-task-panel.tsx";
 import { I18nProvider } from "../web/i18n.tsx";
 import { createWebDomHarness } from "./web-dom.ts";
@@ -22,14 +22,16 @@ async function run(scenario: string) {
     assert.ok(node, `Missing button ${label}`); return node;
   };
   const click = (label: string) => act(async () => { button(label).click(); });
+  const field = () => surface.querySelector<HTMLTextAreaElement>("textarea")!;
+  const fill = (value: string) => act(async () => {
+    const textarea = field();
+    Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, value);
+    textarea.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  });
   try {
     await dom.render(<I18nProvider><Harness /></I18nProvider>);
     if (scenario === "hide-and-retry" || scenario === "close-focus-session") {
-      const textarea = surface.querySelector<HTMLTextAreaElement>("textarea")!;
-      await act(async () => {
-        Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, '[{"name":"auth","value":"COOKIE_PRIVATE_729","domain":"example.com","path":"/"}]');
-        textarea.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
-      });
+      await fill('[{"name":"auth","value":"COOKIE_PRIVATE_729","domain":"example.com","path":"/"}]');
       if (scenario === "close-focus-session") {
         await click("Close");
         const exiting = surface.querySelector('.desktop-motion-presence[aria-hidden="true"]'); assert.ok(exiting?.hasAttribute("inert"), "Retained exit content is inert immediately");
@@ -53,6 +55,30 @@ async function run(scenario: string) {
       await act(async () => { second.resolve(Response.json({ ok: true, count: 1, live: 0, nextStart: 1, errors: [] })); }); await dom.flush();
       assert.equal(task.getSnapshot().summary.succeeded, 2); assert.equal(dom.window.document.activeElement, button("Hide cookie import details"));
       assert.equal(surface.textContent?.includes("COOKIE_PRIVATE_729"), false); await click("Dismiss cookie import result"); assert.equal(task.getSnapshot().phase, "idle");
+    } else if (scenario === "format-and-rejected-draft") {
+      const selectFormat = (format: string) => act(async () => { surface.querySelector<HTMLInputElement>(`.cookie-import-format input[value="${format}"]`)!.click(); });
+      await fill("PRIVATE_INVALID_JSON");
+      await selectFormat("netscape");
+      assert.equal(field().value, "");
+      assert.equal(button("Import cookies").disabled, true, "A draft in the other format cannot enable submission");
+      await fill("PRIVATE_NETSCAPE_DRAFT");
+      await selectFormat("json");
+      assert.equal(field().value, "PRIVATE_INVALID_JSON");
+      await click("Import cookies");
+      assert.deepEqual(calls.map(call => call.input.text), ["PRIVATE_INVALID_JSON"]);
+      await act(async () => { first.resolve(Response.json({ ok: false, error: "PRIVATE_RAW_ERROR" }, { status: 400 })); });
+      await dom.flush();
+      assert.match(surface.querySelector('[role="alert"]')?.textContent ?? "", /before any environment was changed/);
+      await click("View cookie import details");
+      const text = surface.textContent ?? "";
+      assert.equal(text.split("The cookie input was rejected").length - 1, 1, "A rejection for the entire batch appears only once");
+      assert.equal(text.includes("PRIVATE"), false);
+      await click("New import");
+      assert.equal(field().value, "", "The next draft starts blank");
+      await selectFormat("netscape");
+      assert.equal(field().value, "", "Unused formats are also scrubbed upon submission");
+      assert.equal(button("Import cookies").disabled, true);
+      assert.equal(calls.length, 1, "Opening a new draft never replays the rejected request");
     } else {
       const targets = Array.from({ length: 120 }, (_, index) => ({ id: `profile_${index}`, name: `Environment ${index}` }));
       let work!: ReturnType<typeof task.submit>;

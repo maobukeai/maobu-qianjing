@@ -23,7 +23,18 @@ async function run(scenario: string) {
   try {
     await dom.render(<I18nProvider><Harness /></I18nProvider>);
     if (scenario === "focus-and-selection") {
-      button("Open file update").focus(); await click("Open file update"); await choose(); assert.equal(button("Update profiles").disabled, false); assert.equal(body.textContent?.includes("PRIVATE"), false);
+      button("Open file update").focus(); await click("Open file update");
+      const update = body.querySelector<HTMLElement>(".profile-file-update-dialog")!;
+      const safetyNote = dom.window.document.getElementById(update.getAttribute("aria-describedby")!);
+      assert.ok(safetyNote?.textContent?.includes("Empty cells may clear saved values."), "The update warning is visible and described before selecting a file");
+      assert.equal(update.querySelector("details")?.hasAttribute("open"), false);
+      await choose(); assert.equal(button("Update profiles").disabled, false); assert.equal(body.textContent?.includes("PRIVATE"), false);
+      const selection = update.querySelector<HTMLElement>(".profile-file-update-input[data-selected]")!;
+      assert.ok(selection.contains(button("Change file")), "File metadata and replacement action share the compact control");
+      await click("Remove selected file", selection);
+      assert.equal(button("Update profiles").disabled, true);
+      assert.equal(dom.window.document.activeElement, update.querySelector(".profile-file-update-drop"));
+      await choose();
       await click("CSV"); await click("Download example sheet"); assert.deepEqual(exports, ["csv"]); assert.equal(templates, 1);
       const revision = task.getSnapshot().input?.revision;
       await click("Close"); assert.ok(body.querySelector('.desktop-motion-presence[aria-hidden="true"]')?.hasAttribute("inert"));

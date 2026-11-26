@@ -315,13 +315,10 @@ const REQUIRED_AGENT_FILES = [
   "mcp-scope.mjs",
   "playwright-proxy.mjs",
   "playwright-runner.mjs",
+  "script-recorder.mjs",
   "script-runner.mjs",
   "script-runner.py",
   "runtime-client.mjs",
-] as const;
-
-const OPTIONAL_AGENT_FILES = [
-  "script-recorder.mjs",
 ] as const;
 
 /** Copies the worker scripts, agent files and their Node packages; every desktop bundle needs them. */
@@ -333,18 +330,10 @@ export function stageAgentRuntime(cwd: string, playwrightRoot: string): void {
 
   const agentRoot = join(playwrightRoot, "agent");
   mkdirSync(agentRoot, { recursive: true });
-  const stagedAgentFiles: string[] = [];
   for (const file of REQUIRED_AGENT_FILES) {
-    cpSync(join(cwd, "agent", file), join(agentRoot, file));
-    stagedAgentFiles.push(`agent/${file}`);
-  }
-  for (const file of OPTIONAL_AGENT_FILES) {
     const source = join(cwd, "agent", file);
-    const info = lstatSync(source, { throwIfNoEntry: false });
-    if (info && !info.isSymbolicLink() && info.isFile()) {
-      cpSync(source, join(agentRoot, file));
-      stagedAgentFiles.push(`agent/${file}`);
-    }
+    if (!lstatSync(source, { throwIfNoEntry: false })?.isFile()) throw new Error(`desktop agent resource is missing or not a regular file: ${file}`);
+    cpSync(source, join(agentRoot, file));
   }
   writeFileSync(
     join(playwrightRoot, "package.json"),
@@ -354,7 +343,7 @@ export function stageAgentRuntime(cwd: string, playwrightRoot: string): void {
         version: ALIASMODE_VERSION,
         type: "module",
         private: true,
-        agentFiles: stagedAgentFiles,
+        agentFiles: REQUIRED_AGENT_FILES.map((file) => `agent/${file}`),
       },
       null,
       2,

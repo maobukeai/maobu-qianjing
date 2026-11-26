@@ -1,3 +1,5 @@
+import { notifyAppLockedFromResponse, notifyUnauthorizedResponse, withStandaloneAuthHeaders } from "./api.ts";
+
 export const WORKSPACE_COLORS = ["#8169c8", "#628ac7", "#638f77", "#c4905b", "#b87594", "#7c7d8e"] as const;
 export const WORKSPACE_ICONS = ["laptop", "folder", "briefcase", "globe", "star", "layers"] as const;
 export type WorkspaceIcon = typeof WORKSPACE_ICONS[number];
@@ -33,9 +35,14 @@ async function workspaceCapability(): Promise<string> {
   if (capability) return capability;
   if (!capabilityRequest) capabilityRequest = (async () => {
     let response: Response;
-    try { response = await fetch("/ui/api/workspace/capability", { credentials: "same-origin", cache: "no-store", headers: { Accept: "application/json" } }); }
+    try { response = await fetch("/ui/api/workspace/capability", { credentials: "same-origin", cache: "no-store", headers: withStandaloneAuthHeaders({ Accept: "application/json" }) }); }
     catch { throw new Error("The local service could not be reached."); }
     const body = await response.json().catch(() => null);
+    if (response.status === 401) {
+      notifyUnauthorizedResponse(401, "/ui/api/workspace/capability", typeof body?.error === "string" ? body.error : "");
+    } else if (response.status === 423) {
+      notifyAppLockedFromResponse(423, body);
+    }
     if (!response.ok || !body?.ok || typeof body.token !== "string" || !body.token) throw new Error("Workspace request failed.");
     capability = body.token;
     return body.token as string;
@@ -58,12 +65,13 @@ async function request(path: string, init: RequestInit = {}, retry = true): Prom
   const token = await workspaceCapability();
   if (init.signal?.aborted) throw new DOMException("Aborted", "AbortError");
   let response: Response;
-  try { response = await fetch(`/ui/api${path}`, { credentials: "same-origin", cache: "no-store", ...init, headers: { Accept: "application/json", ...init.headers, "X-Maobu-Workspace-Capability": token } }); }
+  try { response = await fetch(`/ui/api${path}`, { credentials: "same-origin", cache: "no-store", ...init, headers: withStandaloneAuthHeaders({ Accept: "application/json", ...init.headers, "X-Maobu-Workspace-Capability": token }) }); }
   catch (error) { if (error instanceof Error && error.name === "AbortError") throw error; throw new Error("The local service could not be reached."); }
   if (response.status === 401 && retry) { clearWorkspaceCapability(); return request(path, init, false); }
   let body: unknown;
   try { body = await response.json(); } catch (error) { if (error instanceof Error && error.name === "AbortError") throw error; throw new Error("Workspace response was not valid JSON."); }
   if (!object(body)) return incomplete();
+  if (response.status === 423) notifyAppLockedFromResponse(423, body);
   if (!response.ok || body.ok !== true) throw new Error(typeof body.error === "string" ? body.error : "Workspace request failed.");
   return body;
 }
@@ -124,7 +132,12 @@ export async function restoreWorkspace(source: File | { backupId: string }, pass
   }
   return job((await request("/workspace/restore", json("POST", { ...source, password }))).job);
 }
-export async function fetchWorkspaceJob(id: string, signal?: AbortSignal): Promise<WorkspaceJob> { return job((await request(`/workspace/jobs/${encodeURIComponent(id)}`, { signal })).job); }
+export async function fetchWorkspaceJob(id: string, signal?: AbortSignal): Promise<WorkspaceJob> {
+  const deadline = AbortSignal.timeout(10_000);
+  const next = job((await request(`/workspace/jobs/${encodeURIComponent(id)}`, { signal: signal ? AbortSignal.any([signal, deadline]) : deadline })).job);
+  if (next.id !== id) return incomplete();
+  return next;
+}
 export function workspaceBackupDownloadUrl(id: string, token: string): string { return `/ui/api/workspace/backups/${encodeURIComponent(id)}/download?capability=${encodeURIComponent(token)}`; }
 function desktopInvoke(): DesktopInvoke | undefined { return typeof window === "undefined" ? undefined : (window as any).__TAURI_INTERNALS__?.invoke; }
 export function workspaceDesktopAvailable(): boolean { return typeof desktopInvoke() === "function"; }

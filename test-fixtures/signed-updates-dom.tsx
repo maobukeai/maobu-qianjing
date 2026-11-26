@@ -102,9 +102,9 @@ async function run(scenario: string) {
       const discard = dialogButton("Discard drafts and install");
       await act(async () => { editor!.update({ dirty: false, busy: false }); discard.click(); });
       assert.equal(installCalls, 0);
-      assert.ok(dialogButton("Install verified update"));
+      assert.ok(dialogButton("Install"));
       assert.ok(!activeDialog()?.querySelector("ul"));
-      await act(async () => { dialogButton("Keep editing").click(); });
+      await act(async () => { dialogButton("Cancel").click(); });
       return;
     }
     if (scenario === "draft-recheck") {
@@ -127,7 +127,7 @@ async function run(scenario: string) {
       });
       assert.equal(installCalls, 0);
       assert.ok(activeDialog()?.textContent?.includes("AI message draft"));
-      assert.ok(activeDialog()?.textContent?.includes("Drafts changed since this prompt opened"));
+      assert.ok(activeDialog()?.textContent?.includes("Drafts changed. Review them before installing."));
       await act(async () => { discard.click(); discard.click(); });
       assert.equal(installCalls, 1);
       assert.equal(coordinator.getSnapshot().operation?.kind, "app-restart");

@@ -1,5 +1,6 @@
 import type { ReactNode, Ref } from "react";
 import { useTranslation } from "../i18n.tsx";
+import { useSlidingIndicator } from "../navigation-motion.ts";
 import { AppIcon, type IconName } from "../ui-primitives.tsx";
 
 export type WorkbenchView = "profiles" | "inspection" | "proxies" | "scripts" | "assistant" | "extensions" | "trash" | "settings" | "workspaces";
@@ -14,6 +15,19 @@ export function WorkbenchSidebar({ compact, collapsed, forced, view, profileCoun
   navigationRef?: Ref<HTMLElement>; switcher: ReactNode; children?: ReactNode; device: ReactNode; error?: string | null;
 }) {
   const { t } = useTranslation();
+  const mainActiveKey = view === "profiles" || view === "inspection" || view === "proxies" || view === "scripts" || view === "assistant" || view === "extensions" ? view : null;
+  const mainPill = useSlidingIndicator<HTMLDivElement>({
+    activeKey: mainActiveKey ? `${mainActiveKey}:${compact}` : null,
+    activeSelector: '.navitem[aria-current="page"]',
+    axis: "vertical",
+    fixedSize: 34,
+  });
+  const utilityPill = useSlidingIndicator<HTMLDivElement>({
+    activeKey: view === "trash" || view === "settings" ? `${view}:${compact}` : null,
+    activeSelector: '.navitem[aria-current="page"]',
+    axis: "vertical",
+    fixedSize: 34,
+  });
   const renderItem = (item: NavigationItem) => {
     const active = view === item.view || item.view === "profiles" && view === "inspection";
     return <button key={item.view} type="button" className={`navitem${active ? " active" : ""}`} aria-current={active ? "page" : undefined}
@@ -32,19 +46,23 @@ export function WorkbenchSidebar({ compact, collapsed, forced, view, profileCoun
     {switcher}
     <nav id="workspace-navigation" className="sidenav" ref={navigationRef} aria-label={t("Workspace navigation")}>
       <span className="rail-active-marker" aria-hidden="true" />
-      <div className="rail-nav-group" role="group" aria-label={t("Workspace")}>
-        {renderItem({ view: "profiles", label: "All profiles", icon: "profiles", count: loaded ? profileCount : 0 })}
-        {renderItem({ view: "proxies", label: "Proxies", icon: "activity" })}
-      </div>
-      <div className="rail-nav-group rail-nav-tools" role="group" aria-label={t("Tools")}>
-        <span className="rail-section-label" aria-hidden="true">{t("Tools")}</span>
-        {renderItem({ view: "scripts", label: "Scripts", icon: "file" })}
-        {renderItem({ view: "assistant", label: "AI workspace", icon: "bot" })}
-        {renderItem({ view: "extensions", label: "Manage extensions", icon: "puzzle", count: extensionCount })}
+      <div className="rail-nav-groups" ref={mainPill.containerRef} data-sliding-managed="self">
+        <span className="sliding-indicator rail-pill-indicator" ref={mainPill.indicatorRef} aria-hidden="true" />
+        <div className="rail-nav-group" role="group" aria-label={t("Workspace")}>
+          {renderItem({ view: "profiles", label: "All profiles", icon: "profiles", count: loaded ? profileCount : 0 })}
+          {renderItem({ view: "proxies", label: "Proxies", icon: "activity" })}
+        </div>
+        <div className="rail-nav-group rail-nav-tools" role="group" aria-label={t("Tools")}>
+          <span className="rail-section-label" aria-hidden="true">{t("Tools")}</span>
+          {renderItem({ view: "scripts", label: "Scripts", icon: "file" })}
+          {renderItem({ view: "assistant", label: "AI workspace", icon: "bot" })}
+          {renderItem({ view: "extensions", label: "Manage extensions", icon: "puzzle", count: extensionCount })}
+        </div>
       </div>
     </nav>
     {children}
-    <div className="sidefoot"><div className="rail-utilities" role="group" aria-label={t("Management")}>
+    <div className="sidefoot"><div className="rail-utilities" ref={utilityPill.containerRef} data-sliding-managed="self" role="group" aria-label={t("Management")}>
+      <span className="sliding-indicator rail-pill-indicator rail-utility-pill" ref={utilityPill.indicatorRef} aria-hidden="true" />
       {renderItem({ view: "trash", label: "Trash", icon: "trash" })}
       {renderItem({ view: "settings", label: "Settings", icon: "settings" })}
     </div>{device}</div>

@@ -7,30 +7,49 @@
   inset: 0;
   z-index: 950;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter: blur(18px);
+  flex-direction: column;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: clamp(10px, 4vw, 28px);
+  scroll-padding-block: 12px;
+  background: radial-gradient(ellipse at 50% 25%, var(--accent-soft), transparent 56%), var(--bg);
 }
 
 .app-lock-card {
   width: 100%;
-  max-width: 440px;
-  padding: 28px;
-  border-radius: 16px;
-  background: var(--surface);
-  border: 1px solid var(--line-strong);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.18);
-  display: flex;
-  flex-direction: column;
+  max-width: 416px;
+  margin: auto;
+  flex: none;
+  padding: clamp(16px, 4vw, 26px);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  box-shadow: 0 16px 42px rgba(23, 24, 28, 0.14), 0 3px 10px rgba(23, 24, 28, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.78);
+  display: grid;
   gap: 14px;
+  overflow-wrap: anywhere;
+}
+:root[data-theme="dark"] .app-lock-card {
+  background: rgba(22, 25, 38, 0.84);
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: 0 20px 54px rgba(0, 0, 0, 0.62), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.app-lock-heading {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
 }
 
 .app-lock-badge {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
   background: var(--accent-soft);
   border: 1px solid var(--accent-line);
   color: var(--accent-ink);
@@ -41,42 +60,49 @@
 
 .app-lock-title {
   margin: 0;
-  font-size: 20px;
+  font-size: clamp(17px, 4.4vw, 20px);
   font-weight: 650;
+  letter-spacing: -0.02em;
   color: var(--ink);
+  line-height: 1.25;
 }
 
 .app-lock-subtitle {
-  margin: 0;
-  font-size: 13px;
+  margin: 4px 0 0;
+  font-size: 12.5px;
   color: var(--muted);
   line-height: 1.5;
 }
 
 .app-lock-form {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  display: grid;
+  min-width: 0;
+  gap: 11px;
 }
 
 .app-lock-field {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 12.5px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--ink-soft);
 }
 
 .app-lock-input-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
 }
 
 .app-lock-input-row .input {
-  flex: 1;
+  width: 100%;
+  min-width: 0;
+  border-radius: 11px;
 }
+
+.app-lock-visibility,
+.app-lock-submit { min-height: 36px; border-radius: 10px; }
 
 .app-lock-submit {
   width: 100%;
@@ -91,6 +117,13 @@
   border-radius: 10px;
   font-size: 12.5px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.app-lock-alert > .icon,
+.app-lock-boundary > .icon {
+  flex: none;
+  margin-top: 1px;
 }
 
 .app-lock-alert.danger {
@@ -112,42 +145,76 @@
 }
 
 .app-lock-boundary {
-  padding-top: 8px;
-  border-top: 1px solid var(--line);
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: rgba(244, 243, 250, 0.62);
   font-size: 12px;
   color: var(--muted);
   line-height: 1.5;
+}
+:root[data-theme="dark"] .app-lock-boundary {
+  background: rgba(14, 17, 26, 0.56);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .app-lock-card,
+  :root[data-theme="dark"] .app-lock-card {
+    background: var(--surface);
+    border-color: var(--line);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .app-lock-boundary { background: var(--surface-sunken); }
 }
 
 .app-lock-boundary p {
   margin: 0;
 }
 
-.app-lock-recovery {
-  border-top: 1px solid var(--line-soft);
-  padding-top: 8px;
+.app-lock-recovery-toggle,
+.app-lock-info-box summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 36px;
+  padding: 7px 9px;
+  border-radius: var(--r-md);
+  color: var(--accent-ink);
+  font-size: 12.5px;
+  font-weight: 550;
+  text-align: start;
+  cursor: pointer;
 }
 
 .app-lock-recovery-toggle {
   width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   background: transparent;
-  border: none;
-  padding: 4px 0;
-  color: var(--ink-soft);
-  font-size: 12.5px;
-  font-weight: 500;
-  cursor: pointer;
+  border: 0;
+}
+
+.app-lock-recovery-toggle:hover,
+.app-lock-info-box summary:hover {
+  background: var(--surface-hover);
+}
+
+.app-lock-recovery-toggle:focus-visible,
+.app-lock-info-box summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.app-lock-recovery-toggle .icon,
+.app-lock-info-box summary .icon {
+  flex: none;
 }
 
 .app-lock-recovery-body {
-  margin-top: 8px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--surface-sunken);
-  border: 1px solid var(--line);
+  padding: 2px 9px 6px;
   font-size: 12px;
   color: var(--muted);
   line-height: 1.5;
@@ -161,8 +228,19 @@
 }
 
 /* Settings Card */
+.app-lock-settings > header {
+  flex-wrap: wrap;
+}
+
+.app-lock-settings > header h2 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .app-lock-settings header .chip {
-  margin-left: auto;
+  margin-inline-start: auto;
+  border-radius: 999px;
+  font-weight: 600;
 }
 
 .app-lock-chip-on {
@@ -171,50 +249,61 @@
   color: var(--success-ink);
 }
 
-.app-lock-desc {
-  margin: 0 0 10px;
-  font-size: 13px;
-  color: var(--muted);
+.app-lock-settings .card-body {
+  display: grid;
+  gap: 12px;
 }
 
 .app-lock-info-box {
-  padding: 10px 12px;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface-sunken);
-  border: 1px solid var(--line);
-  margin-bottom: 14px;
   font-size: 12px;
   color: var(--muted);
   line-height: 1.5;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  overflow-wrap: anywhere;
 }
 
-.app-lock-info-box strong {
-  color: var(--ink-soft);
-  font-size: 12.5px;
+.app-lock-info-box summary {
+  list-style: none;
 }
 
-.app-lock-info-box p {
-  margin: 0;
+.app-lock-info-box summary::-webkit-details-marker {
+  display: none;
 }
 
-.app-lock-reset-note {
-  color: var(--ink-soft);
+.app-lock-info-box[open] summary .icon {
+  transform: rotate(180deg);
+}
+
+.app-lock-info-box[open] p {
+  margin: 2px 9px 8px;
 }
 
 .app-lock-settings-form {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  min-width: 0;
   gap: 12px;
 }
 
 .app-lock-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
   gap: 12px;
   align-items: end;
+}
+
+.app-lock-settings-form .fld :is(.input, .select) {
+  width: 100%;
+  min-width: 0;
+}
+
+.app-lock-options {
+  padding: 11px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 11px;
+  background: var(--surface-sunken);
 }
 
 .app-lock-checkbox {
@@ -223,24 +312,79 @@
   gap: 8px;
   font-size: 13px;
   color: var(--ink-soft);
-  padding: 8px 0;
+  min-height: 36px;
   cursor: pointer;
+}
+
+.app-lock-checkbox input {
+  flex: none;
+  accent-color: var(--accent);
 }
 
 .app-lock-quickbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+
+.app-lock-quickbar kbd {
+  padding: 2px 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .app-lock-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 6px 10px;
   align-items: center;
   padding-top: 4px;
 }
 
-.danger-text {
+.app-lock-setup-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 16px;
+}
+
+.app-lock-setup-bar .app-lock-idle-fld {
+  flex: 1 1 180px;
+  min-width: 0;
+  max-width: 260px;
+  margin: 0;
+}
+
+.app-lock-setup-actions {
+  margin-inline-start: auto;
+  padding-top: 0;
+}
+
+.app-lock-configured-actions {
+  justify-content: flex-end;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.app-lock-configured-actions .app-lock-disable {
+  margin-inline-end: auto;
+}
+
+.app-lock-settings :is(.app-lock-actions, .app-lock-quickbar) .btn {
+  max-width: 100%;
+  min-height: 36px;
+  white-space: normal;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+
+.app-lock-settings .app-lock-setup-actions .btn {
+  min-height: 34px;
+}
+
+.app-lock-settings .btn.app-lock-disable {
   color: var(--danger-ink);
 }

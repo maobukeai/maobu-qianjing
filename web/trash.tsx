@@ -1,18 +1,20 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import { useTranslation } from "./i18n.tsx";
-import { folderScope, type FolderInfo } from "../folders.ts";
+import { folderScope, folderTree as buildFolderTree, type FolderInfo } from "../folders.ts";
 import type { TrashProfileView } from "../proxy-tools-types.ts";
 import { proxyResultPage } from "./proxies.tsx";
 import { createTrashReader, createTrashSelection, createTrashTask, TRASH_FAILURE_REASONS, type TrashAction, type TrashTaskSnapshot } from "./trash-task.ts";
 import { useOptionalWorkspaceOperations, workspaceOperationMessage, type WorkspaceOperationCoordinator, type WorkspaceOperationLease } from "./workspace-operations.tsx";
 import { MotionPresence } from "./desktop-motion.tsx";
+import { AppIcon, useConfirmDialog } from "./ui-primitives.tsx";
 import "./trash.css";
 
 export function filterTrash(profiles: readonly TrashProfileView[], groups: string[] | null, search: string): TrashProfileView[] {
   const query = search.trim().toLowerCase();
+  const scope = groups === null ? null : new Set(groups);
   return profiles.filter(
     profile =>
-      (groups === null || groups.includes(profile.group))
+      (!scope || scope.has(profile.group))
       && (!query || [profile.id, profile.name, profile.group].some(value => value.toLowerCase().includes(query))),
   );
 }
@@ -32,6 +34,7 @@ function TrashTaskPanel({
   busy,
   active,
   retryBlocked,
+  headingRef,
   onRetry,
   onDismiss,
   onRefresh,
@@ -40,6 +43,7 @@ function TrashTaskPanel({
   busy: boolean;
   active: boolean;
   retryBlocked: boolean;
+  headingRef: RefObject<HTMLHeadingElement | null>;
   onRetry: () => void;
   onDismiss: () => void;
   onRefresh: () => void;
@@ -47,26 +51,35 @@ function TrashTaskPanel({
   const { t, language } = useTranslation();
   const id = useId();
   const [expanded, setExpanded] = useState(false);
-  const [attentionOnly, setAttentionOnly] = useState(true);
+  const [includeAll, setIncludeAll] = useState(false);
   const [requestedPage, setPage] = useState(0);
   const expand = useRef<HTMLButtonElement>(null);
-  const retryOrigin = useRef<HTMLButtonElement | null>(null);
+  const retryOrigin = useRef<{ button: HTMLButtonElement; attemptId: number | undefined } | null>(null);
   const receipt = snapshot.receipt;
+  const hasReviewItems = !!(receipt?.failedIds.length || receipt?.unconfirmedIds.length);
+  const attentionOnly = hasReviewItems && !includeAll;
   const action = snapshot.attempt?.action ?? receipt?.action;
+  const confirming = snapshot.phase === "confirming";
 
   useEffect(() => {
     setPage(0);
   }, [receipt?.operationId, attentionOnly]);
 
   useEffect(() => {
+    setExpanded(false);
+    setIncludeAll(false);
+  }, [receipt?.operationId]);
+
+  useEffect(() => {
     if (busy || !retryOrigin.current || !active) return;
-    const origin = retryOrigin.current;
+    const { button: origin, attemptId } = retryOrigin.current;
     retryOrigin.current = null;
+    if (attemptId === snapshot.attempt?.id) return;
     const doc = origin.ownerDocument;
     if (doc.activeElement === doc.body || doc.activeElement === origin) {
       expand.current?.focus({ preventScroll: true });
     }
-  }, [busy, receipt, active]);
+  }, [busy, snapshot.attempt?.id, active]);
 
   const filtered = receipt?.rows.filter(row => !attentionOnly || row.status === "failed" || row.status === "unconfirmed") ?? [];
   const pages = Math.max(1, Math.ceil(filtered.length / 50));
@@ -84,47 +97,27 @@ function TrashTaskPanel({
           ? "Trash result needs confirmation"
           : receipt?.status === "partial" || receipt?.status === "failed"
             ? "Trash operation needs review"
-            : action === "purge"
-              ? "Permanent deletion confirmed"
-              : "Restore confirmed";
+            : !receipt && snapshot.blockedReason
+              ? "Trash operation blocked"
+              : action === "purge"
+                ? "Permanent deletion confirmed"
+                : "Restore confirmed";
 
   return (
     <MotionPresence present={!!receipt || busy || !!snapshot.blockedReason} kind="panel">
       {() => (
         <section className="trash-task-panel" aria-labelledby={`${id}-title`} aria-busy={busy}>
           <header>
-            <div>
-              <h3 id={`${id}-title`} data-trash-task-title tabIndex={-1}>{t(headline)}</h3>
-              {snapshot.attempt && snapshot.phase !== "confirming" && (
-                <p>
-                  {t("Latest attempt: {count} IDs · {action}", {
-                    count: snapshot.attempt.ids.length,
-                    action: t(snapshot.attempt.action === "purge" ? "Permanent deletion" : "Restore"),
-                  })}
-                </p>
-              )}
-            </div>
-            <div>
-              <button
-                ref={expand}
-                className="btn xs ghost"
-                type="button"
-                aria-expanded={expanded}
-                aria-controls={`${id}-details`}
-                onClick={() => setExpanded(value => !value)}
-              >
-                {t(expanded ? "Hide Trash operation details" : "View Trash operation details")}
-              </button>
-              <button
-                type="button"
-                className="iconbtn"
-                disabled={busy}
-                aria-label={t("Dismiss Trash operation result")}
-                onClick={onDismiss}
-              >
-                ×
-              </button>
-            </div>
+            <h3 ref={headingRef} id={`${id}-title`} data-trash-task-title tabIndex={-1}>{t(headline)}</h3>
+            <button
+              type="button"
+              className="iconbtn"
+              disabled={busy}
+              aria-label={t("Dismiss Trash operation result")}
+              onClick={onDismiss}
+            >
+              <AppIcon name="close" className="sm" />
+            </button>
           </header>
 
           {busy && (
@@ -147,39 +140,71 @@ function TrashTaskPanel({
           {receipt && (
             <>
               <div className="trash-task-counts" role="status">
-                <span>
+                {receipt.succeededIds.length > 0 && <span>
                   <strong>{receipt.succeededIds.length.toLocaleString(language)}</strong>
                   {t(receipt.action === "purge" ? "Permanently deleted" : "Restored")}
-                </span>
-                <span>
+                </span>}
+                {receipt.failedIds.length > 0 && <span className="needs-review">
                   <strong>{receipt.failedIds.length.toLocaleString(language)}</strong>
                   {t("Not completed")}
-                </span>
-                <span>
+                </span>}
+                {receipt.unconfirmedIds.length > 0 && <span className="needs-review">
                   <strong>{receipt.unconfirmedIds.length.toLocaleString(language)}</strong>
                   {t("Needs confirmation")}
-                </span>
+                </span>}
               </div>
 
               {receipt.status === "unconfirmed" && (
                 <p className="trash-task-warning" role="alert">
-                  {t("Some environments may already have changed. Refresh Trash before starting another operation. Unknown items will not be sent again automatically.")}
+                  {t("Refresh Trash to check what changed. Unconfirmed items aren’t retried automatically.")}
                 </p>
               )}
 
-              {receipt.refreshFailed && (
+              {receipt.refreshFailed && receipt.status !== "unconfirmed" && (
                 <p className="trash-task-warning" role="alert">
-                  {t("The operation response is preserved, but one or more lists could not refresh. A failed refresh does not undo confirmed restores or deletions.")}
+                  {t("Some lists could not refresh. Confirmed results still apply.")}
                 </p>
               )}
+
+              <div className="trash-task-actions">
+                {receipt.retryIds.length > 0 && (
+                  <button
+                    className={`btn xs${receipt.action === "purge" ? " trash-purge" : ""}`}
+                    type="button"
+                    disabled={(busy && !confirming) || retryBlocked}
+                    aria-disabled={confirming || undefined}
+                    onClick={event => {
+                      retryOrigin.current = { button: event.currentTarget, attemptId: snapshot.attempt?.id };
+                      onRetry();
+                    }}
+                  >
+                    {t(
+                      receipt.action === "purge"
+                        ? "Review and retry deleting {count} failed items"
+                        : "Retry restoring {count} failed items",
+                      { count: receipt.retryIds.length.toLocaleString(language) },
+                    )}
+                  </button>
+                )}
+                {(receipt.refreshFailed || receipt.status === "unconfirmed") && (
+                  <button type="button" className="btn xs" disabled={busy}
+                    aria-label={t("Refresh Trash without repeating the operation")} onClick={onRefresh}>
+                    <AppIcon name="refresh" className="sm" />{t("Refresh")}
+                  </button>
+                )}
+                <button ref={expand} className="btn xs ghost" type="button" aria-expanded={expanded}
+                  aria-controls={`${id}-details`} onClick={() => setExpanded(value => !value)}>
+                  {t(expanded ? "Hide Trash operation details" : "View Trash operation details")}
+                </button>
+              </div>
 
               <div id={`${id}-details`} hidden={!expanded}>
-                <div className="trash-task-filters">
+                {hasReviewItems && <div className="trash-task-filters" role="group" aria-label={t("Trash operation items")}>
                   <button
                     type="button"
                     className="btn xs ghost"
                     aria-pressed={attentionOnly}
-                    onClick={() => setAttentionOnly(true)}
+                    onClick={() => setIncludeAll(false)}
                   >
                     {t("Items needing review")}
                   </button>
@@ -187,13 +212,13 @@ function TrashTaskPanel({
                     type="button"
                     className="btn xs ghost"
                     aria-pressed={!attentionOnly}
-                    onClick={() => setAttentionOnly(false)}
+                    onClick={() => setIncludeAll(true)}
                   >
                     {t("All operation items")}
                   </button>
-                </div>
+                </div>}
 
-                <div className="trash-task-list" tabIndex={0} aria-label={t("Trash operation items")}>
+                <div className="trash-task-list" tabIndex={0} role="region" aria-label={t("Trash operation items")}>
                   <ul>
                     {filtered.slice(page * 50, (page + 1) * 50).map(row => (
                       <li key={row.id} data-trash-result-id={row.id}>
@@ -202,7 +227,7 @@ function TrashTaskPanel({
                           <span>{t(ROW_LABELS[row.status])}</span>
                         </div>
                         {row.reason && <p>{t(TRASH_FAILURE_REASONS[row.reason])}</p>}
-                        <small>{t("Attempt {count}", { count: row.attempts })}</small>
+                        {row.attempts > 1 && <small>{t("Attempt {count}", { count: row.attempts.toLocaleString(language) })}</small>}
                       </li>
                     ))}
                   </ul>
@@ -221,40 +246,7 @@ function TrashTaskPanel({
                   </div>
                 )}
 
-                <p className="trash-task-privacy">
-                  {t("Results contain only environment IDs, fixed reasons and counts. Original account data, paths and raw service errors are excluded.")}
-                </p>
               </div>
-
-              {receipt.retryIds.length > 0 && (
-                <div className="trash-task-actions">
-                  <button
-                    className={`btn xs${receipt.action === "purge" ? " trash-purge" : ""}`}
-                    type="button"
-                    disabled={busy || retryBlocked}
-                    onClick={event => {
-                      retryOrigin.current = event.currentTarget;
-                      onRetry();
-                    }}
-                  >
-                    {t(
-                      receipt.action === "purge"
-                        ? "Review and retry deleting {count} failed items"
-                        : "Retry restoring {count} failed items",
-                      { count: receipt.retryIds.length },
-                    )}
-                  </button>
-                  <p>{t("Only original failed IDs are retried. Changed or missing Trash records must be selected again; successful IDs are excluded.")}</p>
-                </div>
-              )}
-
-              {(receipt.refreshFailed || receipt.status === "unconfirmed") && (
-                <div className="trash-task-actions">
-                  <button type="button" className="btn xs ghost" disabled={busy} onClick={onRefresh}>
-                    {t("Refresh Trash without repeating the operation")}
-                  </button>
-                </div>
-              )}
             </>
           )}
 
@@ -292,8 +284,9 @@ export interface TrashPageProps {
 export function TrashPage({ active = true, onChanged, folderTree = [], onTaskSnapshotChange }: TrashPageProps) {
   const { t, language } = useTranslation();
   const workspace = useOptionalWorkspaceOperations();
-  const latest = useRef({ workspace, onChanged, t, onTaskSnapshotChange });
-  latest.current = { workspace, onChanged, t, onTaskSnapshotChange };
+  const { requestConfirm, cancelConfirm, confirmDialogNode } = useConfirmDialog({ portal: true });
+  const latest = useRef({ active, workspace, onChanged, t, language, onTaskSnapshotChange });
+  latest.current = { active, workspace, onChanged, t, language, onTaskSnapshotChange };
 
   const [selection] = useState(() => createTrashSelection());
   const [reader] = useState(() => createTrashReader());
@@ -319,11 +312,18 @@ export function TrashPage({ active = true, onChanged, folderTree = [], onTaskSna
         },
       };
     },
-    confirmPurge: approval => window.confirm(
-      latest.current.t("Permanently delete {count} profiles and their saved data? This cannot be undone.", {
-        count: approval.count,
-      }),
-    ),
+    confirmPurge: approval => {
+      const { active, t, language } = latest.current;
+      if (!active) return false;
+      return requestConfirm({
+        title: t("Permanent deletion"),
+        message: t("Permanently delete {count} profiles and their saved data? This cannot be undone.", {
+          count: approval.count.toLocaleString(language),
+        }),
+        confirmLabel: t("Delete permanently"),
+        tone: "danger",
+      });
+    },
     validateRetry: attempt => {
       const current = reader.getSnapshot();
       if (!current.loaded || current.stale || current.phase !== "ready") return false;
@@ -348,11 +348,22 @@ export function TrashPage({ active = true, onChanged, folderTree = [], onTaskSna
   useEffect(() => {
     latest.current.onTaskSnapshotChange?.(operation);
   }, [operation]);
+  useEffect(() => {
+    if (!active) cancelConfirm();
+  }, [active, cancelConfirm]);
 
   const [folders, setFolders] = useState<string[]>([]);
+  const [foldersExpanded, setFoldersExpanded] = useState(false);
+  const folderFiltersId = useId();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   const [confirmedGone, setConfirmedGone] = useState<ReadonlyMap<string, string>>(new Map());
+  const refreshButton = useRef<HTMLButtonElement>(null);
+  const resultsRegion = useRef<HTMLElement>(null);
+  const taskHeading = useRef<HTMLHeadingElement>(null);
+  const restoreOrigin = useRef<{ button: HTMLButtonElement; previousAttempt: number | undefined } | null>(null);
+  const dateFormat = useMemo(() => new Intl.DateTimeFormat(language, { month: "short", day: "numeric", year: "numeric" }), [language]);
+  const timeFormat = useMemo(() => new Intl.DateTimeFormat(language, { hour: "2-digit", minute: "2-digit" }), [language]);
 
   useEffect(() => {
     if (active && !task.isBusy()) void reader.load();
@@ -395,38 +406,69 @@ export function TrashPage({ active = true, onChanged, folderTree = [], onTaskSna
     selection.set(targets.map(profile => profile.id), checked);
   };
 
-  const filtered = filterTrash(profiles, folders.length ? folders : null, search);
-  const folderProfiles = filterTrash(profiles, folders, "");
+  const filtered = useMemo(() => filterTrash(profiles, folders.length ? folders : null, search), [profiles, folders, search]);
+  const folderProfiles = useMemo(() => filterTrash(profiles, folders, ""), [profiles, folders]);
+  const groupDetails = useMemo(() => buildFolderTree(folderTree), [folderTree]);
+  const groupCounts = useMemo(() => {
+    const direct = new Map<string, number>();
+    for (const profile of profiles) direct.set(profile.group, (direct.get(profile.group) ?? 0) + 1);
+    const counts = new Map(direct);
+    for (const { name, ancestors } of groupDetails) {
+      const count = direct.get(name);
+      if (!count) continue;
+      for (const ancestor of ancestors) counts.set(ancestor, (counts.get(ancestor) ?? 0) + count);
+    }
+    return counts;
+  }, [profiles, groupDetails]);
   const paged = proxyResultPage(filtered, page);
   const chosen = profiles.filter(isChosen);
-  const scopes = new Map(folderTree.map(folder => [folder.name, folderScope(folderTree, folder.name)]));
-  const groups = [
-    ...new Set([
-      ...profiles.map(profile => profile.group),
-      ...folderTree
-        .filter(folder => profiles.some(profile => scopes.get(folder.name)!.has(profile.group)))
-        .map(folder => folder.name),
-    ]),
-  ].sort();
+  const groups = useMemo(() => [...groupCounts.keys()].sort(), [groupCounts]);
 
   const visibleSelection = selection.visibleSummary(filtered.filter(isChosen).map(profile => profile.id));
+  const selectedGroups = groups.filter(group => folders.includes(group)).length;
   const pageSelected = paged.items.filter(isChosen).length;
   const allResultsSelected = filtered.length > 0 && filtered.every(isChosen);
-  const busy = operation.phase === "confirming" || operation.phase === "sending" || operation.phase === "refreshing";
+  const confirming = operation.phase === "confirming";
+  const operationActive = operation.phase === "sending" || operation.phase === "refreshing";
+  const busy = confirming || operationActive;
   const loading = read.phase === "loading";
   const externalBlock = !!workspace?.snapshot.blocked && workspace.snapshot.operation?.kind !== "profile-trash";
-  const mutationBlocked = busy || externalBlock || !read.loaded || read.stale || loading;
+  const mutationUnavailable = externalBlock || !read.loaded || read.stale || loading;
+  const mutationBlocked = busy || mutationUnavailable;
   const restoreDenied = chosen.some(profile => !profile.canRestore);
   const purgeDenied = chosen.some(profile => !profile.canPurge);
 
+  useLayoutEffect(() => {
+    if (!active) {
+      restoreOrigin.current = null;
+      return;
+    }
+    const origin = restoreOrigin.current;
+    if (!origin || operation.phase !== "settled" || operation.attempt?.id === origin.previousAttempt) return;
+    restoreOrigin.current = null;
+    const doc = origin.button.ownerDocument;
+    if (doc.activeElement === origin.button || doc.activeElement === doc.body) taskHeading.current?.focus();
+  }, [active, operation.phase, operation.attempt?.id]);
+
   const refresh = () => {
-    if (!task.isBusy()) void reader.load();
+    if (!task.isBusy() && reader.getSnapshot().phase !== "loading") void reader.load();
   };
 
-  const begin = (action: TrashAction, targets: readonly TrashProfileView[]) => {
+  const retryRead = () => {
+    refreshButton.current?.focus();
+    refresh();
+  };
+
+  const begin = (action: TrashAction, targets: readonly TrashProfileView[], button: HTMLButtonElement) => {
     if (task.isBusy() || mutationBlocked || !targets.length) return;
     for (const profile of targets) originEntries.current.set(profile.id, entryStamp(profile));
-    void task.submit(action, targets.map(profile => profile.id));
+    const origin = action === "restore" && button.ownerDocument.activeElement === button
+      ? { button, previousAttempt: operation.attempt?.id }
+      : null;
+    restoreOrigin.current = origin;
+    void task.submit(action, targets.map(profile => profile.id)).then(result => {
+      if (!result && restoreOrigin.current === origin) restoreOrigin.current = null;
+    });
   };
 
   const clearUnavailable = () => {
@@ -434,6 +476,7 @@ export function TrashPage({ active = true, onChanged, folderTree = [], onTaskSna
     const missing = chosenState.ids.filter(id => !available.has(id));
     for (const id of missing) selectedEntries.current.delete(id);
     selection.set(missing, false);
+    resultsRegion.current?.focus();
   };
 
   const changeFolders = (next: string[]) => {
@@ -445,6 +488,7 @@ export function TrashPage({ active = true, onChanged, folderTree = [], onTaskSna
     setSearch("");
     setFolders([]);
     setPage(0);
+    resultsRegion.current?.focus();
   };
 
   const emptyState = !read.loaded
@@ -459,30 +503,25 @@ export function TrashPage({ active = true, onChanged, folderTree = [], onTaskSna
 
   return (
     <div className="workspace proxy-page trash-page" hidden={!active} aria-labelledby="trash-page-title" aria-busy={busy || loading}>
+      {active && confirmDialogNode}
       <header className="tools-intro page-heading">
-        <div>
-          <h2 className="sect-title" id="trash-page-title" tabIndex={-1}>{t("Trash")}</h2>
-          <p className="page-subtitle">
-            {t("Restore profiles with their saved identity and session, right back to their original folders.")}
-          </p>
+        <div className="trash-heading-title">
+          <h1 id="trash-page-title" tabIndex={-1}>{t("Trash")}</h1>
+          {read.loaded && <span className="trash-heading-pill">{t("In Trash")} · {profiles.length.toLocaleString(language)}</span>}
         </div>
-        <span className="tools-count">
-          <strong>{profiles.length.toLocaleString(language)}</strong> {t("profiles in Trash")}
-          {read.loadedAt && (
-            <small>
-              {t("Last read {time}", {
-                time: new Date(read.loadedAt).toLocaleTimeString(language, { hour: "2-digit", minute: "2-digit" }),
-              })}
-            </small>
-          )}
-        </span>
+        <button ref={refreshButton} type="button" className="btn trash-refresh" aria-disabled={busy || loading || undefined} onClick={refresh}
+          title={read.loadedAt ? t("Last read {time}", {
+            time: new Date(read.loadedAt).toLocaleTimeString(language, { hour: "2-digit", minute: "2-digit" }),
+          }) : undefined}>
+          <AppIcon name="refresh" className="sm" />
+          {loading ? t("Loading…") : t("Refresh")}
+        </button>
       </header>
 
-      {read.error && (
-        <div className="tools-alert" role="alert">
-          {t(read.error)}
-          {read.loaded && <span> {t("The previous list is shown until a new read succeeds.")}</span>}
-          <button className="btn xs ghost" type="button" disabled={busy || loading} onClick={refresh}>
+      {read.error && profiles.length > 0 && (
+        <div className="tools-alert trash-read-alert" role="alert">
+          <span>{t(read.error)} {t("The previous list is shown until a new read succeeds.")}</span>
+          <button className="btn xs ghost" type="button" disabled={busy || loading} onClick={retryRead}>
             {t("Retry reading Trash")}
           </button>
         </div>
@@ -497,133 +536,171 @@ export function TrashPage({ active = true, onChanged, folderTree = [], onTaskSna
         busy={busy}
         active={active}
         retryBlocked={externalBlock || loading}
+        headingRef={taskHeading}
         onRetry={() => { void task.retryFailed(); }}
-        onDismiss={() => { task.dismiss(); }}
-        onRefresh={refresh}
+        onDismiss={() => { if (task.dismiss()) refreshButton.current?.focus(); }}
+        onRefresh={retryRead}
       />
 
-      <div className="trash-layout">
-        <aside className="tools-panel trash-folders" aria-label={t("Trash folders")}>
-          <div className="tools-panel-head">
-            <h3>{t("Restore by folder")}</h3>
-            <span>{groups.length}</span>
+      <div className="trash-kpi-ribbon">
+        <div className="trash-kpi-card">
+          <div className="trash-kpi-top">
+            <span>{t("Deleted profiles")}</span>
+            <span className="trash-kpi-pill is-accent">{t("Local")}</span>
           </div>
-          <p className="tools-hint">
-            {t("Folder restoration includes the entire selected branch, including items hidden by search.")}
-          </p>
-          <button
-            type="button"
-            className={`folder-all${!folders.length ? " selected" : ""}`}
-            onClick={() => changeFolders([])}
-          >
-            {t("All deleted profiles")} <span>{profiles.length.toLocaleString(language)}</span>
+          <div className="trash-kpi-val">
+            <strong>{read.loaded ? profiles.length.toLocaleString(language) : "—"}</strong>
+            <span>{read.loaded ? t("{count} environments", { count: profiles.length }) : ""}</span>
+          </div>
+        </div>
+        <div className="trash-kpi-card">
+          <div className="trash-kpi-top">
+            <span>{t("Original folder")}</span>
+            <span className="trash-kpi-pill">{t("Groups")}</span>
+          </div>
+          <div className="trash-kpi-val">
+            <strong>{read.loaded ? groups.length.toLocaleString(language) : "—"}</strong>
+            <span>{read.loaded ? t("Restore by folder") : ""}</span>
+          </div>
+        </div>
+        <div className="trash-kpi-card">
+          <div className="trash-kpi-top">
+            <span>{t("Selected environments")}</span>
+            <span className={`trash-kpi-pill${chosenState.ids.length > 0 ? " is-success" : ""}`}>{t(chosenState.ids.length > 0 ? "Ready" : "Idle")}</span>
+          </div>
+          <div className="trash-kpi-val">
+            <strong>{read.loaded ? chosenState.ids.length.toLocaleString(language) : "—"}</strong>
+            <span>{read.loaded ? t("{count} selected", { count: chosenState.ids.length }) : ""}</span>
+          </div>
+        </div>
+        <div className="trash-kpi-card">
+          <div className="trash-kpi-top">
+            <span>{t("Restore")}</span>
+            <span className="trash-kpi-pill is-warn">{t("Permanent deletion")}</span>
+          </div>
+          <div className="trash-kpi-val">
+            <strong>{read.loaded ? filtered.length.toLocaleString(language) : "—"}</strong>
+            <span>{read.loaded ? t("{count} environments", { count: filtered.length }) : ""}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className={`trash-layout${profiles.length ? "" : " trash-layout-empty"}`}>
+        {profiles.length > 0 && <aside className="tools-panel trash-folders" aria-label={t("Trash folders")} data-expanded={foldersExpanded}>
+          <div className="tools-panel-head trash-folders-heading">
+            <h3><AppIcon name="folders" className="sm" />{t("Restore by folder")}</h3>
+            <span>{groups.length.toLocaleString(language)}</span>
+          </div>
+          <button type="button" className="trash-folders-disclosure" aria-controls={folderFiltersId} aria-expanded={foldersExpanded} onClick={() => setFoldersExpanded(open => !open)}>
+            <AppIcon name="folders" />
+            <span>{t("Trash folders")}</span>
+            <small>{selectedGroups
+              ? t("{count} selected", { count: selectedGroups.toLocaleString(language) })
+              : groups.length.toLocaleString(language)}
+            </small>
+            <AppIcon name={foldersExpanded ? "chevronUp" : "chevronDown"} className="sm" />
           </button>
-          <div className="trash-folder-list">
-            {groups.map(name => (
-              <label className={`folder-choice${folders.includes(name) ? " selected" : ""}`} key={name}>
-                <input
-                  type="checkbox"
-                  aria-label={t("Folder {name}", { name: name || t("Ungrouped") })}
-                  checked={folders.includes(name)}
-                  onChange={event => {
-                    const branch = new Set([name, ...folderScope(folderTree, name)]);
-                    changeFolders(
-                      event.target.checked
-                        ? [...new Set([...folders, ...branch])]
-                        : folders.filter(group => !branch.has(group)),
-                    );
-                  }}
-                />
-                <span>{name || t("Ungrouped")}</span>
-                <small>
-                  {profiles
-                    .filter(profile => profile.group === name || scopes.get(name)?.has(profile.group))
-                    .length.toLocaleString(language)}
-                </small>
-              </label>
-            ))}
-            {!groups.length && <p className="tools-hint">{t("Deleted folders appear here.")}</p>}
-          </div>
-          <div className="trash-folder-action">
+          <div id={folderFiltersId} className="trash-folder-filters">
             <button
               type="button"
-              className="btn primary"
-              disabled={mutationBlocked || !folderProfiles.length || folderProfiles.some(profile => !profile.canRestore)}
-              onClick={() => begin("restore", folderProfiles)}
+              className={`folder-all${!folders.length ? " selected" : ""}`}
+              aria-pressed={!folders.length}
+              onClick={() => changeFolders([])}
             >
-              {folders.length
-                ? t("Restore all {count} in folder scope", { count: folderProfiles.length })
-                : t("Restore selected folders")}
+              <AppIcon name="folders" className="sm" />
+              {t("All deleted profiles")} <span>{profiles.length.toLocaleString(language)}</span>
             </button>
-            <p className="tools-hint">
-              {folders.length
-                ? t("Whole folder scope: {total} · Visible now: {visible} · Hidden by search: {hidden}", {
-                    total: folderProfiles.length,
-                    visible: filtered.length,
-                    hidden: folderProfiles.length - filtered.length,
-                  })
-                : t("Select one or more folders above.")}
-            </p>
-          </div>
-        </aside>
-
-        <section className="tools-panel trash-results" aria-label={t("Deleted profiles")}>
-          <div className="tools-panel-head">
-            <div>
-              <h3>{folders.length ? t("Selected folders") : t("All deleted profiles")}</h3>
-              <p>{t("{count} matching profiles", { count: filtered.length })}</p>
+            <div className="trash-folder-list">
+              {groups.map(name => (
+                <label className={`folder-choice${folders.includes(name) ? " selected" : ""}`} key={name}>
+                  <input
+                    type="checkbox"
+                    aria-label={t("Folder {name}", { name: name || t("Ungrouped") })}
+                    checked={folders.includes(name)}
+                    onChange={event => {
+                      const branch = new Set([name, ...folderScope(folderTree, name)]);
+                      changeFolders(
+                        event.target.checked
+                          ? [...new Set([...folders, ...branch])]
+                          : folders.filter(group => !branch.has(group)),
+                      );
+                    }}
+                  />
+                  <span>{name || t("Ungrouped")}</span>
+                  <small>{groupCounts.get(name)!.toLocaleString(language)}</small>
+                </label>
+              ))}
             </div>
-            <button type="button" className="btn ghost" disabled={busy || loading} onClick={refresh}>
-              {loading ? t("Loading…") : t("Refresh")}
-            </button>
+            {folders.length > 0 && <div className="trash-folder-action">
+              {search.trim() && <p className="tools-hint">
+                {t("Whole folder scope: {total} · Visible now: {visible} · Hidden by search: {hidden}", {
+                  total: folderProfiles.length,
+                  visible: filtered.length,
+                  hidden: folderProfiles.length - filtered.length,
+                })}
+              </p>}
+              <button
+                type="button"
+                className="btn primary"
+                disabled={mutationBlocked || !folderProfiles.length || folderProfiles.some(profile => !profile.canRestore)}
+                onClick={event => begin("restore", folderProfiles, event.currentTarget)}
+              >
+                {t("Restore all {count} in folder scope", { count: folderProfiles.length })}
+              </button>
+            </div>}
           </div>
+        </aside>}
 
-          <div className="trash-search">
-            <input
-              className="input"
-              aria-label={t("Search Trash")}
-              type="search"
-              placeholder={t("Search by name, ID, or folder…")}
-              value={search}
-              onChange={event => {
-                setSearch(event.target.value);
-                setPage(0);
-              }}
-            />
-            <button
+        <section ref={resultsRegion} tabIndex={-1} className="tools-panel trash-results" aria-label={t("Deleted profiles")}>
+          {profiles.length > 0 && <div className="trash-search">
+            <div className="trash-search-field">
+              <AppIcon name="search" className="sm" />
+              <input
+                className="input"
+                aria-label={t("Search Trash")}
+                type="search"
+                placeholder={t("Search by name, ID, or folder…")}
+                value={search}
+                onChange={event => {
+                  setSearch(event.target.value);
+                  setPage(0);
+                }}
+              />
+            </div>
+            {filtered.length > 0 && <button
               type="button"
               className="btn"
-              disabled={!filtered.length}
               onClick={() => choose(filtered, !allResultsSelected)}
             >
               {t(
                 allResultsSelected ? "Unselect {count} matching results" : "Select all {count} results",
                 { count: filtered.length },
               )}
-            </button>
-            {(search || folders.length > 0) && (
+            </button>}
+            {filtered.length > 0 && (search || folders.length > 0) && (
               <button type="button" className="btn ghost" onClick={resetFilters}>
                 {t("Reset Trash filters")}
               </button>
             )}
-          </div>
+          </div>}
 
           {chosenState.ids.length > 0 && (
             <div className="trash-selection">
               <div className="trash-selection-scope">
                 <strong>{t("{count} selected in total", { count: visibleSelection.total })}</strong>
-                <span>
+                {visibleSelection.hidden > 0 && <span>
                   {t("Matching current filters {visible} · Hidden by filters {hidden}", {
                     visible: visibleSelection.visible,
                     hidden: visibleSelection.hidden,
                   })}
-                </span>
+                </span>}
                 <button
                   type="button"
                   className="tlink"
                   onClick={() => {
                     selectedEntries.current.clear();
                     selection.clear();
+                    resultsRegion.current?.focus();
                   }}
                 >
                   {t("Clear all selection")}
@@ -634,15 +711,16 @@ export function TrashPage({ active = true, onChanged, folderTree = [], onTaskSna
                   type="button"
                   className="btn primary"
                   disabled={mutationBlocked || !chosen.length || restoreDenied}
-                  onClick={() => begin("restore", chosen)}
+                  onClick={event => begin("restore", chosen, event.currentTarget)}
                 >
                   {t("Restore {count} selected profiles", { count: chosen.length })}
                 </button>
                 <button
                   type="button"
-                  className="btn ghost trash-purge"
-                  disabled={mutationBlocked || !chosen.length || purgeDenied}
-                  onClick={() => begin("purge", chosen)}
+                  className="btn trash-purge"
+                  disabled={operationActive || mutationUnavailable || !chosen.length || purgeDenied}
+                  aria-disabled={confirming || undefined}
+                  onClick={event => begin("purge", chosen, event.currentTarget)}
                 >
                   {t("Delete permanently")}
                 </button>
@@ -667,7 +745,7 @@ export function TrashPage({ active = true, onChanged, folderTree = [], onTaskSna
                 <table className="profile-table proxy-table trash-table">
                   <thead>
                     <tr>
-                      <th className="tools-checkbox">
+                      <th scope="col" className="tools-checkbox">
                         <input
                           type="checkbox"
                           aria-label={t("Select this page")}
@@ -678,54 +756,44 @@ export function TrashPage({ active = true, onChanged, folderTree = [], onTaskSna
                           onChange={event => choose(paged.items, event.target.checked)}
                         />
                       </th>
-                      <th>{t("Profile")}</th>
-                      <th>{t("Original folder")}</th>
-                      <th>{t("Deleted")}</th>
+                      <th scope="col">{t("Profile")}</th>
+                      <th scope="col" className="trash-desktop-meta">{t("Original folder")}</th>
+                      <th scope="col" className="trash-desktop-meta">{t("Deleted")}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {paged.items.map(profile => (
-                      <tr
-                        key={`${profile.id}-${entryStamp(profile)}`}
-                        data-trash-id={profile.id}
-                        data-trash-entry={entryStamp(profile)}
-                        className={isChosen(profile) ? "is-selected" : ""}
-                      >
-                        <td className="tools-checkbox">
-                          <input
-                            type="checkbox"
-                            aria-label={t("Select {name}", { name: profile.name || profile.id })}
-                            checked={isChosen(profile)}
-                            onChange={event => choose([profile], event.target.checked)}
-                          />
-                        </td>
-                        <td>
-                          <strong>{profile.name || profile.id}</strong>
-                          <small className="tools-mono">{profile.id}</small>
-                        </td>
-                        <td>
-                          <span className="tools-folder-tag">{profile.group || t("Ungrouped")}</span>
-                        </td>
-                        <td>
-                          <time
-                            dateTime={new Date(profile.trashedAt).toISOString()}
-                            title={new Date(profile.trashedAt).toLocaleString(language)}
-                          >
-                            {new Date(profile.trashedAt).toLocaleDateString(language, {
-                              month: "short",
-                              day: "numeric",
-                              year: "numeric",
-                            })}
-                          </time>
-                          <small>
-                            {new Date(profile.trashedAt).toLocaleTimeString(language, {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </small>
-                        </td>
-                      </tr>
-                    ))}
+                    {paged.items.map(profile => {
+                      const date = new Date(profile.trashedAt);
+                      const dateTime = date.toISOString();
+                      const day = dateFormat.format(date);
+                      const time = timeFormat.format(date);
+                      const group = profile.group || t("Ungrouped");
+                      const name = profile.name || profile.id;
+                      const stamp = entryStamp(profile);
+                      const checked = isChosen(profile);
+                      return (
+                        <tr key={`${profile.id}-${stamp}`} data-trash-id={profile.id} data-trash-entry={stamp} className={checked ? "is-selected" : ""}>
+                          <td className="tools-checkbox">
+                            <input
+                              type="checkbox"
+                              aria-label={t("Select {name}", { name })}
+                              checked={checked}
+                              onChange={event => choose([profile], event.target.checked)}
+                            />
+                          </td>
+                          <td>
+                            <strong>{name}</strong>
+                            <small className="tools-mono">{profile.id}</small>
+                            <div className="trash-mobile-meta">
+                              <span><span className="sr-only">{t("Original folder")} </span>{group}</span>
+                              <time dateTime={dateTime}><span className="sr-only">{t("Deleted")} </span>{day} {time}</time>
+                            </div>
+                          </td>
+                          <td className="trash-desktop-meta"><span className="tools-folder-tag">{group}</span></td>
+                          <td className="trash-desktop-meta"><time dateTime={dateTime} title={date.toLocaleString(language)}>{day}<small>{time}</small></time></td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -753,9 +821,9 @@ export function TrashPage({ active = true, onChanged, folderTree = [], onTaskSna
               </div>
             </>
           ) : (
-            <div className="tools-empty" data-trash-empty-state={emptyState}>
-              <span className="tools-empty-symbol" aria-hidden="true">↶</span>
-              <h3>
+            <div className="tools-empty" data-trash-empty-state={emptyState} role={emptyState === "loading" ? "status" : undefined}>
+              <span className="tools-empty-symbol" aria-hidden="true"><AppIcon name={emptyState === "filter-empty" ? "search" : "trash"} /></span>
+              <h3 role={emptyState === "error" || emptyState === "stale-empty" ? "alert" : undefined}>
                 {t(
                   emptyState === "error"
                     ? "Trash could not be loaded"
@@ -768,24 +836,14 @@ export function TrashPage({ active = true, onChanged, folderTree = [], onTaskSna
                           : "No matching profiles",
                 )}
               </h3>
-              <p>
-                {t(
-                  emptyState === "error" || emptyState === "stale-empty"
-                    ? "Refresh the list before treating it as the current Trash state."
-                    : emptyState === "loading"
-                      ? "Reading local Trash metadata…"
-                      : emptyState === "filter-empty"
-                        ? "Try another folder or search term. Your selection is preserved."
-                        : "Profiles you move to Trash will appear here. You can restore them at any time.",
-                )}
-              </p>
+              {emptyState === "filter-empty" && <p>{t("Try another folder or search term.")}</p>}
               {emptyState === "filter-empty" && (
                 <button type="button" className="btn ghost" onClick={resetFilters}>
                   {t("Reset Trash filters")}
                 </button>
               )}
               {(emptyState === "error" || emptyState === "stale-empty") && (
-                <button type="button" className="btn ghost" disabled={busy || loading} onClick={refresh}>
+                <button type="button" className="btn ghost" disabled={busy || loading} onClick={retryRead}>
                   {t("Retry reading Trash")}
                 </button>
               )}
@@ -794,9 +852,6 @@ export function TrashPage({ active = true, onChanged, folderTree = [], onTaskSna
         </section>
       </div>
 
-      <p className="tools-footnote">
-        {t("Restoring keeps saved profile data. Permanent deletion removes it and cannot be undone.")}
-      </p>
     </div>
   );
 }

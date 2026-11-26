@@ -299,13 +299,12 @@ test("every editable row and the selection bar can add cookies; closed profiles 
     expect(cookieImportUi).toContain('type="password" autoComplete="off"');
     expect(cookieImportUi).toContain('"Paste cookie JSON" : "Paste cookies.txt content"');
     expect(cookieImportUi).toContain('task.submit(targets, input)');
-    expect(app).toContain('t("The browser sets these cookies the next time it starts, before the first page opens.")');
     expect(app).toContain('{t("{count} cookie(s) at next start", { count: String(p.pendingCookieCount) })}');
     expect(app).not.toContain('className="modal-backdrop" onClick={closeCookie}');
 });
 test("bulk import uploads provider files unchanged", () => {
     expect(app).toContain('const list = Array.from(files);');
-    expect(app).toContain('const uploads = [...bulkFiles];');
+    expect(app).toMatch(/const uploads = bulkSource === "file"\s*\? bulkFiles/);
     expect(app).not.toContain("prepUploads");
     expect(app).not.toContain("csvToBlocks");
     expect(app).toContain('accept=".csv,.txt,.json,.xlsx,text/plain,text/csv,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"');
@@ -313,15 +312,15 @@ test("bulk import uploads provider files unchanged", () => {
         expect(app).toContain(provider);
     }
 });
-test("sidebar manages persistent local groups without workspace roles", () => {
+test("the group manager edits persistent local groups without workspace roles", () => {
     expect(app).toContain("setRegisteredGroups(roster.groups)");
     expect(app).toContain("folderTree(folders)");
-    expect(app).toContain('className="newgroup"');
+    expect(app).toContain('className="group-management-dialog"');
     expect(app).toContain('t("New group")');
     expect(app).toContain("await createGroup(name, newFolderParent)");
     expect(app).toContain("await deleteGroup(g)");
     expect(app).not.toContain("cloudWorkspaceAction");
-    expect(styles).toContain(".newgroup");
+    expect(app).toContain("await moveGroup(source.name, folderParent)");
 });
 test("the roster numbers every profile and prefers a custom NO. over the serial", () => {
     // Mirrors profileDisplayNo in launcher.ts so the row, the browser window title
@@ -343,7 +342,7 @@ test("the custom NO. editor is Local-only and digits-only", () => {
     expect(app).toContain("<small>{t(\"Digits only · blank uses the serial\")}</small>");
     // The placeholder shows the serial that would be used instead, so an empty
     // field is never ambiguous about what the browser window will display.
-    expect(app).toContain('placeholder={editSerial != null ? String(editSerial) : "auto"}');
+    expect(app).toContain('placeholder={editSerial != null ? String(editSerial) : t("Automatic")}');
     expect(app).toContain('setEF("customNo", e.target.value.replace(/\\D/g, "").slice(0, MAX_CUSTOM_NO))');
     expect(PROFILE_EDIT_FORM_FIELDS).toContain("customNo");
     expect(app).toContain("updateProfile(session.id, changes.patch)");
@@ -417,10 +416,11 @@ function rosterSelection(filtered: {
 }[], selected = new Set<string>(), group = "all", q = "", page = 0, pageSize = defaultPageSize) {
     const visible = paginateRoster(filtered, pageSize, page).visibleProfiles;
     const source = sourceBetween("const allVisibleSelected =", "const completeMove =", appShell);
-    const controls = new Function("selectableProfiles", "filtered", "selected", "group", "q", "setSelected", "t", `${source}
+    const controls = new Function("selectableProfiles", "filtered", "selected", "group", "q", "setSelected", "t", "useMemo", `${source}
     return { toggleAll, selectAllFiltered, allFilteredSelected, selectedOutsideFilter, selectionScope };`)(visible, filtered, selected, group, q, (next: Set<string> | ((current: Set<string>) => Set<string>)) => {
         selected = typeof next === "function" ? next(selected) : next;
-    }, (source: string, values?: Record<string, string | number>) => translate({ "en-US": {} }, "en-US", source, values));
+    }, (source: string, values?: Record<string, string | number>) => translate({ "en-US": {} }, "en-US", source, values),
+    (compute: () => unknown) => compute());
     return { ...controls, selected: () => selected };
 }
 test("page selection stays page-only and scope selection reaches all 1600 profiles", () => {
@@ -674,9 +674,10 @@ test("a running row with saved proxy or fingerprint changes offers a restart", (
 });
 test("pending cookies of a closed profile can be seen (domain and name) and removed", () => {
     expect(app).toContain("onClick={() => void openPendingCookies(p)}");
-    expect(app).toContain("await fetchPendingCookies(profile.id)");
+    expect(app).toContain("await fetchPendingCookies(profile.id, request.signal)");
     expect(app).toContain("await clearPendingCookies(pendingView.profile.id)");
-    expect(app).toContain('<li key={index}><span className="mono">{cookie.domain}</span><span className="mono muted">{cookie.name}</span></li>');
+    expect(app).toContain('<th scope="col">{t("Domain")}</th><th scope="col">{t("Cookie name")}</th>');
+    expect(app).toContain('<tr key={index}><td><bdi>{cookie.domain}</bdi></td><td><bdi>{cookie.name}</bdi></td></tr>');
     expect(app).toContain('{t("Remove pending cookies")}');
 });
 test("the sidebar collapses to an icon rail and remembers it", () => {
@@ -770,7 +771,7 @@ test("rows expose start or stop directly and keep secondary actions in an access
     expect(actionMenu).toContain("createPortal(");
     expect(actionMenu).toContain("document.body)");
     for (const key of ["ArrowDown", "ArrowUp", "Home", "End", "Escape", "Tab"]) expect(actionMenu).toContain(`"${key}"`);
-    expect(actionMenu).toContain("trigger.current?.focus()");
+    expect(actionMenu).toContain("trigger.current?.focus({ preventScroll: true })");
     expect(actionMenu).toContain('document.removeEventListener("pointerdown", dismiss)');
     expect(app).not.toContain("rowquick");
     expect(styles).not.toContain(".rowquick");
@@ -806,18 +807,17 @@ test("import offers one source at a time and counts what was pasted", () => {
     // Two full-height inputs stacked left it ambiguous which one Import would read.
     expect(app).toContain('const [bulkSource, setBulkSource] = useState<"file" | "paste">("file");');
     expect(app).toContain('aria-label={t("Import source")}');
-    // Switching sources clears the other, so a stale value cannot be submitted.
-    expect(app).toContain('onClick={() => { if (importInFlight.current) return; setBulkSource("file"); setBulkText(""); }}');
-    expect(app).toContain('onClick={() => { if (importInFlight.current) return; setBulkSource("paste"); setBulkFiles([]); }}');
+    expect(app).toContain('aria-pressed={bulkSource === "file"}');
+    expect(app).toContain('aria-pressed={bulkSource === "paste"}');
     // Every AdsPower record opens with its own id= line, so this count is exact.
     expect(app).toContain("export function countPastedRecords(text: string): number {");
     expect(app).toContain('return (text.match(/^id=/gm) ?? []).length;');
-    expect(app).toContain('t("1 record detected — each one starts with its own id= line.")');
-    expect(app).toContain('t("{count} records detected — each one starts with its own id= line.", { count: pastedRecordCount })');
+    expect(app).toContain('t("1 record detected")');
+    expect(app).toContain('t("{count} records detected", { count: pastedRecordCount })');
     // Chosen files are individually removable rather than a comma-joined string.
-    expect(app).toContain('aria-label={`Remove ${file.name}`}');
+    expect(app).toContain('<ul className="filelist">');
+    expect(app).toContain('aria-label={t("Remove file {name}", { name: file.name })}');
     expect(app).toContain(">{t(\"Clear all\")}</button>");
-    expect(styles).toContain(".filechip");
     expect(styles).toContain(".segmented");
 });
 test("no legacy arrow glyphs survive in place of icons", () => {
@@ -867,7 +867,7 @@ test("sidebar keeps local extension management without original-author support l
 test("file editing keeps export and template entry points and explains original-ID matching", () => {
     expect(app).toContain('<ProfileFileUpdateDialog open={showUpdate} task={fileUpdate.task}');
     expect(app).toContain('onExport={exportSelected} onDownloadTemplate=');
-    expect(fileUpdateUi).toContain('IDs in the file determine which environments change. The current selection does not limit this update, and unmatched IDs are never created.');
+    expect(fileUpdateUi).toContain('File IDs control the update. List selections are ignored and unmatched IDs are skipped.');
     expect(fileUpdateUi).toContain('locale and custom_no.');
     expect(fileUpdateUi).toContain('<ProfileFileUpdatePanel snapshot={snapshot}');
 });

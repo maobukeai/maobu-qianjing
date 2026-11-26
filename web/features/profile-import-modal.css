@@ -1,0 +1,258 @@
+.modal.profile-import-dialog { max-width: 556px; border-radius: 16px; border-color: var(--line-strong); }
+.profile-import-dialog:focus { outline: none; }
+.profile-import-dialog .modal-head { gap: 10px; padding: 12px 22px; }
+.profile-import-dialog .modal-head h2 { min-width: 0; margin: 0; font-size: 16.5px; font-weight: 650; overflow-wrap: anywhere; }
+.profile-import-step-pill {
+  margin-inline-start: auto;
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface-sunken);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease;
+}
+.profile-import-step-pill.is-ready {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+.profile-import-dialog .modal-close { width: 32px; height: 32px; margin-left: 0; }
+.profile-import-dialog .modal-body { padding: 16px 22px 14px; overscroll-behavior: contain; }
+
+.modal.pending-cookie-dialog { max-width: 476px; }
+.pending-cookie-dialog .modal-head { padding-block: 11px; }
+.pending-cookie-heading, .pending-cookie-profile, .pending-cookie-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.pending-cookie-dialog .pending-cookie-profile {
+  color: var(--ink-soft);
+  font-size: var(--t-sm);
+  font-weight: 600;
+}
+.pending-cookie-profile bdi { min-width: 0; overflow-wrap: anywhere; }
+.pending-cookie-dialog .modal-body > p { margin: 0; }
+.pending-cookie-status {
+  min-height: 64px;
+  justify-content: center;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  color: var(--muted);
+  background: var(--surface-sunken);
+}
+.pending-cookie-status .icon, .pending-cookie-profile .icon { flex: 0 0 auto; }
+.pending-cookie-list {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+.pending-cookie-list table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  text-align: start;
+  font-size: var(--t-sm);
+}
+.pending-cookie-list th, .pending-cookie-list td {
+  padding: 7px 11px;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+.pending-cookie-list th { color: var(--ink-soft); background: var(--surface-sunken); }
+.pending-cookie-list td { border-top: 1px solid var(--line); }
+.pending-cookie-list td:first-child { font-weight: 550; }
+.pending-cookie-list td:last-child { color: var(--muted); }
+.pending-cookie-dialog .modal-foot { flex-wrap: wrap; }
+
+.import-draft-fields {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.profile-import-sources {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: min(100%, 250px);
+}
+.profile-import-sources button {
+  justify-content: center;
+  min-width: 0;
+  min-height: 34px;
+  height: auto;
+  padding: 4px 10px;
+  white-space: normal;
+}
+.profile-import-sources button.active { color: var(--accent-ink); }
+
+.profile-import-dialog .bulkdrop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  min-height: 112px;
+  padding: 10px 14px;
+  border: 1px dashed var(--accent-line);
+  border-radius: var(--r-xl);
+  background: color-mix(in srgb, var(--surface) 97%, var(--accent));
+  color: var(--ink);
+  text-align: center;
+}
+.profile-import-dialog .bulkdrop.is-staged {
+  flex-direction: row;
+  gap: 8px;
+  min-height: 40px;
+  padding: 5px 10px;
+}
+.profile-import-dialog .bulkdrop:hover:not(:disabled), .profile-import-dialog .bulkdrop.over {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.profile-import-dialog .bulkdrop {
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+.profile-import-dialog .bulkdrop > * { pointer-events: none; }
+.profile-import-dialog .bulkdrop:disabled { opacity: .6; cursor: wait; }
+.profile-import-dialog .bulkdrop strong { font-size: var(--t-sm); font-weight: 650; }
+.profile-import-dialog .bulkdrop-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  margin-bottom: 1px;
+  border: 1px solid var(--accent-line);
+  border-radius: 11px;
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+}
+.profile-import-dialog .bulkdrop-icon .icon { width: 19px; height: 19px; color: currentColor; }
+.profile-import-dialog .is-staged .bulkdrop-icon {
+  width: auto;
+  height: auto;
+  margin: 0;
+  border: 0;
+  background: transparent;
+}
+.profile-import-dialog .is-staged .bulkdrop-icon .icon { width: 15px; height: 15px; }
+.profile-import-dialog .bulkdrop-formats { color: var(--muted); font-size: var(--t-xs); }
+.profile-import-paste textarea { min-height: 112px; resize: vertical; }
+.profile-import-paste small { color: var(--muted); }
+
+.profile-import-queue {
+  min-width: 0;
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-sunken);
+}
+.profile-import-queue-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  color: var(--muted);
+  font-size: var(--t-xs);
+}
+.profile-import-queue .filelist {
+  display: grid;
+  gap: 0;
+  max-height: 140px;
+  margin: 0;
+  padding: 0 3px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+.profile-import-file {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 34px;
+  padding: 2px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  color: var(--ink);
+  font-size: var(--t-sm);
+}
+.profile-import-file > .icon { flex: 0 0 auto; color: var(--muted); }
+.profile-import-file .fname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-import-file button {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  margin-inline-start: auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--muted);
+  background: none;
+}
+.profile-import-file button .icon { color: currentColor; }
+.profile-import-file button:hover { color: var(--ink); background: var(--surface-hover); }
+
+.profile-import-assignments { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.profile-import-assignments .fld { min-width: 0; }
+.profile-import-note, .profile-import-impact, .import-transfer-details {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--t-xs);
+  line-height: 1.55;
+}
+.profile-import-note { margin-top: -6px; }
+.profile-import-rules { display: grid; gap: 4px; padding-top: 10px; border-top: 1px solid var(--line); }
+.profile-import-impact { display: flex; align-items: flex-start; gap: 7px; margin: 0; color: var(--ink-soft); }
+.profile-import-impact > .icon { flex: 0 0 auto; margin-top: 2px; color: var(--accent-ink); }
+.profile-import-help { display: flex; align-items: flex-start; flex-wrap: wrap; column-gap: 10px; }
+.import-transfer-details[open] { flex: 1 1 100%; min-width: 0; }
+.import-transfer-details > summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  min-height: 28px;
+  color: var(--accent-ink);
+  cursor: pointer;
+}
+.import-transfer-details > summary::-webkit-details-marker { display: none; }
+.import-transfer-details[open] > summary .icon { transform: rotate(90deg); }
+.import-transfer-details ul { margin: 3px 0 4px; padding-inline-start: 24px; }
+.import-transfer-details li + li { margin-top: 5px; }
+
+.profile-import-dialog .profile-import-footer {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 22px 10px;
+}
+.profile-import-footer .btn { min-height: 36px; }
+.profile-import-templates { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin-inline-start: auto; }
+.profile-import-templates .tlink { min-height: 28px; color: var(--muted); font-size: var(--t-xs); }
+.profile-import-templates .tlink:hover { color: var(--accent-ink); }
+
+@media (max-width: 440px) {
+  .modal-backdrop.profile-import-backdrop { padding: 12px; }
+  .modal.profile-import-dialog, .modal.pending-cookie-dialog { max-height: calc(100dvh - 24px); }
+  .profile-import-dialog :is(.modal-head, .modal-body, .modal-foot) { padding-inline: 14px; }
+  .profile-import-sources { width: 100%; }
+  .profile-import-dialog .bulkdrop:not(.is-staged) { min-height: 100px; }
+  .profile-import-assignments { gap: 8px; }
+  .profile-import-assignments select { padding-inline-start: 8px; }
+  .profile-import-templates { margin-inline-start: 0; }
+  .pending-cookie-dialog :is(.modal-head, .modal-body, .modal-foot) { padding-inline: 14px; }
+}
+

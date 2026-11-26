@@ -1,10 +1,15 @@
-import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ProfileStore } from "./store.ts";
 import { buildNewProfile } from "./create.ts";
 import { handleUiRequest, listUiProfiles } from "./ui.ts";
 import { serveDashboard } from "./web.ts";
 import { rosterBenchmarkData } from "./test-fixtures/roster-benchmark-data.ts";
+import type { UiRosterTags } from "./src/ui/shared.ts";
 
 function fixture() {
   const store = new ProfileStore(":memory:");
@@ -59,6 +64,7 @@ test("all serialized fields affect the roster ETag, including nested tags/extens
 test("a matching conditional tag cannot bypass the dashboard's existing source boundary", async () => {
   const state = fixture(), server = serveDashboard({ port: 0, launcher: state.launcher, store: state.store, log() {} });
   const origin = `http://127.0.0.1:${server.port}`;
+  const list = spyOn(state.store, "listProfiles");
   try {
     const first = await fetch(`${origin}/ui/api/profiles`), tag = first.headers.get("etag")!; expect(first.status).toBe(200);
     const foreignSources: Array<Record<string, string>> = [{ Origin: "https://foreign.invalid" }, { Referer: "https://foreign.invalid/" }, { "Sec-Fetch-Site": "cross-site" }];
@@ -67,11 +73,80 @@ test("a matching conditional tag cannot bypass the dashboard's existing source b
     }
     expect(state.reconciliations).toBe(1);
     const normal = await fetch(`${origin}/ui/api/profiles`, { headers: { "If-None-Match": tag, Referer: `${origin}/ui/` } }); expect(normal.status).toBe(304); expect(state.reconciliations).toBe(2);
-  } finally { await server.stop(true); state.store.close(); }
+    expect(list).toHaveBeenCalledTimes(1);
+  } finally { list.mockRestore(); await server.stop(true); state.store.close(); }
+});
+
+test("conditional reuse is invalidated by raw writes and does not cache a failed reconciliation", async () => {
+  const state = fixture();
+  const rosterTags: UiRosterTags = new WeakMap();
+  const get = (etag?: string) => handleUiRequest(request(etag), state.launcher, state.store, { rosterTags });
+  const list = spyOn(state.store, "listProfiles");
+  try {
+    const first = (await get())!;
+    const originalTag = first.headers.get("etag")!;
+    expect((await get(originalTag))!.status).toBe(304);
+    expect(list).toHaveBeenCalledTimes(1);
+
+    state.store.rawDatabase().query("UPDATE profiles SET name = ? WHERE id = ?").run("Changed directly", state.profile.id);
+    const changed = (await get(originalTag))!;
+    expect(changed.status).toBe(200);
+    expect((await changed.json()).profiles[0].name).toBe("Changed directly");
+    expect(list).toHaveBeenCalledTimes(2);
+
+    const newTag = changed.headers.get("etag")!;
+    expect((await get(newTag))!.status).toBe(304);
+    state.fail();
+    expect((await get(newTag))!.status).toBe(500);
+    expect(state.reconciliations).toBe(5);
+    expect(list).toHaveBeenCalledTimes(2);
+  } finally { list.mockRestore(); state.store.close(); }
+});
+
+test("another connection invalidates the tag, including a commit during roster serialization", async () => {
+  const home = mkdtempSync(join(tmpdir(), "maobu-roster-revision-"));
+  const path = join(home, "profiles.sqlite");
+  const store = new ProfileStore(path, { protection: { inMemory: true } });
+  const writer = new Database(path);
+  const profile = buildNewProfile({ name: "Before external commit", group: "A" }, () => false);
+  const launcher = { reconcileOrphans: async () => {} } as any;
+  const rosterTags: UiRosterTags = new WeakMap();
+  const get = (etag?: string) => handleUiRequest(request(etag), launcher, store, { rosterTags });
+  const update = writer.query("UPDATE profiles SET name = ? WHERE id = ?");
+  const originalFolders = store.listFolders.bind(store);
+  let injected = false;
+  store.listFolders = () => {
+    if (!injected) {
+      injected = true;
+      update.run("During serialization", profile.id);
+    }
+    return originalFolders();
+  };
+  try {
+    store.upsertProfile(profile);
+    const first = (await get())!;
+    expect((await first.json()).profiles[0].name).toBe("Before external commit");
+    expect(rosterTags.has(store)).toBe(false);
+
+    const changed = (await get(first.headers.get("etag")!))!;
+    expect(changed.status).toBe(200);
+    expect((await changed.json()).profiles[0].name).toBe("During serialization");
+    const latestTag = changed.headers.get("etag")!;
+    expect((await get(latestTag))!.status).toBe(304);
+    update.run("After serialization", profile.id);
+
+    const after = (await get(latestTag))!;
+    expect(after.status).toBe(200);
+    expect((await after.json()).profiles[0].name).toBe("After serialization");
+  } finally {
+    writer.close(true);
+    store.close();
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 for (const count of [10_000, 50_000]) {
-  test(`conditional roster server benchmark: ${count} profiles still reconcile, map, serialize and hash`, async () => {
+  test(`conditional roster server benchmark: ${count} profiles with and without revision reuse`, async () => {
     const data = rosterBenchmarkData(count), base = buildNewProfile({ name: "Inert benchmark" }, () => false);
     const profiles = data.profiles.map((profile, index) => ({ ...base, ...profile, proxy: { type: "http" as const, host: `proxy${index % 500}.invalid`, port: 8080 }, cookies: base.cookies }));
     const metadata = new Map(data.profiles.map(profile => [profile.id, { serial: profile.serial!, createdAt: profile.createdAt!, lastOpenAt: profile.lastOpenAt! }]));
@@ -84,6 +159,19 @@ for (const count of [10_000, 50_000]) {
     start = performance.now(); const unchanged = (await handleUiRequest(request(tag), launcher, store))!, unchangedMs = performance.now() - start;
     expect(first.status).toBe(200); expect(unchanged.status).toBe(304); expect(unchanged.body).toBeNull(); expect(reconciliations).toBe(2); expect(lists).toBe(2);
     const fields = Object.keys(listUiProfiles({ ...store, listProfiles: () => profiles.slice(0, 1) } as any)[0]!).length;
-    console.log(`roster conditional server benchmark: rows=${count}, mappedFields=${fields}, jsonBytes=${Buffer.byteLength(text)}, first200=${firstMs.toFixed(1)}ms, unchanged304=${unchangedMs.toFixed(1)}ms, reconciliations=${reconciliations}, fullMappings=${lists}`);
+    const withCache = Object.assign(new ProfileStore(":memory:"), store);
+    const rosterTags: UiRosterTags = new WeakMap();
+    try {
+      const seeded = (await handleUiRequest(request(), launcher, withCache, { rosterTags }))!;
+      const seededTag = seeded.headers.get("etag")!;
+      expect(seededTag).toBe(tag);
+      const mapped = lists;
+      start = performance.now();
+      const cached = (await handleUiRequest(request(seededTag), launcher, withCache, { rosterTags }))!;
+      const cachedMs = performance.now() - start;
+      expect(cached.status).toBe(304);
+      expect(lists).toBe(mapped);
+      console.log(`roster conditional server benchmark: rows=${count}, mappedFields=${fields}, jsonBytes=${Buffer.byteLength(text)}, first200=${firstMs.toFixed(1)}ms, uncached304=${unchangedMs.toFixed(1)}ms, unchanged304=${cachedMs.toFixed(1)}ms, cachedFullMappings=${lists - mapped}`);
+    } finally { withCache.close(); }
   });
 }

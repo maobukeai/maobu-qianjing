@@ -7,20 +7,23 @@
   outline-offset: 4px;
   border-radius: 3px;
 }
-.browser-runtime-settings .browser-runtime-host { margin-bottom: 10px; }
+.browser-runtime-settings .browser-runtime-host { font-size: var(--t-xs); }
 .browser-runtime-cards {
   display: grid;
-  gap: 9px;
-  margin: 0 0 14px;
+  gap: 10px;
+  margin: 0;
   padding: 0;
   list-style: none;
+  border: 0;
 }
 .browser-runtime-card {
   min-width: 0;
-  padding: 12px 14px;
+  padding: 11px 14px;
   border: 1px solid var(--line);
   border-radius: 10px;
+  background: var(--surface-sunken);
 }
+.browser-runtime-card + .browser-runtime-card { border-top: 1px solid var(--line); }
 .browser-runtime-card-meta {
   display: flex;
   align-items: start;
@@ -29,9 +32,14 @@
   gap: 8px 16px;
 }
 .browser-runtime-card-meta h4 { margin: 0 0 3px; color: var(--ink); font-size: 13px; font-weight: 620; }
-.browser-runtime-card-meta p { font-size: 12px; overflow-wrap: anywhere; }
+.browser-runtime-card-meta p { font-size: var(--t-xs); overflow-wrap: anywhere; }
+.browser-runtime-card-meta code { font: inherit; font-variant-numeric: tabular-nums; }
 .browser-runtime-badges { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
-.browser-runtime-badges .feature-badge { flex-shrink: 1; overflow-wrap: anywhere; }
+.browser-runtime-badges .feature-badge { flex-shrink: 1; padding: 3px 6px; overflow-wrap: anywhere; }
+.browser-runtime-badges .runtime-host-warning { color: var(--warn-ink); background: var(--warn-soft); border-color: var(--warn-line); }
+.browser-runtime-settings .browser-runtime-check-note { margin-top: 9px; font-size: var(--t-xs); }
+.browser-runtime-help > summary { width: fit-content; min-height: 24px; color: var(--accent-ink); }
+.browser-runtime-help > p { margin-top: 3px; font-size: var(--t-xs); }
 .browser-runtime-downloads {
   display: grid;
   gap: 7px;

@@ -373,9 +373,30 @@ export async function openProfilePackage(data: Uint8Array, password: string): Pr
   return validateProfilePackage(parsed);
 }
 
-export function buildProfilePackagePreviewItems(
+type PackageTargetStore = Pick<ProfileStore, "listProfiles" | "listTrashed" | "listLaunches">;
+type PackageOverwriteStore = Pick<ProfileStore, "getProfileIncarnation" | "getSessionBundle">;
+
+function readPackageTargets(store: PackageTargetStore) {
+  return {
+    runningIds: new Set(store.listLaunches().map((launch) => launch.profileId.toLowerCase())),
+    trashedIds: new Set(store.listTrashed().map((item) => item.id.toLowerCase())),
+    activeProfiles: new Map(store.listProfiles().map((profile) => [profile.id.toLowerCase(), profile])),
+  };
+}
+
+function overwriteTargetRevision(store: PackageOverwriteStore, profile: Profile, includesSession: boolean): string {
+  const revision = createHash("sha256").update(JSON.stringify([store.getProfileIncarnation(profile.id), profile]));
+  if (includesSession) revision.update("\0").update(store.getSessionBundle(profile.id) ?? "");
+  return revision.digest("hex");
+}
+
+export function buildProfilePackagePreviewItems(payload: ProfilePackagePayload, store: PackageTargetStore) {
+  return summarizePackageTargets(payload, readPackageTargets(store));
+}
+
+function summarizePackageTargets(
   payload: ProfilePackagePayload,
-  store: Pick<ProfileStore, "listProfiles" | "listTrashed" | "listLaunches">,
+  { runningIds, trashedIds, activeProfiles }: ReturnType<typeof readPackageTargets>,
 ): {
   profiles: ProfilePackagePreviewItem[];
   newCount: number;
@@ -383,10 +404,6 @@ export function buildProfilePackagePreviewItems(
   runningConflictCount: number;
   trashedConflictCount: number;
 } {
-  const runningIds = new Set(store.listLaunches().map((launch) => launch.profileId.toLowerCase()));
-  const trashedIds = new Set(store.listTrashed().map((item) => item.id.toLowerCase()));
-  const activeIds = new Set(store.listProfiles().map((profile) => profile.id.toLowerCase()));
-
   let runningConflictCount = 0;
   let trashedConflictCount = 0;
   let conflictCount = 0;
@@ -402,7 +419,7 @@ export function buildProfilePackagePreviewItems(
       conflictReason = "existing_trashed";
       trashedConflictCount++;
       conflictCount++;
-    } else if (activeIds.has(lower)) {
+    } else if (activeProfiles.has(lower)) {
       conflictReason = "existing_active";
       conflictCount++;
     }
@@ -440,6 +457,7 @@ interface StoredPackagePreview {
   createdAt: number;
   expiresAt: number;
   payload: ProfilePackagePayload;
+  reviewedOverwriteTargets: ReadonlyMap<string, string>;
 }
 
 export class ProfilePackagePreviewStore {
@@ -470,7 +488,7 @@ export class ProfilePackagePreviewStore {
   create(
     payload: ProfilePackagePayload,
     rawBytes: Uint8Array,
-    store: Pick<ProfileStore, "listProfiles" | "listTrashed" | "listLaunches">,
+    store: PackageTargetStore & PackageOverwriteStore & Pick<ProfileStore, "withTransaction">,
     workspaceId = "default",
   ): ProfilePackagePreview {
     const now = this.nowFn();
@@ -486,6 +504,18 @@ export class ProfilePackagePreviewStore {
     const previewToken = this.sign(workspaceId, previewId, sha256);
     const expiresAt = now + this.ttlMs;
 
+    const { summary, reviewedOverwriteTargets } = store.withTransaction(() => {
+      const targets = readPackageTargets(store);
+      const summary = summarizePackageTargets(payload, targets);
+      const reviewedOverwriteTargets = new Map<string, string>();
+      for (const item of summary.profiles) {
+        if (item.conflictReason !== "existing_active") continue;
+        const profile = targets.activeProfiles.get(item.id.toLowerCase())!;
+        reviewedOverwriteTargets.set(item.id, overwriteTargetRevision(store, profile, item.hasSession));
+      }
+      return { summary, reviewedOverwriteTargets };
+    });
+
     this.entries.set(previewId, {
       previewId,
       workspaceId,
@@ -494,9 +524,9 @@ export class ProfilePackagePreviewStore {
       createdAt: now,
       expiresAt,
       payload: structuredClone(payload),
+      reviewedOverwriteTargets,
     });
 
-    const summary = buildProfilePackagePreviewItems(payload, store);
     return {
       previewId,
       previewToken,
@@ -514,6 +544,21 @@ export class ProfilePackagePreviewStore {
 
   /** Verify and consume a preview entry atomically (one-time use). */
   consume(previewId: unknown, previewToken: unknown, workspaceId = "default"): ProfilePackagePayload {
+    return this.take(previewId, previewToken, workspaceId).payload;
+  }
+
+  importReviewed(
+    store: ProfileStore,
+    previewId: unknown,
+    previewToken: unknown,
+    workspaceId: string,
+    options: Pick<ApplyProfilePackageImportOptions, "strategy" | "selectedIds">,
+  ): ProfilePackageImportResult {
+    const entry = this.take(previewId, previewToken, workspaceId);
+    return applyProfilePackageImport(store, entry.payload, { ...options, reviewedOverwriteTargets: entry.reviewedOverwriteTargets });
+  }
+
+  private take(previewId: unknown, previewToken: unknown, workspaceId: string): StoredPackagePreview {
     const now = this.nowFn();
     this.pruneExpired(now);
 
@@ -555,7 +600,7 @@ export class ProfilePackagePreviewStore {
 
     // One-time use: burn immediately upon verified consumption.
     this.entries.delete(previewId);
-    return entry.payload;
+    return entry;
   }
 
   clear(): void {
@@ -572,6 +617,7 @@ export interface ApplyProfilePackageImportOptions {
   strategy: ProfilePackageConflictStrategy;
   selectedIds?: readonly string[];
   cloneNameSuffix?: string;
+  reviewedOverwriteTargets?: ReadonlyMap<string, string>;
 }
 
 export function isValidConflictStrategy(value: unknown): value is ProfilePackageConflictStrategy {
@@ -601,12 +647,7 @@ export function applyProfilePackageImport(
   }
 
   const result = store.withTransaction(() => {
-    const activeProfiles = store.listProfiles();
-    const activeByLower = new Map<string, Profile>(
-      activeProfiles.map((profile) => [profile.id.toLowerCase(), profile]),
-    );
-    const trashedLower = new Set(store.listTrashed().map((item) => item.id.toLowerCase()));
-    const runningLower = new Set(store.listLaunches().map((launch) => launch.profileId.toLowerCase()));
+    const { activeProfiles: activeByLower, trashedIds: trashedLower, runningIds: runningLower } = readPackageTargets(store);
     const occupiedLower = new Set<string>([
       ...activeByLower.keys(),
       ...trashedLower,
@@ -730,6 +771,17 @@ export function applyProfilePackageImport(
           reason: "engine_mismatch",
         });
         continue;
+      }
+
+      if (
+        options.reviewedOverwriteTargets &&
+        options.reviewedOverwriteTargets.get(incoming.id) !== overwriteTargetRevision(store, existingActive, incomingSession !== undefined)
+      ) {
+        throw new ProfilePackageError(
+          "This package preview is no longer available. Review it again before importing.",
+          "preview_target_changed",
+          409,
+        );
       }
 
       const overwritten: Profile = {

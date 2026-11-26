@@ -3,6 +3,7 @@ import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { useTranslation } from "./i18n.tsx";
 import { MotionPresence } from "./desktop-motion.tsx";
+import { AppIcon } from "./ui-primitives.tsx";
 import { hasActiveWorkbenchModal } from "./workbench-shortcuts.ts";
 import type { ProfileViewFilters, SavedProfileView } from "../profile-view-state.ts";
 import { createProfileSearchIndex, searchProfileIndex, type CommandPaletteProfile } from "./profile-search.ts";
@@ -108,6 +109,7 @@ export function CommandPalette({ commands, open, onClose, profiles, favoriteIds,
   const closing = useRef(onClose); closing.current = onClose;
   const composing = useRef(false);
   const executing = useRef(false);
+  const hoveredId = useRef<string | null>(null);
   const mountedPortal = useRef(open);
   if (open) mountedPortal.current = true;
   const [query, setQuery] = useState(""), [activeId, setActiveId] = useState<string | null>(null), [error, setError] = useState(false);
@@ -130,13 +132,14 @@ export function CommandPalette({ commands, open, onClose, profiles, favoriteIds,
   const navigation = currentMode === "profiles" ? profileMatches.items.map(profile => ({ id: profile.id, disabled: false })) : actionOptions;
   const resultCount = currentMode === "profiles" ? profileMatches.total : actionOptions.length;
   const empty = currentMode === "profiles"
-    ? { title: profiles?.length ? "No matching environments" : "No environments available", help: "Try a name, ID, group or tag, or switch to Commands." }
+    ? profiles?.length ? { title: "No matching environments", canClear: true }
+      : { title: "No environments available", help: "Create or import an environment first." }
     : currentMode === "views"
       ? savedViewsState === "loading" ? { title: "Loading this workspace's views…" }
         : savedViewsState === "unavailable" ? { title: "Saved views are unavailable", help: "Reload views from the environment list." }
-        : savedViews?.length ? { title: "No matching saved views", help: "Try another view name or group." }
+        : savedViews?.length ? { title: "No matching saved views", canClear: true }
         : { title: "No saved views in this workspace", help: "Save a view from the environment list to find it here." }
-      : { title: "No matching commands", help: "Try another search or clear the text." };
+      : { title: "No matching commands", canClear: commands.length > 0 };
   let activeIndex = navigation.findIndex(item => item.id === activeId && !item.disabled);
   if (activeIndex < 0) activeIndex = nextCommandIndex(navigation, -1, "ArrowDown");
   const active = navigation[activeIndex];
@@ -144,7 +147,7 @@ export function CommandPalette({ commands, open, onClose, profiles, favoriteIds,
 
   useLayoutEffect(() => {
     if (!open) return;
-    setMode("commands"); setQuery(""); setActiveId(null); setError(false); composing.current = false; executing.current = false;
+    setMode("commands"); setQuery(""); setActiveId(null); setError(false); composing.current = false; executing.current = false; hoveredId.current = null;
     const container = dialog.current;
     if (!container) return;
     const document = container.ownerDocument;
@@ -154,7 +157,7 @@ export function CommandPalette({ commands, open, onClose, profiles, favoriteIds,
       if (!executing.current && !container.contains(event.target as Node)) input.current?.focus({ preventScroll: true });
     };
     const keydown = (event: KeyboardEvent) => {
-      if (event.isComposing || event.keyCode === 229 || composing.current) return;
+      if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || composing.current) return;
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closing.current(); return; }
       if (event.key !== "Tab") return;
       const targets = Array.from(container.querySelectorAll<HTMLElement>('input:not(:disabled), button:not(:disabled), [href], [tabindex]:not([tabindex="-1"])')).filter(element => element.tabIndex >= 0 && rendered(element));
@@ -176,7 +179,9 @@ export function CommandPalette({ commands, open, onClose, profiles, favoriteIds,
   }, [open]);
 
   useLayoutEffect(() => {
-    if (open && activeOptionId) dialog.current?.ownerDocument.getElementById(activeOptionId)?.scrollIntoView({ block: "nearest" });
+    if (open && activeOptionId && hoveredId.current !== active?.id) {
+      dialog.current?.ownerDocument.getElementById(activeOptionId)?.scrollIntoView({ block: "nearest" });
+    }
   }, [open, activeOptionId, active?.id, query, currentMode]);
 
   function execute(command: CommandPaletteCommand | undefined) {
@@ -198,13 +203,35 @@ export function CommandPalette({ commands, open, onClose, profiles, favoriteIds,
   }
   function chooseMode(next: PaletteMode, focusSearch = true) {
     if (composing.current) return;
+    hoveredId.current = null;
     setMode(next); setActiveId(null); setError(false);
     if (focusSearch) input.current?.focus({ preventScroll: true });
+  }
+  function updateQuery(next: string) {
+    hoveredId.current = null;
+    setQuery(next); setActiveId(null); setError(false);
+  }
+  function clearQuery() {
+    updateQuery("");
+    input.current?.focus({ preventScroll: true });
+  }
+  function highlightPointer(event: React.PointerEvent, optionId: string) {
+    if (event.pointerType === "touch" || active?.id === optionId) return;
+    // Highlighting a partly visible option must not move it out from under the pointer.
+    hoveredId.current = optionId;
+    setActiveId(optionId);
+  }
+  function keepSearchFocus(event: React.PointerEvent) {
+    if (event.pointerType !== "touch") event.preventDefault();
   }
 
   const content = () => <div className="command-palette-backdrop" onPointerDown={event => { if (event.target === event.currentTarget) closing.current(); }}>
     <div className="command-palette" ref={dialog} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId} tabIndex={-1} data-command-palette="true">
-      <div className="command-palette-top"><h2 id={titleId}>{t(labels.title)}</h2>{(currentMode !== "views" || savedViewsState === "ready") && <span>{t(labels.count, { count: resultCount })}</span>}</div>
+      <header className="command-palette-top">
+        <h2 id={titleId}>{t(labels.title)}</h2>
+        {resultCount > 0 && <span className="command-palette-count">{t(labels.count, { count: resultCount })}</span>}
+        <button className="command-palette-close" type="button" aria-label={t("Close command palette")} onClick={onClose}><AppIcon name="close" className="sm" /></button>
+      </header>
       {hasTabs && <div className="command-palette-tabs" role="tablist" aria-label={t("Quick access mode")} onKeyDown={event => {
         if (event.nativeEvent.isComposing || composing.current || event.altKey || event.ctrlKey || event.metaKey || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
         event.preventDefault();
@@ -212,14 +239,19 @@ export function CommandPalette({ commands, open, onClose, profiles, favoriteIds,
         const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? count - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + count) % count;
         const next = availableModes[nextIndex]!;
         chooseMode(next, false); dialog.current?.ownerDocument.getElementById(tabId(next))?.focus();
-      }}>{availableModes.map(tab => <button key={tab} id={tabId(tab)} type="button" role="tab" aria-selected={currentMode === tab} aria-controls={panelId} tabIndex={currentMode === tab ? 0 : -1} onClick={() => chooseMode(tab)}>{t(PALETTE_MODES[tab].tab)}</button>)}</div>}
+      }}>{availableModes.map(tab => <button key={tab} id={tabId(tab)} type="button" role="tab" aria-label={t(PALETTE_MODES[tab].tab)} aria-selected={currentMode === tab} aria-controls={panelId} tabIndex={currentMode === tab ? 0 : -1} onClick={() => chooseMode(tab)}>
+        {tab === "views" ? <>
+          <span className="command-palette-tab-full">{t("Saved views")}</span>
+          <span className="command-palette-tab-short">{t("Views")}</span>
+        </> : t(PALETTE_MODES[tab].tab)}
+      </button>)}</div>}
       <p id={descriptionId} className="command-palette-sr-only">{t(labels.help)}</p>
       <div className="command-palette-panel" id={hasTabs ? panelId : undefined} role={hasTabs ? "tabpanel" : undefined} aria-labelledby={hasTabs ? tabId(currentMode) : undefined}>
       <div className="command-palette-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4.5 4.5" strokeLinecap="round" /></svg><input
-        ref={input} type="search" role="combobox" aria-label={t(labels.search)} aria-autocomplete="list" aria-expanded="true" aria-controls={listId} aria-activedescendant={activeOptionId}
+        ref={input} type="search" role="combobox" aria-label={t(labels.search)} aria-autocomplete="list" aria-expanded={navigation.length > 0} aria-controls={listId} aria-activedescendant={activeOptionId}
         autoComplete="off" spellCheck={false} maxLength={500} placeholder={t(labels.placeholder)} value={query}
         onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
-        onChange={event => { setQuery(event.target.value); setActiveId(null); setError(false); }}
+        onChange={event => updateQuery(event.target.value)}
         onKeyDown={event => {
           if (event.defaultPrevented || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || composing.current || event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) return;
           if (event.key === "Enter") { if (event.repeat) return; event.preventDefault(); if (currentMode === "profiles") locate(profileMatches.items[activeIndex]); else if (currentMode === "views") applyView(viewMatches[activeIndex]); else execute(filtered[activeIndex]); return; }
@@ -228,33 +260,41 @@ export function CommandPalette({ commands, open, onClose, profiles, favoriteIds,
           if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
           event.preventDefault();
           const next = nextCommandIndex(navigation, activeIndex, event.key as CommandNavigationKey);
+          hoveredId.current = null;
           setActiveId(navigation[next]?.id ?? null);
         }}
-      />{query && <button className="command-palette-clear" type="button" aria-label={t(labels.clear)} onClick={() => { setQuery(""); setActiveId(null); input.current?.focus(); }}>×</button>}<button className="command-palette-close" type="button" aria-label={t("Close command palette")} onClick={onClose}><kbd>Esc</kbd></button></div>
+      />{query && <button className="command-palette-clear" type="button" aria-label={t(labels.clear)} onClick={clearQuery}><AppIcon name="close" className="sm" /></button>}</div>
       {error && <p className="command-palette-error" role="alert">{t("Command could not be completed. Please try again.")}</p>}
-      {currentMode === "profiles" && <p className="command-palette-profile-note">{t(query.trim() ? "Enter takes you to the selected environment in your list." : "Favorites first, then most recently launched. Enter locates an environment in your list.")}</p>}
-      <div className="command-palette-list" id={listId} role="listbox" aria-label={t(labels.list)}>
+      <div className="command-palette-results">
+      <div className="command-palette-list" id={listId} role="listbox" aria-label={t(labels.list)} hidden={!navigation.length}>
         {currentMode === "commands" ? filtered.map((command, index) => <div key={command.id} id={`${listId}-commands-${index}`} role="option" aria-selected={index === activeIndex} aria-disabled={command.disabled || undefined}
           className={`command-palette-option${index === activeIndex ? " selected" : ""}${command.disabled ? " disabled" : ""}`}
-          onPointerMove={() => { if (!command.disabled) setActiveId(command.id); }} onPointerDown={event => event.preventDefault()} onClick={() => execute(command)}>
-          <span className="command-palette-option-icon" aria-hidden="true">›</span><span className="command-palette-option-copy"><strong>{t(command.label)}</strong>{command.description && <span>{t(command.description)}</span>}</span>
+          onPointerMove={event => { if (!command.disabled) highlightPointer(event, command.id); }} onPointerDown={keepSearchFocus} onClick={() => execute(command)}>
+          <span className="command-palette-option-copy"><strong>{t(command.label)}</strong>{command.description && <span>{t(command.description)}</span>}</span>
           {command.disabled ? <span className="command-palette-unavailable">{t("Unavailable")}</span> : command.shortcut && <kbd>{command.shortcut}</kbd>}
         </div>) : currentMode === "views" ? viewMatches.map((view, index) => <div key={view.id} id={`${listId}-views-${index}`} role="option" aria-selected={index === activeIndex} aria-disabled={view.disabled || undefined} data-saved-view-id={view.id}
           className={`command-palette-option${index === activeIndex ? " selected" : ""}${view.disabled ? " disabled" : ""}`}
-          onPointerMove={() => { if (!view.disabled) setActiveId(view.id); }} onPointerDown={event => event.preventDefault()} onClick={() => applyView(view)}>
-          <span className="command-palette-option-icon" aria-hidden="true">›</span><span className="command-palette-option-copy"><strong>{view.label}</strong><span>{view.description}</span></span>
+          onPointerMove={event => { if (!view.disabled) highlightPointer(event, view.id); }} onPointerDown={keepSearchFocus} onClick={() => applyView(view)}>
+          <span className="command-palette-option-copy"><strong>{view.label}</strong><span>{view.description}</span></span>
           {view.disabled && <span className="command-palette-unavailable">{t("Unavailable")}</span>}
         </div>) : profileMatches.items.map((profile, index) => <div key={profile.id} id={`${listId}-profiles-${index}`} role="option" aria-selected={index === activeIndex} data-profile-id={profile.id}
-          className={`command-palette-option command-palette-profile${index === activeIndex ? " selected" : ""}`} onPointerMove={() => setActiveId(profile.id)} onPointerDown={event => event.preventDefault()} onClick={() => locate(profile)}>
+          className={`command-palette-option command-palette-profile${index === activeIndex ? " selected" : ""}`} onPointerMove={event => highlightPointer(event, profile.id)} onPointerDown={keepSearchFocus} onClick={() => locate(profile)}>
           <span className={`command-palette-profile-dot${profile.running ? " running" : ""}`} aria-hidden="true" />
           <span className="command-palette-option-copy"><strong>{profile.name || profile.id}{favoriteIds?.has(profile.id) && <span className="command-palette-profile-favorite" role="img" aria-label={t("Favorite")}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z" /></svg></span>}</strong><span className="command-palette-profile-meta"><span title={profile.group}>{profile.group || t("Ungrouped")}</span><code title={profile.id}>{profile.id}</code></span>{profile.tags.length > 0 && <span className="command-palette-profile-tags" title={profile.tags.join(" · ")}>{profile.tags.slice(0, 3).join(" · ")}{profile.tags.length > 3 ? ` +${profile.tags.length - 3}` : ""}</span>}</span>
           <span className="command-palette-profile-status">{t(profile.running ? "Running" : "Stopped")}</span>
         </div>)}
       </div>
-      {currentMode === "profiles" && profileMatches.limited && <p className="command-palette-profile-limit" role="status">{t("Showing {shown} of {total} matches. Refine your search to locate a specific environment.", { shown: profileMatches.items.length, total: profileMatches.total })}</p>}
-      {!navigation.length && <div className="command-palette-empty" role="status"><strong>{t(empty.title)}</strong>{empty.help && <p>{t(empty.help)}</p>}</div>}
+      {!navigation.length && <div className="command-palette-empty">
+        <div role="status">
+          <strong>{t(empty.title)}</strong>
+          {empty.help && <p>{t(empty.help)}</p>}
+        </div>
+        {empty.canClear && query.trim() && <button className="btn" type="button" onClick={clearQuery}>{t("Clear search")}</button>}
+      </div>}
       </div>
-      <div className="command-palette-footer"><span><kbd>↑</kbd><kbd>↓</kbd>{t(labels.choose)}</span><span><kbd>↵</kbd>{t(labels.action)}</span><span><kbd>Esc</kbd>{t("Close")}</span></div>
+      {currentMode === "profiles" && profileMatches.limited && <p className="command-palette-profile-limit" role="status">{t("Showing {shown} of {total} matches. Refine your search to locate a specific environment.", { shown: profileMatches.items.length, total: profileMatches.total })}</p>}
+      </div>
+      {active && <div className="command-palette-footer"><span><kbd>↑</kbd><kbd>↓</kbd>{t(labels.choose)}</span><span><kbd>↵</kbd>{t(labels.action)}</span></div>}
     </div>
   </div>;
   if (typeof document === "undefined") return open ? content() : null;

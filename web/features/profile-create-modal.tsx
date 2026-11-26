@@ -13,7 +13,7 @@ import { parsePastedProxy } from "../proxy-input.ts";
 import { AppIcon } from "../ui-primitives.tsx";
 import { useUnsavedChangesGuard } from "../unsaved-changes-guard.tsx";
 import type { useWindowChrome } from "../window-chrome.tsx";
-import { ProfileEditorLayout, ProfileEditorSection } from "./profile-editor-layout.tsx";
+import { ProfileEditorLayout, ProfileEditorPreviewCard, ProfileEditorSection } from "./profile-editor-layout.tsx";
 import {
   BLANK_FORM,
   browserLabel,
@@ -510,11 +510,57 @@ export function ProfileCreateModal({
                 <ProfileEditorLayout
                   label={t("Environment sections")}
                   sections={[
-                    { id: "basic", label: t("Basic information") },
-                    { id: "proxy", label: t("Network & proxy") },
-                    { id: "fingerprint", label: t("Fingerprint settings") },
+                    { id: "basic", label: t("Basic information"), icon: "profiles" },
+                    { id: "proxy", label: t("Network & proxy"), icon: "activity" },
+                    { id: "fingerprint", label: t("Fingerprint settings"), icon: "fingerprint" },
                   ]}
                   scrollBehavior={editorScroll}
+                  preview={
+                    <ProfileEditorPreviewCard
+                      title={t("Live summary")}
+                      heading={form.name.trim() || t("New profile")}
+                      subheading={form.group.trim() || t("Ungrouped")}
+                      badgeText={form.customNo.trim() ? `#${form.customNo.trim()}` : t("Automatic")}
+                      avatarText={form.name.trim() || "MB"}
+                      statusLabel={createProxyIssue || createErr ? t("Needs attention") : t("Ready")}
+                      statusTone={createProxyIssue || createErr ? "warn" : "success"}
+                      items={[
+                        {
+                          key: "browser",
+                          label: t("Browser"),
+                          value: browserLabel(form.engine, createFingerprintRuntime),
+                        },
+                        {
+                          key: "platform",
+                          label: t("Platform"),
+                          value: form.platform.trim() || t("Not set"),
+                          muted: !form.platform.trim(),
+                        },
+                        {
+                          key: "proxy",
+                          label: t("Proxy"),
+                          value: createHasProxy
+                            ? `${form.proxyType} · ${createProxyEndpoint}`
+                            : t("Direct connection"),
+                          muted: !createHasProxy,
+                          mono: createHasProxy,
+                        },
+                        {
+                          key: "os",
+                          label: t("Operating system"),
+                          value: form.platformOs || t("Automatic"),
+                          muted: !form.platformOs,
+                        },
+                        {
+                          key: "screen",
+                          label: t("Screen"),
+                          value: form.screen.trim() || t("Automatic"),
+                          muted: !form.screen.trim(),
+                          mono: !!form.screen.trim(),
+                        },
+                      ]}
+                    />
+                  }
                 >
                   <ProfileEditorSection sectionId="basic">
                     <ProfileTemplates
@@ -551,7 +597,7 @@ export function ProfileCreateModal({
                           value={form.customNo}
                           inputMode="numeric"
                           maxLength={MAX_CUSTOM_NO}
-                          placeholder="auto"
+                          placeholder={t("Automatic")}
                           onChange={(e) => setF("customNo", e.target.value.replace(/\D/g, "").slice(0, MAX_CUSTOM_NO))}
                         />
                       </label>
@@ -601,9 +647,9 @@ export function ProfileCreateModal({
                             ? <><option value="aliasmode">{t("Chromium 155 (default)")}</option><option value="">{t("CloakBrowser 146")}</option></>
                             : <><option value="">{t("CloakBrowser 146 (default)")}</option><option value="aliasmode">{t("Chromium 155")}</option></>}
                         </select>
-                        <small>{form.chromiumRuntime === "auto" ? t("Uses this computer's default browser runtime.") : !form.chromiumRuntime
+                        {form.chromiumRuntime !== "auto" && <small>{!form.chromiumRuntime
                           ? t(CLOAKBROWSER_NOTE)
-                          : t("Downloads once (about 190 MB) on each computer that opens it.")}</small>
+                          : t("Downloads once (about 190 MB) on each computer that opens it.")}</small>}
                       </label>
                     )}
                   </ProfileEditorSection>
@@ -611,7 +657,7 @@ export function ProfileCreateModal({
                     <details className="fingerprint-settings" open={createProxyOpen} onToggle={(event) => setCreateProxyOpen(event.currentTarget.open)}>
                       <summary>
                         <span>{t("Proxy")}</span>
-                        <span className="automatic-badge">{createHasProxy ? createProxyEndpoint : t("Optional")}</span>
+                        <span className="profile-editor-proxy-summary">{createHasProxy ? createProxyEndpoint : t("Direct connection")}</span>
                       </summary>
                       <div className="proxy-settings">
                         {createProxySource && (

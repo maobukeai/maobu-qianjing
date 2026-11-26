@@ -104,7 +104,7 @@ async function run(scenario: string) {
     assert.equal(requests.some(request => request.path === "/ui/api/trash"), false, "The hidden Trash page must not read until visited");
     if (scenario === "proxy-owner") {
       await click(button("Proxies"));
-      await click(button("Replace proxies Assign new connections"));
+      await click(button("Replace proxies"));
       const input = visible<HTMLTextAreaElement>('textarea[aria-label="Replacement input"]')[0]; assert.ok(input);
       await type(input, "fixture.invalid:8000\nfixture.invalid:8001"); await click(button("Preview changes"));
       await waitFor(() => visible("[data-proxy-task-title]").length > 0 || body.textContent!.includes("Apply 2 changes"), "The actual proxy replacement should show a review");
@@ -124,12 +124,12 @@ async function run(scenario: string) {
       assert.equal(dom.window.document.activeElement, focusedWhileRefreshing, "Background completion keeps the user's current focus");
       assert.ok((await activityTask(dom, "Proxy assignment")).classList.contains("is-complete"));
       await click(button("Proxies"));
-      await click(button("Check proxies Find connection problems"));
+      await click(visible<HTMLButtonElement>('.tools-tabs button[data-proxy-tab="check"]')[0]!);
       assert.equal(visible("[data-proxy-review-title]").length, 0);
       await goAI();
       await viewActivityTask(dom, "Proxy assignment");
       await waitFor(() => dom.window.document.activeElement?.matches("[data-proxy-review-title]") ?? false, "Activity must open the latest completed receipt and focus its details from the Check proxies tab");
-      assert.equal(button("Replace proxies Assign new connections").getAttribute("aria-pressed"), "true");
+      assert.equal(button("Replace proxies").getAttribute("aria-pressed"), "true");
       assert.match(visible(".proxy-table")[0]!.textContent!, /activity_a[\s\S]*Updated[\s\S]*activity_b[\s\S]*Updated/);
 
       const nextInput = visible<HTMLTextAreaElement>('textarea[aria-label="Replacement input"]')[0]!;
@@ -163,7 +163,7 @@ async function run(scenario: string) {
       await viewActivityTask(dom, "Trash operation");
       await waitFor(() => visible(".trash-task-counts strong")[0]?.textContent === "1", "The confirmed restore count must remain available across navigation");
       assert.equal(visible('tr[data-trash-id="activity_deleted"]').length, 0); assert.equal(trashWrites, 1);
-      if (scenario === "trash-refresh-failure") assert.ok(visible<HTMLElement>(".trash-task-panel")[0]!.textContent!.includes("A failed refresh does not undo confirmed restores or deletions."));
+      if (scenario === "trash-refresh-failure") assert.ok(visible<HTMLElement>(".trash-task-panel")[0]!.textContent!.includes("Some lists could not refresh. Confirmed results still apply."));
       await click(button("Dismiss Trash operation result")); await waitFor(() => activityTrigger(dom) === null, "Dismissing only the receipt removes its activity entry"); assert.deepEqual(unexpected, []); return;
     }
     if (scenario === "idle") {

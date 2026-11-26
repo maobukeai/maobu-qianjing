@@ -117,7 +117,8 @@ async function lockRequest(
 }
 
 export async function fetchAppLockStatus(signal?: AbortSignal): Promise<AppLockStatus> {
-  return lockRequest("/status", "GET", undefined, signal);
+  const deadline = AbortSignal.timeout(10_000);
+  return lockRequest("/status", "GET", undefined, signal ? AbortSignal.any([signal, deadline]) : deadline);
 }
 
 export async function setupAppLock(input: {
@@ -164,47 +165,90 @@ export function useAppLockController(options: UseAppLockControllerOptions = {}) 
   const activityThrottleMs = options.activityThrottleMs ?? 30_000;
   const idlePollMs = options.idlePollMs ?? 15_000;
 
-  const [status, setStatus] = useState<AppLockStatus | null>(null);
+  const [status, updateStatus] = useState<AppLockStatus | null>(null);
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
   const lastPingRef = useRef(0);
+  const transition = useRef(0);
+  const statusRequest = useRef<{ transition: number; promise: Promise<AppLockStatus | null> } | null>(null);
+  const pendingLock = useRef<Promise<AppLockStatus | null> | null>(null);
 
-  const refresh = useCallback(async () => {
-    if (!enabled) {
-      setLoading(false);
-      return null;
-    }
-    try {
-      const next = await fetchAppLockStatus();
-      setStatus(next);
-      setError(null);
-      return next;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      return null;
-    } finally {
-      setLoading(false);
-    }
-  }, [enabled]);
+  const setStatus = useCallback((next: AppLockStatus) => {
+    transition.current++;
+    updateStatus(next);
+    setError(null);
+  }, []);
 
-  const lockNow = useCallback(async () => {
-    if (!enabled) return null;
-    try {
-      const next = await lockAppNow();
+  const observeStatus = useCallback((next: AppLockStatus, startedAtTransition: number) => {
+    if (startedAtTransition !== transition.current) return false;
+    // A confirmed lock supersedes background responses issued before it was observed.
+    if (next.locked) transition.current++;
+    updateStatus(next);
+    setError(null);
+    return true;
+  }, []);
+
+  const refresh = useCallback((replacePending = false) => {
+    if (!enabled) return Promise.resolve(null);
+    const startedAtTransition = transition.current;
+    if (!replacePending && statusRequest.current?.transition === startedAtTransition) return statusRequest.current.promise;
+    setLoading(true);
+    const request: Promise<AppLockStatus | null> = fetchAppLockStatus()
+      .then((next) => statusRequest.current?.promise === request && observeStatus(next, startedAtTransition) ? next : null)
+      .catch((err) => {
+        if (statusRequest.current?.promise === request && startedAtTransition === transition.current) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+        return null;
+      })
+      .finally(() => {
+        if (statusRequest.current?.promise !== request) return;
+        statusRequest.current = null;
+        setLoading(false);
+      });
+    statusRequest.current = { transition: startedAtTransition, promise: request };
+    return request;
+  }, [enabled, observeStatus]);
+
+  const beginSettingsStatusChange = useCallback(() => {
+    const startedAtTransition = transition.current;
+    return (next: AppLockStatus) => {
+      if (startedAtTransition !== transition.current) {
+        // A settings write may have succeeded. Re-read current state without applying its older snapshot.
+        void refresh(true);
+        return false;
+      }
       setStatus(next);
-      setError(null);
-      return next;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      return null;
-    }
-  }, [enabled]);
+      return true;
+    };
+  }, [refresh, setStatus]);
 
   const notifyLocked = useCallback(() => {
     if (!enabled) return;
-    setStatus((prev) => (prev ? { ...prev, locked: true, enabled: true } : prev));
+    transition.current++;
+    updateStatus((prev) => (prev ? { ...prev, locked: true, enabled: true } : prev));
     void refresh();
   }, [enabled, refresh]);
+
+  const lockNow = useCallback(() => {
+    if (!enabled) return Promise.resolve(null);
+    if (pendingLock.current) return pendingLock.current;
+    const startedAtTransition = transition.current;
+    pendingLock.current = lockAppNow()
+      .then((next) => {
+        if (startedAtTransition === transition.current) setStatus(next);
+        else void refresh(true);
+        return next;
+      })
+      .catch((err) => {
+        if (startedAtTransition !== transition.current) return null;
+        if (err instanceof AppLockApiError && err.code === "app_locked") notifyLocked();
+        else setError(err instanceof Error ? err.message : String(err));
+        return null;
+      })
+      .finally(() => { pendingLock.current = null; });
+    return pendingLock.current;
+  }, [enabled, notifyLocked, refresh, setStatus]);
 
   useEffect(() => {
     if (!enabled) {
@@ -222,11 +266,12 @@ export function useAppLockController(options: UseAppLockControllerOptions = {}) 
       const now = Date.now();
       if (now - lastPingRef.current < activityThrottleMs) return;
       lastPingRef.current = now;
+      const startedAtTransition = transition.current;
       void reportAppLockActivity()
-        .then((next) => setStatus(next))
+        .then((next) => observeStatus(next, startedAtTransition))
         .catch((err) => {
-          if (err instanceof AppLockApiError && err.status === 423) {
-            void refresh();
+          if (startedAtTransition === transition.current && err instanceof AppLockApiError && err.code === "app_locked") {
+            notifyLocked();
           }
         });
     };
@@ -260,13 +305,14 @@ export function useAppLockController(options: UseAppLockControllerOptions = {}) 
       window.removeEventListener("focus", pingActivity);
       if (timer) clearInterval(timer);
     };
-  }, [enabled, status?.enabled, status?.locked, status?.idleTimeoutMinutes, activityThrottleMs, idlePollMs, lockNow, refresh]);
+  }, [enabled, status?.enabled, status?.locked, status?.idleTimeoutMinutes, activityThrottleMs, idlePollMs, lockNow, notifyLocked, observeStatus, refresh]);
 
   return {
     status,
     loading,
     error,
     setStatus,
+    beginSettingsStatusChange,
     refresh,
     lockNow,
     notifyLocked,

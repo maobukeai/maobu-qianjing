@@ -74,6 +74,21 @@ async function run(scenario: string) {
     await open();
     assert.equal(dom.window.document.activeElement, close());
     assert.equal(readWorkbenchShortcutContext(null, dom.window.document as unknown as Document).modalOpen, true);
+    if (scenario === "reference-scroll") {
+      const list = help()!.querySelector<HTMLElement>(".shortcut-help-body")!;
+      Object.defineProperties(list, { clientHeight: { value: 160 }, scrollHeight: { value: 500 } });
+      assert.equal(list.querySelectorAll('[role="list"]').length, 2);
+      assert.ok(help()!.querySelector(":scope > footer.shortcut-help-note"));
+      await key("PageDown", { ctrlKey: true }); assert.equal(list.scrollTop, 0);
+      await key("PageDown"); assert.equal(list.scrollTop, 160);
+      assert.equal(dom.window.document.activeElement, close());
+      await key("End"); assert.equal(list.scrollTop, 340);
+      await key("PageUp"); assert.equal(list.scrollTop, 180);
+      await key("Home"); assert.equal(list.scrollTop, 0);
+      await key("Escape"); assert.equal(dom.window.document.activeElement, trigger());
+      assert.deepEqual(actions, []);
+      return;
+    }
     if (scenario === "focus") {
       const buttons = [...help()!.querySelectorAll<HTMLButtonElement>("button")], first = buttons[0]!, last = buttons.at(-1)!;
       await act(async () => { last.focus(); }); await key("Tab"); assert.equal(dom.window.document.activeElement, first);

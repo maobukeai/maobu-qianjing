@@ -5,6 +5,7 @@ import { MotionPresence } from "./desktop-motion.tsx";
 import { useTranslation } from "./i18n.tsx";
 import { isolateModalSiblings } from "./modal-isolation.ts";
 import type { SignedUpdateProgress } from "./signed-update-api.ts";
+import { AppIcon } from "./ui-primitives.tsx";
 import { hasActiveWorkbenchModal } from "./workbench-shortcuts.ts";
 import "./signed-update-draft-dialog.css";
 
@@ -51,9 +52,9 @@ export function SignedUpdateDraftDialog(props: SignedUpdateDraftDialogProps) {
   const hasDrafts = !!confirmation?.dirty.length;
   const title = installing ? "Installing verified update" : hasDrafts ? "Install with unsaved changes?" : "Install verified update";
   const description = installing
-    ? t("Keep the app open while the update downloads and installs. Closing and restarting are blocked until it finishes.")
+    ? t("Keep the app open until the update finishes.")
     : t(hasDrafts
-      ? "Installing version {version} restarts the app. Unsaved drafts will be lost if the app restarts."
+      ? "Installing version {version} restarts the app. Unsaved drafts will be lost."
       : "Installing version {version} restarts the app.", { version: confirmation?.version ?? "" });
 
   useLayoutEffect(() => {
@@ -98,18 +99,31 @@ export function SignedUpdateDraftDialog(props: SignedUpdateDraftDialogProps) {
   return createPortal(<div ref={layer} className="signed-update-dialog-layer"><MotionPresence present={open}>{() => (
     <div className="signed-update-dialog-backdrop" onPointerDown={event => event.stopPropagation()}>
       <div className="signed-update-dialog" ref={panel} role={installing ? "dialog" : "alertdialog"} aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={`${id}-description`} tabIndex={-1}>
-        <h2 id={`${id}-title`}>{t(title)}</h2>
-        <p id={`${id}-description`}>{description}</p>
-        {installing ? (
-          progress ? <SignedUpdateProgressView progress={progress} /> : <p className="signed-update-progress" role="status">{t("Preparing update installation…")}</p>
-        ) : <>
-          {hasDrafts && <ul aria-label={t("Unsaved drafts")}>{confirmation?.dirty.map(label => <li key={label}>{t(DESKTOP_DRAFT_LABELS[label])}</li>)}</ul>}
-          {confirmation?.changed && <p className="signed-update-dialog-note" role="status">{t("Drafts changed since this prompt opened. Review them before continuing.")}</p>}
-          {blocked && <p className="signed-update-dialog-note" role="status">{t(blocked)}</p>}
-          <div className="signed-update-dialog-actions">
-            <button type="button" className="btn primary" ref={keepEditing} onClick={() => { if (usable(panel.current)) onKeepEditing(); }}>{t("Keep editing")}</button>
-            <button type="button" className={`btn${hasDrafts ? " signed-update-discard" : ""}`} disabled={!!blocked} onClick={() => { if (usable(panel.current)) onConfirm(); }}>{t(hasDrafts ? "Discard drafts and install" : "Install verified update")}</button>
+        <header className="signed-update-dialog-heading">
+          <span className={`signed-update-dialog-icon${hasDrafts && !installing ? " is-warning" : ""}`}>
+            <AppIcon name={hasDrafts && !installing ? "warning" : "refresh"} />
+          </span>
+          <div>
+            <h2 id={`${id}-title`}>{t(title)}</h2>
+            <p id={`${id}-description`}>{description}</p>
           </div>
+        </header>
+        {installing ? (
+          <div className="signed-update-dialog-body">
+            {progress ? <SignedUpdateProgressView progress={progress} /> : <p className="signed-update-progress" role="status">{t("Preparing update installation…")}</p>}
+          </div>
+        ) : <>
+          {(hasDrafts || confirmation?.changed || blocked) && <div className="signed-update-dialog-body">
+            {hasDrafts && <ul className="signed-update-drafts" aria-label={t("Unsaved drafts")}>
+              {confirmation?.dirty.map(label => <li key={label}><AppIcon name="file" className="sm" />{t(DESKTOP_DRAFT_LABELS[label])}</li>)}
+            </ul>}
+            {confirmation?.changed && <p className="signed-update-dialog-note" role="status"><AppIcon name="alert" className="sm" />{t("Drafts changed. Review them before installing.")}</p>}
+            {blocked && <p className="signed-update-dialog-note" role="status"><AppIcon name="alert" className="sm" />{t(blocked)}</p>}
+          </div>}
+          <footer className="signed-update-dialog-actions">
+            <button type="button" className={`btn${hasDrafts ? " primary" : " ghost"}`} ref={keepEditing} onClick={() => { if (usable(panel.current)) onKeepEditing(); }}>{t(hasDrafts ? "Keep editing" : "Cancel")}</button>
+            <button type="button" className={`btn${hasDrafts ? " signed-update-discard" : " primary"}`} disabled={!!blocked} onClick={() => { if (usable(panel.current)) onConfirm(); }}>{t(hasDrafts ? "Discard drafts and install" : "Install")}</button>
+          </footer>
         </>}
       </div>
     </div>

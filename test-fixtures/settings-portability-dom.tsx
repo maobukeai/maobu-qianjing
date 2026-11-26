@@ -61,7 +61,7 @@ async function run(scenario: string) {
       onLocateSnapshotProfile={coordinated ? id => locatedProfiles.push(id) : undefined} /><button>Outside action</button></I18nProvider>;
     await dom.render(coordinated ? <WorkspaceOperationsProvider coordinator={coordinator}>{feature}</WorkspaceOperationsProvider> : feature);
     if (scenario === "announcement-source") {
-      assert.ok(dom.container.textContent?.includes("does not change the installation source"));
+      assert.ok(dom.container.querySelector(".github-announcements")?.textContent?.includes("In-app installation requires a signed publisher channel."));
       const source = dom.container.querySelector(".signed-update-source")!; assert.equal(source.hasAttribute("open"), false);
       await type("Release repository", "unrelated/announcements"); await click("Save & check for updates", true);
       assert.equal(count("/settings", "PATCH"), 1); assert.equal(count("/updates", "POST"), 1);
@@ -79,7 +79,7 @@ async function run(scenario: string) {
       assert.ok(dom.container.querySelector(".signed-update-release")); assert.equal(dom.container.querySelector(".signed-update-card [role=alert]"), null);
       return;
     }
-    assert.ok(dom.container.textContent?.includes("Cloud upload and availability on other devices are managed by your sync app."));
+    assert.ok(dom.container.querySelector(".sync-status-summary")?.textContent?.includes("Snapshots are encrypted locally. Your sync app handles transfers."));
     if (scenario === "disabled-empty") {
       assert.ok(dom.container.textContent?.includes("Snapshots disabled")); assert.equal(count("/sync/files"), 0);
       await act(async () => { dom.container.querySelector<DomInput>('[role="switch"]')!.click(); });
@@ -115,7 +115,8 @@ async function run(scenario: string) {
     if (scenario === "all-conflicts") {
       assert.ok(dom.container.querySelector(".sync-preview [role=status]")?.textContent?.includes("There are no new environments in this snapshot."));
       assert.ok(dom.container.querySelector(".sync-preview")?.textContent?.includes("Conflict · skip"));
-      assert.ok(dom.container.textContent?.includes("Matching environment IDs in the list, Trash, or running browser records are skipped."));
+      const formatHelp = dom.container.querySelector(".sync-restore select")?.getAttribute("aria-describedby");
+      assert.ok(formatHelp && dom.window.document.getElementById(formatHelp)?.textContent?.includes("IDs in the list, Trash, or running profiles are skipped."));
       assert.equal([...dom.container.querySelectorAll("button")].some(node => node.textContent?.trim() === "Import new profiles"), false);
       assert.equal(count("/sync/import"), 0);
       return;

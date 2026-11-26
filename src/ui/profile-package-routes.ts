@@ -1,7 +1,6 @@
 import type { Launcher } from "../../launcher.ts";
 import { isSafeProfileId, PROFILE_ID_ERROR } from "../../profile-id.ts";
 import {
-  applyProfilePackageImport,
   createProfilePackage,
   isValidConflictStrategy,
   MAX_PROFILE_PACKAGE_BYTES,
@@ -356,8 +355,7 @@ export async function handleProfilePackageRoutes(
 
     try {
       const workspaceId = options.workspaceManagement?.currentId() ?? "default";
-      const payload = getPreviewStore(store, options).consume(body.previewId, body.previewToken, workspaceId);
-      const result = applyProfilePackageImport(store, payload, {
+      const result = getPreviewStore(store, options).importReviewed(store, body.previewId, body.previewToken, workspaceId, {
         strategy: body.strategy,
         selectedIds,
       });

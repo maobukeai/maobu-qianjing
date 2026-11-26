@@ -7,6 +7,7 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { RosterSkeleton } from "./components/roster-skeleton.tsx";
 import { DESKTOP_MOTION_KEY, desktopMotionCookie, isMotionAllowed, readDesktopMotionPreference, resolveDesktopMotion } from "./desktop-motion.tsx";
+import { installGlobalSlidingIndicators } from "./global-sliding-indicators.ts";
 import { FLIP_DURATION_MS, MAX_FLIP_ROWS, useFlipGroup } from "./hooks/use-flip-group.ts";
 import { I18nProvider } from "./i18n.tsx";
 import { useSlidingIndicator } from "./navigation-motion.ts";
@@ -310,4 +311,171 @@ test("RosterSkeleton renders column-aligned density rows with accessible Loading
   expect(compact.match(/<td\b/g)).toHaveLength(20);
   expect(compact).toContain('data-skeleton-density="compact"');
   expect(compact).not.toContain("roster-skeleton-bar is-sub");
+});
+
+test("useSlidingIndicator keeps active transition when ResizeObserver reports unchanged geometry", async () => {
+  const prevRO = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
+  const listeners = new Set<() => void>();
+  class MockResizeObserver {
+    constructor(readonly cb: () => void) { listeners.add(cb); }
+    observe() {}
+    disconnect() { listeners.delete(this.cb); }
+  }
+  Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: MockResizeObserver });
+  try {
+    await withHappyDom(async (dom, container) => {
+      dom.document.documentElement.dataset.desktopMotion = "full";
+      dom.matchMedia = (() => ({ matches: false, media: "(prefers-reduced-motion: reduce)", addEventListener: () => {}, removeEventListener: () => {} })) as unknown as typeof dom.matchMedia;
+      Object.defineProperty(dom.HTMLElement.prototype, "getBoundingClientRect", {
+        configurable: true,
+        value(this: HTMLElement) {
+          if (this.dataset.tab === "a") return { left: 10, top: 0, width: 60, height: 32 };
+          if (this.dataset.tab === "b") return { left: 80, top: 0, width: 60, height: 32 };
+          return { left: 10, top: 0, width: 200, height: 32 };
+        },
+      });
+      function Tabs({ active }: { active: string }) {
+        const { containerRef, indicatorRef } = useSlidingIndicator<HTMLDivElement>({ activeKey: active, axis: "vertical", fixedSize: 32 });
+        return createElement(
+          "div",
+          { ref: containerRef, className: "tabs" },
+          createElement("span", { ref: indicatorRef, className: "sliding-indicator" }),
+          createElement("button", { "data-tab": "a", className: active === "a" ? "active" : "" }, "A"),
+          createElement("button", { "data-tab": "b", className: active === "b" ? "active" : "" }, "B"),
+        );
+      }
+      const root = createRoot(container);
+      act(() => { root.render(createElement(Tabs, { active: "a" })); });
+      act(() => { root.render(createElement(Tabs, { active: "b" })); });
+      const indicator = container.querySelector<HTMLElement>(".sliding-indicator")!;
+      expect(indicator.style.transition).toBe("");
+      // Simulate initial async ResizeObserver fire on the next frame with unchanged coordinates
+      for (const cb of listeners) cb();
+      expect(indicator.style.transition).toBe("");
+      act(() => { root.unmount(); });
+    });
+  } finally {
+    if (prevRO) Object.defineProperty(globalThis, "ResizeObserver", prevRO);
+    else Reflect.deleteProperty(globalThis, "ResizeObserver");
+  }
+});
+
+test("installGlobalSlidingIndicators equips existing and future toggle groups with sliding pills", async () => {
+  const prevMO = Object.getOwnPropertyDescriptor(globalThis, "MutationObserver");
+  const prevCS = Object.getOwnPropertyDescriptor(globalThis, "getComputedStyle");
+  try {
+    await withHappyDom(async (dom, container) => {
+      dom.document.documentElement.dataset.desktopMotion = "full";
+      dom.matchMedia = (() => ({ matches: false, media: "(prefers-reduced-motion: reduce)", addEventListener: () => {}, removeEventListener: () => {} })) as unknown as typeof dom.matchMedia;
+      Object.defineProperty(globalThis, "MutationObserver", { configurable: true, writable: true, value: dom.MutationObserver });
+      Object.defineProperty(globalThis, "getComputedStyle", { configurable: true, writable: true, value: () => ({ borderRadius: "8px" }) });
+      Object.defineProperty(dom.HTMLElement.prototype, "getBoundingClientRect", {
+        configurable: true,
+        value(this: HTMLElement) {
+          if (this.dataset.btn === "1") return { left: 14, top: 10, width: 64, height: 32 };
+          if (this.dataset.btn === "2") return { left: 86, top: 10, width: 72, height: 32 };
+          return { left: 10, top: 10, width: 220, height: 40 };
+        },
+      });
+
+      const tablist = dom.document.createElement("div");
+      tablist.setAttribute("role", "tablist");
+      const b1 = dom.document.createElement("button");
+      b1.dataset.btn = "1";
+      b1.setAttribute("aria-selected", "true");
+      const b2 = dom.document.createElement("button");
+      b2.dataset.btn = "2";
+      b2.setAttribute("aria-selected", "false");
+      tablist.append(b1, b2);
+      container.appendChild(tablist as unknown as Node);
+
+      const dispose = installGlobalSlidingIndicators(container);
+      const pill = tablist.querySelector(".global-sliding-pill") as { style: CSSStyleDeclaration } | null;
+      expect(pill).toBeTruthy();
+      expect(tablist.getAttribute("data-global-sliding")).toBe("active");
+      expect(tablist.getAttribute("data-global-sliding-visible")).toBe("true");
+      expect(pill!.style.transform).toBe("translate3d(4px, 0px, 0)");
+      expect(pill!.style.width).toBe("64px");
+
+      // Switch active tab -> MutationObserver updates transform smoothly without killing transition
+      b1.setAttribute("aria-selected", "false");
+      b2.setAttribute("aria-selected", "true");
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(pill!.style.transform).toBe("translate3d(76px, 0px, 0)");
+      expect(pill!.style.width).toBe("72px");
+      expect(pill!.style.transition).toBe("");
+
+      // Future dynamically mounted group automatically gets a sliding pill
+      const dynamicGroup = dom.document.createElement("div");
+      dynamicGroup.setAttribute("data-sliding-group", "");
+      const d1 = dom.document.createElement("button");
+      d1.dataset.btn = "1";
+      d1.setAttribute("aria-pressed", "true");
+      const d2 = dom.document.createElement("button");
+      d2.dataset.btn = "2";
+      d2.setAttribute("aria-pressed", "false");
+      dynamicGroup.append(d1, d2);
+      container.appendChild(dynamicGroup as unknown as Node);
+      await Promise.resolve();
+      await Promise.resolve();
+      const dynamicPill = dynamicGroup.querySelector(".global-sliding-pill") as { style: CSSStyleDeclaration } | null;
+      expect(dynamicPill).toBeTruthy();
+      expect(dynamicPill!.style.transform).toBe("translate3d(4px, 0px, 0)");
+
+      // Native radio-inside-label group (like theme switcher) glides on change event
+      const radioGroup = dom.document.createElement("div");
+      radioGroup.setAttribute("role", "radiogroup");
+      const l1 = dom.document.createElement("label");
+      l1.dataset.btn = "1";
+      const r1 = dom.document.createElement("input");
+      r1.type = "radio";
+      r1.name = "theme-test";
+      r1.checked = true;
+      l1.appendChild(r1);
+      const l2 = dom.document.createElement("label");
+      l2.dataset.btn = "2";
+      const r2 = dom.document.createElement("input");
+      r2.type = "radio";
+      r2.name = "theme-test";
+      l2.appendChild(r2);
+      radioGroup.append(l1, l2);
+      container.appendChild(radioGroup as unknown as Node);
+      await Promise.resolve();
+      await Promise.resolve();
+      const radioPill = radioGroup.querySelector(".global-sliding-pill") as { style: CSSStyleDeclaration } | null;
+      expect(radioPill).toBeTruthy();
+      expect(radioPill!.style.transform).toBe("translate3d(4px, 0px, 0)");
+
+      r1.checked = false;
+      r2.checked = true;
+      r2.dispatchEvent(new dom.Event("change", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(radioPill!.style.transform).toBe("translate3d(76px, 0px, 0)");
+      expect(radioPill!.style.transition).toBe("");
+
+      // Multi-select toggle group (2 active items) never shows a single sliding pill
+      const multiGroup = dom.document.createElement("div");
+      multiGroup.setAttribute("role", "group");
+      const m1 = dom.document.createElement("button");
+      m1.dataset.btn = "1";
+      m1.setAttribute("aria-pressed", "true");
+      const m2 = dom.document.createElement("button");
+      m2.dataset.btn = "2";
+      m2.setAttribute("aria-pressed", "true");
+      multiGroup.append(m1, m2);
+      container.appendChild(multiGroup as unknown as Node);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(multiGroup.getAttribute("data-global-sliding-visible")).toBeNull();
+
+      dispose();
+    });
+  } finally {
+    if (prevMO) Object.defineProperty(globalThis, "MutationObserver", prevMO);
+    else Reflect.deleteProperty(globalThis, "MutationObserver");
+    if (prevCS) Object.defineProperty(globalThis, "getComputedStyle", prevCS);
+    else Reflect.deleteProperty(globalThis, "getComputedStyle");
+  }
 });

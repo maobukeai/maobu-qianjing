@@ -345,7 +345,7 @@ export function PlatformPicker({ value, onChange }: { value: string; onChange: (
         } else onChange(e.target.value);
       }}
     >
-      {KNOWN_PLATFORMS.map((p) => <option key={p.value} value={p.value}>{p.value ? p.label : t(p.label)}</option>)}
+      {KNOWN_PLATFORMS.map((p) => <option key={p.value} value={p.value}>{p.value ? p.label : t("None")}</option>)}
       <option value="__new__">{t("➕ New platform…")}</option>
     </select>
   );
@@ -440,14 +440,9 @@ export function FingerprintSettings({
   return (
     <details className="fingerprint-settings">
       <summary>
-        <span>{t("Fingerprint settings")}</span>
-        <span className="automatic-badge">{onTimezoneChange ? t("Advanced") : t("Automatic")}</span>
+        <span>{t("Customize")}</span>
       </summary>
       <div className="fingerprint-grid">
-        <label className="fld">
-          <span>{t("Browser")}</span>
-          <input value={browserLabel(engine, chromiumRuntime)} readOnly tabIndex={-1} className="ro" />
-        </label>
         <label className="fld">
           <span>{t("Screen")}</span>
           <input
@@ -468,7 +463,7 @@ export function FingerprintSettings({
               <option value="linux">Linux</option>
             </select>
           ) : (
-            <input value={{ windows: "Windows", macos: "macOS", linux: "Linux" }[platformOs] ?? "Automatic"} readOnly tabIndex={-1} className="ro" />
+            <input value={{ windows: "Windows", macos: "macOS", linux: "Linux" }[platformOs] ?? t("Automatic")} readOnly tabIndex={-1} className="ro" />
           )}
         </label>
         {onTimezoneChange && (

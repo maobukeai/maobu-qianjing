@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "./i18n.tsx";
 import { AppIcon as Icon, ConfirmDialog, ModalDialog } from "./ui-primitives.tsx";
 import {
@@ -40,6 +41,7 @@ export interface ProxyVaultPanelProps {
   active: boolean;
   profiles?: readonly VaultTargetProfile[];
   onChanged: () => Promise<void>;
+  headerActionsHost?: HTMLDivElement | null;
 }
 
 const VAULT_STATUS_LABELS: Record<ProxyVaultStatus, string> = {
@@ -68,6 +70,11 @@ function rttTone(latencyMs: number): "fast" | "medium" | "slow" {
 
 function exitLocation(entry: ProxyVaultEntry): string {
   return [entry.lastExitCountry, entry.lastExitRegion, entry.lastExitCity].filter(Boolean).join(" · ");
+}
+
+function formatHostPort(entry: Pick<ProxyVaultEntry, "host" | "port">): string {
+  const host = entry.host.includes(":") && !entry.host.startsWith("[") ? `[${entry.host}]` : entry.host;
+  return `${host}:${entry.port}`;
 }
 
 interface EditorFormState {
@@ -157,7 +164,7 @@ export function assessBindRisk(
   return { level, reasons };
 }
 
-export function ProxyVaultPanel({ active, profiles = [], onChanged }: ProxyVaultPanelProps) {
+export function ProxyVaultPanel({ active, profiles = [], onChanged, headerActionsHost }: ProxyVaultPanelProps) {
   const { t, language } = useTranslation();
   const [entries, setEntries] = useState<ProxyVaultEntry[]>([]);
   const [groups, setGroups] = useState<string[]>([]);
@@ -288,13 +295,38 @@ export function ProxyVaultPanel({ active, profiles = [], onChanged }: ProxyVault
     let highRisk = 0;
     let mediumRisk = 0;
     let boundProfiles = 0;
+    let runningProfiles = 0;
+    let latencySum = 0;
+    let latencyCount = 0;
+    let ungrouped = 0;
+    const groupCounts = new Map<string, number>();
     for (const item of entries) {
       if (item.lastStatus === "working") working++;
+      if (item.lastLatencyMs !== null) {
+        latencySum += item.lastLatencyMs;
+        latencyCount++;
+      }
       if (item.riskLevel === "high") highRisk++;
       else if (item.riskLevel === "medium") mediumRisk++;
       boundProfiles += item.boundProfiles.length;
+      for (const bp of item.boundProfiles) {
+        if (bp.running) runningProfiles++;
+      }
+      if (!item.group) ungrouped++;
+      else groupCounts.set(item.group, (groupCounts.get(item.group) ?? 0) + 1);
     }
-    return { total: entries.length, working, highRisk, mediumRisk, boundProfiles };
+    const avgLatencyMs = latencyCount > 0 ? Math.round(latencySum / latencyCount) : null;
+    return {
+      total: entries.length,
+      working,
+      highRisk,
+      mediumRisk,
+      boundProfiles,
+      runningProfiles,
+      avgLatencyMs,
+      ungrouped,
+      groupCounts,
+    };
   }, [entries]);
 
   const allVisibleSelected =
@@ -700,65 +732,105 @@ export function ProxyVaultPanel({ active, profiles = [], onChanged }: ProxyVault
 
   if (!active) return null;
 
+  const actionButtons = (
+    <>
+      <button
+        type="button"
+        className="iconbtn tip"
+        disabled={loading}
+        aria-label={t("Refresh proxy vault")}
+        data-tip={t("Refresh proxy vault")}
+        onClick={() => void loadVault()}
+      >
+        <Icon name="refresh" className="sm" />
+      </button>
+      <button type="button" className="btn" disabled={loading || checking || ingesting} onClick={() => void handleIngest()}>
+        <Icon name="import" className="sm" />
+        {ingesting ? t("Ingesting…") : t("Ingest from environments")}
+      </button>
+      <button type="button" className="btn" disabled={unavailable || checking} onClick={openImportModal}>
+        <Icon name="fileImport" className="sm" />
+        {t("Batch import")}
+      </button>
+      <button
+        type="button"
+        className="btn"
+        disabled={unavailable || checking || entries.length === 0}
+        onClick={() => void runVaultCheck()}
+      >
+        <Icon name="activity" className="sm" />
+        {checking
+          ? t("Checking…")
+          : selectedIds.size > 0
+            ? t("Check selected ({count})", { count: selectedIds.size })
+            : t("Check all")}
+      </button>
+      <button type="button" className="btn primary" disabled={unavailable} onClick={openCreateModal}>
+        <Icon name="plus" className="sm" />
+        {t("Add proxy")}
+      </button>
+    </>
+  );
+
+  const reachableRate = stats.total > 0 ? Math.round((stats.working / stats.total) * 100) : 0;
+
   return (
     <div className="proxy-vault-panel" data-proxy-vault-panel>
+      {headerActionsHost ? createPortal(actionButtons, headerActionsHost) : null}
       <section className="tools-panel">
-        <div className="tools-panel-head">
-          <div>
-            <h3>{t("Proxy vault")}</h3>
-            <p>{t("Store reusable proxies with encrypted credentials, anti-association alerts, and one-click environment binding.")}</p>
+        {!headerActionsHost && (
+          <div className="tools-panel-head">
+            <h3>{t("Saved connections")}</h3>
+            <div className="proxy-actions">{actionButtons}</div>
           </div>
-          <div className="proxy-actions">
-            <button type="button" className="btn" disabled={loading || checking || ingesting} onClick={() => void handleIngest()}>
-              <Icon name="import" className="sm" />
-              {ingesting ? t("Ingesting…") : t("Ingest from environments")}
-            </button>
-            <button type="button" className="btn" disabled={unavailable || checking} onClick={openImportModal}>
-              <Icon name="fileImport" className="sm" />
-              {t("Batch import")}
-            </button>
-            <button
-              type="button"
-              className="btn"
-              disabled={unavailable || checking || entries.length === 0}
-              onClick={() => void runVaultCheck()}
-            >
-              <Icon name="activity" className="sm" />
-              {checking
-                ? t("Checking…")
-                : selectedIds.size > 0
-                  ? t("Check selected ({count})", { count: selectedIds.size })
-                  : t("Check all")}
-            </button>
-            <button type="button" className="btn primary" disabled={unavailable} onClick={openCreateModal}>
-              <Icon name="plus" className="sm" />
-              {t("Add proxy")}
-            </button>
-          </div>
-        </div>
+        )}
 
-        <div className="vault-summary-grid" aria-label={t("Proxy vault overview")}>
+        {entries.length > 0 && <div className="vault-summary-grid" aria-label={t("Proxy vault overview")}>
           <div>
-            <strong>{stats.total.toLocaleString()}</strong>
-            <span>{t("Saved proxies")}</span>
+            <div className="vault-kpi-head">
+              <span>{t("Saved proxies")}</span>
+              {groups.length > 0 && <small>{groups.length} {t("Groups")}</small>}
+            </div>
+            <div className="vault-kpi-value">
+              <strong>{stats.total.toLocaleString()}</strong>
+            </div>
           </div>
           <div>
-            <strong className={stats.working > 0 ? "tone-good" : ""}>{stats.working.toLocaleString()}</strong>
-            <span>{t("Reachable")}</span>
+            <div className="vault-kpi-head">
+              <span>{t("Reachable")}</span>
+              <small className={stats.working > 0 ? "tone-good" : ""}>{reachableRate}%</small>
+            </div>
+            <div className="vault-kpi-value">
+              <strong className={stats.working > 0 ? "tone-good" : ""}>{stats.working.toLocaleString()}</strong>
+              {stats.avgLatencyMs !== null && <small>{stats.avgLatencyMs} ms</small>}
+            </div>
+            <div className="vault-health-bar" aria-hidden="true">
+              <span style={{ width: `${reachableRate}%` }} />
+            </div>
           </div>
           <div>
-            <strong className={stats.highRisk > 0 ? "tone-danger" : stats.mediumRisk > 0 ? "tone-warn" : ""}>
-              {stats.highRisk > 0
-                ? t("{high} high · {medium} med", { high: stats.highRisk, medium: stats.mediumRisk })
-                : stats.mediumRisk.toLocaleString()}
-            </strong>
-            <span>{t("Association risks")}</span>
+            <div className="vault-kpi-head">
+              <span>{t("Association risks")}</span>
+            </div>
+            <div className="vault-kpi-value">
+              <strong className={stats.highRisk > 0 ? "tone-danger" : stats.mediumRisk > 0 ? "tone-warn" : ""}>
+                {stats.highRisk > 0 ? stats.highRisk.toLocaleString() : stats.mediumRisk.toLocaleString()}
+              </strong>
+              {stats.highRisk > 0 && (
+                <small>{t("{high} high · {medium} med", { high: stats.highRisk, medium: stats.mediumRisk })}</small>
+              )}
+            </div>
           </div>
           <div>
-            <strong>{stats.boundProfiles.toLocaleString()}</strong>
-            <span>{t("Bound environments")}</span>
+            <div className="vault-kpi-head">
+              <span>{t("Bound environments")}</span>
+              {stats.runningProfiles > 0 && <small>{t("Running")} {stats.runningProfiles}</small>}
+            </div>
+            <div className="vault-kpi-value">
+              <strong>{stats.boundProfiles.toLocaleString()}</strong>
+            </div>
           </div>
-        </div>
+        </div>}
 
         {syncPrompt && (
           <div className="vault-sync-banner" role="status">
@@ -785,7 +857,12 @@ export function ProxyVaultPanel({ active, profiles = [], onChanged }: ProxyVault
         )}
 
         {error && <div className="tools-alert" role="alert">{error}</div>}
-        {notice && <div className="tools-notice" role="status">{notice}</div>}
+        {notice && (
+          <div className="tools-notice" role="status">
+            <span>{notice}</span>
+            <button type="button" className="btn xs ghost vault-notice-close" aria-label={t("Close")} onClick={() => setNotice(null)}>×</button>
+          </div>
+        )}
 
         {checking && (
           <div className="tools-progress" role="status">
@@ -811,291 +888,380 @@ export function ProxyVaultPanel({ active, profiles = [], onChanged }: ProxyVault
           </div>
         )}
 
-        <div className="vault-toolbar">
-          <div className="vault-search-wrap">
-            <label>
-              <span className="sr-only">{t("Search vault proxies")}</span>
-              <input
-                className="input"
-                type="search"
-                value={search}
-                placeholder={t("Search name, host, exit IP, notes or environment…")}
-                onChange={(event) => setSearch(event.target.value)}
-              />
-            </label>
-          </div>
-          <select
-            className="select vault-filter-select"
-            aria-label={t("Filter by proxy group")}
-            value={groupFilter}
-            onChange={(event) => setGroupFilter(event.target.value)}
-          >
-            <option value="all">{t("All proxy groups")}</option>
-            <option value="__ungrouped__">{t("Ungrouped")}</option>
-            {groups.map((grp) => (
-              <option key={grp} value={grp}>{grp}</option>
-            ))}
-          </select>
-          <div className="vault-risk-pills" role="group" aria-label={t("Filter by risk level")}>
-            {(
-              [
-                { key: "all", label: "All", cls: "" },
-                { key: "high", label: "High risk", cls: "risk-high" },
-                { key: "medium", label: "Medium risk", cls: "risk-medium" },
-                { key: "any", label: "Any risk", cls: "" },
-              ] as const
-            ).map((opt) => (
-              <button
-                key={opt.key}
-                type="button"
-                className={opt.cls}
-                aria-pressed={riskFilter === opt.key}
-                onClick={() => setRiskFilter(opt.key)}
-              >
-                {t(opt.label)}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            className="btn xs ghost"
-            disabled={loading}
-            aria-label={t("Refresh proxy vault")}
-            onClick={() => void loadVault()}
-          >
-            <Icon name="refresh" className="sm" />
-          </button>
-        </div>
-
-        {selectedIds.size > 0 && (
-          <div className="vault-selection-bar">
-            <span>{t("{count} proxies selected", { count: selectedIds.size })}</span>
-            <div className="vault-selection-actions">
-              <button type="button" className="btn xs primary" onClick={() => openBindModal([...selectedIds])}>
-                {t("Bind to environments")}
-              </button>
-              <button type="button" className="btn xs" disabled={checking} onClick={() => void runVaultCheck([...selectedIds])}>
-                {t("Check selected")}
-              </button>
-              <button
-                type="button"
-                className="btn xs danger"
-                onClick={() =>
-                  setDeleteTarget({
-                    ids: [...selectedIds],
-                    label: t("{count} selected proxies", { count: selectedIds.size }),
-                  })
-                }
-              >
-                {t("Delete selected")}
-              </button>
-              <button type="button" className="btn xs ghost" onClick={() => setSelectedIds(new Set())}>
-                {t("Clear selection")}
-              </button>
-            </div>
-          </div>
-        )}
-
         {loading && !loadedOnce ? (
           <div className="tools-empty compact">
             <p role="status">{t("Loading proxy vault…")}</p>
           </div>
-        ) : filteredEntries.length === 0 ? (
+        ) : entries.length === 0 ? (
           <div className="tools-empty">
-            <span className="tools-empty-symbol" aria-hidden="true">⇄</span>
-            <h3>{entries.length === 0 ? t("Your proxy vault is empty") : t("No proxies match these filters")}</h3>
-            <p>
-              {entries.length === 0
-                ? t("Add proxies manually, batch-import a list/CSV, or ingest proxies already saved on your environments.")
-                : t("Adjust the search query, proxy group, or risk filter to see more entries.")}
-            </p>
+            <span className="tools-empty-symbol" aria-hidden="true"><Icon name="lock" /></span>
+            <h3>{t("Your proxy vault is empty")}</h3>
           </div>
         ) : (
-          <div className="vault-table-wrap">
-            <table className="profile-table proxy-table vault-table">
-              <thead>
-                <tr>
-                  <th className="col-chk">
+          <div className="vault-workbench">
+            <aside className="vault-sidebar">
+              <div className="vault-sidebar-section">
+                <div className="vault-sidebar-label">{t("Filter by proxy group")}</div>
+                <div
+                  className="vault-group-nav"
+                  role="group"
+                  aria-label={t("Filter by proxy group")}
+                  data-sliding-group
+                  data-sliding-axis="vertical"
+                  data-sliding-accent-bar="true"
+                >
+                  <button
+                    type="button"
+                    aria-pressed={riskFilter === "all" && groupFilter === "all"}
+                    data-count={entries.length}
+                    onClick={() => {
+                      setGroupFilter("all");
+                      setRiskFilter("all");
+                    }}
+                  >
+                    {t("All proxy groups")}
+                  </button>
+                  {(stats.ungrouped > 0 || groupFilter === "__ungrouped__") && (
+                    <button
+                      type="button"
+                      aria-pressed={riskFilter === "all" && groupFilter === "__ungrouped__"}
+                      data-count={stats.ungrouped}
+                      onClick={() => {
+                        setGroupFilter("__ungrouped__");
+                        setRiskFilter("all");
+                      }}
+                    >
+                      {t("Ungrouped")}
+                    </button>
+                  )}
+                  {groups.map((grp) => (
+                    <button
+                      key={grp}
+                      type="button"
+                      aria-pressed={riskFilter === "all" && groupFilter === grp}
+                      data-count={stats.groupCounts.get(grp) ?? 0}
+                      onClick={() => {
+                        setGroupFilter(grp);
+                        setRiskFilter("all");
+                      }}
+                    >
+                      {grp}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="vault-sidebar-sep" aria-hidden="true" />
+              <div className="vault-sidebar-section">
+                <div className="vault-sidebar-label">{t("Filter by risk level")}</div>
+                <div
+                  className="vault-risk-pills"
+                  role="group"
+                  aria-label={t("Filter by risk level")}
+                  data-sliding-group
+                  data-sliding-axis="vertical"
+                  data-sliding-accent-bar="true"
+                >
+                  {(
+                    [
+                      { key: "all", label: "All", cls: "", count: entries.length },
+                      { key: "high", label: "High risk", cls: "risk-high", count: stats.highRisk },
+                      { key: "medium", label: "Medium risk", cls: "risk-medium", count: stats.mediumRisk },
+                      { key: "any", label: "Any risk", cls: "", count: stats.highRisk + stats.mediumRisk },
+                    ] as const
+                  ).map((opt) => (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      className={[opt.cls, opt.key === "all" ? "vault-risk-all-sr" : ""].filter(Boolean).join(" ")}
+                      aria-pressed={opt.key === "all" ? undefined : riskFilter === opt.key}
+                      tabIndex={opt.key === "all" ? -1 : undefined}
+                      data-count={opt.count}
+                      onClick={() => {
+                        setRiskFilter(opt.key);
+                        setGroupFilter("all");
+                      }}
+                    >
+                      {t(opt.label)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </aside>
+
+            <div className={`vault-main${selectedIds.size > 0 ? " has-selection" : ""}`}>
+              <div className="vault-toolbar">
+                <div className="vault-search-wrap">
+                  <Icon name="search" className="sm vault-search-icon" />
+                  <label>
+                    <span className="sr-only">{t("Search vault proxies")}</span>
                     <input
-                      type="checkbox"
-                      aria-label={t("Select all visible vault proxies")}
-                      checked={allVisibleSelected}
-                      onChange={toggleSelectAll}
+                      className="input"
+                      type="search"
+                      value={search}
+                      placeholder={t("Search name, host, exit IP, notes or environment…")}
+                      onChange={(event) => setSearch(event.target.value)}
                     />
-                  </th>
-                  <th className="col-endpoint">{t("Proxy")}</th>
-                  <th className="col-status">{t("Health & RTT")}</th>
-                  <th className="col-exit">{t("Exit IP")}</th>
-                  <th className="col-risk">{t("Risk & bindings")}</th>
-                  <th className="col-actions">{t("Actions")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredEntries.map((entry) => {
-                  const isSelected = selectedIds.has(entry.id);
-                  const isRefreshing = !!refreshingIds[entry.id];
-                  const inCooldown = (cooldownUntil[entry.id] ?? 0) > Date.now();
-                  const hasDrifted = entry.boundProfiles.some((bp) => bp.drifted);
-                  const location = exitLocation(entry);
-                  return (
-                    <tr key={entry.id} data-vault-id={entry.id} className={isSelected ? "is-selected" : ""}>
-                      <td className="col-chk">
-                        <input
-                          type="checkbox"
-                          aria-label={t("Select proxy {proxy}", { proxy: entry.name || `${entry.host}:${entry.port}` })}
-                          checked={isSelected}
-                          onChange={() => toggleSelectOne(entry.id)}
-                        />
-                      </td>
-                      <td className="col-endpoint">
-                        <div className="vault-endpoint-cell">
-                          <div className="vault-name-row">
-                            <strong>{entry.name || `${entry.host}:${entry.port}`}</strong>
-                            {entry.group && <span className="vault-tag">{entry.group}</span>}
-                          </div>
-                          <span className="vault-endpoint-addr">{formatVaultEndpoint(entry)}</span>
-                          <div className="vault-meta-chips">
-                            {entry.hasAuth && <span className="vault-tag auth">{t("Auth")}</span>}
-                            {entry.hasRefreshUrl && (
-                              <span className="vault-tag rotating" title={entry.refreshUrlHost || t("Dynamic IP refresh URL configured")}>
-                                {entry.refreshUrlHost ? t("Refresh · {host}", { host: entry.refreshUrlHost }) : t("Dynamic IP")}
-                              </span>
-                            )}
-                            {entry.notes && <span className="vault-tag" title={entry.notes}>{entry.notes.slice(0, 28)}{entry.notes.length > 28 ? "…" : ""}</span>}
-                          </div>
-                        </div>
-                      </td>
-                      <td className="col-status">
-                        <div className="vault-status-stack">
-                          <span className={`tools-status ${entry.lastStatus}`}>
-                            {t(VAULT_STATUS_LABELS[entry.lastStatus])}
-                          </span>
-                          {entry.lastLatencyMs !== null && (
-                            <span className={`vault-rtt-pill ${rttTone(entry.lastLatencyMs)}`}>
-                              {entry.lastLatencyMs} ms
-                            </span>
-                          )}
-                          {entry.lastCheckedAt > 0 && (
-                            <small>
-                              {new Date(entry.lastCheckedAt).toLocaleString(language, {
-                                month: "2-digit",
-                                day: "2-digit",
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
-                            </small>
-                          )}
-                        </div>
-                      </td>
-                      <td className="col-exit">
-                        <span className="tools-mono">{entry.lastExitIp || "—"}</span>
-                        {location && <small>{location}</small>}
-                        {entry.lastExitRotating && <small>{t("Rotating exit")}</small>}
-                      </td>
-                      <td className="col-risk">
-                        <span className={`vault-risk-badge ${entry.riskLevel}`}>
-                          {entry.riskLevel === "high"
-                            ? t("High risk")
-                            : entry.riskLevel === "medium"
-                              ? t("Medium risk")
-                              : t("No risk")}
-                        </span>
-                        {(entry.risks.length > 0 || entry.boundProfiles.length > 0) && (
-                          <details className="vault-risk-details">
-                            <summary>
-                              {t("{bound} bound · {risks} alerts", {
-                                bound: entry.boundProfiles.length,
-                                risks: entry.risks.length,
-                              })}
-                            </summary>
-                            {entry.risks.length > 0 && (
-                              <ul className="vault-risk-list">
-                                {entry.risks.map((risk, idx) => (
-                                  <li key={`${risk.code}-${idx}`} className={risk.level}>
-                                    {t(RISK_CODE_LABELS[risk.code])}
-                                    {risk.platform ? ` (${risk.platform})` : ""}
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                            {entry.boundProfiles.length > 0 && (
-                              <ul className="vault-bound-list">
-                                {entry.boundProfiles.map((bp) => (
-                                  <li key={bp.profileId}>
-                                    {bp.name}
-                                    {bp.platform ? ` · ${bp.platform}` : ""}
-                                    {bp.running ? ` · ${t("Running")}` : ""}
-                                    {bp.drifted && (
-                                      <span className="vault-bound-drifted"> · {t("Out of sync")}</span>
+                  </label>
+                </div>
+                <span className="vault-visible-count">{filteredEntries.length} / {entries.length}</span>
+              </div>
+
+              {filteredEntries.length === 0 ? (
+                <div className="tools-empty">
+                  <span className="tools-empty-symbol" aria-hidden="true"><Icon name="lock" /></span>
+                  <h3>{t("No proxies match these filters")}</h3>
+                  <p>{t("Adjust the search query, proxy group, or risk filter to see more entries.")}</p>
+                </div>
+              ) : (
+                <div className="vault-table-wrap">
+                  <table className="profile-table proxy-table vault-table">
+                    <thead>
+                      <tr>
+                        <th className="col-chk">
+                          <input
+                            type="checkbox"
+                            aria-label={t("Select all visible vault proxies")}
+                            checked={allVisibleSelected}
+                            onChange={toggleSelectAll}
+                          />
+                        </th>
+                        <th className="col-endpoint">{t("Proxy")}</th>
+                        <th className="col-status">{t("Health & RTT")}</th>
+                        <th className="col-exit">{t("Exit IP")}</th>
+                        <th className="col-risk">{t("Risk & bindings")}</th>
+                        <th className="col-actions">{t("Actions")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredEntries.map((entry) => {
+                        const isSelected = selectedIds.has(entry.id);
+                        const isRefreshing = !!refreshingIds[entry.id];
+                        const inCooldown = (cooldownUntil[entry.id] ?? 0) > Date.now();
+                        const hasDrifted = entry.boundProfiles.some((bp) => bp.drifted);
+                        const location = exitLocation(entry);
+                        const tone = entry.lastLatencyMs !== null ? rttTone(entry.lastLatencyMs) : null;
+                        return (
+                          <tr
+                            key={entry.id}
+                            data-vault-id={entry.id}
+                            data-risk-level={entry.riskLevel}
+                            className={isSelected ? "is-selected" : ""}
+                          >
+                            <td className="col-chk">
+                              <input
+                                type="checkbox"
+                                aria-label={t("Select proxy {proxy}", { proxy: entry.name || `${entry.host}:${entry.port}` })}
+                                checked={isSelected}
+                                onChange={() => toggleSelectOne(entry.id)}
+                              />
+                            </td>
+                            <td className="col-endpoint">
+                              <div className="vault-endpoint-cell">
+                                <div className="vault-name-row">
+                                  <strong title={entry.name || `${entry.host}:${entry.port}`}>{entry.name || `${entry.host}:${entry.port}`}</strong>
+                                  <span className="vault-group-inline">
+                                    {[
+                                      entry.group,
+                                      entry.type.toUpperCase(),
+                                      entry.hasAuth ? t("Auth") : "",
+                                    ].filter(Boolean).join(" · ")}
+                                  </span>
+                                </div>
+                                <span className="vault-endpoint-addr" title={formatVaultEndpoint(entry)}>
+                                  {formatHostPort(entry)}
+                                </span>
+                                {(entry.hasRefreshUrl || entry.notes) && (
+                                  <div className="vault-meta-chips">
+                                    {entry.hasRefreshUrl && (
+                                      <span className="vault-tag rotating" title={entry.refreshUrlHost || t("Dynamic IP refresh URL configured")}>
+                                        {entry.refreshUrlHost ? t("Refresh · {host}", { host: entry.refreshUrlHost }) : t("Dynamic IP")}
+                                      </span>
                                     )}
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                          </details>
-                        )}
-                      </td>
-                      <td className="col-actions">
-                        <div className="vault-row-actions">
-                          <button
-                            type="button"
-                            className="btn xs"
-                            disabled={checking}
-                            onClick={() => void runVaultCheck([entry.id])}
-                          >
-                            {t("Check")}
-                          </button>
-                          {entry.hasRefreshUrl && (
-                            <button
-                              type="button"
-                              className="btn xs"
-                              disabled={isRefreshing || inCooldown}
-                              title={t("Request a new exit IP from the configured refresh URL")}
-                              onClick={() => void handleRefreshIp(entry)}
-                            >
-                              {isRefreshing ? t("Refreshing…") : t("Refresh IP")}
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            className="btn xs"
-                            onClick={() => openBindModal([entry.id])}
-                          >
-                            {t("Bind")}
-                          </button>
-                          {hasDrifted && (
-                            <button
-                              type="button"
-                              className="btn xs warn"
-                              disabled={syncingId === entry.id}
-                              onClick={() => void handleSyncBound(entry.id, entry.name || `${entry.host}:${entry.port}`)}
-                            >
-                              {t("Sync")}
-                            </button>
-                          )}
-                          <button type="button" className="btn xs ghost" onClick={() => void openEditModal(entry)}>
-                            {t("Edit")}
-                          </button>
-                          <button
-                            type="button"
-                            className="btn xs ghost"
-                            aria-label={t("Delete proxy {proxy}", { proxy: entry.name || `${entry.host}:${entry.port}` })}
-                            onClick={() =>
-                              setDeleteTarget({
-                                ids: [entry.id],
-                                label: entry.name || formatVaultEndpoint(entry),
-                              })
-                            }
-                          >
-                            <Icon name="trash" className="sm" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                                    {entry.notes && <span className="vault-tag" title={entry.notes}>{entry.notes.slice(0, 28)}{entry.notes.length > 28 ? "…" : ""}</span>}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                            <td className="col-status">
+                              <div className="vault-status-stack">
+                                <span className={`tools-status ${entry.lastStatus}`}>
+                                  {t(VAULT_STATUS_LABELS[entry.lastStatus])}
+                                </span>
+                                {entry.lastLatencyMs !== null && tone && (
+                                  <span className={`vault-rtt-pill ${tone}`}>
+                                    <svg className="vault-rtt-bars" width="12" height="10" viewBox="0 0 12 10" aria-hidden="true">
+                                      <rect x="0" y="6" width="2.5" height="4" rx="1" />
+                                      <rect x="4.5" y="3.5" width="2.5" height="6.5" rx="1" opacity={tone === "slow" ? 0.3 : 1} />
+                                      <rect x="9" y="0.5" width="2.5" height="9.5" rx="1" opacity={tone === "fast" ? 1 : 0.3} />
+                                    </svg>
+                                    {entry.lastLatencyMs} ms
+                                  </span>
+                                )}
+                                {entry.lastCheckedAt > 0 && (
+                                  <small>
+                                    {new Date(entry.lastCheckedAt).toLocaleString(language, {
+                                      month: "2-digit",
+                                      day: "2-digit",
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                    })}
+                                  </small>
+                                )}
+                              </div>
+                            </td>
+                            <td className="col-exit">
+                              <span className="tools-mono">{entry.lastExitIp || "—"}</span>
+                              {location && <small>{location}</small>}
+                              {entry.lastExitRotating && <small>{t("Rotating exit")}</small>}
+                            </td>
+                            <td className="col-risk">
+                              <span className={`vault-risk-badge ${entry.riskLevel}`}>
+                                {entry.riskLevel === "high"
+                                  ? t("High risk")
+                                  : entry.riskLevel === "medium"
+                                    ? t("Medium risk")
+                                    : t("No risk")}
+                                {entry.boundProfiles.length > 0 ? ` (${entry.boundProfiles.length})` : ""}
+                              </span>
+                              {(entry.risks.length > 0 || entry.boundProfiles.length > 0) && (
+                                <details className="vault-risk-details">
+                                  <summary
+                                    title={t("{bound} bound · {risks} alerts", {
+                                      bound: entry.boundProfiles.length,
+                                      risks: entry.risks.length,
+                                    })}
+                                  >
+                                    {entry.boundProfiles.length === 1
+                                      ? entry.boundProfiles[0]!.name
+                                      : entry.boundProfiles.length === 2
+                                        ? `${entry.boundProfiles[0]!.name} · ${entry.boundProfiles[1]!.name}`
+                                        : entry.boundProfiles.length > 2
+                                          ? `${entry.boundProfiles[0]!.name} +${entry.boundProfiles.length - 1}`
+                                          : t(RISK_CODE_LABELS[entry.risks[0]!.code])}
+                                  </summary>
+                                  {entry.risks.length > 0 && (
+                                    <ul className="vault-risk-list">
+                                      {entry.risks.map((risk, idx) => (
+                                        <li key={`${risk.code}-${idx}`} className={risk.level}>
+                                          {t(RISK_CODE_LABELS[risk.code])}
+                                          {risk.platform ? ` (${risk.platform})` : ""}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                  {entry.boundProfiles.length > 0 && (
+                                    <ul className="vault-bound-list">
+                                      {entry.boundProfiles.map((bp) => (
+                                        <li key={bp.profileId}>
+                                          {bp.name}
+                                          {bp.platform ? ` · ${bp.platform}` : ""}
+                                          {bp.running ? ` · ${t("Running")}` : ""}
+                                          {bp.drifted && (
+                                            <span className="vault-bound-drifted"> · {t("Out of sync")}</span>
+                                          )}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </details>
+                              )}
+                            </td>
+                            <td className="col-actions">
+                              <div className="vault-row-actions">
+                                {entry.hasRefreshUrl && (
+                                  <button
+                                    type="button"
+                                    className="btn xs"
+                                    disabled={isRefreshing || inCooldown}
+                                    title={t("Request a new exit IP from the configured refresh URL")}
+                                    onClick={() => void handleRefreshIp(entry)}
+                                  >
+                                    {isRefreshing ? t("Refreshing…") : t("Refresh IP")}
+                                  </button>
+                                )}
+                                {hasDrifted && (
+                                  <button
+                                    type="button"
+                                    className="btn xs warn"
+                                    disabled={syncingId === entry.id}
+                                    onClick={() => void handleSyncBound(entry.id, entry.name || `${entry.host}:${entry.port}`)}
+                                  >
+                                    {t("Sync")}
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  className="btn xs"
+                                  onClick={() => openBindModal([entry.id])}
+                                >
+                                  {t("Bind")}
+                                </button>
+                                <button type="button" className="btn xs ghost" onClick={() => void openEditModal(entry)}>
+                                  {t("Edit")}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn xs ghost vault-row-icon-btn"
+                                  disabled={checking}
+                                  aria-label={t("Check")}
+                                  title={t("Check")}
+                                  onClick={() => void runVaultCheck([entry.id])}
+                                >
+                                  <Icon name="activity" className="sm" />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn xs ghost vault-row-icon-btn"
+                                  aria-label={t("Delete proxy {proxy}", { proxy: entry.name || `${entry.host}:${entry.port}` })}
+                                  onClick={() =>
+                                    setDeleteTarget({
+                                      ids: [entry.id],
+                                      label: entry.name || formatVaultEndpoint(entry),
+                                    })
+                                  }
+                                >
+                                  <Icon name="trash" className="sm" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {selectedIds.size > 0 && (
+                <div className="vault-selection-bar">
+                  <span className="vault-selection-count">{t("{count} proxies selected", { count: selectedIds.size })}</span>
+                  <button type="button" className="btn xs ghost" onClick={() => setSelectedIds(new Set())}>
+                    {t("Clear selection")}
+                  </button>
+                  <span className="vault-dock-sep" aria-hidden="true" />
+                  <div className="vault-selection-actions">
+                    <button type="button" className="btn xs primary" onClick={() => openBindModal([...selectedIds])}>
+                      {t("Bind to environments")}
+                    </button>
+                    <button type="button" className="btn xs" disabled={checking} onClick={() => void runVaultCheck([...selectedIds])}>
+                      {t("Check selected")}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn xs danger"
+                      onClick={() =>
+                        setDeleteTarget({
+                          ids: [...selectedIds],
+                          label: t("{count} selected proxies", { count: selectedIds.size }),
+                        })
+                      }
+                    >
+                      {t("Delete selected")}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </section>

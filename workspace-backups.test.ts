@@ -169,15 +169,51 @@ test("older backups without app preferences restore with safe defaults", async (
   expect(new ProfileTemplateStore(join(f.catalog.pathFor(result.restoredWorkspaceId!), PROFILE_TEMPLATES_FILE)).read()).toEqual({ version: 1, revision: 0, templates: [] });
 });
 
-test("invalid optional settings do not publish an unsafe restored workspace or expose file content", async () => {
-  const f = await fixture(); const original = f.store.getProfile(f.profile.id), workspaces = f.catalog.list();
-  for (const value of ['{"password":"private-settings-content",BROKEN', JSON.stringify({ ...defaultAppSettings(), version: 2 }), JSON.stringify({ ...defaultAppSettings(), unknown: "private-settings-content" }), "x".repeat(65 * 1024)]) {
-    writeFileSync(join(f.root, "app-settings.json"), value);
-    const made = await completed(f.service, f.service.startCreate(undefined, { allowUnencrypted: true }).id);
-    const restored = await f.service.wait(f.service.startRestore({ backupId: made.backupId! }).id);
-    expect(restored.status).toBe("failed"); expect(restored.error).toBe("Backup application settings are invalid or unsupported");
-    expect(restored.error).not.toContain("private-settings-content"); expect(f.catalog.list()).toEqual(workspaces); expect(f.store.getProfile(f.profile.id)).toEqual(original);
-    expect(readFileSync(join(f.root, "app-settings.json"), "utf8")).toBe(value);
+const invalidAppSettings = [
+  '{"password":"private-settings-content",BROKEN',
+  JSON.stringify({ ...defaultAppSettings(), version: 2 }),
+  JSON.stringify({ ...defaultAppSettings(), unknown: "private-settings-content" }),
+  "x".repeat(65 * 1024),
+];
+
+test("invalid source application settings never publish an unrestorable backup", async () => {
+  const f = await fixture();
+  const settings = new AppSettingsStore(join(f.root, "app-settings.json"));
+  settings.patch({ network: { checkLocalProxyBeforeLaunch: true } });
+  const made = await completed(f.service, f.service.startCreate(undefined, { allowUnencrypted: true }).id);
+  const priorBackup = f.service.getBackupFile(made.backupId!);
+  const priorBytes = readFileSync(priorBackup.path);
+
+  for (const value of invalidAppSettings) {
+    writeFileSync(settings.path, value);
+    const job = await f.service.wait(f.service.startCreate(undefined, { allowUnencrypted: true }).id);
+    expect(job).toMatchObject({ status: "failed", error: "Backup application settings are invalid or unsupported" });
+    expect(f.service.listBackups().map(backup => backup.id)).toEqual([made.backupId!]);
+    expect(readFileSync(priorBackup.path)).toEqual(priorBytes);
+    expect(readFileSync(settings.path, "utf8")).toBe(value);
+    expect(readdirSync(f.service.directory).some(name => name.startsWith(".create-") || name.endsWith(".partial"))).toBe(false);
+  }
+
+  const restored = await completed(f.service, f.service.startRestore({ backupId: made.backupId! }).id);
+  expect(new AppSettingsStore(join(f.catalog.pathFor(restored.restoredWorkspaceId!), "app-settings.json")).read().network?.checkLocalProxyBeforeLaunch).toBe(true);
+});
+
+test("invalid archived settings do not publish a restored workspace or expose file content", async () => {
+  const f = await fixture();
+  const settings = new AppSettingsStore(join(f.root, "app-settings.json"));
+  settings.write(defaultAppSettings());
+  const made = await completed(f.service, f.service.startCreate(undefined, { allowUnencrypted: true }).id);
+  const archive = readFileSync(f.service.getBackupFile(made.backupId!).path);
+  const original = f.store.getProfile(f.profile.id), workspaces = f.catalog.list(), source = readFileSync(settings.path);
+  const upload = join(f.root, "invalid-settings.mqbackup");
+
+  for (const value of invalidAppSettings) {
+    writeFileSync(upload, archiveWithFile(archive, "app-settings.json", Buffer.from(value)));
+    const restored = await f.service.wait(f.service.startRestore({ archivePath: upload }).id);
+    expect(restored).toMatchObject({ status: "failed", error: "Backup application settings are invalid or unsupported" });
+    expect(f.catalog.list()).toEqual(workspaces);
+    expect(f.store.getProfile(f.profile.id)).toEqual(original);
+    expect(readFileSync(settings.path)).toEqual(source);
     expect(readdirSync(join(f.root, "workspaces")).some(name => name.startsWith(".restore-"))).toBe(false);
   }
 });

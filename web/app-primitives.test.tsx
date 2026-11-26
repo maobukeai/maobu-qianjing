@@ -87,33 +87,38 @@ afterEach(async () => {
 });
 
 describe("shared UI primitives & hooks", () => {
-  test("ErrorBoundary catches render failures and recovers after Try again", () => {
+  test("ErrorBoundary presents a safe recovery action for a render failure", () => {
     const originalConsoleError = console.error;
     console.error = () => {};
     let shouldThrow = true;
+    const rendererError = new Error("Fixture error C:\\private\\settings.json INTERNAL_ERROR_SAMPLE");
+    const caught: Error[] = [];
 
     function Bomb() {
-      if (shouldThrow) throw new Error("boom in panel");
+      if (shouldThrow) throw rendererError;
       return <div data-testid="recovered">Healthy view</div>;
     }
 
     try {
       const mounted = mountWithDom(
-        <ErrorBoundary scope="Profiles">
+        <ErrorBoundary scope="Profiles" onError={error => caught.push(error)}>
           <Bomb />
         </ErrorBoundary>,
       );
       activeCleanup = mounted.restore;
 
       const alert = mounted.container.querySelector('[role="alert"]');
-      expect(alert?.textContent).toContain("Profiles ran into an unexpected error");
-      expect(alert?.textContent).toContain("boom in panel");
+      expect(alert?.querySelector("h2")?.textContent).toBe("Could not open Profiles");
+      expect(alert?.textContent).toContain("Reloading may discard unsaved changes.");
+      expect(mounted.container.textContent).not.toContain("INTERNAL_ERROR_SAMPLE");
+      expect(caught[0]).toBe(rendererError);
 
       shouldThrow = false;
       const retryBtn = [...mounted.container.querySelectorAll("button")].find(
         (btn) => btn.textContent === "Try again",
       );
       expect(retryBtn).toBeTruthy();
+      expect(mounted.container.ownerDocument.activeElement).toBe(retryBtn!);
       act(() => {
         retryBtn!.click();
       });
@@ -124,14 +129,51 @@ describe("shared UI primitives & hooks", () => {
     }
   });
 
+  test("ErrorBoundary still passes the original error and recovery to a custom fallback", () => {
+    const originalConsoleError = console.error;
+    console.error = () => {};
+    const rendererError = new Error("Synthetic custom fallback test");
+    let shouldThrow = true;
+    let supplied: Error | undefined;
+    let suppliedScope: string | undefined;
+
+    function Bomb() {
+      if (shouldThrow) throw rendererError;
+      return <div data-testid="recovered">Healthy view</div>;
+    }
+
+    try {
+      const mounted = mountWithDom(
+        <ErrorBoundary scope="Profiles" onReset={() => { shouldThrow = false; }} fallback={({ error, scope, resetErrorBoundary }) => {
+          supplied = error;
+          suppliedScope = scope;
+          return <button type="button" onClick={resetErrorBoundary}>Custom recovery</button>;
+        }}>
+          <Bomb />
+        </ErrorBoundary>,
+      );
+      activeCleanup = mounted.restore;
+      expect(supplied).toBe(rendererError);
+      expect(suppliedScope).toBe("Profiles");
+      expect(mounted.container.querySelector(".error-boundary-fallback")).toBeNull();
+      const recover = mounted.container.querySelector("button");
+      expect(recover?.textContent).toBe("Custom recovery");
+      act(() => { recover!.click(); });
+      expect(mounted.container.querySelector('[data-testid="recovered"]')?.textContent).toBe("Healthy view");
+    } finally {
+      console.error = originalConsoleError;
+    }
+  });
+
   test("ModalDialog, ConfirmDialog, and useConfirmDialog resolve choices and use confirm-dialog-backdrop without inline z-index", async () => {
-    let resolved: boolean[] = [];
+    const resolved: boolean[] = [];
+    let lowerCloseCount = 0;
 
     function Harness() {
       const { requestConfirm, confirmDialogNode } = useConfirmDialog();
       return (
         <div>
-          <ModalDialog open onClose={() => {}} title="Test Modal">
+          <ModalDialog open onClose={() => { lowerCloseCount++; }} title="Test Modal">
             <button
               type="button"
               data-testid="trigger-confirm"
@@ -180,16 +222,69 @@ describe("shared UI primitives & hooks", () => {
 
     // Re-open and cancel via Escape
     act(() => {
+      trigger!.focus();
       trigger!.click();
     });
-    expect(mounted.container.querySelector('[role="alertdialog"]')).toBeTruthy();
+    const current = mounted.container.querySelector('[role="alertdialog"]')!;
+    expect(current.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement?.textContent).toBe("Cancel");
+    const buttons = current.querySelectorAll("button");
+    buttons[2]!.focus();
     act(() => {
-      mounted.dom.document.dispatchEvent(
-        new mounted.dom.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }) as unknown as Parameters<typeof mounted.dom.document.dispatchEvent>[0],
-      );
+      document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+    });
+    expect(document.activeElement === buttons[0]).toBe(true);
+    act(() => {
+      document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }));
+    });
+    expect(document.activeElement === buttons[2]).toBe(true);
+    act(() => {
+      document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
     });
     await Promise.resolve();
     expect(resolved).toEqual([true, false]);
+    expect(lowerCloseCount).toBe(0);
+    expect(document.activeElement === trigger).toBe(true);
+  });
+
+  test("ModalDialog wraps focus around visible controls and a closed disclosure", () => {
+    const mounted = mountWithDom(
+      <ModalDialog open onClose={() => {}} ariaLabel="Import details">
+        <button type="button" tabIndex={-1}>Programmatic target</button>
+        <button type="button">First</button>
+        <button type="button" hidden>Hidden</button>
+        <div inert><button type="button">Inert</button></div>
+        <details>
+          <summary>Import rules</summary>
+          <button type="button">Hidden until expanded</button>
+        </details>
+      </ModalDialog>,
+    );
+    activeCleanup = mounted.restore;
+
+    const summary = mounted.container.querySelector("summary")!;
+    expect(document.activeElement?.textContent).toBe("First");
+    act(() => {
+      document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }));
+    });
+    expect(document.activeElement === summary).toBe(true);
+    act(() => {
+      summary.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+    });
+    expect(document.activeElement?.textContent).toBe("First");
+  });
+
+  test("A busy confirmation keeps keyboard focus in the dialog while every action is disabled", () => {
+    const onCancel = () => { throw new Error("Busy confirmation cancelled"); };
+    const mounted = mountWithDom(<ConfirmDialog open busy title="Saving" message="Wait for the update" onConfirm={() => {}} onCancel={onCancel} />);
+    activeCleanup = mounted.restore;
+
+    const dialog = mounted.container.querySelector('[role="alertdialog"]')!;
+    expect(document.activeElement === dialog).toBe(true);
+    const event = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+    dialog.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(document.activeElement === dialog).toBe(true);
   });
 
   test("Pagination notifies page and page-size changes cleanly", () => {

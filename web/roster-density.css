@@ -8,24 +8,28 @@
 .roster-density-options > button[aria-checked="true"] { color: var(--ink); background: var(--surface); border-color: var(--line); }
 .roster-density-options > button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .roster-density-options > button[aria-disabled="true"] { cursor: default; opacity: .65; }
+.roster-density-select { display: none; }
 .roster-density-control.is-settings { display: flex; width: 100%; justify-content: space-between; gap: 14px 24px; }
 .roster-density-control.is-settings .roster-density-copy > span { font-size: 13px; font-weight: 550; color: var(--ink-soft); }
 
-/* Comfortable (52px) has no overrides: it preserves the existing roster and its column widths.
-   Scope to the roster's direct table so nested dialogs and other pages cannot change. */
+/* Comfortable (52px) + 8px vertical card gap; Standard (48px) + 7px gap; Compact (44px) + 5px gap. */
+:where([data-roster-density="comfortable"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table { border-spacing: 0 8px; }
+:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table { border-spacing: 0 7px; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table { border-spacing: 0 5px; }
+
 :where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table > tbody > tr[data-profile-id] > td { height: 48px; padding-top: 3px; padding-bottom: 3px; }
 :where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .name-cell { gap: 2px; }
 :where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .name-cell .sub { line-height: 1.32; }
 :where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-name-button { min-height: 30px; }
 :where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-favorite { width: 30px; height: 30px; }
-:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .rowactions > .btn { min-width: 30px; min-height: 30px; height: auto; }
-:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-row > td { padding-top: 3px; }
+:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .rowactions > .btn { min-width: 30px; min-height: 29px; height: auto; }
+:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-row > td { padding-top: 5px; }
 :where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-heading { min-height: 35px; gap: 9px; }
-:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-toggle { min-height: 34px; padding-top: 4px; padding-bottom: 4px; }
+:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-toggle { min-height: 30px; padding-top: 3px; padding-bottom: 3px; }
 :where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-create { min-width: 28px; min-height: 28px; right: 33px; }
-:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-heading > .profile-menu-trigger { flex-basis: 29px; width: 29px; height: 29px; }
+:where([data-roster-density="standard"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-group-heading > .profile-menu-trigger { flex-basis: 28px; width: 28px; height: 28px; }
 
-:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table > tbody > tr[data-profile-id] > td { height: 44px; padding-top: 1px; padding-bottom: 1px; }
+:where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table > tbody > tr[data-profile-id] > td { height: 44px; padding-top: 2px; padding-bottom: 2px; }
 :where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .name-cell { gap: 1px; }
 :where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .name-cell .sub { line-height: 1.25; }
 :where([data-roster-density="compact"]) .profiles-workspace > .profile-browser > .tablewrap > .profile-table .profile-name-button { min-height: 28px; }

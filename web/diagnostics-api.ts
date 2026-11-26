@@ -1,4 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { notifyAppLockedFromResponse, notifyUnauthorizedResponse, withStandaloneAuthHeaders } from "./api.ts";
 import type {
   ClientDesktopProbeInput,
   DiagnosticCheckId,
@@ -21,6 +22,11 @@ export interface ExportDiagnosticsResult {
   sha256: string | null;
   bytes: number;
   format: "zip" | "json";
+}
+
+export interface DiagnosticsSnapshot {
+  report: SystemDiagnosticReport;
+  reportId: string;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -48,18 +54,18 @@ export async function runDiagnosticsCheck(options: {
   includeMcpProbe?: boolean;
   desktopProbe?: ClientDesktopProbeInput | null;
   signal?: AbortSignal;
-} = {}): Promise<SystemDiagnosticReport> {
+} = {}): Promise<DiagnosticsSnapshot> {
   const desktopProbe =
     options.desktopProbe !== undefined ? options.desktopProbe : await probeDesktopSystemDiagnostics();
   const response = await fetch("/ui/api/diagnostics/run", {
     method: "POST",
     credentials: "same-origin",
     cache: "no-store",
-    headers: {
+    headers: withStandaloneAuthHeaders({
       "X-Maobu-Settings": "1",
       "Content-Type": "application/json",
       Accept: "application/json",
-    },
+    }),
     body: JSON.stringify({
       includeMcpProbe: options.includeMcpProbe === true,
       ...(desktopProbe ? { desktopProbe } : {}),
@@ -67,13 +73,20 @@ export async function runDiagnosticsCheck(options: {
     ...(options.signal ? { signal: options.signal } : {}),
   });
   const body = await response.json().catch(() => null);
+  if (response.status === 401) {
+    notifyUnauthorizedResponse(401, "/ui/api/diagnostics/run", isObject(body) && typeof body.error === "string" ? body.error : "");
+  } else if (response.status === 423) {
+    notifyAppLockedFromResponse(423, body);
+  }
   if (!isObject(body)) {
     throw new Error("The local service returned an invalid diagnostics response.");
   }
-  if (!response.ok || body.ok !== true || !isObject(body.report) || !Array.isArray(body.report.checks)) {
+  if (!response.ok || body.ok !== true || typeof body.reportId !== "string" || !body.reportId
+    || !isObject(body.report) || !Array.isArray(body.report.checks)
+    || typeof body.report.generatedAt !== "string" || !Number.isFinite(Date.parse(body.report.generatedAt))) {
     throw new Error(typeof body.error === "string" ? body.error : "Diagnostics run failed.");
   }
-  return body.report as unknown as SystemDiagnosticReport;
+  return { report: body.report as unknown as SystemDiagnosticReport, reportId: body.reportId };
 }
 
 function parseFilenameFromDisposition(header: string | null, fallback: string): string {
@@ -84,32 +97,40 @@ function parseFilenameFromDisposition(header: string | null, fallback: string): 
 
 export async function exportDiagnosticsBundle(options: {
   format?: "zip" | "json";
+  reportId?: string;
   includeMcpProbe?: boolean;
   includeLogs?: boolean;
   desktopProbe?: ClientDesktopProbeInput | null;
   signal?: AbortSignal;
 } = {}): Promise<ExportDiagnosticsResult> {
   const format = options.format ?? "zip";
-  const desktopProbe =
-    options.desktopProbe !== undefined ? options.desktopProbe : await probeDesktopSystemDiagnostics();
+  const payload: Record<string, unknown> = { format, includeLogs: options.includeLogs !== false };
+  if (options.reportId === undefined) {
+    const desktopProbe =
+      options.desktopProbe !== undefined ? options.desktopProbe : await probeDesktopSystemDiagnostics();
+    payload.includeMcpProbe = options.includeMcpProbe === true;
+    if (desktopProbe) payload.desktopProbe = desktopProbe;
+  } else {
+    payload.reportId = options.reportId;
+  }
   const response = await fetch("/ui/api/diagnostics/export", {
     method: "POST",
     credentials: "same-origin",
     cache: "no-store",
-    headers: {
+    headers: withStandaloneAuthHeaders({
       "X-Maobu-Settings": "1",
       "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      format,
-      includeMcpProbe: options.includeMcpProbe === true,
-      includeLogs: options.includeLogs !== false,
-      ...(desktopProbe ? { desktopProbe } : {}),
     }),
+    body: JSON.stringify(payload),
     ...(options.signal ? { signal: options.signal } : {}),
   });
   if (!response.ok) {
     const body = await response.json().catch(() => null);
+    if (response.status === 401) {
+      notifyUnauthorizedResponse(401, "/ui/api/diagnostics/export", isObject(body) && typeof body.error === "string" ? body.error : "");
+    } else if (response.status === 423) {
+      notifyAppLockedFromResponse(423, body);
+    }
     const message = isObject(body) && typeof body.error === "string"
       ? body.error
       : "Diagnostics export failed.";

@@ -5,6 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { MotionPresence } from "./desktop-motion.tsx";
 import { useTranslation } from "./i18n.tsx";
 import { isolateModalSiblings } from "./modal-isolation.ts";
+import { AppIcon } from "./ui-primitives.tsx";
 import { createDesktopCloseBridge, createDesktopCloseRegistry, DESKTOP_DRAFT_LABELS, EMPTY_DESKTOP_CLOSE_VIEW, EMPTY_DESKTOP_DRAFT_SNAPSHOT, type DesktopCloseNative, type DesktopCloseRegistry, type DesktopCloseView, type DesktopDraftFlags, type DesktopDraftLabel } from "./desktop-close-state.ts";
 import "./desktop-close.css";
 
@@ -50,11 +51,27 @@ export function createNativeDesktopCloseAdapter(): DesktopCloseNative | null {
   };
 }
 
-const CLOSE_ERROR = "The desktop could not confirm this close request. Your draft has not been cleared.";
+const CLOSE_ERROR = "Could not confirm closing. Your drafts are kept.";
 const CONNECTION_ERROR = "Draft protection could not connect to the desktop. Closing the window will offer a native recovery warning.";
 function usable(node: HTMLElement | null | undefined): node is HTMLElement {
   return !!node?.isConnected && node !== node.ownerDocument.body && node !== node.ownerDocument.documentElement
     && !node.closest('[inert], [hidden], [aria-hidden="true"]') && !node.matches(":disabled");
+}
+
+function focusClosePanel(panel: HTMLDivElement | null, preferred: HTMLButtonElement | null) {
+  (usable(preferred) ? preferred : panel)?.focus({ preventScroll: true });
+}
+
+function scrollDraftList(body: HTMLDivElement | null, event: KeyboardEvent): boolean {
+  if (!body || body.scrollHeight <= body.clientHeight || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+  switch (event.key) {
+    case "PageDown": body.scrollTop += body.clientHeight; break;
+    case "PageUp": body.scrollTop -= body.clientHeight; break;
+    case "Home": body.scrollTop = 0; break;
+    case "End": body.scrollTop = body.scrollHeight - body.clientHeight; break;
+    default: return false;
+  }
+  return true;
 }
 
 /** Mount once for the whole App lifetime, including its loading/error shell. */
@@ -73,6 +90,7 @@ export function DesktopCloseHost({ registry, native: suppliedNative, returnFocus
   const fallback = useRef(returnFocus); fallback.current = returnFocus;
   const pendingCallback = useRef(onPendingChange); pendingCallback.current = onPendingChange;
   const layer = useRef<HTMLDivElement>(null), panel = useRef<HTMLDivElement>(null), keep = useRef<HTMLButtonElement>(null);
+  const body = useRef<HTMLDivElement>(null);
   const id = useId(), open = view.phase !== "idle";
 
   // Install before later page-level modal traps. Only the current top-level
@@ -91,7 +109,11 @@ export function DesktopCloseHost({ registry, native: suppliedNative, returnFocus
         event.preventDefault(); event.stopImmediatePropagation();
         const controls = [...(panel.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])];
         const index = controls.indexOf(document.activeElement as HTMLButtonElement);
-        (controls[(index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length] ?? panel.current)?.focus({ preventScroll: true });
+        const next = index < 0 ? (event.shiftKey ? controls.at(-1) : controls[0])
+          : controls[(index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length];
+        (next ?? panel.current)?.focus({ preventScroll: true });
+      } else if (scrollDraftList(body.current, event)) {
+        event.preventDefault(); event.stopImmediatePropagation();
       }
     };
     const release = (event: KeyboardEvent) => { if (event.key === "Escape") escaped.current = false; };
@@ -99,7 +121,7 @@ export function DesktopCloseHost({ registry, native: suppliedNative, returnFocus
     const focus = (event: FocusEvent) => {
       if (viewRef.current.phase === "idle") return;
       event.stopImmediatePropagation();
-      if (!panel.current?.contains(event.target as Node)) (keep.current ?? panel.current)?.focus({ preventScroll: true });
+      if (!panel.current?.contains(event.target as Node)) focusClosePanel(panel.current, keep.current);
     };
     window.addEventListener("keydown", key, true); window.addEventListener("keyup", release, true); window.addEventListener("blur", blur); window.addEventListener("focusin", focus, true);
     return () => { window.removeEventListener("keydown", key, true); window.removeEventListener("keyup", release, true); window.removeEventListener("blur", blur); window.removeEventListener("focusin", focus, true); };
@@ -136,21 +158,39 @@ export function DesktopCloseHost({ registry, native: suppliedNative, returnFocus
 
   useLayoutEffect(() => {
     if (!open) return;
-    (keep.current ?? panel.current)?.focus({ preventScroll: true });
+    focusClosePanel(panel.current, keep.current);
   }, [open, view.phase, view.revision]);
   if (!native || typeof document === "undefined") return null;
   const busy = !!view.busy.length, waiting = view.phase === "waiting", failed = view.phase === "error";
-  const title = waiting ? "Waiting for the desktop to close" : failed ? "Close request needs attention" : busy ? "A change is still in progress" : "Close with unsaved changes?";
-  const description = waiting ? "The desktop is checking this close request. Your draft stays in place until the app exits." : failed ? CLOSE_ERROR : busy ? "Wait for the current change to finish before closing. Your draft stays open." : "Your changes have not been saved. Keep editing or discard them and close the app.";
+  const title = waiting ? "Waiting for the desktop to close" : failed ? "Close request needs attention" : busy ? "A change is still in progress"
+    : view.dirty.length ? "Close with unsaved changes?" : "Close app?";
+  const description = waiting ? null : view.sending ? "Working…" : failed ? CLOSE_ERROR : busy ? "Wait for the current change to finish." : null;
   const labels = [...new Set([...view.busy, ...view.dirty])];
+  const pendingDecision = waiting || view.sending;
   return <>
     {view.connectionError && <div className="desktop-close-connection-error" role="alert">{t(CONNECTION_ERROR)}</div>}
     {createPortal(<div className="desktop-close-layer" ref={layer}><MotionPresence present={open}>{() => <div className="desktop-close-backdrop" onPointerDown={event => event.stopPropagation()}>
-      <div className="desktop-close-dialog" ref={panel} role="alertdialog" aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={`${id}-description`} aria-busy={view.sending || waiting || undefined} tabIndex={-1}>
-        <h2 id={`${id}-title`}>{t(title)}</h2><p id={`${id}-description`}>{t(description)}</p>
-        {!!labels.length && <ul>{labels.map(label => <li key={label}>{t(DESKTOP_DRAFT_LABELS[label])}</li>)}</ul>}
-        {!waiting && <div className="desktop-close-actions"><button className="btn primary" type="button" ref={keep} disabled={view.sending} onClick={() => void bridge.current?.keepEditing()}>{t("Keep editing")}</button>
-          {!busy && !failed && <button className="btn desktop-close-discard" type="button" disabled={view.sending} onClick={() => void bridge.current?.discardAndClose()}>{t(view.dirty.length ? "Discard and close app" : "Close app")}</button>}</div>}
+      <div className="desktop-close-dialog" ref={panel} role="alertdialog" aria-modal="true" aria-labelledby={`${id}-title`}
+        aria-describedby={description ? `${id}-description` : undefined} aria-busy={pendingDecision || undefined} tabIndex={-1}>
+        <header className="desktop-close-heading">
+          <span className={`desktop-close-icon${pendingDecision ? " is-pending" : ""}`}>
+            <AppIcon name={pendingDecision ? "activity" : failed ? "alert" : "warning"} />
+          </span>
+          <div>
+            <h2 id={`${id}-title`}>{t(title)}</h2>
+            {description && <p id={`${id}-description`}>{t(description)}</p>}
+          </div>
+        </header>
+        {!!labels.length && <div className="desktop-close-body" ref={body}>
+          <ul className="desktop-close-labels" role="list" aria-label={busy ? undefined : t("Unsaved drafts")}>
+            {labels.map(label => <li key={label}><AppIcon name="file" className="sm" />{t(DESKTOP_DRAFT_LABELS[label])}</li>)}
+          </ul>
+        </div>}
+        {!waiting && <footer className="desktop-close-actions">
+          <button className="btn primary" type="button" ref={keep} disabled={view.sending} onClick={() => void bridge.current?.keepEditing()}>{t("Keep editing")}</button>
+          {!busy && !failed && <button className={`btn${view.dirty.length ? " desktop-close-discard" : ""}`} type="button" disabled={view.sending}
+            onClick={() => void bridge.current?.discardAndClose()}>{t(view.dirty.length ? "Discard and close app" : "Close app")}</button>}
+        </footer>}
       </div>
     </div>}</MotionPresence></div>, document.body)}
   </>;

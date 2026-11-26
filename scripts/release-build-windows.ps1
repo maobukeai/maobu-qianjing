@@ -6,6 +6,7 @@ param(
   [string]$OutputDirectory = ""
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'windows-installer-artifact.ps1')
 $projectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 if ($ReleaseVersion -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$') { throw 'A semantic release version without leading v is required' }
 if (-not $env:MAOBU_UPDATE_PUBLIC_KEY -or -not $env:MAOBU_UPDATE_ENDPOINT) { throw 'Configure MAOBU_UPDATE_PUBLIC_KEY and MAOBU_UPDATE_ENDPOINT before building a signed release' }
@@ -19,6 +20,8 @@ try {
   & bun scripts/release-config.mjs --version $ReleaseVersion --output $configurationPath --require-private-key true
   if ($LASTEXITCODE -ne 0) { throw 'Signed publisher configuration or source version validation failed' }
   $releaseConfiguration = Get-Content -LiteralPath $configurationPath -Raw | ConvertFrom-Json
+  $configuration = Get-Content -LiteralPath (Join-Path $projectRoot 'src-tauri/tauri.conf.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+  $targetRoot = Get-MaobuCargoTargetDirectory $projectRoot
   $certificateThumbprint = $releaseConfiguration.bundle.windows.certificateThumbprint
   if ($certificateThumbprint) {
     $certificate = Get-Item -LiteralPath "Cert:\CurrentUser\My\$certificateThumbprint" -ErrorAction SilentlyContinue
@@ -40,11 +43,12 @@ try {
     $publisherSigningKey = $null
     $publisherSigningPassword = $null
   }
+  $builtVersion = (Get-Content -LiteralPath 'src-tauri/generated/VERSION.txt' -Raw).Trim()
+  if ($builtVersion -cne $ReleaseVersion) { throw 'Bundled backend version differs from the release version' }
+  $packagingStarted = [DateTime]::UtcNow
   & node node_modules/@tauri-apps/cli/tauri.js build --bundles nsis --config $configurationPath
   if ($LASTEXITCODE -ne 0) { throw 'Signed Windows installer build failed' }
-  $configuration = Get-Content -LiteralPath (Join-Path $projectRoot 'src-tauri/tauri.conf.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-  $builtName = "$($configuration.productName)_${ReleaseVersion}_x64-setup.exe"
-  $installer = Get-Item -LiteralPath (Join-Path $projectRoot "src-tauri/target/release/bundle/nsis/$builtName") -ErrorAction Stop
+  $installer = Get-MaobuFreshWindowsInstaller $targetRoot $configuration.productName $ReleaseVersion $packagingStarted
   New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
   $destination = Join-Path $outputRoot "MaobuBrowser_${ReleaseVersion}_x64-setup.exe"
   Copy-Item -LiteralPath $installer.FullName -Destination $destination -Force

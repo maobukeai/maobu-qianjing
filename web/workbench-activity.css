@@ -4,28 +4,33 @@
 .workbench-activity-count { min-width: 16px; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: center; }
 .workbench-activity-running { flex: 0 0 auto; width: 5px; height: 5px; border-radius: 50%; background: var(--success, #4e9a70); }
 .workbench-activity-popover { position: fixed; z-index: calc(var(--z-modal, 75) + 7); width: min(360px, calc(100vw - 24px)); max-width: calc(100vw - 24px); overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); box-shadow: 0 16px 50px rgba(var(--shadow-rgb), .17); outline: none; }
-.workbench-activity-popover > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 16px 16px 12px; }
-.workbench-activity-popover h2 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: -.02em; }
-.workbench-activity-popover header p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
-.workbench-activity-popover header .iconbtn { flex-shrink: 0; width: 28px; height: 28px; margin: -4px -5px 0 0; }
-.workbench-activity-popover header .iconbtn svg { width: 16px; height: 16px; }
-.workbench-activity-summary { display: flex; flex-wrap: wrap; gap: 5px 12px; padding: 0 16px 11px; color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--line-soft); }
+.workbench-activity-popover > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 12px 7px 15px; border-bottom: 1px solid var(--line-soft); }
+.workbench-activity-popover h2 { min-width: 0; margin: 0; font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
+.workbench-activity-popover .iconbtn { flex: 0 0 auto; width: 34px; height: 34px; }
+.workbench-activity-summary { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 7px 15px; color: var(--muted); background: var(--surface-sunken); font-size: 11px; border-bottom: 1px solid var(--line-soft); }
+.workbench-activity-summary [data-state="running"] { color: var(--accent-ink); }
+.workbench-activity-summary [data-state="attention"] { color: var(--warn-ink); }
 .workbench-activity-list { margin: 0; padding: 0; list-style: none; }
-.workbench-activity-item { display: flex; align-items: center; gap: 12px; padding: 13px 16px; }
+.workbench-activity-item { display: flex; align-items: center; gap: 10px; padding: 11px 12px 11px 15px; }
 .workbench-activity-item + .workbench-activity-item { border-top: 1px solid var(--line-soft); }
 .workbench-activity-item-main { flex: 1; min-width: 0; }
-.workbench-activity-state { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; }
-.workbench-activity-state i { width: 5px; height: 5px; border-radius: 50%; background: var(--faint); }
-.workbench-activity-item.is-running .workbench-activity-state { color: var(--accent-ink); }
-.workbench-activity-item.is-running .workbench-activity-state i { background: var(--accent-ink); }
-.workbench-activity-item.is-attention .workbench-activity-state { color: var(--warning-ink, #a36c25); }
-.workbench-activity-item.is-attention .workbench-activity-state i { background: currentColor; }
-.workbench-activity-item h3 { margin: 4px 0 0; color: var(--ink); font-size: 12px; font-weight: 550; line-height: 1.5; overflow-wrap: anywhere; }
-.workbench-activity-item p { margin: 4px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
-.workbench-activity-view { flex: 0 0 auto; min-width: 42px; min-height: 29px; }
+.workbench-activity-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 7px; margin-top: 4px; }
+.workbench-activity-state { padding: 1px 5px; border-radius: var(--r-sm); color: var(--muted); background: var(--surface-sunken); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.workbench-activity-item.is-running .workbench-activity-state { color: var(--accent-ink); background: var(--accent-soft); }
+.workbench-activity-item.is-attention .workbench-activity-state { color: var(--warn-ink); background: var(--warn-soft); }
+.workbench-activity-item h3 { margin: 0; color: var(--ink); font-size: 13px; font-weight: 650; line-height: 1.45; overflow-wrap: anywhere; }
+.workbench-activity-description { min-width: 0; color: var(--muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.workbench-activity-view { color: var(--accent-ink); }
 .workbench-activity-progress { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .workbench-activity-progress progress { display: block; flex: 1; min-width: 0; width: 0; height: 4px; accent-color: var(--accent-ink); border: 0; border-radius: 4px; overflow: hidden; }
 .workbench-activity-progress small { flex-shrink: 0; color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
 .workbench-activity-trigger:focus-visible, .workbench-activity-popover button:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 3px; }
 @media (max-width: 1280px) { .workbench-activity-copy { display: none; } .workbench-activity-trigger { max-width: 78px; padding-inline: 7px; gap: 4px; } }
-@media (max-width: 700px) { .workbench-activity-trigger { min-height: 36px; min-width: 44px; } .workbench-activity-popover { width: min(360px, calc(100vw - 16px)); max-width: calc(100vw - 16px); border-radius: 12px; } .workbench-activity-popover > header, .workbench-activity-item { padding-inline: 13px; } .workbench-activity-summary { padding-inline: 13px; } .workbench-activity-view, .workbench-activity-popover header .iconbtn { min-height: 36px; } }
+@media (max-width: 700px) {
+  .workbench-activity-trigger { width: 36px; min-height: 36px; padding: 0; }
+  .workbench-activity-trigger > svg { margin-inline-end: 3px; margin-top: 4px; }
+  .workbench-activity-count { position: absolute; inset-inline-end: 1px; inset-block-start: 1px; min-width: 13px; padding-inline: 2px; border-radius: var(--r-pill); background: var(--surface-sunken); font-size: 9px; line-height: 13px; }
+  .workbench-activity-running { position: absolute; inset-inline-start: 3px; inset-block-end: 3px; width: 4px; height: 4px; }
+  .workbench-activity-popover { width: min(360px, calc(100vw - 16px)); max-width: calc(100vw - 16px); border-radius: 12px; }
+  .workbench-activity-popover .iconbtn { width: 36px; height: 36px; }
+}

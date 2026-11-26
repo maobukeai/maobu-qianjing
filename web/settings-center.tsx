@@ -14,10 +14,12 @@ import "./settings-center.css";
 import { ProxyResources } from "./proxy-resources.tsx";
 import { SignedUpdateCard, type SignedUpdateStartupController } from "./signed-updates.tsx";
 import { BrowserRuntimeSettings } from "./browser-runtime-settings.tsx";
+import { AppIcon } from "./ui-primitives.tsx";
 import { McpConnectionProbe } from "./mcp-connection-probe.tsx";
 import { copyText } from "./clipboard.ts";
 import { useOptionalWorkspaceOperations, workspaceOperationMessage, type WorkspaceOperationLease } from "./workspace-operations.tsx";
 import { useDesktopCloseDraft } from "./desktop-close.tsx";
+import { DEFAULT_GITHUB_REPOSITORY } from "./about-popover.tsx";
 import { ModelServicesPanel } from "./model-services.tsx";
 
 export type FeatureSettingsTab = "network" | "fingerprints" | "models" | "integrations" | "sync" | "updates";
@@ -36,20 +38,6 @@ interface NetworkPanelProps {
 }
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function date(value: string | number): string { const parsed = new Date(value); return Number.isNaN(parsed.getTime()) ? "—" : parsed.toLocaleString(); }
-function Glyph({ kind }: { kind: "network" | "fingerprints" | "integrations" | "sync" | "updates" }) {
-  const paths = {
-    network: <><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a17 17 0 010 18 17 17 0 010-18" /></>,
-    fingerprints: <><path d="M5 12a7 7 0 0114 0M8 12a4 4 0 018 0v2c0 3-1 5-2 7M11 12a1 1 0 012 0v3c0 3-1 5-2 6M5 15c0 2-.5 3-1 4M8 15c0 3-1 5-2 6" /></>,
-    integrations: <><rect x="4" y="6" width="16" height="14" rx="4" /><path d="M12 2v4M1 11v5M23 11v5M9 16h6M8 11h.01M16 11h.01" /></>,
-    sync: <><path d="M20 7a9 9 0 00-15 0L2 10M2 4v6h6M4 17a9 9 0 0015 0l3-3M22 20v-6h-6" /></>,
-    updates: <><path d="M12 3v12M7 10l5 5 5-5M4 17v3h16v-3" /></>,
-  };
-  return <svg className="feature-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[kind]}</svg>;
-}
-function Heading({ kind, title, description }: { kind: Exclude<FeatureSettingsTab, "models">; title: string; description: string }) {
-  const { t } = useTranslation();
-  return <div className="feature-heading"><span className="feature-heading-icon"><Glyph kind={kind} /></span><div><h2>{t(title)}</h2><p>{t(description)}</p></div></div>;
-}
 function Alert({ error }: { error: string | null }) { const { t } = useTranslation(); return error ? <div className="feature-alert" role="alert">{t(error)}</div> : null; }
 function Loading() { const { t } = useTranslation(); return <p className="feature-loading" role="status">{t("Loading…")}</p>; }
 interface PanelTask { current(): boolean; finish(): void }
@@ -149,85 +137,118 @@ function NetworkPanel({ onCreateWithLocalProxy, onAssignLocalProxy, onResumeLoca
     }
   }
   return <div className="feature-panel">
-    <Heading kind="network" title="Network & proxies" description="Connect your desktop proxy, then verify the actual exit connection." />
-    <LocalProxyPreflightSettings />
-    <ChromiumPreloadingSettings />
-    <ChromiumMemorySaverSettings />
-    <DataSaverSettings />
+    <h2 className="sr-only">{t("Network & proxies")}</h2>
     <section className="feature-card">
-      <div className="feature-card-title"><div><h3>{t("Desktop proxy discovery")}</h3><p>{t("Find local listeners used by Clash, Mihomo, v2rayN and other desktop clients.")}</p></div></div>
       <form onSubmit={event => { event.preventDefault(); void scan(); }}>
-        <div className="feature-grid">
-          <label className="fld"><span>{t("Loopback address")}</span>
-            <select value={host} disabled={locked} onChange={event => {
-              const value = event.target.value;
-              if (value === "127.0.0.1" || value === "::1") changeOptions(() => setHost(value));
-            }}>
-              <option value="127.0.0.1">IPv4 (127.0.0.1)</option><option value="::1">IPv6 (::1)</option>
-            </select>
-          </label>
-          <label className="fld"><span id={`${portHint}-label`}>{t("Custom ports (optional)")}</span>
-            <input type="text" value={ports} placeholder="7890, 1080" autoComplete="off" spellCheck={false} disabled={locked}
-              aria-labelledby={`${portHint}-label`} aria-describedby={portHint} aria-invalid={error === DISCOVERY_PORTS_ERROR || undefined} onChange={event => {
-                const value = event.target.value;
-                changeOptions(() => setPorts(value));
-              }} />
-            <small id={portHint}>{t("Use commas to separate up to 16 unique ports. Leave blank to use common ports.")}</small>
-          </label>
+        <div className="feature-card-title">
+          <div className="feature-card-head-main">
+            <div className="feature-card-heading">
+              <AppIcon name="globe" className="sm" />
+              <h3>{t("Desktop proxy discovery")}</h3>
+            </div>
+            <p>{t("Find local listeners used by Clash, Mihomo, v2rayN and other desktop clients.")}</p>
+          </div>
+          <button type="submit" className="btn primary" disabled={locked} aria-busy={busy}>{t(busy ? "Scanning…" : "Discover local proxies")}</button>
         </div>
-        <div className="feature-actions"><button type="submit" className="btn primary" disabled={locked} aria-busy={busy}>{t(busy ? "Scanning…" : "Discover local proxies")}</button></div>
+        <div className="feature-card-body">
+          <div className="feature-grid">
+            <label className="fld"><span>{t("Loopback address")}</span>
+              <select value={host} disabled={locked} onChange={event => {
+                const value = event.target.value;
+                if (value === "127.0.0.1" || value === "::1") changeOptions(() => setHost(value));
+              }}>
+                <option value="127.0.0.1">IPv4 (127.0.0.1)</option><option value="::1">IPv6 (::1)</option>
+              </select>
+            </label>
+            <label className="fld"><span id={`${portHint}-label`}>{t("Custom ports (optional)")}</span>
+              <input type="text" value={ports} placeholder="7890, 1080" autoComplete="off" spellCheck={false} disabled={locked}
+                aria-labelledby={`${portHint}-label`} aria-describedby={portHint} aria-invalid={error === DISCOVERY_PORTS_ERROR || undefined} onChange={event => {
+                  const value = event.target.value;
+                  changeOptions(() => setPorts(value));
+                }} />
+              <small id={portHint}>{t("Use commas to separate up to 16 unique ports. Leave blank to use common ports.")}</small>
+            </label>
+          </div>
+          <div className="feature-inline-note">{t("Discovery checks loopback ports only. A listening port still needs an exit check.")}</div>
+          <Alert error={error} />
+          {onResumeLocalProxyAssignment && <div className="feature-actions"><button className="btn" type="button" onClick={onResumeLocalProxyAssignment}>{t("Return to proxy assignment draft")}</button></div>}
+          {discovery && <><div className="feature-result-meta"><span>{t("{count} local listeners", { count: listening.length })}</span><time>{date(discovery.checkedAt)}</time></div>
+            {!listening.length && <p className="feature-empty">{t("No local proxy listener found. Open your desktop proxy client and enable its local HTTP or SOCKS port.")}</p>}
+            {listening.map(result => {
+              const endpoint = localProxyEndpoint(result.host, result.port);
+              return <div className="local-proxy-result" key={endpoint}>
+                <div className="local-proxy-address"><span className="feature-dot" /><strong className="mono">{endpoint}</strong><span className="feature-badge">{result.latencyMs ?? "—"} ms</span></div>
+                <p>{t(result.socks5 === "available" ? "SOCKS5 handshake confirmed" : result.socks5 === "authentication_required" ? "SOCKS5 requires authentication" : "TCP listener detected; protocol needs verification")}</p>
+                <div className="feature-actions">{result.suggestions.map(suggestion => {
+                  const key = `${endpoint}/${suggestion.type}`, protocol = suggestion.type.toUpperCase();
+                  const checked = checks[key], note = checked && proxyCheckNote(checked);
+                  const candidate: LocalProxyDraftCandidate = {
+                    host: result.host, port: result.port, type: suggestion.type, evidence: suggestion.evidence,
+                    socks5AuthRequired: suggestion.type === "socks5" && result.socks5 === "authentication_required",
+                  };
+                  return <React.Fragment key={key}>
+                    <CopyButton value={`${suggestion.type}://${endpoint}`} label={suggestion.type === "http" ? "Copy HTTP" : "Copy SOCKS5"}
+                      accessibleLabel={t("Copy {protocol} proxy for {endpoint}", { protocol, endpoint })} />
+                    <button className="btn xs" type="button" aria-label={t("Verify {protocol} exit for {endpoint}", { protocol, endpoint })}
+                      disabled={locked} onClick={() => void verify(result.host, result.port, suggestion.type)}>
+                      {t(checking === key ? "Checking…" : "Verify exit")} · {protocol}
+                    </button>
+                    {onCreateWithLocalProxy && <button className="btn xs" type="button"
+                      aria-label={t("Use {protocol} proxy at {endpoint} in a new profile", { protocol, endpoint })}
+                      disabled={locked} onClick={event => onCreateWithLocalProxy(candidate, event.currentTarget)}>
+                      {t("Use in new profile")}
+                    </button>}
+                    {onAssignLocalProxy && <button className="btn xs" type="button"
+                      aria-label={t("Assign {protocol} proxy at {endpoint} to existing profiles", { protocol, endpoint })}
+                      disabled={locked || localProxyAssignmentBlocked || !!onResumeLocalProxyAssignment}
+                      onClick={event => onAssignLocalProxy(candidate, event.currentTarget)}>
+                      {t("Assign to existing profiles")}
+                    </button>}
+                    {checked && <span className={`feature-check-result ${checked.status}`} role="status">
+                      {t(checked.status)} · {checked.ip ?? ""} {checked.country ?? ""} · {checked.successes}/{checked.attempts} · {date(checked.checkedAt)}
+                      {note && <small className="proxy-exit-note">{t(note)}</small>}
+                    </span>}
+                  </React.Fragment>;
+                })}</div>
+              </div>;
+            })}
+            <details className="feature-details"><summary>{t("All checked ports")}</summary><div className="port-list">{discovery.results.map(result => {
+              const endpoint = localProxyEndpoint(result.host, result.port);
+              return <span key={endpoint} className={`feature-badge ${result.status === "listening" ? "positive" : ""}`}>{endpoint} · {t(result.status)}</span>;
+            })}</div></details>
+          </>}
+        </div>
       </form>
-      <div className="feature-inline-note">{t("Discovery checks loopback ports only. A listening port still needs an exit check.")}</div>
-      <Alert error={error} />
-      {onResumeLocalProxyAssignment && <div className="feature-actions"><button className="btn" type="button" onClick={onResumeLocalProxyAssignment}>{t("Return to proxy assignment draft")}</button></div>}
-      {discovery && <><div className="feature-result-meta"><span>{t("{count} local listeners", { count: listening.length })}</span><time>{date(discovery.checkedAt)}</time></div>
-        {!listening.length && <p className="feature-empty">{t("No local proxy listener found. Open your desktop proxy client and enable its local HTTP or SOCKS port.")}</p>}
-        {listening.map(result => {
-          const endpoint = localProxyEndpoint(result.host, result.port);
-          return <div className="local-proxy-result" key={endpoint}>
-            <div className="local-proxy-address"><span className="feature-dot" /><strong className="mono">{endpoint}</strong><span className="feature-badge">{result.latencyMs ?? "—"} ms</span></div>
-            <p>{t(result.socks5 === "available" ? "SOCKS5 handshake confirmed" : result.socks5 === "authentication_required" ? "SOCKS5 requires authentication" : "TCP listener detected; protocol needs verification")}</p>
-            <div className="feature-actions">{result.suggestions.map(suggestion => {
-              const key = `${endpoint}/${suggestion.type}`, protocol = suggestion.type.toUpperCase();
-              const checked = checks[key], note = checked && proxyCheckNote(checked);
-              const candidate: LocalProxyDraftCandidate = {
-                host: result.host, port: result.port, type: suggestion.type, evidence: suggestion.evidence,
-                socks5AuthRequired: suggestion.type === "socks5" && result.socks5 === "authentication_required",
-              };
-              return <React.Fragment key={key}>
-                <CopyButton value={`${suggestion.type}://${endpoint}`} label={suggestion.type === "http" ? "Copy HTTP" : "Copy SOCKS5"}
-                  accessibleLabel={t("Copy {protocol} proxy for {endpoint}", { protocol, endpoint })} />
-                <button className="btn xs" type="button" aria-label={t("Verify {protocol} exit for {endpoint}", { protocol, endpoint })}
-                  disabled={locked} onClick={() => void verify(result.host, result.port, suggestion.type)}>
-                  {t(checking === key ? "Checking…" : "Verify exit")} · {protocol}
-                </button>
-                {onCreateWithLocalProxy && <button className="btn xs" type="button"
-                  aria-label={t("Use {protocol} proxy at {endpoint} in a new profile", { protocol, endpoint })}
-                  disabled={locked} onClick={event => onCreateWithLocalProxy(candidate, event.currentTarget)}>
-                  {t("Use in new profile")}
-                </button>}
-                {onAssignLocalProxy && <button className="btn xs" type="button"
-                  aria-label={t("Assign {protocol} proxy at {endpoint} to existing profiles", { protocol, endpoint })}
-                  disabled={locked || localProxyAssignmentBlocked || !!onResumeLocalProxyAssignment}
-                  onClick={event => onAssignLocalProxy(candidate, event.currentTarget)}>
-                  {t("Assign to existing profiles")}
-                </button>}
-                {checked && <span className={`feature-check-result ${checked.status}`} role="status">
-                  {t(checked.status)} · {checked.ip ?? ""} {checked.country ?? ""} · {checked.successes}/{checked.attempts} · {date(checked.checkedAt)}
-                  {note && <small className="proxy-exit-note">{t(note)}</small>}
-                </span>}
-              </React.Fragment>;
-            })}</div>
-          </div>;
-        })}
-        <details className="feature-details"><summary>{t("All checked ports")}</summary><div className="port-list">{discovery.results.map(result => {
-          const endpoint = localProxyEndpoint(result.host, result.port);
-          return <span key={endpoint} className={`feature-badge ${result.status === "listening" ? "positive" : ""}`}>{endpoint} · {t(result.status)}</span>;
-        })}</div></details>
-      </>}
     </section>
-    <div className="feature-grid"><section className="feature-card"><span className="feature-eyebrow">{t("Choose your route")}</span><h3>{t("Match the proxy to your work")}</h3><ul className="feature-guide"><li><strong>{t("Desktop client")}</strong><span>{t("Reuse a local HTTP or SOCKS endpoint. Keep the client running while profiles use it.")}</span></li><li><strong>{t("Dedicated proxy")}</strong><span>{t("Use a provider or server you control when a stable exit IP and clear ownership matter.")}</span></li><li><strong>{t("Public proxy lists")}</strong><span>{t("Free endpoints have unknown operators and changing availability. A successful check does not certify IP reputation.")}</span></li></ul></section>
-    <section className="feature-card"><span className="feature-eyebrow">{t("Connection checklist")}</span><h3>{t("Verify before assigning")}</h3><ol className="feature-steps"><li>{t("Confirm the proxy protocol and authentication.")}</li><li>{t("Verify the exit IP and country using the proxy check.")}</li><li>{t("Assign the endpoint in the profile editor, then align timezone and language.")}</li><li>{t("Reopen the profile to apply network changes.")}</li></ol><p className="feature-inline-note">{t("Connection checks measure reachability and exit location. IP reputation, DNS and WebRTC need separate evidence.")}</p></section></div>
+    <LocalProxyPreflightSettings />
+    <div className="feature-grid">
+      <ChromiumPreloadingSettings />
+      <ChromiumMemorySaverSettings />
+    </div>
+    <DataSaverSettings />
+    <details className="feature-disclosure">
+      <summary>{t("Verify before assigning")}</summary>
+      <div className="feature-grid feature-disclosure-content">
+        <div>
+          <h3>{t("Choose your route")}</h3>
+          <ul className="feature-guide">
+            <li><strong>{t("Desktop client")}</strong><span>{t("Reuse a local HTTP or SOCKS endpoint. Keep the client running while profiles use it.")}</span></li>
+            <li><strong>{t("Dedicated proxy")}</strong><span>{t("Use a provider or server you control when a stable exit IP and clear ownership matter.")}</span></li>
+            <li><strong>{t("Public proxy lists")}</strong><span>{t("Free endpoints have unknown operators and changing availability. A successful check does not certify IP reputation.")}</span></li>
+          </ul>
+        </div>
+        <div>
+          <h3>{t("Connection checklist")}</h3>
+          <ol className="feature-steps">
+            <li>{t("Confirm the proxy protocol and authentication.")}</li>
+            <li>{t("Verify the exit IP and country using the proxy check.")}</li>
+            <li>{t("Assign the endpoint in the profile editor, then align timezone and language.")}</li>
+            <li>{t("Reopen the profile to apply network changes.")}</li>
+          </ol>
+          <p className="feature-inline-note">{t("Connection checks measure reachability and exit location. IP reputation, DNS and WebRTC need separate evidence.")}</p>
+        </div>
+      </div>
+    </details>
     <ProxyResources />
   </div>;
 }
@@ -290,21 +311,33 @@ function FingerprintsPanel({ onEditProfile, onInspectProfile, onExplainFingerpri
   }
   const counts = { issues: 0, review: 0, unmeasured: 0, consistent: 0 }; for (const item of reports ?? []) counts[item.status]++;
   const labels = { issues: "Needs attention", review: "Review suggested", unmeasured: "Not measured", consistent: "Consistent" };
-  return <div className="feature-panel"><Heading kind="fingerprints" title="Fingerprint quality" description="Review configuration consistency and evidence from the last browser measurement." />
+  return <div className="feature-panel"><h2 className="sr-only">{t("Fingerprint quality")}</h2>
     <Alert error={error} />
     <div className="quality-overview">{Object.entries(labels).map(([key, label]) => <div className={`quality-stat ${key}`} key={key}><span>{t(label)}</span><strong>{reports ? counts[key as keyof typeof counts] : "—"}</strong></div>)}</div>
-    <section className="feature-card"><div className="feature-card-title"><div><h3>{t("Profile inspection")}</h3><p>{t("This review does not open browsers or send profile data to a third party.")}</p></div><button className="btn" type="button" disabled={busy || measuring} onClick={() => void load()}>{t(busy ? "Checking…" : "Run review")}</button></div>
-      {busy && !reports ? <Loading /> : reports?.length === 0 && !selected ? <p className="feature-empty">{t("Create a profile to inspect its fingerprint configuration.")}</p> : reports && <><label className="fld"><span>{t("Profile")}</span><select value={selected} disabled={busy || measuring} onChange={event => setSelected(event.target.value)}>{missingSelected && <option value={selected} disabled>{t("Selected profile unavailable")}</option>}{reports.map(item => <option key={item.profileId} value={item.profileId}>{item.name || item.profileId} · {t(labels[item.status])}</option>)}</select></label>
-        {(onEditProfile || onInspectProfile || onExplainFingerprint) && <div className="feature-actions">
-          {onInspectProfile && <button type="button" className="btn" disabled={busy || measuring || !report} onClick={() => actOnReport(item => onInspectProfile(item.profileId))}>{t("Inspect network & fingerprint")}</button>}
-          {onEditProfile && <button type="button" className="btn" disabled={busy || measuring || !report} aria-label={report ? t("Edit {profile}", { profile: report.name || report.profileId }) : undefined} onClick={() => actOnReport(item => onEditProfile(item.profileId))}>{t("Edit profile configuration")}</button>}
-          {onExplainFingerprint && <button type="button" className="btn" disabled={busy || measuring || !report} onClick={() => actOnReport(onExplainFingerprint)}>{t("Draft AI explanation")}</button>}
-        </div>}
-        {missingSelected && <Alert error="The selected profile is no longer available. Refresh the review or choose another profile." />}
-        {report && <><div className="feature-result-meta"><span className={`feature-badge ${report.status === "consistent" ? "positive" : ""}`}>{t(labels[report.status])}</span><span>{report.measuredAt ? `${t("Last measurement")}: ${date(report.measuredAt)}` : t("No runtime measurement yet")}</span></div>
-        <div className="feature-actions"><button className="btn primary" type="button" disabled={busy || measuring || !report.running} aria-busy={measuring} onClick={() => void measure()}>{t(measuring ? "Measuring fingerprint…" : "Measure running browser")}</button><span className="muted">{t(report.running ? "Uses an isolated local probe page in this browser." : "Open this profile, then refresh the review to collect a live measurement.")}</span></div>
-        <div className="quality-filter"><label><input type="checkbox" checked={attentionOnly} onChange={event => setAttentionOnly(event.target.checked)} />{t("Only items needing attention")}</label><span>{t("Showing {count} of {total} checks", { count: visibleChecks.length, total: report.checks.length })}</span></div><div className="quality-checks">{visibleChecks.map(check => <FingerprintCheckRow key={check.id} check={check} />)}</div>{!visibleChecks.length && <p className="feature-empty">{t("No items need attention in this stored report.")}</p>}
-      </>}</>}
+    <section className="feature-card">
+      <div className="feature-card-title">
+        <div className="feature-card-head-main">
+          <div className="feature-card-heading">
+            <AppIcon name="shieldCheck" className="sm" />
+            <h3>{t("Profile inspection")}</h3>
+          </div>
+          <p>{t("This review does not open browsers or send profile data to a third party.")}</p>
+        </div>
+        <button className="btn" type="button" disabled={busy || measuring} onClick={() => void load()}>{t(busy ? "Checking…" : "Run review")}</button>
+      </div>
+      <div className="feature-card-body">
+        {busy && !reports ? <Loading /> : reports?.length === 0 && !selected ? <p className="feature-empty">{t("Create a profile to inspect its fingerprint configuration.")}</p> : reports && <><label className="fld"><span>{t("Profile")}</span><select value={selected} disabled={busy || measuring} onChange={event => setSelected(event.target.value)}>{missingSelected && <option value={selected} disabled>{t("Selected profile unavailable")}</option>}{reports.map(item => <option key={item.profileId} value={item.profileId}>{item.name || item.profileId} · {t(labels[item.status])}</option>)}</select></label>
+          {(onEditProfile || onInspectProfile || onExplainFingerprint) && <div className="feature-actions">
+            {onInspectProfile && <button type="button" className="btn" disabled={busy || measuring || !report} onClick={() => actOnReport(item => onInspectProfile(item.profileId))}>{t("Inspect network & fingerprint")}</button>}
+            {onEditProfile && <button type="button" className="btn" disabled={busy || measuring || !report} aria-label={report ? t("Edit {profile}", { profile: report.name || report.profileId }) : undefined} onClick={() => actOnReport(item => onEditProfile(item.profileId))}>{t("Edit profile configuration")}</button>}
+            {onExplainFingerprint && <button type="button" className="btn" disabled={busy || measuring || !report} onClick={() => actOnReport(onExplainFingerprint)}>{t("Draft AI explanation")}</button>}
+          </div>}
+          {missingSelected && <Alert error="The selected profile is no longer available. Refresh the review or choose another profile." />}
+          {report && <><div className="feature-result-meta"><span className={`feature-badge ${report.status === "consistent" ? "positive" : ""}`}>{t(labels[report.status])}</span><span>{report.measuredAt ? `${t("Last measurement")}: ${date(report.measuredAt)}` : t("No runtime measurement yet")}</span></div>
+          <div className="feature-actions"><button className="btn primary" type="button" disabled={busy || measuring || !report.running} aria-busy={measuring} onClick={() => void measure()}>{t(measuring ? "Measuring fingerprint…" : "Measure running browser")}</button><span className="muted">{t(report.running ? "Uses an isolated local probe page in this browser." : "Open this profile, then refresh the review to collect a live measurement.")}</span></div>
+          <div className="quality-filter"><label><input type="checkbox" checked={attentionOnly} onChange={event => setAttentionOnly(event.target.checked)} />{t("Only items needing attention")}</label><span>{t("Showing {count} of {total} checks", { count: visibleChecks.length, total: report.checks.length })}</span></div><div className="quality-checks">{visibleChecks.map(check => <FingerprintCheckRow key={check.id} check={check} />)}</div>{!visibleChecks.length && <p className="feature-empty">{t("No items need attention in this stored report.")}</p>}
+        </>}</>}
+      </div>
     </section><p className="feature-inline-note">{t("A consistent configuration is not a guarantee of anonymity or a website acceptance score. Unmeasured fields remain unknown.")}</p>
   </div>;
 }
@@ -330,13 +363,31 @@ function IntegrationsPanel({ active, onOpenAssistant }: { active: boolean; onOpe
     setRevision(value => value + 1);
   }
   const config = loading ? undefined : info?.configs.find(item => item.id === configId) ?? info?.configs[0];
-  return <div className="feature-panel"><Heading kind="integrations" title="AI & MCP" description="Give your AI assistant a local browser workspace with real, inspectable capabilities." /><div className="feature-actions">{onOpenAssistant && <button className="btn primary" type="button" onClick={onOpenAssistant}>{t("Open AI workspace")}</button>}<button className="btn" type="button" disabled={loading || probing} aria-busy={loading} onClick={refresh}>{t("Refresh connection info")}</button></div><Alert error={error} />
-    {!info && !error && <Loading />}{info && <><section className="feature-card"><div className="feature-card-title"><div><h3>{t("Connect your assistant")}</h3><p>{t("Use a stdio MCP client to manage local profiles and automate the browser.")}</p></div><span className={`feature-badge ${!loading && info.status === "ready" ? "positive" : ""}`}>{t(loading ? "Loading…" : info.status === "ready" ? "Ready to connect" : "Setup required")}</span></div>
-      <div className="integration-checks">{info.checks.map(check => <p key={check.id}><span className={`quality-mark ${check.status}`}>{check.status === "pass" ? "✓" : "△"}</span>{t(check.message)}</p>)}</div>
-      <McpConnectionProbe active={active} ready={!loading && info.status === "ready"} catalogRevision={revision} onBusyChange={busy => { probingNow.current = busy; setProbing(busy); }} />
-      {config && <><div className="feature-card-title"><label className="fld grow"><span>{t("Client configuration")}</span><select value={config.id} onChange={event => setConfigId(event.target.value)}>{info.configs.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label><CopyButton value={config.content} label="Copy configuration" /></div>{config.content ? <pre className="integration-code" tabIndex={0}>{config.content}</pre> : <p className="feature-inline-note">{t("Build and launch the desktop app to obtain a verified MCP helper path.")}</p>}</>}
-    </section><div className="feature-grid">{info.capabilities.map(capability => <section className="feature-card integration-capability" key={capability.id}><h3>{t(capability.label)}</h3><p>{t(capability.description)}</p><div className="feature-actions">{capability.engines.map(engine => <span className="feature-badge" key={engine}>{engine}</span>)}</div></section>)}</div>
-    <section className="feature-card"><span className="feature-eyebrow">{t("Try a workflow")}</span><h3>{t("Start with a clear instruction")}</h3><div className="workflow-list">{info.workflows.map(workflow => <div key={workflow.id}><strong>{t(workflow.label)}</strong><p>{t(workflow.prompt)}</p><CopyButton value={t(workflow.prompt)} label="Copy prompt" /></div>)}</div></section></>}
+  return <div className="feature-panel"><h2 className="sr-only">{t("AI & MCP")}</h2>
+    {!info && <div className="feature-actions feature-panel-actions">{onOpenAssistant && <button className="btn primary" type="button" onClick={onOpenAssistant}>{t("Open AI workspace")}</button>}<button className="btn" type="button" disabled={loading || probing} aria-busy={loading} onClick={refresh}>{t("Refresh connection info")}</button></div>}
+    <Alert error={error} />
+    {!info && !error && <Loading />}{info && <><section className="feature-card">
+      <div className="feature-card-title">
+        <div className="feature-card-head-main">
+          <div className="feature-card-heading">
+            <AppIcon name="plug" className="sm" />
+            <h3>{t("Connect your assistant")}</h3>
+            <span className={`feature-badge ${!loading && info.status === "ready" ? "positive" : ""}`}>{t(loading ? "Loading…" : info.status === "ready" ? "Ready to connect" : "Setup required")}</span>
+          </div>
+          <p>{t("Use a stdio MCP client to manage local profiles and automate the browser.")}</p>
+        </div>
+        <div className="feature-card-title-actions">
+          <button className="btn" type="button" disabled={loading || probing} aria-busy={loading} onClick={refresh}>{t("Refresh connection info")}</button>
+          {onOpenAssistant && <button className="btn primary" type="button" onClick={onOpenAssistant}>{t("Open AI workspace")}</button>}
+        </div>
+      </div>
+      <div className="feature-card-body">
+        <div className="integration-checks">{info.checks.map(check => <p key={check.id}><span className={`quality-mark ${check.status}`}>{check.status === "pass" ? "✓" : "△"}</span>{t(check.message)}</p>)}</div>
+        <McpConnectionProbe active={active} ready={!loading && info.status === "ready"} catalogRevision={revision} onBusyChange={busy => { probingNow.current = busy; setProbing(busy); }} />
+        {config && <><div className="feature-card-subbar"><label className="fld grow"><span>{t("Client configuration")}</span><select value={config.id} onChange={event => setConfigId(event.target.value)}>{info.configs.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label><CopyButton value={config.content} label="Copy configuration" /></div>{config.content ? <pre className="integration-code" tabIndex={0}>{config.content}</pre> : <p className="feature-inline-note">{t("Build and launch the desktop app to obtain a verified MCP helper path.")}</p>}</>}
+      </div>
+    </section><div className="feature-grid">{info.capabilities.map(capability => <section className="feature-card integration-capability" key={capability.id}><div className="feature-card-title"><div className="feature-card-head-main"><h3>{t(capability.label)}</h3></div></div><div className="feature-card-body"><p>{t(capability.description)}</p><div className="feature-actions">{capability.engines.map(engine => <span className="feature-badge" key={engine}>{engine}</span>)}</div></div></section>)}</div>
+    <details className="feature-disclosure"><summary>{t("Try a workflow")}</summary><div className="feature-disclosure-content workflow-list">{info.workflows.map(workflow => <div key={workflow.id}><strong>{t(workflow.label)}</strong><p>{t(workflow.prompt)}</p><CopyButton value={t(workflow.prompt)} label="Copy prompt" /></div>)}</div></details></>}
   </div>;
 }
 
@@ -382,16 +433,62 @@ function UpdatesPanel({ signedUpdateStartup, active = true, runtimeDownloads, ru
   function edit(updates: Partial<AppSettings["updates"]>) { draftRevision.current++; setSettings(previous => previous ? { ...previous, updates: { ...previous.updates, ...updates } } : null); setSaved(false); setDirty(true); setResult(null); }
   const matchingResult = settings && result?.repository === settings.updates.repository && result?.channel === settings.updates.channel ? result : null;
   const labels = { "not-configured": "Choose a release repository", "up-to-date": "No newer GitHub release", available: "New GitHub release found", error: "Could not read GitHub releases" };
-  return <div className="feature-panel"><Heading kind="updates" title="App updates" description="Review trusted app updates and follow release announcements." /><p className="feature-inline-note updates-source-note">{t("Install this app from its publisher's trusted channel below. The optional GitHub repository is for release announcements and does not change the installation source.")}</p>{active && <SignedUpdateCard startup={signedUpdateStartup} />}<Alert error={error} /><Alert error={settingsError} />
-    {!settings && <div className="feature-actions"><button type="button" className="btn" disabled={settingsLoading} aria-busy={settingsLoading} onClick={() => void loadSettings()}>{t(settingsLoading ? "Loading…" : "Retry settings")}</button></div>}{settings && <section className="feature-card github-announcements"><div className="feature-card-title"><div><h3>{t("GitHub release announcements")}</h3><p>{t("Follow a repository for release notes. Changing this repository does not enable app installation.")}</p></div><span className="feature-badge">GitHub Releases</span></div>
-      <label className="fld"><span>{t("Release repository")}</span><input spellCheck={false} autoComplete="off" placeholder="owner/repository" value={settings.updates.repository} disabled={busy} onChange={event => edit({ repository: event.target.value })} /><small>{t("Use owner/repository. No repository is selected by default.")}</small></label>
-      <label className="fld"><span>{t("Release channel")}</span><select value={settings.updates.channel} disabled={busy} onChange={event => edit({ channel: event.target.value as "stable" | "beta" })}><option value="stable">{t("Stable releases")}</option><option value="beta">{t("Include prereleases")}</option></select></label>
-      <label className="feature-toggle"><span><strong>{t("Check on startup")}</strong><small>{t("Check the configured GitHub repository when this workspace opens.")}</small></span><input type="checkbox" role="switch" checked={settings.updates.checkOnStartup} disabled={busy} onChange={event => edit({ checkOnStartup: event.target.checked })} /></label>
-      <div className="feature-actions"><button className="btn" type="button" disabled={busy} onClick={() => void save()}>{t("Save settings")}</button><button className="btn primary" type="button" disabled={busy || !settings.updates.repository.trim()} onClick={() => void save(true)}>{t(busy ? "Checking…" : "Save & check for updates")}</button>{saved && <span className="feature-success" role="status">{t("Saved")}</span>}{dirty && <span className="feature-inline-note" role="status">{t("Changes not saved")}</span>}</div>
-    </section>}
-    <section className="feature-card"><div className="feature-card-title"><div><h3>{t("Last GitHub check")}</h3><p>{t("Read the last check from this session without contacting GitHub.")}</p></div><button type="button" className="btn" disabled={historyLoading || busy} aria-busy={historyLoading} onClick={() => void loadHistory()}>{t(historyLoading ? "Loading…" : "Reload last check")}</button></div><Alert error={historyError} /></section>
-    {matchingResult && <section className="feature-card update-result" aria-live="polite"><span className={`feature-badge ${matchingResult.status === "available" || matchingResult.status === "up-to-date" ? "positive" : ""}`}>{t(labels[matchingResult.status])}</span><h3>{matchingResult.latest?.name || `${t("Current version")} ${matchingResult.currentVersion}`}</h3>{matchingResult.error && <p className="feature-alert">{t(matchingResult.error)}</p>}<p>{t("Current version")}: {matchingResult.currentVersion}{matchingResult.latest ? ` → ${matchingResult.latest.version}` : ""}</p><p className="muted">{matchingResult.repository} · {t(matchingResult.channel === "stable" ? "Stable releases" : "Include prereleases")} · {t("Last checked")}: {date(matchingResult.checkedAt)}</p>{matchingResult.latest && <><pre className="release-notes">{matchingResult.latest.notes || t("No release notes provided.")}</pre><a className="btn primary" href={matchingResult.latest.url} target="_blank" rel="noreferrer">{t("View release on GitHub")} ↗</a><p className="feature-inline-note">{t("Review the publisher and release assets before installing. Automatic installation requires a signed release channel.")}</p></>}</section>}
+  return <div className="feature-panel"><h2 className="sr-only">{t("App updates")}</h2>
+    {active && <SignedUpdateCard startup={signedUpdateStartup} />}
     {active && <BrowserRuntimeSettings downloads={runtimeDownloads} downloadStatusUnavailable={runtimeDownloadsStale} />}
+    <section className="feature-card github-announcements">
+      <div className="feature-card-title">
+        <div className="feature-card-head-main">
+          <div className="feature-card-heading">
+            <AppIcon name="import" className="sm" />
+            <h3>{t("GitHub release announcements")}</h3>
+          </div>
+          <p>{t("Follow a repository for release notes. Changing this repository does not enable app installation.")}</p>
+        </div>
+      </div>
+      <div className="feature-card-body">
+        <Alert error={error} />
+        <Alert error={settingsError} />
+        {settings ? <>
+          <div className="feature-grid announcement-fields">
+            <label className="fld"><span>{t("Release repository")}</span><input spellCheck={false} autoComplete="off" placeholder={DEFAULT_GITHUB_REPOSITORY} value={settings.updates.repository} disabled={busy} onChange={event => edit({ repository: event.target.value })} /></label>
+            <label className="fld"><span>{t("Release channel")}</span><select value={settings.updates.channel} disabled={busy} onChange={event => edit({ channel: event.target.value as "stable" | "beta" })}><option value="stable">{t("Stable releases")}</option><option value="beta">{t("Include prereleases")}</option></select></label>
+          </div>
+          <label className="feature-toggle"><span><strong>{t("Check on startup")}</strong></span><input type="checkbox" role="switch" checked={settings.updates.checkOnStartup} disabled={busy} onChange={event => edit({ checkOnStartup: event.target.checked })} /></label>
+          <div className="feature-actions">
+            {!settings.updates.repository.trim() && (
+              <button className="btn" type="button" disabled={busy} onClick={() => edit({ repository: DEFAULT_GITHUB_REPOSITORY })}>{t("Use official repository")}</button>
+            )}
+            <button className="btn" type="button" disabled={busy} onClick={() => void save()}>{t("Save settings")}</button>
+            <button className="btn primary" type="button" disabled={busy || !settings.updates.repository.trim()} onClick={() => void save(true)}>{t(busy ? "Checking…" : "Save & check for updates")}</button>
+            {saved && <span className="feature-success" role="status">{t("Saved")}</span>}
+            {dirty && <span className="announcement-draft-note" role="status">{t("Changes not saved")}</span>}
+          </div>
+        </> : <div className="feature-actions">
+          <button type="button" className="btn" disabled={settingsLoading} aria-busy={settingsLoading} onClick={() => void loadSettings()}>{t(settingsLoading ? "Loading…" : "Retry settings")}</button>
+        </div>}
+        <div className="announcement-history">
+          <div className="announcement-history-heading">
+            <h4>{t("Last GitHub check")}</h4>
+            <button type="button" className="btn xs ghost" disabled={historyLoading || busy} aria-busy={historyLoading} title={t("Read the last check from this session without contacting GitHub.")} onClick={() => void loadHistory()}>{t(historyLoading ? "Loading…" : "Reload last check")}</button>
+          </div>
+          <Alert error={historyError} />
+          {matchingResult && <div className="update-result" aria-live="polite">
+            <span className={`feature-badge ${matchingResult.status === "available" || matchingResult.status === "up-to-date" ? "positive" : ""}`}>{t(labels[matchingResult.status])}</span>
+            {matchingResult.latest?.name && <h5>{matchingResult.latest.name}</h5>}
+            {matchingResult.error && <p className="feature-alert">{t(matchingResult.error)}</p>}
+            <p>{t("Current version")} {matchingResult.currentVersion}{matchingResult.latest ? ` → ${matchingResult.latest.version}` : ""}</p>
+            <p className="muted">{matchingResult.repository} · {t(matchingResult.channel === "stable" ? "Stable releases" : "Include prereleases")} · {date(matchingResult.checkedAt)}</p>
+            {matchingResult.latest && <>
+              <pre className="release-notes">{matchingResult.latest.notes || t("No release notes provided.")}</pre>
+              <a className="btn" href={matchingResult.latest.url} target="_blank" rel="noreferrer">{t("View release on GitHub")} ↗</a>
+              <p className="feature-inline-note">{t("Review the publisher and release assets before installing. Automatic installation requires a signed release channel.")}</p>
+            </>}
+          </div>}
+          {settings && !matchingResult && !historyLoading && !historyError && <p>{t("No check yet for this repository and channel.")}</p>}
+        </div>
+      </div>
+    </section>
   </div>;
 }
 
@@ -603,8 +700,7 @@ function SyncPanel({ onProfilesImported, onLocateSnapshotProfile, active = true 
   const passwordReady = Array.from(password).length >= 10;
   const receiptPages = completion?.kind === "imported" ? Math.ceil(completion.profiles.length / snapshotReceiptPageSize) : 0;
   const phases = { load: "Loading snapshot settings…", files: "Refreshing snapshot files…", save: "Saving folder settings…", create: "Encrypting and saving your snapshot…", preview: "Unlocking snapshot preview…", import: "Importing new profiles…", "import-refresh": "Refreshing environment lists…", "receipt-refresh": "Refreshing environment lists…" };
-  return <div className="feature-panel"><Heading kind="sync" title="Sync & portability" description="Keep encrypted profile snapshots in a folder you control." />
-    {settings && <section className="feature-card sync-status-summary" aria-label={t("Snapshot status")}><div className="feature-card-title"><div><h3>{t("Your snapshot storage")}</h3><p>{t("Snapshots are saved when you choose. Your own sync app can copy this folder between devices.")}</p></div><span className={`feature-badge ${settings.sync.enabled && !dirty && !filesError ? "positive" : ""}`}>{t(dirty ? "Changes not saved" : !settings.sync.enabled ? "Snapshots disabled" : filesError ? "Folder needs attention" : "Manual snapshots enabled")}</span></div>{settings.sync.folder && <p className="sync-folder-path mono">{settings.sync.folder}</p>}<p className="feature-inline-note">{t("This app saves encrypted files locally. Cloud upload and availability on other devices are managed by your sync app.")}</p></section>}
+  return <div className="feature-panel sync-settings"><h2 className="sr-only">{t("Sync & portability")}</h2>
     {operation && <div className="sync-operation" role="status" aria-live="polite"><progress aria-label={t(phases[operation])} /><span>{t(phases[operation])}</span></div>}
     {completion?.kind === "created" && <div className="sync-last-result" role="status"><span>{t("Last completed action in this session")} · {date(completion.completedAt)}</span><strong>{t("Encrypted snapshot saved · {count} profiles", { count: completion.profileCount })}</strong></div>}
     {completion?.kind === "imported" && <section className="sync-last-result sync-import-receipt" aria-labelledby={resultId}>
@@ -630,37 +726,67 @@ function SyncPanel({ onProfilesImported, onLocateSnapshotProfile, active = true 
       </details>}
     </section>}
     <Alert error={error} />
-    {!settings && <div className="feature-actions"><button type="button" className="btn" disabled={busy} aria-busy={busy} onClick={() => void loadSettings()}>{t(busy ? "Loading…" : "Retry settings")}</button></div>}{settings && <section className="feature-card"><div className="feature-card-title"><div><h3>{t("Your folder, your storage")}</h3><p>{t("Use a local folder, an external drive, or a folder managed by OneDrive or Syncthing.")}</p></div><span className="feature-badge">{t("Encrypted snapshots")}</span></div>
-      <label className="fld"><span>{t("Sync folder")}</span><input spellCheck={false} value={settings.sync.folder} placeholder={"C:\\Users\\you\\OneDrive\\Maobu"} disabled={busy} onChange={event => edit({ folder: event.target.value })} /><small>{t("Enter an absolute path. Your sync client transports the encrypted files.")}</small></label>
-      <label className="fld"><span>{t("Snapshots to retain")}</span><input type="number" min={1} max={100} value={settings.sync.retainSnapshots} disabled={busy} onChange={event => edit({ retainSnapshots: Number(event.target.value) })} /></label>
-      <label className="feature-toggle"><span><strong>{t("Enable folder snapshots")}</strong><small>{t("Save snapshots manually; each snapshot keeps an independent copy.")}</small></span><input type="checkbox" role="switch" checked={settings.sync.enabled} disabled={busy} onChange={event => edit({ enabled: event.target.checked })} /></label>
-      <div className="feature-actions"><button className="btn primary" type="button" disabled={busy} onClick={() => void save()}>{t(operation === "save" ? "Saving…" : "Save settings")}</button>{saved && <span className="feature-success" role="status">{t("Saved")}</span>}</div>
-    </section>}
-    {settings?.sync.enabled && <section className="feature-card"><div className="feature-card-title"><div><h3>{t("Encrypted profile snapshots")}</h3><p>{t("Your password encrypts each snapshot and is never stored by this app.")}</p></div><button className="btn xs" type="button" disabled={locked} onClick={() => void refresh()}>{t("Refresh files")}</button></div>
-      {filesError && <div className="feature-alert sync-files-error" role="alert"><strong>{t("Could not refresh snapshot files. Previous files and your input are kept.")}</strong><p>{t(filesError)}</p><button className="btn xs" type="button" disabled={locked} onClick={() => void refresh()}>{t("Retry file list")}</button></div>}
-      {!busy && !filesError && !files.length && <p className="feature-inline-note">{t("No snapshots yet. Create one here, or wait for your sync app to copy files into this folder and refresh.")}</p>}
-      {dirty && <p className="feature-inline-note">{t("Save folder changes before working with snapshots.")}</p>}
-      <label className="fld"><span>{t("Snapshot password")}</span><input ref={passwordInput} type="password" autoComplete="new-password" value={password} disabled={locked} onChange={event => editPassword(event.target.value)} /><small>{t("Use at least 10 characters. Keep your password to restore on another device.")}</small></label>
-      <div className="feature-actions"><button className="btn primary" type="button" disabled={locked || !passwordReady} onClick={() => void operate("create")}>{t(operation === "create" ? "Encrypting snapshot…" : "Create encrypted snapshot")}</button></div>
-      <div className="sync-restore">
-        <h3>{t("Restore from your folder")}</h3>
-        <label className="fld"><span>{t("Snapshot file")}</span><select value={fileName} disabled={restoreLocked} onChange={event => chooseFile(event.target.value)}><option value="">{t("Select a snapshot")}</option>{files.map(file => <option key={file.fileName} value={file.fileName}>{date(file.createdAt)} · {(file.bytes / 1024).toFixed(1)} KB · {file.fileName.slice(-23)}</option>)}</select></label>
-        <div className="feature-actions"><button ref={previewButton} className="btn" type="button" disabled={restoreLocked || !listedFile || !passwordReady} onClick={() => void operate("preview")}>{t("Preview snapshot")}</button><span className="muted">{t("Matching environment IDs in the list, Trash, or running browser records are skipped.")}</span></div>
-        {reviewFileChanged && <p className="feature-inline-note" role="status">{t("The snapshot file changed. Preview it again before importing.")}</p>}
-        {matchingReview && <section className="sync-preview" aria-labelledby={reviewId}>
-          <header className="sync-review-file">
-            <h4 id={reviewId} ref={reviewHeading} tabIndex={-1}>{t("Review snapshot")}</h4>
-            <p><time>{date(matchingReview.file.createdAt)}</time> · <code>{matchingReview.file.fileName}</code></p>
-          </header>
-          <div className="feature-result-meta"><strong>{t("{count} new profiles", { count: matchingReview.preview.newCount })}</strong><span>{t("{count} conflicts skipped", { count: matchingReview.preview.conflictCount })}</span></div>
-          <ul>{matchingReview.preview.profiles.map(profile => <li key={profile.id}><span>{profile.name || profile.id}</span><span className="feature-badge">{t(profile.conflict ? "Conflict · skip" : "New profile")}</span></li>)}</ul>
-          {workspaceOperations?.snapshot.blocked && operation !== "import" && operation !== "import-refresh" && <p className="feature-inline-note" role="status">{t(workspaceOperationMessage(workspaceOperations.snapshot))}</p>}
-          {matchingReview.preview.newCount === 0 ? <p className="feature-inline-note" role="status">{t("There are no new environments in this snapshot. Choose another snapshot or check the environment list and Trash for the originals.")}</p>
-            : <button className="btn primary" type="button" disabled={restoreLocked || workspaceOperations?.snapshot.blocked === true} onClick={() => void operate("import")}>{t("Import new profiles")}</button>}
-        </section>}
+    {!settings && <div className="feature-actions"><button type="button" className="btn" disabled={busy} aria-busy={busy} onClick={() => void loadSettings()}>{t(busy ? "Loading…" : "Retry settings")}</button></div>}{settings && <section className="feature-card sync-status-summary" aria-label={t("Snapshot status")}>
+      <div className="feature-card-title">
+        <div className="feature-card-head-main">
+          <div className="feature-card-heading">
+            <AppIcon name="sync" className="sm" />
+            <h3>{t("Your snapshot storage")}</h3>
+            <span className={`feature-badge ${settings.sync.enabled && !dirty && !filesError ? "positive" : ""}`}>{t(dirty ? "Changes not saved" : !settings.sync.enabled ? "Snapshots disabled" : filesError ? "Folder needs attention" : "Manual snapshots enabled")}</span>
+          </div>
+          <p>{t("This app saves encrypted files locally. Cloud upload and availability on other devices are managed by your sync app.")}</p>
+        </div>
+        <div className="feature-card-title-actions">
+          {saved && <span className="feature-success" role="status">{t("Saved")}</span>}
+          <button className="btn primary" type="button" disabled={busy} onClick={() => void save()}>{t(operation === "save" ? "Saving…" : "Save settings")}</button>
+        </div>
+      </div>
+      <div className="feature-card-body">
+        <label className="feature-toggle"><span><strong>{t("Enable folder snapshots")}</strong><small>{t("Save snapshots manually; each snapshot keeps an independent copy.")}</small></span><input type="checkbox" role="switch" checked={settings.sync.enabled} disabled={busy} onChange={event => edit({ enabled: event.target.checked })} /></label>
+        <div className="sync-folder-fields">
+          <label className="fld"><span>{t("Sync folder")}</span><input spellCheck={false} value={settings.sync.folder} placeholder={"C:\\Users\\you\\OneDrive\\Maobu"} disabled={busy} onChange={event => edit({ folder: event.target.value })} /><small>{t("Enter an absolute path. Your sync client transports the encrypted files.")}</small></label>
+          <label className="fld"><span>{t("Snapshots to retain")}</span><input type="number" min={1} max={100} value={settings.sync.retainSnapshots} disabled={busy} onChange={event => edit({ retainSnapshots: Number(event.target.value) })} /></label>
+        </div>
       </div>
     </section>}
-    <section className="feature-card"><h3>{t("Portable profiles, recoverable workspaces")}</h3><p>{t("Profile snapshots carry saved configuration and sessions. Full workspace backups also include browser storage, extensions and scripts; manage them from Workspace management.")}</p><p className="feature-inline-note">{t("Close profiles before capturing complete browser storage. A saved session only contains data captured by this app.")}</p></section>
+    {settings?.sync.enabled && <section className="feature-card"><div className="feature-card-title"><div className="feature-card-head-main"><div className="feature-card-heading"><AppIcon name="lock" className="sm" /><h3>{t("Encrypted profile snapshots")}</h3></div><p>{t("Your password encrypts each snapshot and is never stored by this app.")}</p></div><button className="btn xs" type="button" disabled={locked} onClick={() => void refresh()}>{t("Refresh files")}</button></div>
+      <div className="feature-card-body">
+        {filesError && <div className="feature-alert sync-files-error" role="alert"><strong>{t("Could not refresh snapshot files. Previous files and your input are kept.")}</strong><p>{t(filesError)}</p><button className="btn xs" type="button" disabled={locked} onClick={() => void refresh()}>{t("Retry file list")}</button></div>}
+        {dirty && <p className="feature-inline-note">{t("Save folder changes before working with snapshots.")}</p>}
+        <div className="sync-task">
+          <label className="fld"><span>{t("Snapshot password")}</span><input ref={passwordInput} type="password" autoComplete="new-password" aria-describedby={`${resultId}-password-help`} value={password} disabled={locked} onChange={event => editPassword(event.target.value)} /></label>
+          <button className="btn primary" type="button" disabled={locked || !passwordReady} onClick={() => void operate("create")}>{t(operation === "create" ? "Encrypting snapshot…" : "Create encrypted snapshot")}</button>
+        </div>
+        <p className="sync-field-note" id={`${resultId}-password-help`}>{t("Use at least 10 characters. Keep your password to restore on another device.")}</p>
+        <div className="sync-restore">
+          <h3>{t("Restore from your folder")}</h3>
+          <div className="sync-task">
+            <label className="fld"><span>{t("Snapshot file")}</span><select aria-describedby={`${resultId}-restore-help`} value={fileName} disabled={restoreLocked} onChange={event => chooseFile(event.target.value)}><option value="">{t("Select a snapshot")}</option>{files.map(file => <option key={file.fileName} value={file.fileName}>{date(file.createdAt)} · {(file.bytes / 1024).toFixed(1)} KB · {file.fileName.slice(-23)}</option>)}</select></label>
+            <button ref={previewButton} className="btn" type="button" disabled={restoreLocked || !listedFile || !passwordReady} onClick={() => void operate("preview")}>{t("Preview snapshot")}</button>
+          </div>
+          <p className="sync-field-note" id={`${resultId}-restore-help`}>{t(!busy && !filesError && !files.length ? "No snapshots yet. Create one here, or wait for your sync app to copy files into this folder and refresh." : "Matching environment IDs in the list, Trash, or running browser records are skipped.")}</p>
+          {reviewFileChanged && <p className="feature-inline-note" role="status">{t("The snapshot file changed. Preview it again before importing.")}</p>}
+          {matchingReview && <section className="sync-preview" aria-labelledby={reviewId}>
+            <header className="sync-review-file">
+              <h4 id={reviewId} ref={reviewHeading} tabIndex={-1}>{t("Review snapshot")}</h4>
+              <p><time>{date(matchingReview.file.createdAt)}</time> · <code>{matchingReview.file.fileName}</code></p>
+            </header>
+            <div className="feature-result-meta"><strong>{t("{count} new profiles", { count: matchingReview.preview.newCount })}</strong><span>{t("{count} conflicts skipped", { count: matchingReview.preview.conflictCount })}</span></div>
+            <ul>{matchingReview.preview.profiles.map(profile => <li key={profile.id}><span>{profile.name || profile.id}</span><span className="feature-badge">{t(profile.conflict ? "Conflict · skip" : "New profile")}</span></li>)}</ul>
+            {workspaceOperations?.snapshot.blocked && operation !== "import" && operation !== "import-refresh" && <p className="feature-inline-note" role="status">{t(workspaceOperationMessage(workspaceOperations.snapshot))}</p>}
+            {matchingReview.preview.newCount === 0 ? <p className="feature-inline-note" role="status">{t("There are no new environments in this snapshot. Choose another snapshot or check the environment list and Trash for the originals.")}</p>
+              : <button className="btn primary" type="button" disabled={restoreLocked || workspaceOperations?.snapshot.blocked === true} onClick={() => void operate("import")}>{t("Import new profiles")}</button>}
+          </section>}
+        </div>
+      </div>
+    </section>}
+    <details className="feature-disclosure sync-scope">
+      <summary>{t("Portable profiles, recoverable workspaces")}</summary>
+      <div className="feature-disclosure-content">
+        <p>{t("Profile snapshots carry saved configuration and sessions. Full workspace backups also include browser storage, extensions and scripts; manage them from Workspace management.")}</p>
+        <p>{t("Close profiles before capturing complete browser storage. A saved session only contains data captured by this app.")}</p>
+      </div>
+    </details>
   </div>;
 }
 

@@ -183,10 +183,13 @@ export function RpaRecorderPanel({
 
   return (
     <div className="rpa-recorder-layout">
-      <section className="settings-card rpa-recorder-card">
+      <section className="settings-card rpa-recorder-card rpa-recorder-rail">
         <header>
           <h3>{t("Visual action recorder")}</h3>
-          <span className={`rpa-recorder-status-pill${isRecording ? " recording" : ""}`} role="status">
+          <span
+            className={`rpa-recorder-status-pill${isRecording ? " recording" : status.state !== "error" ? " ready" : ""}`}
+            role="status"
+          >
             <span className="rpa-rec-dot" aria-hidden="true" />
             {isRecording
               ? t("Recording ({count} steps)", { count: editableSteps.length })
@@ -201,7 +204,7 @@ export function RpaRecorderPanel({
           {!error && status.error && <div className="modal-err" role="alert">{status.error}</div>}
           {notice && <p className="script-notice" role="status">{notice}</p>}
 
-          <div className="rpa-recorder-controls">
+          <div className="rpa-recorder-rail-fields">
             <label className="rpa-schema-field">
               <span>{t("Target profile")}</span>
               <select
@@ -231,7 +234,7 @@ export function RpaRecorderPanel({
             </label>
           </div>
 
-          <div className="script-actions">
+          <div className="rpa-recorder-rail-actions">
             {!isRecording ? (
               <button
                 type="button"
@@ -271,9 +274,16 @@ export function RpaRecorderPanel({
           <div className="rpa-safety-banner" role="note">
             {t("Credential protection active: password, one-time-code (2FA), and payment inputs are never stored in plain text.")}
           </div>
+        </div>
+      </section>
 
-          <div className="script-source-header">
-            <strong>{t("Captured steps")} ({editableSteps.length})</strong>
+      <div className="rpa-recorder-main">
+        <section className="settings-card rpa-recorder-card rpa-recorder-steps-card">
+          <header>
+            <h3>
+              {t("Captured steps")}
+              <span className="rpa-count-pill">{editableSteps.length}</span>
+            </h3>
             {editableSteps.length > 0 && !isRecording && (
               <button
                 type="button"
@@ -283,144 +293,148 @@ export function RpaRecorderPanel({
                 {t("Clear steps")}
               </button>
             )}
-          </div>
+          </header>
 
-          {editableSteps.length === 0 ? (
-            <p className="formnote">
-              {isRecording
-                ? t("Waiting for clicks, typing, navigation, or key presses in the browser…")
-                : t("Start recording on a profile to capture browser actions with stable selectors.")}
-            </p>
-          ) : (
-            <div className="rpa-steps-list" aria-label={t("Recorded action steps")}>
-              {editableSteps.map((step) => (
-                <div key={step.id} className={`rpa-step-row${step.masked ? " masked" : ""}`}>
-                  <div className="rpa-step-main">
-                    <div className="rpa-step-head">
-                      <span className="rpa-step-index">#{step.index}</span>
-                      <span className="rpa-action-tag">{step.kind}</span>
-                      {step.selectorStrategy && <span className="rpa-strategy-tag">{step.selectorStrategy}</span>}
-                      {step.credentialRef && (
-                        <span className="rpa-mask-tag">
-                          {step.credentialRef === "twofa"
-                            ? t("Masked 2FA (credentials.twofa)")
-                            : t("Masked password (credentials.password)")}
-                        </span>
+          <div className="card-body">
+            {editableSteps.length === 0 ? (
+              <div className="rpa-steps-empty">
+                {isRecording
+                  ? t("Waiting for clicks, typing, navigation, or key presses in the browser…")
+                  : t("Start recording on a profile to capture browser actions with stable selectors.")}
+              </div>
+            ) : (
+              <div className="rpa-steps-list" aria-label={t("Recorded action steps")}>
+                {editableSteps.map((step) => (
+                  <div key={step.id} className={`rpa-step-row${step.masked ? " masked" : ""}`}>
+                    <div className="rpa-step-main">
+                      <div className="rpa-step-head">
+                        <span className="rpa-step-index">#{step.index}</span>
+                        <span className="rpa-action-tag">{step.kind}</span>
+                        {step.selectorStrategy && <span className="rpa-strategy-tag">{step.selectorStrategy}</span>}
+                        {step.credentialRef && (
+                          <span className="rpa-mask-tag">
+                            {step.credentialRef === "twofa"
+                              ? t("Masked 2FA (credentials.twofa)")
+                              : t("Masked password (credentials.password)")}
+                          </span>
+                        )}
+                      </div>
+                      <div className="rpa-step-selector">
+                        {step.kind === "goto"
+                          ? step.url
+                          : step.selectorStrategy === "role" && step.role
+                            ? `role=${step.role}${step.accessibleName ? ` "${step.accessibleName}"` : ""}`
+                            : step.selector || step.label}
+                      </div>
+                      {step.kind === "fill" && !step.masked && step.value !== undefined && (
+                        <div className="rpa-step-value">{t("Value")}: {step.value}</div>
+                      )}
+                      {step.kind === "select" && step.value !== undefined && (
+                        <div className="rpa-step-value">{t("Selected option")}: {step.value}</div>
+                      )}
+                      {step.kind === "press" && step.key && (
+                        <div className="rpa-step-value">{t("Key")}: {step.key}</div>
                       )}
                     </div>
-                    <div className="rpa-step-selector">
-                      {step.kind === "goto"
-                        ? step.url
-                        : step.selectorStrategy === "role" && step.role
-                          ? `role=${step.role}${step.accessibleName ? ` "${step.accessibleName}"` : ""}`
-                          : step.selector || step.label}
-                    </div>
-                    {step.kind === "fill" && !step.masked && step.value !== undefined && (
-                      <div className="rpa-step-value">{t("Value")}: {step.value}</div>
-                    )}
-                    {step.kind === "select" && step.value !== undefined && (
-                      <div className="rpa-step-value">{t("Selected option")}: {step.value}</div>
-                    )}
-                    {step.kind === "press" && step.key && (
-                      <div className="rpa-step-value">{t("Key")}: {step.key}</div>
+                    {!isRecording && (
+                      <button
+                        type="button"
+                        className="btn xs ghost"
+                        aria-label={t("Remove step {index}", { index: step.index })}
+                        onClick={() => removeStep(step.id)}
+                      >
+                        ×
+                      </button>
                     )}
                   </div>
-                  {!isRecording && (
-                    <button
-                      type="button"
-                      className="btn xs ghost"
-                      aria-label={t("Remove step {index}", { index: step.index })}
-                      onClick={() => removeStep(step.id)}
-                    >
-                      ×
-                    </button>
-                  )}
-                </div>
-              ))}
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="settings-card rpa-recorder-card rpa-recorder-code-card">
+          <header className="rpa-code-card-head">
+            <h3>{t("Generated script code")}</h3>
+            <div className="page-actions">
+              <button
+                type="button"
+                className="btn xs"
+                disabled={busy || editableSteps.length === 0}
+                onClick={() => void handleGenerateCode()}
+              >
+                {t("Generate code")}
+              </button>
+              <button
+                type="button"
+                className="btn xs primary"
+                disabled={busy || !generatedSource.trim() || !scriptName.trim()}
+                onClick={() => void handleSaveScript()}
+              >
+                {t("Save to my scripts")}
+              </button>
             </div>
-          )}
-        </div>
-      </section>
+          </header>
 
-      <section className="settings-card rpa-recorder-card">
-        <header>
-          <h3>{t("Generated script code")}</h3>
-          <div className="page-actions">
-            <button
-              type="button"
-              className="btn xs"
-              disabled={busy || editableSteps.length === 0}
-              onClick={() => void handleGenerateCode()}
-            >
-              {t("Generate code")}
-            </button>
-            <button
-              type="button"
-              className="btn xs primary"
-              disabled={busy || !generatedSource.trim() || !scriptName.trim()}
-              onClick={() => void handleSaveScript()}
-            >
-              {t("Save to my scripts")}
-            </button>
-          </div>
-        </header>
+          <div className="card-body">
+            <div className="rpa-recorder-code-meta">
+              <label className="rpa-schema-field">
+                <span>{t("Script title")}</span>
+                <input
+                  className="input"
+                  value={scriptName}
+                  disabled={busy}
+                  onChange={(event) => setScriptName(event.target.value)}
+                />
+              </label>
 
-        <div className="card-body">
-          <label className="rpa-schema-field">
-            <span>{t("Script title")}</span>
-            <input
-              className="input"
-              value={scriptName}
-              disabled={busy}
-              onChange={(event) => setScriptName(event.target.value)}
-            />
-          </label>
+              <div className="rpa-recorder-code-checks">
+                <label className="rpa-schema-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={parameterizeInputs}
+                    disabled={busy}
+                    onChange={(event) => setParameterizeInputs(event.target.checked)}
+                  />
+                  <span>{t("Parameterize inputs")}</span>
+                </label>
+                <label className="rpa-schema-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={humanDelay}
+                    disabled={busy}
+                    onChange={(event) => setHumanDelay(event.target.checked)}
+                  />
+                  <span>{t("Human-like random delay")}</span>
+                </label>
+              </div>
+            </div>
 
-          <div className="rpa-recorder-controls">
-            <label className="rpa-schema-checkbox">
-              <input
-                type="checkbox"
-                checked={parameterizeInputs}
-                disabled={busy}
-                onChange={(event) => setParameterizeInputs(event.target.checked)}
-              />
-              <span>{t("Parameterize inputs")}</span>
-            </label>
-            <label className="rpa-schema-checkbox">
-              <input
-                type="checkbox"
-                checked={humanDelay}
-                disabled={busy}
-                onChange={(event) => setHumanDelay(event.target.checked)}
-              />
-              <span>{t("Human-like random delay")}</span>
-            </label>
-          </div>
+            {usesCredentials && (
+              <p className="formnote">
+                {t("This script references saved profile credentials (password / 2FA). Enable 'Use saved profile login details' when running.")}
+              </p>
+            )}
 
-          {usesCredentials && (
-            <p className="formnote">
-              {t("This script references saved profile credentials (password / 2FA). Enable 'Use saved profile login details' when running.")}
-            </p>
-          )}
-
-          <label className="fld">
-            <span>{t("Editable ESM source")}</span>
-            <textarea
-              className="script-source-editor"
-              value={generatedSource}
-              placeholder={t("Click Generate code after capturing actions to preview and edit Playwright JavaScript.")}
-              onChange={(event) => setGeneratedSource(event.target.value)}
-            />
-          </label>
-
-          {Object.keys(suggestedInputs).length > 0 && (
             <label className="fld">
-              <span>{t("Suggested JSON inputs")}</span>
-              <pre className="script-source">{JSON.stringify(suggestedInputs, null, 2)}</pre>
+              <span>{t("Editable ESM source")}</span>
+              <textarea
+                className="script-source-editor"
+                value={generatedSource}
+                placeholder={t("Click Generate code after capturing actions to preview and edit Playwright JavaScript.")}
+                onChange={(event) => setGeneratedSource(event.target.value)}
+              />
             </label>
-          )}
-        </div>
-      </section>
+
+            {Object.keys(suggestedInputs).length > 0 && (
+              <label className="fld">
+                <span>{t("Suggested JSON inputs")}</span>
+                <pre className="script-source">{JSON.stringify(suggestedInputs, null, 2)}</pre>
+              </label>
+            )}
+          </div>
+        </section>
+      </div>
     </div>
   );
 }

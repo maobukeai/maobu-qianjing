@@ -1,6 +1,7 @@
 import * as React from "react";
 import {
   type ReactNode,
+  type RefObject,
   useCallback,
   useEffect,
   useId,
@@ -66,6 +67,14 @@ export const ICONS = {
   moon: <path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" />,
   help: <><circle cx="12" cy="12" r="9" /><path d="M9.4 9.1a2.7 2.7 0 015.3.7c0 1.8-2.7 2.2-2.7 3.7" /><path d="M12 16.8v.3" /></>,
   bot: <><rect x="4" y="7" width="16" height="13" rx="4" /><path d="M12 3v4M1 12v4M23 12v4M8 12h.01M16 12h.01M9 16h6" /></>,
+  sliders: <><line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" /><line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" /><line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" /><line x1="17" y1="16" x2="23" y2="16" /></>,
+  globe: <><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></>,
+  shieldCheck: <><path d="M12 2 4 5v6c0 5.5 3.4 9.8 8 11 4.6-1.2 8-5.5 8-11V5l-8-3z" /><path d="m9 12 2 2 4-4" /></>,
+  cpu: <><rect x="5" y="5" width="14" height="14" rx="2" /><rect x="9" y="9" width="6" height="6" /><path d="M9 1v4M15 1v4M9 19v4M15 19v4M1 9h4M1 15h4M19 9h4M19 15h4" /></>,
+  plug: <><path d="M12 22v-5" /><path d="M9 8V2M15 8V2" /><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" /></>,
+  sync: <><path d="M21 12a9 9 0 0 0-9-9 9.7 9.7 0 0 0-6.7 2.7L3 8" /><path d="M3 3v5h5" /><path d="M3 12a9 9 0 0 0 9 9 9.7 9.7 0 0 0 6.7-2.7L21 16" /><path d="M16 16h5v5" /></>,
+  terminal: <><polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" /></>,
+  info: <><circle cx="12" cy="12" r="9" /><path d="M12 16v-4M12 8h.01" /></>,
 } as const;
 
 export type IconName = keyof typeof ICONS;
@@ -90,19 +99,100 @@ export function AppIcon({
 
 export const Icon = AppIcon;
 
-const FOCUSABLE_SELECTOR = [
+const TABBABLE_SELECTOR = [
   'a[href]',
-  'button:not([disabled])',
-  'input:not([disabled]):not([type="hidden"])',
-  'select:not([disabled])',
-  'textarea:not([disabled])',
-  '[tabindex]:not([tabindex="-1"])',
+  'button',
+  'input:not([type="hidden"])',
+  'select',
+  'textarea',
+  'details > summary:first-of-type',
+  '[tabindex]',
 ].join(",");
 
-function getFocusableElements(container: HTMLElement | null): HTMLElement[] {
-  if (!container) return [];
-  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
-    .filter((el) => !el.hasAttribute("aria-hidden"));
+const HIDDEN_ANCESTOR = '[hidden], [inert], [aria-hidden="true"]';
+const dialogStacks = new WeakMap<Document, HTMLElement[]>();
+
+function canFocus(element: HTMLElement): boolean {
+  if (!element.isConnected || element.matches(":disabled, input[type=hidden]") || element.closest(HIDDEN_ANCESTOR) || !element.getClientRects().length) return false;
+  const visibility = element.ownerDocument.defaultView?.getComputedStyle(element).visibility;
+  if (visibility === "hidden" || visibility === "collapse") return false;
+  for (let details = element.closest("details:not([open])"); details; details = details.parentElement?.closest("details:not([open])") ?? null) {
+    if (!details.querySelector(":scope > summary")?.contains(element)) return false;
+  }
+  return true;
+}
+
+function getTabbableElements(panel: HTMLElement): HTMLElement[] {
+  const tabOrder = (element: HTMLElement) => element.tabIndex > 0 ? element.tabIndex : Number.MAX_SAFE_INTEGER;
+  return [...panel.querySelectorAll<HTMLElement>(TABBABLE_SELECTOR)]
+    .filter(element => (!element.hasAttribute("tabindex") || element.tabIndex >= 0) && canFocus(element))
+    .sort((left, right) => tabOrder(left) - tabOrder(right));
+}
+
+/** Only the uppermost shared dialog can handle Escape, wrap Tab, or restore focus. */
+export function useDialogKeyboard(
+  ref: RefObject<HTMLElement | null>,
+  open: boolean,
+  onEscape: (() => void) | null,
+  preferredFocus?: () => HTMLElement | null,
+) {
+  const latest = useRef({ onEscape, preferredFocus });
+  latest.current = { onEscape, preferredFocus };
+  useEffect(() => {
+    const panel = ref.current;
+    if (!open || !panel) return;
+    const { ownerDocument } = panel;
+    const stack = dialogStacks.get(ownerDocument) ?? [];
+    dialogStacks.set(ownerDocument, stack);
+    const previousFocus = ownerDocument.activeElement;
+    stack.push(panel);
+
+    const ownsFocus = () => stack.findLast(dialog => dialog.isConnected && !dialog.closest(HIDDEN_ANCESTOR)) === panel;
+    const isOtherModal = (target: EventTarget | null) => {
+      const modal = (target as Element | null)?.closest?.('[aria-modal="true"]');
+      return !!modal && modal !== panel && !modal.closest(HIDDEN_ANCESTOR) && !stack.some(dialog => dialog === modal);
+    };
+    const focusPreferred = () => {
+      const preferred = latest.current.preferredFocus?.();
+      const target = preferred && canFocus(preferred) ? preferred : getTabbableElements(panel)[0] ?? panel;
+      target.focus({ preventScroll: true });
+    };
+    if (ownsFocus()) focusPreferred();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.key !== "Tab" && event.key !== "Escape") || event.defaultPrevented || event.isComposing || event.keyCode === 229 || !ownsFocus() || isOtherModal(event.target)) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        latest.current.onEscape?.();
+        return;
+      }
+      const controls = getTabbableElements(panel);
+      const first = controls[0], last = controls.at(-1);
+      const active = ownerDocument.activeElement;
+      const outside = !panel.contains(active) || active === panel;
+      if (!first || outside || active === (event.shiftKey ? first : last)) {
+        event.preventDefault();
+        ((event.shiftKey ? last : first) ?? panel).focus();
+      }
+    };
+    const onFocus = (event: FocusEvent) => {
+      if (ownsFocus() && !panel.contains(event.target as Node) && !isOtherModal(event.target)) focusPreferred();
+    };
+    ownerDocument.addEventListener("keydown", onKeyDown, true);
+    ownerDocument.addEventListener("focusin", onFocus);
+    return () => {
+      const wasTop = stack.at(-1) === panel;
+      stack.splice(stack.indexOf(panel), 1);
+      if (!stack.length) dialogStacks.delete(ownerDocument);
+      ownerDocument.removeEventListener("keydown", onKeyDown, true);
+      ownerDocument.removeEventListener("focusin", onFocus);
+      const active = ownerDocument.activeElement;
+      if (wasTop && (active === ownerDocument.body || panel.contains(active)) && previousFocus instanceof HTMLElement && canFocus(previousFocus)) {
+        previousFocus.focus({ preventScroll: true });
+      }
+    };
+  }, [ref, open]);
 }
 
 export interface ModalDialogProps {
@@ -156,70 +246,7 @@ export function ModalDialog({
   const { t } = useTranslation();
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-
-  useEffect(() => {
-    if (!open) return;
-    previousFocusRef.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    const panel = panelRef.current;
-    if (panel) {
-      const focusable = getFocusableElements(panel);
-      if (focusable[0]) focusable[0].focus();
-      else panel.focus();
-    }
-    return () => {
-      const prev = previousFocusRef.current;
-      if (prev && prev.isConnected && typeof prev.focus === "function") {
-        prev.focus();
-      }
-      previousFocusRef.current = null;
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing || event.keyCode === 229) {
-        return;
-      }
-      if (event.key === "Escape") {
-        if (closeOnEscape && !busy) {
-          event.stopPropagation();
-          onCloseRef.current();
-        }
-        return;
-      }
-      if (event.key === "Tab") {
-        const panel = panelRef.current;
-        if (!panel) return;
-        const focusable = getFocusableElements(panel);
-        if (focusable.length === 0) {
-          event.preventDefault();
-          panel.focus();
-          return;
-        }
-        const first = focusable[0]!;
-        const last = focusable[focusable.length - 1]!;
-        const active = document.activeElement;
-        if (event.shiftKey) {
-          if (active === first || !panel.contains(active)) {
-            event.preventDefault();
-            last.focus();
-          }
-        } else if (active === last || !panel.contains(active)) {
-          event.preventDefault();
-          first.focus();
-        }
-      }
-    };
-    document.addEventListener("keydown", onKeyDown, true);
-    return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [open, closeOnEscape, busy]);
+  useDialogKeyboard(panelRef, open, closeOnEscape && !busy ? onClose : null);
 
   if (!open) return null;
 
@@ -258,7 +285,7 @@ export function ModalDialog({
             {headerExtra}
             <button
               type="button"
-              className="btn ghost xs icon-only"
+              className="modal-close"
               onClick={onClose}
               disabled={busy}
               aria-label={t("Close")}
@@ -310,63 +337,7 @@ export function ConfirmDialog({
   const cancelBtnRef = useRef<HTMLButtonElement | null>(null);
   const confirmBtnRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
-  const onCancelRef = useRef(onCancel);
-  onCancelRef.current = onCancel;
-
-  useEffect(() => {
-    if (!open) return;
-    previousFocusRef.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    const preferred =
-      tone === "danger" ? cancelBtnRef.current : confirmBtnRef.current;
-    preferred?.focus();
-    return () => {
-      const prev = previousFocusRef.current;
-      if (prev && prev.isConnected && typeof prev.focus === "function") {
-        prev.focus();
-      }
-      previousFocusRef.current = null;
-    };
-  }, [open, tone]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing || event.keyCode === 229) {
-        return;
-      }
-      if (event.key === "Escape") {
-        if (!busy) {
-          event.stopPropagation();
-          onCancelRef.current();
-        }
-        return;
-      }
-      if (event.key === "Tab") {
-        const panel = panelRef.current;
-        if (!panel) return;
-        const focusable = getFocusableElements(panel);
-        if (focusable.length === 0) return;
-        const first = focusable[0]!;
-        const last = focusable[focusable.length - 1]!;
-        const active = document.activeElement;
-        if (event.shiftKey) {
-          if (active === first || !panel.contains(active)) {
-            event.preventDefault();
-            last.focus();
-          }
-        } else if (active === last || !panel.contains(active)) {
-          event.preventDefault();
-          first.focus();
-        }
-      }
-    };
-    document.addEventListener("keydown", onKeyDown, true);
-    return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [open, busy]);
+  useDialogKeyboard(panelRef, open, busy ? null : onCancel, () => tone === "danger" ? cancelBtnRef.current : confirmBtnRef.current);
 
   if (!open) return null;
 
@@ -393,7 +364,7 @@ export function ConfirmDialog({
           <h3 id={titleId}>{title}</h3>
           <button
             type="button"
-            className="btn ghost xs icon-only"
+            className="modal-close"
             onClick={onCancel}
             disabled={busy}
             aria-label={t("Close")}
@@ -450,7 +421,7 @@ interface PendingConfirm extends ConfirmRequestOptions {
  * Imperative promise-based confirmation hook backed by `<ConfirmDialog />`.
  * Renders an accessible in-app alertdialog instead of native `window.confirm()`.
  */
-export function useConfirmDialog() {
+export function useConfirmDialog({ portal = false }: Pick<ConfirmDialogProps, "portal"> = {}) {
   const [pending, setPending] = useState<PendingConfirm | null>(null);
   const pendingRef = useRef<PendingConfirm | null>(null);
   pendingRef.current = pending;
@@ -481,22 +452,25 @@ export function useConfirmDialog() {
     setPending(null);
     current?.resolve(accepted);
   }, []);
+  const cancelConfirm = useCallback(() => settle(false), [settle]);
 
   const confirmDialogNode = pending ? (
     <ConfirmDialog
       open
+      portal={portal}
       title={pending.title}
       message={pending.message}
       confirmLabel={pending.confirmLabel}
       cancelLabel={pending.cancelLabel}
       tone={pending.tone}
       onConfirm={() => settle(true)}
-      onCancel={() => settle(false)}
+      onCancel={cancelConfirm}
     />
   ) : null;
 
   return {
     requestConfirm,
+    cancelConfirm,
     confirmDialogNode,
     isConfirmOpen: pending !== null,
   };

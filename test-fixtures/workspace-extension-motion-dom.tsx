@@ -12,13 +12,14 @@ async function run(scenario: string) {
   const reduced = scenario.startsWith("reduced-"), surface = scenario.replace(/^reduced-/, "").split("-")[0];
   const record = (id: string, name: string) => ({ id, name, color: "#8169c8", icon: "laptop" as const, archived: false, createdAt: 1, updatedAt: 1, lastOpenedAt: 1 });
   const catalog = { currentId: "one", activeId: "one", workspaces: [record("one", "Personal"), record("two", "Research")] };
+  let catalogOffline = scenario === "switcher-retry";
   const requests: string[] = [], navigations: string[] = [], writes: string[] = [];
   const operation = deferred<boolean>(), language = deferred<void>();
   const fakeFetch = Object.assign(async (input: RequestInfo | URL, options?: RequestInit) => {
     const path = String(input), method = options?.method ?? "GET"; requests.push(`${method} ${path}`);
     if (path === "/ui/api/shell-language") return Response.json({ ok: true, language: "en-US" });
     if (path === "/ui/api/workspace/capability") return Response.json({ ok: true, token: "c".repeat(64) });
-    if (path === "/ui/api/workspaces" && method === "GET") return Response.json({ ok: true, ...catalog });
+    if (path === "/ui/api/workspaces" && method === "GET") return catalogOffline ? Response.json({ ok: false, error: "Workspace request failed." }, { status: 503 }) : Response.json({ ok: true, ...catalog });
     if (path === "/ui/api/workspace/overview" && method === "GET") return Response.json({ ok: true, workspaceId: "one", root: "inert-motion-fixture", profileCount: 0, trashCount: 0, runningCount: 0, bytes: 0, freeBytes: 1000, lastBackupAt: null, backupBusy: false, scriptRunning: false });
     if (path === "/ui/api/workspace/backups" && method === "GET") return Response.json({ ok: true, backups: [{ id: "fixture", name: "Motion fixture backup", createdAt: 1, bytes: 1, profileCount: 0 }], jobs: [] });
     throw new Error(`Unexpected motion fixture request ${method} ${path}`);
@@ -38,7 +39,7 @@ async function run(scenario: string) {
     onPreviewGroupDefaults: async selection => { const { signature: _s, unknown: _u, ...preview } = extensionGroupPreview(selection.group, selection.extensions, extensionProps.groupDefaults, extensionProps.profiles); return { ...preview, version: 1, unknown: 0, expectedFingerprint: "a".repeat(64) }; },
   };
   const render = () => dom.render(<I18nProvider><button type="button" data-outside>Outside fixture focus</button>{surface === "extension" || surface === "unmount" ? <ExtensionsPage {...extensionProps} /> : <WorkspaceProvider initialCatalog={catalog}>
-    {surface === "switcher" ? <WorkspaceSwitcher profileCount={0} runningCount={0} connection onShowRunning={() => {}} onOpenManagement={intent => navigations.push(intent.mode)} /> : surface === "device" ? <DevicePanel runningCount={0} downloads={[]} connection version="fixture" theme="light" chooseTheme={theme => writes.push(theme)} language="en-US" setLanguage={async value => { writes.push(value); await language.promise; }} onShowRunning={() => navigations.push("running")} onSettings={() => navigations.push("settings")} onViewLogs={() => navigations.push("logs")} /> : <WorkspaceManagementPage active request={{ mode: "backups", id: 1 }} onBack={() => navigations.push("back")} onShowRunning={() => {}} />}
+    {surface === "switcher" ? <WorkspaceSwitcher variant={scenario === "switcher-retry" ? "rail" : undefined} profileCount={0} runningCount={0} connection onShowRunning={() => {}} onOpenManagement={intent => navigations.push(intent.mode)} /> : surface === "device" ? <DevicePanel runningCount={0} downloads={[]} connection version="fixture" theme="light" chooseTheme={theme => writes.push(theme)} language="en-US" setLanguage={async value => { writes.push(value); await language.promise; }} onShowRunning={() => navigations.push("running")} onSettings={() => navigations.push("settings")} onViewLogs={() => navigations.push("logs")} /> : <WorkspaceManagementPage active request={{ mode: "backups", id: 1 }} onBack={() => navigations.push("back")} onShowRunning={() => {}} />}
   </WorkspaceProvider>}</I18nProvider>);
   const active = <T extends HTMLElement>(selector: string) => [...dom.window.document.querySelectorAll<T>(selector)].find(node => !node.closest('[inert], [hidden], [aria-hidden="true"]')) ?? null;
   const button = (label: string, scope: HTMLElement = dom.window.document.body) => { const result = [...scope.querySelectorAll<HTMLButtonElement>("button")].find(node => !node.closest('[inert], [hidden], [aria-hidden="true"]') && (node.textContent?.trim() === label || node.getAttribute("aria-label") === label)); assert.ok(result, `Missing ${label}`); return result; };
@@ -51,7 +52,19 @@ async function run(scenario: string) {
   try {
     await render(); await dom.flush();
     const initialRequests = [...requests];
-    if (surface === "switcher") {
+    if (scenario === "switcher-retry") {
+      const trigger = button("Switch workspace: Personal"); await click(trigger);
+      const menu = active<HTMLElement>('[role="menu"]'); assert.ok(menu);
+      catalogOffline = false;
+      await click(button("Retry", menu));
+      await dom.flush();
+      assert.equal(menu.querySelector('button[aria-checked="true"]'), dom.window.document.activeElement);
+      assert.equal(menu.querySelector('[role="alert"]'), null);
+      assert.deepEqual(requests, [...initialRequests, "GET /ui/api/workspaces"]);
+      await key("Escape");
+      assert.equal(dom.window.document.activeElement, trigger);
+      return;
+    } else if (surface === "switcher") {
       const trigger = button("Open workspace switcher"); await click(trigger);
       const menu = active<HTMLElement>('[role="menu"]'); assert.ok(menu);
       const management = button("Manage workspaces", menu);

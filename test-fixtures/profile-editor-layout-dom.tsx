@@ -64,7 +64,7 @@ async function run(scenario: string) {
       assert.equal(details.open, true);
       assert.equal(dom.window.document.activeElement, target);
       assert.equal(current(), navButton("Fingerprint"), "An inspection/validation field link updates the section index");
-      assert.equal(dom.container.querySelector('nav[aria-label="Other editor"] [aria-current="location"]')?.textContent, "01Basic");
+      assert.equal(dom.container.querySelector('nav[aria-label="Other editor"] [aria-current="location"]')?.textContent, "Basic");
       assert.equal(revealProfileEditorTarget(null), false);
       return;
     }

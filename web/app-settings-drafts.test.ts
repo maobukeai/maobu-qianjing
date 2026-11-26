@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 
-for (const scenario of ["tab-roundtrip", "page-roundtrip", "prepared-switch", "workspace-isolation", "local-proxy-handoff", "scripts-roundtrip", "runtime-activity"]) {
+for (const scenario of ["tab-roundtrip", "page-roundtrip", "prepared-switch", "workspace-isolation", "local-proxy-handoff", "scripts-roundtrip", "runtime-activity", "app-lock-startup-retry"]) {
   test(`actual App draft integration: ${scenario}`, async () => {
     const child = Bun.spawn([process.execPath, "--no-env-file", resolve(import.meta.dir, "../test-fixtures/app-settings-drafts-dom.ts"), scenario], { cwd: resolve(import.meta.dir, ".."), stdout: "pipe", stderr: "pipe" });
     const timer = setTimeout(() => child.kill(), 12_000);

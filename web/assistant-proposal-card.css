@@ -2,8 +2,9 @@
 .proposal-card {
   margin-top: 14px;
   border: 1px solid var(--line);
-  border-radius: var(--r-lg);
+  border-radius: 12px;
   background: var(--surface);
+  box-shadow: var(--sh-xs);
   overflow: hidden;
   color: var(--ink);
   transition: opacity 150ms var(--ease), transform 150ms var(--ease);
@@ -110,6 +111,15 @@
   font-family: var(--mono);
   font-size: 10.5px;
   color: var(--muted);
+}
+
+.proposal-phase-badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: 0 0 auto;
 }
 
 .proposal-phase-badge[data-phase="running"] {
@@ -281,11 +291,42 @@
   text-align: center;
 }
 
+.proposal-col-check input[type="checkbox"],
+.proposal-secondary-confirm input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 4.5px;
+  border: 1.5px solid var(--line-strong);
+  background: var(--surface);
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+}
 .proposal-col-check input[type="checkbox"] {
-  width: 14px;
-  height: 14px;
   margin: 2px 0 0;
-  accent-color: var(--accent);
+}
+.proposal-secondary-confirm input[type="checkbox"] {
+  flex-shrink: 0;
+  margin: 2px 0 0;
+}
+.proposal-col-check input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.proposal-secondary-confirm input[type="checkbox"]:checked {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+.proposal-col-check input[type="checkbox"]:checked::after,
+.proposal-secondary-confirm input[type="checkbox"]:checked::after {
+  content: "";
+  width: 7px;
+  height: 4px;
+  border-left: 1.6px solid #fff;
+  border-bottom: 1.6px solid #fff;
+  transform: rotate(-45deg) translate(0.5px, -0.5px);
 }
 
 .proposal-profile-cell strong {
@@ -424,14 +465,6 @@
   line-height: 1.5;
   color: var(--danger-ink);
   cursor: pointer;
-}
-
-.proposal-secondary-confirm input[type="checkbox"] {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  margin-top: 2px;
-  accent-color: var(--danger);
 }
 
 .proposal-error {

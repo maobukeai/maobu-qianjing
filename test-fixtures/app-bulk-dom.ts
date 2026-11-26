@@ -148,7 +148,7 @@ async function run(scenario: string) {
       if (scenario === "workspace-maintenance-gate") {
         await openWorkspacePage();
         assert.ok(dom.container.textContent?.includes("An environment batch task is running."));
-        await click(button("Inert second workspaceLocal workspace"));
+        await click(button("Inert second workspace"));
         assert.ok(button("Switch to this workspace").disabled);
         assert.equal(visible<HTMLInputElement>('input[maxlength="40"]')[0]?.disabled, false);
         await click(button("Backup and restore"));

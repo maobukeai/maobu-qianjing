@@ -13,6 +13,7 @@ import { buildNewProfile } from "./create.ts";
 import { trackRuntimeDownload } from "./runtime-download.ts";
 import { readXlsx, writeXlsx } from "./xlsx.ts";
 import { AppConfigStore } from "./app-config.ts";
+import { statePaths } from "./paths.ts";
 
 import type { ProxyCheckResult } from "./proxy-check.ts";
 import type { Profile, ProxySpec } from "./types.ts";
@@ -519,6 +520,31 @@ test("GET /ui/api/health uses desktop parent metadata when supplied", async () =
     const res = await handleUiRequest(new Request("http://x/ui/api/health"), {} as any, s, { health });
     expect(await res!.json()).toEqual({ ok: true, ...health });
     s.close();
+});
+test("GET /ui/api/logs returns an uncached UTF-8 tail and reports an empty directory", async () => {
+    const root = mkdtempSync(join(tmpdir(), "maobu-ui-log-tail-"));
+    const s = store();
+    const directory = join(root, "logs");
+    mkdirSync(directory);
+    const get = () => handleUiRequest(new Request("http://x/ui/api/logs"), {} as Launcher, s, { paths: statePaths(root) });
+    try {
+        const empty = (await get())!;
+        expect(empty.headers.get("Cache-Control")).toBe("no-store");
+        expect(await empty.json()).toEqual({ ok: false, error: "no log file yet" });
+
+        const latest = "aliasmode-2026-11-24.log";
+        const content = "older lines\n".repeat(35_000) + "🐾日志".repeat(40_001) + "\nlatest\n";
+        writeFileSync(join(directory, "aliasmode-2026-11-23.log"), "yesterday");
+        writeFileSync(join(directory, "notes.log"), "do not select");
+        writeFileSync(join(directory, latest), content);
+        const response = (await get())!;
+        expect(response.status).toBe(200);
+        expect(response.headers.get("Cache-Control")).toBe("no-store");
+        expect(await response.json()).toEqual({ ok: true, file: latest, content: content.slice(-64 * 1024) });
+    } finally {
+        s.close();
+        rmSync(root, { recursive: true, force: true });
+    }
 });
 test("GET /ui/api/profiles clears a stale launch row before reporting status", async () => {
     const s = store();

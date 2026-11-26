@@ -183,6 +183,25 @@ test("app mode client reads first-launch state", async () => {
     })) as unknown as typeof fetch;
     expect(await fetchAppMode()).toEqual({ version: 1, mode: "local", localOnly: true, localAnalytics: false });
 });
+test("app mode rejects a failed response even when its payload contains local mode", async () => {
+    globalThis.fetch = (async () => Response.json({ mode: "local", localOnly: true }, { status: 503 })) as unknown as typeof fetch;
+    await expect(fetchAppMode()).rejects.toThrow();
+});
+test("app mode passes cancellation through to the local request", async () => {
+    const caller = new AbortController();
+    let signal: AbortSignal | null | undefined;
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+        signal = init?.signal;
+        return new Promise((_resolve, reject) => {
+            signal?.addEventListener("abort", () => reject(signal?.reason), { once: true });
+        });
+    }) as unknown as typeof fetch;
+    const pending = fetchAppMode(caller.signal);
+    expect(signal?.aborted).toBe(false);
+    const stopped = new Error("Synthetic startup cancelled");
+    caller.abort(stopped);
+    await expect(pending).rejects.toBe(stopped);
+});
 test("runtime downloads client reads the downloads in progress", async () => {
     let requested: RequestInfo | URL | undefined;
     const downloads = [{ runtime: "aliasmode" as const, receivedBytes: 42, totalBytes: 100 }, { runtime: "firefox" as const, receivedBytes: 12, totalBytes: 0 }];

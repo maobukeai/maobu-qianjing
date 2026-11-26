@@ -10,9 +10,9 @@ async function run(scenario: string) {
   const profile = (id: string, group: string, extensions: string[]): UiProfile => ({ id, name: `Synthetic ${id}`, engine: "chromium", chromiumRuntime: "aliasmode", group, platform: "", tags: [], extensions, proxy: null, timezone: "UTC", cookieCount: 0, seeded: true, screen: "1600x900", has2fa: false, serial: id.endsWith("one") ? 1 : 2, createdAt: 1, lastOpenAt: 0, customNo: "", running: false, mobilePersona: false });
   const groupNames = ["missing-group-draft", "all-missing-drafts"].includes(scenario) ? ["Research", "Other"] : ["Team One", "Team Two"];
   let profiles = [profile("extension_one", groupNames[0]!, ["alpha"]), profile("extension_two", groupNames[1]!, ["gamma"])];
-  let registry = [{ id: "alpha", name: "Alpha" }, { id: "beta", name: "Beta" }, { id: "gamma", name: "Gamma" }];
+  let registry = scenario === "initial-read-recovery" ? [] : [{ id: "alpha", name: "Alpha" }, { id: "beta", name: "Beta" }, { id: "gamma", name: "Gamma" }];
   let defaults: GroupExtensionDefaults[] = [{ name: groupNames[0]!, extensions: ["alpha"] }, { name: groupNames[1]!, extensions: ["gamma"] }];
-  let failDefaults = false, failRoster = false;
+  let failRegistry = false, failDefaults = false, failRoster = false;
   const requests: Array<{ path: string; method: string; body?: any }> = [], unexpected: string[] = [];
   const json = (value: unknown, status = 200) => Response.json(value, { status });
   const count = (path: string, method = "GET") => requests.filter(request => request.path === path && request.method === method).length;
@@ -35,7 +35,7 @@ async function run(scenario: string) {
     const body = typeof options?.body === "string" ? JSON.parse(options.body) : undefined;
     requests.push({ path, method, body });
     if (path === "/ui/api/profiles" && method === "GET") return failRoster ? json({ ok: false, error: "Synthetic roster unavailable" }, 503) : json({ ok: true, profiles, groups: groupNames, folders: groupNames.map(name => ({ name })) });
-    if (path === "/ui/api/extensions" && method === "GET") return json({ ok: true, extensions: registry });
+    if (path === "/ui/api/extensions" && method === "GET") return failRegistry ? json({ ok: false, error: "Synthetic registry unavailable" }, 503) : json({ ok: true, extensions: registry });
     if (path === "/ui/api/groups/extensions" && method === "GET") return failDefaults ? json({ ok: false, error: "Synthetic defaults unavailable" }, 503) : json({ ok: true, groups: defaults });
     if (path === "/ui/api/groups/extensions/preview" && method === "POST") {
       const extensions = [...new Set(body.extensions as string[])].sort(), baseline = defaults.find(group => group.name === body.group)?.extensions ?? [];
@@ -117,6 +117,29 @@ async function run(scenario: string) {
   try {
     await act(async () => { await import("../web/app.tsx"); });
     await waitFor(() => visible("tr[data-profile-id]").length === 2, "Real App should load the inert profile roster");
+    if (scenario === "initial-read-recovery") {
+      await waitFor(() => count("/ui/api/extensions") > 0, "Initial registry prefetch settles before the page failure");
+      failRegistry = failDefaults = true;
+      await click(button("Manage extensions"));
+      await waitFor(() => visible(".extensions-page-error p[role=alert]").length === 1, "The first extension page read should report unavailability");
+      const library = () => visible<HTMLElement>(".extensions-library")[0];
+      const groupPanel = () => visible<HTMLElement>(".extensions-defaults")[0];
+      assert.ok(!library()?.textContent?.includes("No extensions yet"));
+      assert.ok(!groupPanel()?.textContent?.includes("Create an editable group"));
+      assert.ok(button("Add extension").disabled);
+      failRegistry = failDefaults = false;
+      defaults = []; groupNames.splice(0); profiles = profiles.map(item => ({ ...item, group: "", extensions: [] }));
+      const before = requests.length, writes = mutationCount();
+      const retry = button("Retry", visible<HTMLElement>(".extensions-page-error")[0]!);
+      retry.focus(); await click(retry, true);
+      await waitFor(() => !!library()?.textContent?.includes("No extensions yet") && !!groupPanel()?.textContent?.includes("Create an editable group"), "A successful empty read may show the real empty states");
+      assert.ok(!button("Add extension").disabled);
+      assert.equal(mutationCount(), writes);
+      for (const path of ["/ui/api/extensions", "/ui/api/groups/extensions", "/ui/api/profiles"]) assert.equal(requests.slice(before).filter(request => request.path === path && request.method === "GET").length, 1);
+      assert.equal(dom.window.document.activeElement, library()?.querySelector("h2"), "A successful Retry restores focus to the refreshed result");
+      assert.deepEqual(unexpected, []);
+      return;
+    }
     await click(button("Manage extensions"));
     await waitFor(() => visible(".extensions-library-row").length === 3 && choices().length === 3 && visible<HTMLElement>(".extensions-workspace")[0]?.getAttribute("aria-busy") === "false", "Real App extension page should load complete registry, group defaults, and roster");
     requireSelection(["Alpha"], "Initial group selection uses its saved defaults");

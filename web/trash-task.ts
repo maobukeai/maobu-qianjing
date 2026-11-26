@@ -1,4 +1,5 @@
 import { isSafeProfileId } from "../profile-id.ts";
+import { notifyAppLockedFromResponse, notifyUnauthorizedResponse, withStandaloneAuthHeaders } from "./api.ts";
 import type { TrashProfileView } from "../proxy-tools-types.ts";
 
 export type TrashAction = "restore" | "purge";
@@ -97,8 +98,13 @@ export function createTrashReader(options: { read?: (signal: AbortSignal) => Pro
       return Promise.resolve().then(async () => {
         try {
           if (!owns()) return null;
-          const response = await (options.read ?? (signal => fetch("/ui/api/trash", { signal, credentials: "same-origin", cache: "no-store", redirect: "error" })))(controller.signal);
+          const response = await (options.read ?? (signal => fetch("/ui/api/trash", { signal, credentials: "same-origin", cache: "no-store", redirect: "error", headers: withStandaloneAuthHeaders() })))(controller.signal);
           const body: unknown = await response.json();
+          if (response.status === 401) {
+            notifyUnauthorizedResponse(401, "/ui/api/trash", object(body) && typeof body.error === "string" ? body.error : "");
+          } else if (response.status === 423) {
+            notifyAppLockedFromResponse(423, body);
+          }
           if (!owns()) return null;
           if (response.status !== 200 || !response.ok || !object(body) || body.ok !== true) throw new Error("Invalid Trash list");
           const profiles = projectProfiles(body.profiles);
@@ -157,7 +163,7 @@ export interface TrashTaskOptions {
   refreshWorkspace?: () => Promise<unknown>;
   now?: () => number;
 }
-export const postTrashTask = (action: TrashAction, ids: string[]) => fetch(`/ui/api/trash/${action}`, { method: "POST", headers: { "Content-Type": "application/json" },
+export const postTrashTask = (action: TrashAction, ids: string[]) => fetch(`/ui/api/trash/${action}`, { method: "POST", headers: withStandaloneAuthHeaders({ "Content-Type": "application/json" }),
   body: JSON.stringify({ ids }), redirect: "error", credentials: "same-origin", cache: "no-store" });
 const REASONS = new Set<TrashFailureReason>(["not_in_trash", "permission_denied", "profile_open", "operation_failed", "cancelled"]);
 const INVALID = "Choose valid environments in Trash before starting this operation.";
@@ -169,6 +175,15 @@ type ValidRow = { id: string; status: "restored" | "purged" | "failed"; reason: 
 async function readMutation(response: Response, action: TrashAction, ids: readonly string[]): Promise<ValidRow[] | null> {
   // The real route's 409 has no confirmed per-ID result and may follow partial writes.
   // Supplying results alongside that HTTP error does not turn it into the HTTP200 contract.
+  if (response.status === 401) {
+    notifyUnauthorizedResponse(401, `/ui/api/trash/${action}`);
+    return null;
+  }
+  if (response.status === 423) {
+    const lockedBody = await response.json().catch(() => null);
+    notifyAppLockedFromResponse(423, lockedBody);
+    return null;
+  }
   if (response.status !== 200 || !response.ok) return null;
   const body: unknown = await response.json();
   if (!object(body) || body.ok !== true || !Array.isArray(body.results) || body.results.length !== ids.length || Object.keys(body).some(key => key !== "ok" && key !== "results")) return null;

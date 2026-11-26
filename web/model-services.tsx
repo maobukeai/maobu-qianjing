@@ -5,6 +5,7 @@ import { useDesktopCloseDraft } from "./desktop-close.tsx";
 import { useTranslation } from "./i18n.tsx";
 import { AssistantRequestError } from "./local-assistant-api.ts";
 import { useOptionalWorkspaceOperations, workspaceOperationMessage } from "./workspace-operations.tsx";
+import { AppIcon } from "./ui-primitives.tsx";
 import "./model-services.css";
 
 const sampleEndpoints: Record<AssistantServiceProvider, string> = {
@@ -197,16 +198,23 @@ function ModelServicesSession({ active, workspaceId, onCatalogChanged }: ModelSe
   }
 
   return <section className="feature-panel model-services" aria-labelledby={headingId} hidden={!active}>
-    <header className="model-services-header">
-      <div><h2 id={headingId}>{t("Model services")}</h2><p>{defaultService ? t("Default model: {service} / {model}", { service: defaultService.name, model: defaultService.model }) : t("No default model service selected")}</p></div>
-      <div className="model-services-actions">{notice && <p className="feature-success model-services-notice" role="status">{t(notice)}</p>}<button ref={addButton} className="btn primary" type="button" disabled={!catalog || locked} onClick={() => choose()}>{t("Add model service")}</button></div>
-    </header>
-    {workspaceBlocked && workspace && <p className="feature-inline-note" role="status">{t(workspaceOperationMessage(workspace.snapshot))}</p>}
-    {error && <div className="feature-alert" role="alert"><p>{t(error)}</p>{readFailed && catalog && <button className="btn xs" type="button" disabled={pending !== null} onClick={load}>{t("Try again")}</button>}</div>}
-    {!catalog ? <div className="feature-card model-services-placeholder">
-      {error ? <button className="btn" type="button" disabled={pending !== null} onClick={load}>{t("Try again")}</button>
-        : <p role="status">{workspaceReady ? t("Loading model services…") : t("Load the workspace before managing model services.")}</p>}
-    </div> : <div className="model-services-grid" aria-busy={pending !== null}>
+    <div className="feature-card model-services-card">
+      <header className="feature-card-title model-services-header">
+        <div className="feature-card-head-main">
+          <div className="feature-card-heading">
+            <AppIcon name="cpu" className="sm" />
+            <h2 id={headingId}>{t("Model services")}</h2>
+          </div>
+          <p>{defaultService ? t("Default model: {service} / {model}", { service: defaultService.name, model: defaultService.model }) : t("No default model service selected")}</p>
+        </div>
+        <div className="model-services-actions">{notice && <p className="feature-success model-services-notice" role="status">{t(notice)}</p>}<button ref={addButton} className="btn primary" type="button" disabled={!catalog || locked} onClick={() => choose()}>{t("Add model service")}</button></div>
+      </header>
+      {workspaceBlocked && workspace && <p className="feature-inline-note model-services-banner-note" role="status">{t(workspaceOperationMessage(workspace.snapshot))}</p>}
+      {error && <div className="feature-alert model-services-banner-alert" role="alert"><p>{t(error)}</p>{readFailed && catalog && <button className="btn xs" type="button" disabled={pending !== null} onClick={load}>{t("Try again")}</button>}</div>}
+      {!catalog ? <div className="feature-card-body model-services-placeholder">
+        {error ? <button className="btn" type="button" disabled={pending !== null} onClick={load}>{t("Try again")}</button>
+          : <p role="status">{workspaceReady ? t("Loading model services…") : t("Load the workspace before managing model services.")}</p>}
+      </div> : <div className="model-services-grid" aria-busy={pending !== null}>
       <nav className="model-services-list" aria-labelledby={listId}>
         <h3 id={listId}>{t("Saved connections")}</h3>
         {catalog.services.length === 0 && <p className="model-services-empty">{t("No saved connections yet")}</p>}
@@ -253,6 +261,7 @@ function ModelServicesSession({ active, workspaceId, onCatalogChanged }: ModelSe
           if (event.key === "Escape" && !locked) { event.stopPropagation(); cancelRemoval(); }
         }}><p>{t("Remove the model service {service}?", { service: saved.name })}</p><div className="model-services-actions"><button ref={cancelRemoveButton} type="button" className="btn" disabled={locked} onClick={cancelRemoval}>{t("Cancel")}</button><button type="button" className="btn solid-danger" disabled={locked} onClick={remove}>{t(pending === "remove" ? "Removing…" : "Remove connection")}</button></div></div>}
       </div> : <div className="model-services-detail model-services-placeholder"><h3>{t("Add your first model service")}</h3><p>{t("Connect to local Ollama or save an API service for the AI workspace.")}</p></div>}
-    </div>}
+      </div>}
+    </div>
   </section>;
 }

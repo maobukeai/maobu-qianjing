@@ -7,7 +7,7 @@ import type {
   RpaTemplate,
 } from "../contracts/local.ts";
 import type { ScriptRun } from "../scripts.ts";
-import { getStandaloneSessionToken } from "./api.ts";
+import { getStandaloneSessionToken, notifyAppLockedFromResponse, notifyUnauthorizedResponse } from "./api.ts";
 
 type ScriptInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 
@@ -50,12 +50,19 @@ async function rpaJson(path: string, init: RequestInit = {}): Promise<Record<str
     const text = await response.text();
     body = text.trim() ? JSON.parse(text) : {};
   } catch {
+    notifyUnauthorizedResponse(response.status, path);
     throw new Error(`RPA Studio API ${path} returned non-JSON (${response.status}).`);
   }
   if (!body || typeof body !== "object" || Array.isArray(body)) {
+    notifyUnauthorizedResponse(response.status, path);
     throw new Error("RPA Studio returned invalid data.");
   }
   const record = body as Record<string, unknown>;
+  if (response.status === 401) {
+    notifyUnauthorizedResponse(401, path, typeof record.error === "string" ? record.error : "");
+  } else if (response.status === 423) {
+    notifyAppLockedFromResponse(423, record);
+  }
   if (!response.ok || record.ok !== true) {
     throw new Error(typeof record.error === "string" && record.error ? record.error : "RPA Studio request failed");
   }
@@ -118,6 +125,7 @@ export async function fetchScriptArtifactBlob(
     ...(signal ? { signal } : {}),
   });
   if (!response.ok) {
+    if (response.status === 401) notifyUnauthorizedResponse(401, path);
     throw new Error(`Artifact request failed (${response.status})`);
   }
   const contentType = (response.headers.get("content-type") ?? "").toLowerCase();

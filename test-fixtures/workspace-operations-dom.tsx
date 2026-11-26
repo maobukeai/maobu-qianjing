@@ -3,7 +3,7 @@ import { act } from "react";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import type { HTMLElement as DomElement, HTMLButtonElement as DomButton, HTMLInputElement as DomInput } from "happy-dom";
 import { I18nProvider } from "../web/i18n.tsx";
-import { WorkspaceProvider, WorkspaceManagementPage, WorkspaceSwitcher, useWorkspaceCatalog } from "../web/workspace-manager.tsx";
+import { WorkspaceActivity, WorkspaceProvider, WorkspaceManagementPage, WorkspaceSwitcher, useWorkspaceCatalog } from "../web/workspace-manager.tsx";
 import { useWorkspaceOperations, type WorkspaceOperationCoordinator, type WorkspaceOperationLease } from "../web/workspace-operations.tsx";
 import { SignedUpdateCard } from "../web/signed-updates.tsx";
 import type { SignedUpdateStatus } from "../web/signed-update-api.ts";
@@ -16,8 +16,15 @@ async function run(scenario: string) {
   const catalog = { currentId: "one", activeId: "one", workspaces: [record("one", "Personal"), record("two", "Research")] };
   const requests: string[] = [], native: string[] = [];
   const activation = deferred<Response>(), installation = deferred<void>(), refresh = deferred<Response>(), initialHistory = deferred<Response>(), catalogRead = deferred<Response>();
+  const jobStatusRetry = deferred<Response>();
   let job: WorkspaceJob | null = null, terminal = false, holdRefresh = false, manager = true, updater = true, views = 0;
+  if (scenario === "restore-receipt-focus") {
+    terminal = true;
+    job = { id: "completed-restore", kind: "restore", status: "succeeded", phase: "complete", completed: 1, total: 1, result: { workspaceId: "two" } };
+  }
   let historyReads = 0, failRefresh = scenario === "terminal-refresh-failure";
+  const reconnect = scenario === "job-poll-reconnect", manualRetry = scenario === "job-poll-manual-retry";
+  let jobStatusReads = 0;
   let coordinator!: WorkspaceOperationCoordinator, batch: WorkspaceOperationLease | null = null, lastBatch: WorkspaceOperationLease | null = null;
   let acceptActiveId!: (id: string) => void;
   const update: SignedUpdateStatus = { configured: true, status: scenario === "external-install" ? "downloading" : "available", currentVersion: "1", endpoint: null, message: "Inert update fixture", update: { version: "2", currentVersion: "1", notes: "Fixture", publishedAt: null } };
@@ -33,10 +40,17 @@ async function run(scenario: string) {
     if (path === "/ui/api/workspace/backups" && method === "GET") { historyReads++; if (historyReads === 1 && scenario === "stale-job-history") return initialHistory.promise; if (terminal && failRefresh) throw new Error("Fixture history unavailable"); return json({ ok: true, backups: [{ id: "backup", name: "Fixture backup", createdAt: 1, bytes: 1, profileCount: 2 }], jobs: job ? [currentJob()] : [] }); }
     if (path === "/ui/api/workspaces/two/activate") return activation.promise;
     if ((path === "/ui/api/workspace/backups" || path === "/ui/api/workspace/restore") && method === "POST") {
-      job = { id: "job", kind: path.endsWith("restore") ? "restore" : "backup", status: "queued", phase: "queued", completed: 0, total: 1 };
+      job = reconnect || manualRetry
+        ? { id: "job", kind: "backup", status: "running", phase: "copying", completed: 1, total: 4 }
+        : { id: "job", kind: path.endsWith("restore") ? "restore" : "backup", status: "queued", phase: "queued", completed: 0, total: 1 };
       return json({ ok: true, job });
     }
-    if (path === "/ui/api/workspace/jobs/job") return json({ ok: true, job: currentJob() });
+    if (path === "/ui/api/workspace/jobs/job") {
+      jobStatusReads++;
+      if ((reconnect || manualRetry) && jobStatusReads === 1) throw new Error("Fixture status unavailable");
+      if (manualRetry && jobStatusReads === 2) return jobStatusRetry.promise;
+      return json({ ok: true, job: currentJob() });
+    }
     throw new Error(`Unexpected fixture request ${method} ${path}`);
   }, { preconnect: globalThis.fetch.preconnect });
   const dom = await createWebDomHarness({ desktop: true, fetch: fakeFetch });
@@ -49,7 +63,7 @@ async function run(scenario: string) {
     acceptActiveId = useWorkspaceCatalog().acceptActiveId;
     return <button onClick={() => { lastBatch = coordinator.acquire("profile-batch", "one"); if (lastBatch) batch = lastBatch; }}>Start fixture batch</button>;
   }
-  const render = () => dom.render(<I18nProvider><WorkspaceProvider initialCatalog={catalog}><Probe /><WorkspaceSwitcher profileCount={2} runningCount={0} connection onShowRunning={() => {}} onOpenManagement={() => { views++; }} onShowBatchTask={() => { views++; }} />{manager && <WorkspaceManagementPage active request={{ mode: scenario === "same-frame-switch" ? "switch" : "backups", workspaceId: "two", id: 1 }} onBack={() => { views++; }} onShowRunning={() => {}} onShowBatchTask={() => { views++; }} />}{updater && <SignedUpdateCard />}</WorkspaceProvider></I18nProvider>);
+  const render = () => dom.render(<I18nProvider><WorkspaceProvider initialCatalog={catalog}><Probe /><WorkspaceSwitcher profileCount={2} runningCount={0} connection onShowRunning={() => {}} onOpenManagement={() => { views++; }} onShowBatchTask={() => { views++; }} />{(reconnect || manualRetry) && <WorkspaceActivity hidden={false} onOpen={() => { views++; }} />}{manager && <WorkspaceManagementPage active request={{ mode: scenario === "same-frame-switch" ? "switch" : "backups", workspaceId: "two", id: 1 }} onBack={() => { views++; }} onShowRunning={() => {}} onShowBatchTask={() => { views++; }} />}{updater && <SignedUpdateCard />}</WorkspaceProvider></I18nProvider>);
   const button = (label: string, scope: DomElement = dom.window.document.body) => { const found = [...scope.querySelectorAll<DomButton>("button")].find(item => !item.closest("[hidden]") && (item.textContent?.trim() === label || item.getAttribute("aria-label") === label)); assert.ok(found, `Missing ${label}`); return found; };
   const click = async (label: string) => act(async () => { button(label).click(); });
   const prepareBackup = async () => {
@@ -117,6 +131,32 @@ async function run(scenario: string) {
       await act(async () => { refresh.resolve(json(overview())); });
       await waitFor(() => !coordinator.getSnapshot().workspaceJob, "Final refresh must release the background barrier after unmount");
       assert.equal(coordinator.getSnapshot().blocked, false);
+    } else if (scenario === "restore-receipt-focus") {
+      const receipt = dom.container.querySelector<DomElement>(".wm-job-succeeded")!;
+      assert.equal(receipt.querySelector(".wm-job-result-name")?.textContent, "Research");
+      assert.equal(dom.window.document.getElementById(receipt.getAttribute("aria-labelledby")!)?.textContent, "Restore task");
+      const view = button("View restored workspace", receipt);
+      await act(async () => { view.focus(); view.click(); });
+      const title = dom.container.querySelector<DomElement>(".wm-editor-title h2")!;
+      assert.equal(title.textContent, "Research");
+      assert.equal(dom.window.document.activeElement, title);
+
+      const name = dom.container.querySelector<DomInput>('input[maxlength="40"]')!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!.call(name, "Unsaved recovery name");
+        name.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+        dom.container.querySelector<DomButton>("#wm-tab-backups")!.click();
+      });
+      await act(async () => { view.focus(); view.click(); });
+      await click("Keep editing");
+      assert.equal(name.value, "Unsaved recovery name");
+      assert.equal(dom.window.document.activeElement, view);
+      await act(async () => { view.click(); });
+      await click("Discard changes");
+      assert.equal(name.value, "Research");
+      assert.equal(dom.window.document.activeElement, title);
+      assert.equal(coordinator.getSnapshot().workspaceId, "one");
+      assert.ok(requests.every(item => item.startsWith("GET ")), "Opening the receipt only navigates to workspace details");
     } else if (scenario === "install-unmount") {
       await act(async () => { button("Install verified update").click(); button("Start fixture batch").click(); });
       assert.equal(lastBatch, null); assert.equal(native.filter(item => item === "signed_update_install").length, 1);
@@ -139,6 +179,31 @@ async function run(scenario: string) {
       await act(async () => { button("Retry", dom.container.querySelector<DomElement>(".wm-history-card")!).click(); button("Retry", dom.container.querySelector<DomElement>(".wm-backup-main > .wm-error")!).click(); });
       assert.equal(dom.container.querySelector(".wm-history-card .wm-error"), null); assert.equal(dom.container.querySelector(".wm-backup-main > .wm-error"), null);
       assert.ok(dom.container.querySelector(".wm-job-succeeded")); assert.equal(button("Create full backup").disabled, false);
+    } else if (reconnect || manualRetry) {
+      await startBackup();
+      await waitFor(() => !!dom.container.querySelector(".wm-job .wm-error"), "Status read failure reaches the task card");
+      assert.equal(jobStatusReads, 1);
+      assert.equal(coordinator.getSnapshot().workspaceJob?.phase, "running", "An unreadable status cannot unlock the workspace");
+      terminal = true;
+      if (manualRetry) {
+        const retry = button("Retry status check");
+        await act(async () => { retry.focus(); });
+        await act(async () => { retry.click(); retry.click(); });
+        assert.equal(jobStatusReads, 2, "Same-frame retry requests one immediate status check");
+        assert.equal(retry.getAttribute("aria-disabled"), "true");
+        assert.ok(dom.container.querySelector(".wm-job .wm-error"), "The warning remains while a retry is pending");
+        await act(async () => { jobStatusRetry.resolve(json({ ok: true, job: currentJob() })); });
+      } else {
+        assert.ok(!dom.container.querySelector(".wm-job progress"), "A disconnected status does not present old progress as live");
+        assert.match(dom.container.querySelector(".wm-job")?.textContent ?? "", /Task status unavailable\. Retrying automatically…/);
+        assert.match(dom.container.querySelector(".wm-activity")?.textContent ?? "", /Task status unavailable\. Retrying automatically…/);
+      }
+      await waitFor(() => !coordinator.getSnapshot().blocked, "Retry should release the barrier after a confirmed terminal result");
+      assert.equal(jobStatusReads, 2);
+      assert.ok(dom.container.querySelector(".wm-job-succeeded"));
+      if (manualRetry) assert.equal(dom.window.document.activeElement, dom.container.querySelector(".wm-job-succeeded"));
+      assert.ok(!dom.container.querySelector(".wm-job .wm-error"));
+      assert.equal(requests.filter(item => item === "POST /ui/api/workspace/backups").length, 1);
     } else if (scenario === "job-unmount-recover") {
       await startBackup(); manager = false; await render();
       assert.equal(coordinator.acquire("profile-batch"), null);
@@ -162,7 +227,7 @@ async function run(scenario: string) {
       assert.equal(coordinator.getSnapshot().blocked, false);
     } else throw new Error(scenario);
   } finally {
-    activation.resolve(json({ ok: false, error: "Fixture teardown" })); installation.resolve(); terminal = true; holdRefresh = false; failRefresh = false; refresh.resolve(json(overview())); initialHistory.resolve(json({ ok: true, backups: [], jobs: [] })); catalogRead.resolve(json({ ok: true, ...catalog }));
+    activation.resolve(json({ ok: false, error: "Fixture teardown" })); installation.resolve(); terminal = true; holdRefresh = false; failRefresh = false; refresh.resolve(json(overview())); initialHistory.resolve(json({ ok: true, backups: [], jobs: [] })); catalogRead.resolve(json({ ok: true, ...catalog })); jobStatusRetry.resolve(json({ ok: true, job: currentJob() }));
     await dom.flush(); await dom.cleanup();
     if (styleDescriptor) Object.defineProperty(globalThis, "getComputedStyle", styleDescriptor); else Reflect.deleteProperty(globalThis, "getComputedStyle");
   }

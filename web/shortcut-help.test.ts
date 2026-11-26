@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 
-for (const scenario of ["focus", "handoff", "platforms", "contexts", "fallback"]) {
+for (const scenario of ["focus", "handoff", "platforms", "contexts", "fallback", "reference-scroll"]) {
   test(`keyboard shortcut guide: ${scenario} (isolated DOM)`, async () => {
     const child = Bun.spawn([process.execPath, "--no-env-file", resolve(import.meta.dir, "../test-fixtures/shortcut-help-dom.tsx"), scenario], { cwd: resolve(import.meta.dir, ".."), stdout: "pipe", stderr: "pipe" });
     const timer = setTimeout(() => child.kill(), 12_000);

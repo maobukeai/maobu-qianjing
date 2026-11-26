@@ -6,7 +6,7 @@ import {
 } from "../profile-notes.ts";
 import { updateProfile } from "./api.ts";
 import { useTranslation } from "./i18n.tsx";
-import { AppIcon } from "./ui-primitives.tsx";
+import { AppIcon, ModalDialog } from "./ui-primitives.tsx";
 import "./inline-profile-editors.css";
 
 function isImeComposing(event: KeyboardEvent<HTMLElement>, composingFlag: boolean): boolean {
@@ -248,7 +248,7 @@ export interface QuickProfileNotesEditorProps {
   profileName?: string;
   notes: string;
   disabled?: boolean;
-  /** "inline" opens a lightweight popover from roster rows; "panel" edits inline inside ProfileDetailsPanel. */
+  /** "inline" opens a small dialog from the roster; "panel" edits inside ProfileDetailsPanel. */
   variant?: "inline" | "panel";
   onSaveNotes?: (id: string, nextNotes: string) => Promise<void>;
   onSaved?: (id: string, nextNotes: string) => void;
@@ -258,7 +258,7 @@ export interface QuickProfileNotesEditorProps {
 }
 
 /**
- * Quick profile notes display and lightweight editor (<= 500 chars / 2048 bytes).
+ * Quick profile notes display and editor (<= 500 chars / 2048 bytes).
  * Supports `Ctrl+Enter` / `Cmd+Enter` save, `Escape` cancel, and IME composition guard.
  */
 export function QuickProfileNotesEditor({
@@ -295,7 +295,6 @@ export function QuickProfileNotesEditor({
   const [draft, setDraft] = useState(notes);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const rootRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
   const editorId = useId();
@@ -311,22 +310,18 @@ export function QuickProfileNotesEditor({
   }, [notes, open]);
 
   useEffect(() => {
-    if (!open) return;
-    textareaRef.current?.focus();
-    if (variant !== "inline") return;
-    const onPointerDown = (event: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node) && !saving) {
-        setOpen(false);
-        setDraft(notes);
-        setError(null);
-      }
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [open, variant, saving, notes]);
+    if (open && !saving) textareaRef.current?.focus({ preventScroll: true });
+  }, [open, saving]);
 
   const charCount = Array.from(draft.replaceAll("\r\n", "\n")).length;
   const overLimit = charCount > MAX_PROFILE_NOTES_CHARACTERS;
+
+  function cancel() {
+    if (saving) return;
+    setOpen(false);
+    setDraft(notes);
+    setError(null);
+  }
 
   async function save() {
     if (saving) return;
@@ -380,11 +375,7 @@ export function QuickProfileNotesEditor({
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
-      if (!saving) {
-        setOpen(false);
-        setDraft(notes);
-        setError(null);
-      }
+      cancel();
     }
   }
 
@@ -397,8 +388,9 @@ export function QuickProfileNotesEditor({
         rows={variant === "panel" ? 4 : 3}
         value={draft}
         disabled={saving}
-        placeholder={t("Add operator notes (max 500 characters)…")}
         aria-label={t("Notes for {profile}", { profile: profileName || profileId })}
+        aria-describedby={error ? `${editorId}-hint ${editorId}-error` : `${editorId}-hint`}
+        aria-invalid={overLimit || undefined}
         onCompositionStart={() => {
           composingRef.current = true;
         }}
@@ -412,7 +404,7 @@ export function QuickProfileNotesEditor({
         onKeyDown={handleKeyDown}
       />
       <div className="quick-notes-footer">
-        <span className={`quick-notes-meta${overLimit ? " is-error" : ""}`}>
+        <span id={`${editorId}-hint`} className={`quick-notes-meta${overLimit ? " is-error" : ""}`}>
           {`${charCount} / ${MAX_PROFILE_NOTES_CHARACTERS}`} · {t("Ctrl+Enter to save")}
         </span>
         <div className="quick-notes-actions">
@@ -420,17 +412,14 @@ export function QuickProfileNotesEditor({
             type="button"
             className="btn xs ghost"
             disabled={saving}
-            onClick={() => {
-              setOpen(false);
-              setDraft(notes);
-              setError(null);
-            }}
+            onClick={cancel}
           >
             {t("Cancel")}
           </button>
           <button
             type="button"
             className="btn xs primary"
+            aria-keyshortcuts="Control+Enter Meta+Enter"
             disabled={saving || overLimit}
             onClick={() => void save()}
           >
@@ -439,7 +428,7 @@ export function QuickProfileNotesEditor({
         </div>
       </div>
       {error && (
-        <p className="inline-editor-error" role="alert">
+        <p id={`${editorId}-error`} className="inline-editor-error" role="alert">
           {error}
         </p>
       )}
@@ -448,7 +437,7 @@ export function QuickProfileNotesEditor({
 
   if (variant === "panel") {
     return (
-      <div ref={rootRef} className="quick-notes-panel">
+      <div className="quick-notes-panel">
         {open ? (
           editorBody
         ) : (
@@ -478,12 +467,14 @@ export function QuickProfileNotesEditor({
   }
 
   return (
-    <div ref={rootRef} className="quick-notes-inline">
+    <div className="quick-notes-inline">
       <button
         type="button"
         className={`quick-notes-trigger${notes ? " has-notes" : ""}`}
         disabled={disabled}
         title={notes || t("Add notes")}
+        aria-label={t(notes ? "Edit notes" : "Add notes")}
+        aria-haspopup="dialog"
         aria-expanded={open}
         onClick={(event) => {
           event.stopPropagation();
@@ -492,19 +483,20 @@ export function QuickProfileNotesEditor({
           setOpen((prev) => !prev);
         }}
       >
-        <span className="quick-notes-preview">{notes || t("+ Notes")}</span>
+        {notes ? <span className="quick-notes-preview">{notes}</span> : <AppIcon name="file" className="sm" />}
       </button>
 
-      {open && (
-        <div
-          className="quick-notes-popover"
-          role="region"
-          aria-label={t("Quick notes")}
-          onClick={(event) => event.stopPropagation()}
-        >
-          {editorBody}
-        </div>
-      )}
+      <ModalDialog
+        open={open}
+        onClose={cancel}
+        busy={saving}
+        portal
+        className="quick-notes-dialog"
+        ariaLabelledBy={`${editorId}-title`}
+      >
+        <h2 className="quick-notes-title" id={`${editorId}-title`}><AppIcon name="file" className="sm" />{t("Quick notes")}</h2>
+        {editorBody}
+      </ModalDialog>
     </div>
   );
 }

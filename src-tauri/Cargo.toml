@@ -1,6 +1,6 @@
 [package]
 name = "aliasmode-desktop"
-version = "0.20.0"
+version = "3.0.0"
 description = "Maobu local browser profile manager"
 edition = "2021"
 rust-version = "1.89"

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { localeTimezoneMismatch } from "../../profile-locale.ts";
 import {
   checkProxy,
+  clearProfileCache,
   convertMobileProfile,
   fetchProfileEdit,
   fetchTotp,
@@ -13,6 +14,12 @@ import {
   type ProxyCheckInput,
   type UiProfile,
 } from "../api.ts";
+import {
+  fetchProfileResourcePolicy,
+  updateProfileResourcePolicy,
+  type EffectiveProfileResourcePolicy,
+  type ProfileResourcePolicyMode,
+} from "../resource-monitor-api.ts";
 import { useDesktopCloseDraft } from "../desktop-close.tsx";
 import { MotionPresence } from "../desktop-motion.tsx";
 import { EditChangesSummary } from "../edit-changes-summary.tsx";
@@ -33,7 +40,7 @@ import { AppIcon, type useConfirmDialog } from "../ui-primitives.tsx";
 import { useUnsavedChangesGuard } from "../unsaved-changes-guard.tsx";
 import type { useWindowChrome } from "../window-chrome.tsx";
 import { CopyField, copyPlainText } from "./copy-field.tsx";
-import { ProfileEditorLayout, ProfileEditorSection } from "./profile-editor-layout.tsx";
+import { ProfileEditorLayout, ProfileEditorPreviewCard, ProfileEditorSection } from "./profile-editor-layout.tsx";
 import {
   browserLabel,
   CLOAKBROWSER_NOTE,
@@ -54,6 +61,7 @@ import {
 } from "./profile-form-helpers.tsx";
 
 const Icon = AppIcon;
+const CONNECTION_TIMEZONE_SAVE_NOTE = "Saves the detected timezone and language now for the next launch. Unsaved edits stay in this editor.";
 
 export interface UseProfileEditModalOptions {
   busy: Readonly<Record<string, boolean>>;
@@ -405,10 +413,10 @@ export function useProfileEditModal({
 
   const refreshEditedTimezone = async () => {
     const session = editSessionRef.current;
-    if (!editId || !editReady || !session?.ready || editSaveInFlight.current || editProxyChanged || timezoneBusy || editForm.proxyError) return;
+    if (!editId || !editReady || !session?.ready || !editSnapshot || editSaveInFlight.current || editProxyChanged || timezoneBusy || editForm.proxyError) return;
     const confirmed = await requestConfirm({
       title: t("Confirm fingerprint change"),
-      message: t(FINGERPRINT_EDIT_WARNING),
+      message: `${t(CONNECTION_TIMEZONE_SAVE_NOTE)}\n\n${t(FINGERPRINT_EDIT_WARNING)}`,
       confirmLabel: t("Continue"),
       cancelLabel: t("Cancel"),
     });
@@ -421,7 +429,11 @@ export function useProfileEditModal({
     try {
       const { timezone, locale } = await refreshProfileTimezone(id);
       if (editSessionRef.current !== session || generation !== editProxyCheckGeneration.current) return;
-      setEditForm((form) => ({ ...form, timezone, locale }));
+      setEditForm((form) => ({
+        ...form,
+        timezone: form.timezone === editSnapshot.form.timezone ? timezone : form.timezone ?? timezone,
+        locale: form.locale === editSnapshot.form.locale ? locale : form.locale ?? locale,
+      }));
       setEditInitialFingerprint((initial) => ({ ...initial, timezone, locale }));
       setEditSnapshot((initial) => (initial ? captureProfileEditSnapshot({ ...initial, form: { ...initial.form, timezone, locale }, timezoneManual: false }) : null));
       onRefreshQualityAfterEdit();
@@ -647,6 +659,118 @@ export function ProfileEditModal({
     toggleEditExt,
   } = controller;
 
+  const [policyOpen, setPolicyOpen] = useState(false);
+  const [policyState, setPolicyState] = useState<"idle" | "loading" | "ready" | "unsupported" | "error">("idle");
+  const [policyMemMode, setPolicyMemMode] = useState<ProfileResourcePolicyMode>("inherit");
+  const [policyDataMode, setPolicyDataMode] = useState<ProfileResourcePolicyMode>("inherit");
+  const [policyBlockImages, setPolicyBlockImages] = useState(true);
+  const [policyBlockMedia, setPolicyBlockMedia] = useState(true);
+  const [policyBlockFonts, setPolicyBlockFonts] = useState(false);
+  const [policyEffective, setPolicyEffective] = useState<EffectiveProfileResourcePolicy | null>(null);
+  const [policySaving, setPolicySaving] = useState(false);
+  const [policyMsg, setPolicyMsg] = useState<string | null>(null);
+  const [policyErr, setPolicyErr] = useState<string | null>(null);
+  const [cacheBusy, setCacheBusy] = useState(false);
+  const [cacheMsg, setCacheMsg] = useState<string | null>(null);
+  const [cacheErr, setCacheErr] = useState<string | null>(null);
+  const policyTargetIdRef = useRef<string | null>(null);
+  policyTargetIdRef.current = editId;
+
+  useEffect(() => {
+    setPolicyOpen(false);
+    setPolicyState("idle");
+    setPolicyMemMode("inherit");
+    setPolicyDataMode("inherit");
+    setPolicyBlockImages(true);
+    setPolicyBlockMedia(true);
+    setPolicyBlockFonts(false);
+    setPolicyEffective(null);
+    setPolicySaving(false);
+    setPolicyMsg(null);
+    setPolicyErr(null);
+    setCacheBusy(false);
+    setCacheMsg(null);
+    setCacheErr(null);
+  }, [editId]);
+
+  const loadResourcePolicy = async (targetId: string) => {
+    setPolicyState("loading");
+    setPolicyErr(null);
+    try {
+      const res = await fetchProfileResourcePolicy(targetId);
+      if (policyTargetIdRef.current !== targetId) return;
+      if (!res.supported || !res.policy) {
+        setPolicyState("unsupported");
+        return;
+      }
+      setPolicyMemMode(res.policy.memorySaverMode);
+      setPolicyDataMode(res.policy.dataSaver.mode);
+      setPolicyBlockImages(res.policy.dataSaver.blockImages ?? true);
+      setPolicyBlockMedia(res.policy.dataSaver.blockMedia ?? true);
+      setPolicyBlockFonts(res.policy.dataSaver.blockFonts ?? false);
+      setPolicyEffective(res.effective);
+      setPolicyState("ready");
+    } catch (error) {
+      if (policyTargetIdRef.current !== targetId) return;
+      setPolicyState("error");
+      setPolicyErr(error instanceof Error ? error.message : t("Could not load resource policy."));
+    }
+  };
+
+  const saveResourcePolicy = async () => {
+    if (!editId || policySaving || policyState !== "ready") return;
+    const targetId = editId;
+    setPolicySaving(true);
+    setPolicyMsg(null);
+    setPolicyErr(null);
+    try {
+      const res = await updateProfileResourcePolicy(targetId, {
+        memorySaverMode: policyMemMode,
+        dataSaver:
+          policyDataMode === "on"
+            ? {
+                mode: "on",
+                blockImages: policyBlockImages,
+                blockMedia: policyBlockMedia,
+                blockFonts: policyBlockFonts,
+              }
+            : { mode: policyDataMode },
+      });
+      if (policyTargetIdRef.current !== targetId) return;
+      setPolicyEffective(res.effective);
+      setPolicyMsg(res.restartRequired ? `${t("Resource policy saved.")} ${t("Saved changes apply at the next start.")}` : t("Resource policy saved."));
+      onFlash(t("Resource policy saved."));
+    } catch (error) {
+      if (policyTargetIdRef.current !== targetId) return;
+      setPolicyErr(error instanceof Error ? error.message : t("Could not save resource policy."));
+    } finally {
+      if (policyTargetIdRef.current === targetId) setPolicySaving(false);
+    }
+  };
+
+  const handleClearProfileCache = async () => {
+    if (!editId || cacheBusy || editRunning) return;
+    const targetId = editId;
+    setCacheBusy(true);
+    setCacheMsg(null);
+    setCacheErr(null);
+    try {
+      const res = await clearProfileCache(targetId);
+      if (policyTargetIdRef.current !== targetId) return;
+      if (res?.ok === false) {
+        throw new Error(typeof res.error === "string" ? res.error : t("Could not clear browser cache."));
+      }
+      const message = res?.cleared ? t("Browser cache cleared.") : t("No cache files to clear.");
+      setCacheMsg(message);
+      onFlash(message);
+    } catch (error) {
+      if (policyTargetIdRef.current !== targetId) return;
+      setCacheErr(error instanceof Error ? error.message : t("Could not clear browser cache."));
+    } finally {
+      if (policyTargetIdRef.current === targetId) setCacheBusy(false);
+    }
+  };
+
   return (
     <>
       {editCloseGuard.dialog}
@@ -666,7 +790,7 @@ export function ProfileEditModal({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-head">
-              <Icon name="edit" /><span id="edit-profile-title">{t("Edit profile")}</span><span className="mono muted">{editId}</span>
+              <Icon name="edit" /><span id="edit-profile-title">{t("Edit profile")}</span>
               <EditorWindowControls chrome={windowChrome} disabled={editSaving || timezoneBusy} />
               <button type="button" className="modal-close" aria-label={t("Close")} disabled={editSaving || timezoneBusy} onClick={closeEdit}><Icon name="close" className="sm" /></button>
             </div>
@@ -728,12 +852,85 @@ export function ProfileEditModal({
                     sessionKey={editId}
                     scrollBehavior={editorScroll}
                     sections={[
-                      { id: "basic", label: t("Basic information") },
-                      { id: "proxy", label: t("Network & proxy") },
-                      { id: "account", label: t("Account data") },
-                      { id: "fingerprint", label: t("Fingerprint settings") },
-                      ...(editEngine === "chromium" && editExtensionChoices.length > 0 ? [{ id: "extensions", label: t("Extensions") }] : []),
+                      { id: "basic", label: t("Basic information"), icon: "profiles" },
+                      { id: "proxy", label: t("Network & proxy"), icon: "activity" },
+                      { id: "account", label: t("Account data"), icon: "key" },
+                      { id: "fingerprint", label: t("Fingerprint settings"), icon: "fingerprint" },
+                      ...(editEngine === "chromium" && editExtensionChoices.length > 0 ? [{ id: "extensions", label: t("Extensions"), icon: "puzzle" as const }] : []),
                     ]}
+                    preview={
+                      <ProfileEditorPreviewCard
+                        title={t("Live summary")}
+                        heading={(editForm.name ?? "").trim() || (editSerial != null ? `#${editSerial}` : t("Loading profile…"))}
+                        subheading={(editForm.group ?? "").trim() || t("Ungrouped")}
+                        badgeText={
+                          (editForm.customNo ?? "").trim()
+                            ? `#${(editForm.customNo ?? "").trim()}`
+                            : editSerial != null
+                              ? `#${editSerial}`
+                              : t("Automatic")
+                        }
+                        avatarText={(editForm.name ?? "").trim() || "MB"}
+                        statusLabel={
+                          editReview.error || editErr
+                            ? t("Needs attention")
+                            : editRunning
+                              ? t("Running")
+                              : t("Ready")
+                        }
+                        statusTone={
+                          editReview.error || editErr
+                            ? "warn"
+                            : editRunning
+                              ? "success"
+                              : "neutral"
+                        }
+                        items={[
+                          {
+                            key: "browser",
+                            label: t("Browser"),
+                            value: editEngine ? browserLabel(editEngine, editChromiumRuntime) : "—",
+                            muted: !editEngine,
+                          },
+                          {
+                            key: "platform",
+                            label: t("Platform"),
+                            value: (editForm.platform ?? "").trim() || t("Not set"),
+                            muted: !(editForm.platform ?? "").trim(),
+                          },
+                          {
+                            key: "proxy",
+                            label: t("Proxy"),
+                            value: editHasProxy
+                              ? `${editForm.proxyType ?? "http"} · ${(editForm.proxy ?? "").trim()}`
+                              : t("Direct connection"),
+                            muted: !editHasProxy,
+                            mono: editHasProxy,
+                          },
+                          {
+                            key: "os",
+                            label: t("Operating system"),
+                            value: editForm.platformOs || t("Automatic"),
+                            muted: !editForm.platformOs,
+                          },
+                          {
+                            key: "screen",
+                            label: t("Screen"),
+                            value: (editForm.resolution ?? "").trim() || t("Automatic"),
+                            muted: !(editForm.resolution ?? "").trim(),
+                            mono: !!(editForm.resolution ?? "").trim(),
+                          },
+                          ...(editEngine === "chromium" && editExtensionChoices.length > 0
+                            ? [{
+                                key: "extensions",
+                                label: t("Extensions"),
+                                value: String(editExts.length),
+                                muted: editExts.length === 0,
+                              }]
+                            : []),
+                        ]}
+                      />
+                    }
                   >
                     <ProfileEditorSection sectionId="basic">
                       <div className="fld-row">
@@ -748,7 +945,7 @@ export function ProfileEditModal({
                             value={editForm.customNo ?? ""}
                             inputMode="numeric"
                             maxLength={MAX_CUSTOM_NO}
-                            placeholder={editSerial != null ? String(editSerial) : "auto"}
+                            placeholder={editSerial != null ? String(editSerial) : t("Automatic")}
                             onChange={(e) => setEF("customNo", e.target.value.replace(/\D/g, "").slice(0, MAX_CUSTOM_NO))}
                           />
                           <small>{t("Digits only · blank uses the serial")}</small>
@@ -767,13 +964,7 @@ export function ProfileEditModal({
                       <label className="fld">
                         <span>{t("Browser")}</span>
                         <input value={editEngine ? browserLabel(editEngine, editChromiumRuntime) : ""} readOnly className="ro" />
-                        {editEngine && (
-                          <small>
-                            {editEngine === "firefox"
-                              ? t("Native Firefox profile · no CDP, PDF, or Chrome extensions.")
-                              : t("CDP, PDF, and Chrome extensions are available.")}
-                          </small>
-                        )}
+                        {editEngine === "firefox" && <small>{t("Native Firefox profile · no CDP, PDF, or Chrome extensions.")}</small>}
                         {editEngine === "chromium" && !editChromiumRuntime && <small>{t(CLOAKBROWSER_NOTE)}</small>}
                       </label>
                       <label className="fld">
@@ -797,23 +988,21 @@ export function ProfileEditModal({
                           <small>{t("Leave blank to launch on a direct connection.")}</small>
                         </label>
                       </div>
-                      <div className="proxy-check-actions">
+                      <div className="profile-editor-proxy-actions">
                         <button type="button" className="btn proxy-check-btn" disabled={editProxyCheck.checking || timezoneBusy || !editHasProxy} aria-busy={editProxyCheck.checking} onClick={checkEditedProxy}>
                           <Icon name="activity" className="sm" />
                           {editProxyCheck.checking ? t("Checking…") : t("Check proxy")}
                         </button>
-                      </div>
-                      <ProxyCheckFeedback hasProxy={editHasProxy} state={editProxyCheck} />
-                      <div className="proxy-check-actions">
                         <button type="button" className="btn proxy-check-btn" disabled={timezoneBusy || editSaving || editProxyChanged || !!editForm.proxyError} onClick={refreshEditedTimezone}>
                           <Icon name="activity" className="sm" />
                           {timezoneBusy ? t("Looking up timezone and language…") : editHasProxy ? t("Set timezone and language from proxy") : t("Use current connection timezone and language")}
                         </button>
                       </div>
+                      <ProxyCheckFeedback hasProxy={editHasProxy} state={editProxyCheck} />
                       <p className="hint">
                         {editProxyChanged
                           ? t("Save proxy changes before setting the timezone.")
-                          : t("This action saves the timezone immediately. It applies the next time this profile opens.")}
+                          : t(CONNECTION_TIMEZONE_SAVE_NOTE)}
                       </p>
                       {editForm.locale && localeTimezoneMismatch(editForm.locale, editForm.timezone ?? "") && (
                         <p className="hint">{t("This language does not match the timezone's country. Use “Set timezone and language from proxy” to match them.")}</p>
@@ -873,29 +1062,127 @@ export function ProfileEditModal({
                       )}
                     </ProfileEditorSection>
                     {editEngine === "chromium" && editExtensionChoices.length > 0 && (
-                      <ProfileEditorSection sectionId="extensions">
-                        <div className="fld">
-                          <span>{t("Extensions")}</span>
-                          <div className="extassign">
-                            {editExtensionChoices.map((x) => (
-                              <label key={x.id} className="extchk">
-                                <input type="checkbox" checked={editExts.includes(x.id)} onChange={() => toggleEditExt(x.id)} />
-                                <span>{x.name}{x.missing && <span className="muted">{t(" · Not installed on this device")}</span>}</span>
-                              </label>
-                            ))}
-                          </div>
+                      <ProfileEditorSection sectionId="extensions" description={t(" Extensions load when the browser opens.")}>
+                        <div className="extassign">
+                          {editExtensionChoices.map((x) => (
+                            <label key={x.id} className="extchk">
+                              <input type="checkbox" checked={editExts.includes(x.id)} onChange={() => toggleEditExt(x.id)} />
+                              <span>{x.name}{x.missing && <span className="muted">{t(" · Not installed on this device")}</span>}</span>
+                            </label>
+                          ))}
                         </div>
                       </ProfileEditorSection>
                     )}
                   </ProfileEditorLayout>
+                  <details
+                    className="profile-resource-policy-disclosure"
+                    open={policyOpen}
+                    onToggle={(event) => {
+                      const nextOpen = event.currentTarget.open;
+                      setPolicyOpen(nextOpen);
+                      if (nextOpen && editId && policyState === "idle") {
+                        void loadResourcePolicy(editId);
+                      }
+                    }}
+                  >
+                    <summary>
+                      <Icon name="activity" className="sm" />
+                      <span>{t("Resource policy & cache")}</span>
+                      {policyEffective && (
+                        <span className="profile-policy-summary-pill">
+                          {t("Memory saver")}: {policyEffective.memorySaver ? t("Enabled") : t("Disabled")}
+                        </span>
+                      )}
+                    </summary>
+                    <div className="profile-resource-policy-body">
+                      {policyState === "loading" && <p className="hint" role="status">{t("Loading…")}</p>}
+                      {policyState === "unsupported" && (
+                        <p className="hint">{t("Resource policies are unavailable on this server.")}</p>
+                      )}
+                      {policyErr && <div className="modal-err" role="alert"><Icon name="alert" className="sm" />{policyErr}</div>}
+                      {policyState === "ready" && (
+                        <div className="profile-policy-controls">
+                          <div className="fld-row">
+                            <label className="fld grow">
+                              <span>{t("Memory saver")}</span>
+                              <select
+                                value={policyMemMode}
+                                disabled={policySaving}
+                                onChange={(e) => { setPolicyMemMode(e.target.value as ProfileResourcePolicyMode); setPolicyMsg(null); }}
+                              >
+                                <option value="inherit">{t("Follow global setting")}</option>
+                                <option value="on">{t("Always enable")}</option>
+                                <option value="off">{t("Disable for this profile")}</option>
+                              </select>
+                            </label>
+                            <label className="fld grow">
+                              <span>{t("Bandwidth data saver mode")}</span>
+                              <select
+                                value={policyDataMode}
+                                disabled={policySaving}
+                                onChange={(e) => { setPolicyDataMode(e.target.value as ProfileResourcePolicyMode); setPolicyMsg(null); }}
+                              >
+                                <option value="inherit">{t("Follow global setting")}</option>
+                                <option value="on">{t("Always enable")}</option>
+                                <option value="off">{t("Disable for this profile")}</option>
+                              </select>
+                            </label>
+                          </div>
+                          {policyDataMode === "on" && (
+                            <div className="profile-policy-checks">
+                              <label className="extchk">
+                                <input type="checkbox" checked={policyBlockImages} disabled={policySaving} onChange={(e) => setPolicyBlockImages(e.target.checked)} />
+                                <span>{t("Block images")}</span>
+                              </label>
+                              <label className="extchk">
+                                <input type="checkbox" checked={policyBlockMedia} disabled={policySaving} onChange={(e) => setPolicyBlockMedia(e.target.checked)} />
+                                <span>{t("Block media autoplay & preload")}</span>
+                              </label>
+                              <label className="extchk">
+                                <input type="checkbox" checked={policyBlockFonts} disabled={policySaving} onChange={(e) => setPolicyBlockFonts(e.target.checked)} />
+                                <span>{t("Block remote web fonts")}</span>
+                              </label>
+                            </div>
+                          )}
+                          {policyEffective && (
+                            <p className="hint">
+                              {t("Effective: {summary}", {
+                                summary: `${t("Memory saver")} ${policyEffective.memorySaver ? t("Enabled") : t("Disabled")} · ${t("Bandwidth data saver mode")} ${policyEffective.dataSaver.enabled ? t("Enabled") : t("Disabled")}`,
+                              })}
+                            </p>
+                          )}
+                          <div className="profile-policy-actions">
+                            <button type="button" className="btn" disabled={policySaving} onClick={() => { void saveResourcePolicy(); }}>
+                              {policySaving ? t("Saving…") : t("Save resource policy")}
+                            </button>
+                            {policyMsg && <span className="hint" role="status">{policyMsg}</span>}
+                          </div>
+                        </div>
+                      )}
+                      <div className="profile-cache-actions">
+                        <button
+                          type="button"
+                          className="btn"
+                          disabled={cacheBusy || editRunning}
+                          onClick={() => { void handleClearProfileCache(); }}
+                        >
+                          {cacheBusy ? t("Clearing…") : t("Clear browser cache")}
+                        </button>
+                        {editRunning && <span className="hint">{t("Stop this environment before clearing cache.")}</span>}
+                        {cacheMsg && <span className="hint" role="status">{cacheMsg}</span>}
+                        {cacheErr && <span className="modal-err" role="alert">{cacheErr}</span>}
+                      </div>
+                    </div>
+                  </details>
                   <p className="formnote">
                     {t("Cookies and locked fingerprint values are preserved. Only editable fields change.")}
-                    {editEngine === "chromium" && t(" Extensions load when the browser opens.")}
                   </p>
                 </fieldset>
               )}
               {editReady && editReview.error && <div id="profile-edit-validation-error" className="modal-err" role="alert" tabIndex={-1}>{t(editReview.error)}</div>}
-              {editReady && editReview.summary && <div className="editor-summary-anchor" tabIndex={-1}><EditChangesSummary summary={editReview.summary} running={editRunning} busy={editSaving} /></div>}
+              {editReady && editReview.summary && (editReview.summary.hasChanges || editReview.summary.notices.length > 0) && (
+                <div className="editor-summary-anchor" tabIndex={-1}><EditChangesSummary summary={editReview.summary} running={editRunning} busy={editSaving} /></div>
+              )}
             </div>
             <div className="modal-foot profile-editor-status-footer">
               {editReady && (

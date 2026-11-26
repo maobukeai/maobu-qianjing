@@ -40,6 +40,9 @@ async function run(scenario: string) {
   const preferences: Record<string, string> = { [FAVORITE_PROFILES_KEY]: JSON.stringify(large ? profiles.filter(item => item.group === "A").map(item => item.id) : scenario === "missing-group-recovery" || paletteScenario ? [profiles[1]!.id] : []), [SAVED_PROFILE_VIEWS_KEY]: JSON.stringify(paletteScenario ? [saved, similar] : ["saved-view-apply", "missing-group-recovery"].includes(scenario) ? [saved] : []) };
   const requests: Array<{ path: string; method: string }> = [], unexpected: string[] = [];
   const reads: Array<ReturnType<typeof deferred<Response>>> = [];
+  const controlledRoster = scenario === "roster-recovery";
+  const rosterReads: Array<ReturnType<typeof deferred<Response>>> = [];
+  const rosterResponse = (entries = profiles) => Response.json({ ok: true, profiles: entries, groups: folders.map(folder => folder.name), folders });
   const writes: Array<{ key: string; value: string; response: ReturnType<typeof deferred<Response>> }> = [];
   const metadataWrites = () => writes.filter(item => [FAVORITE_PROFILES_KEY, SAVED_PROFILE_VIEWS_KEY].includes(item.key));
   const workspace = { id: "default", name: "Roster views fixture", color: "#8169c8", icon: "laptop", archived: false, createdAt: 1, updatedAt: 1, lastOpenedAt: 1 };
@@ -48,7 +51,10 @@ async function run(scenario: string) {
   const fakeFetch = Object.assign(async (input: RequestInfo | URL, options?: RequestInit): Promise<Response> => {
     const path = String(input), method = options?.method ?? "GET"; requests.push({ path, method });
     if (heldCatalog && path === "/ui/api/workspaces") return heldCatalog.promise;
-    if (path === "/ui/api/profiles" && method === "GET") return Response.json({ ok: true, profiles, groups: folders.map(folder => folder.name), folders });
+    if (path === "/ui/api/profiles" && method === "GET") {
+      if (!controlledRoster) return rosterResponse();
+      const response = deferred<Response>(); rosterReads.push(response); return response.promise;
+    }
     if (path === "/ui/api/workspace/preferences") {
       if (method === "GET") { const response = deferred<Response>(); reads.push(response); if (!heldLoad) response.resolve(Response.json({ ok: true, preferences })); return response.promise; }
       if (method === "POST") {
@@ -108,6 +114,41 @@ async function run(scenario: string) {
   const status = (name: string) => [...dom.container.querySelectorAll<HTMLButtonElement>('.profile-status-tabs button')].find(node => node.textContent?.startsWith(name))!;
   try {
     await act(async () => { await import("../web/app.tsx"); });
+    if (controlledRoster) {
+      const failRead = () => Response.json({ ok: false, error: "Fixture roster service temporarily unavailable" }, { status: 503 });
+      const recovery = () => dom.container.querySelector<HTMLElement>(".roster-recovery");
+      await waitFor(() => rosterReads.length === 1 && !!dom.container.querySelector('.profile-table[aria-busy="true"]'), "First read shows loading");
+      await act(async () => rosterReads[0]!.resolve(failRead()));
+      await waitFor(() => !dom.container.querySelector('.profile-table[aria-busy="true"]'), "First read finishes with a failure");
+      assert.ok(!empty(), "A failed first read must not report that the workspace is empty");
+      assert.match(recovery()!.textContent, /Could not load environments/);
+      assert.equal(rows().length, 0);
+      const retry = button("Retry", recovery()!);
+      retry.focus();
+      await click(retry, true);
+      await waitFor(() => rosterReads.length === 2, "Retry reads the roster");
+      assert.equal(retry.getAttribute("aria-disabled"), "true");
+      await act(async () => rosterReads[1]!.resolve(rosterResponse()));
+      await waitFor(() => rows().length === profiles.length && !recovery(), "Successful retry displays the roster");
+      assert.equal(dom.window.document.activeElement?.id, "profiles-page-title");
+      assert.equal(rosterReads.length, 2);
+
+      await type(search(), "Environment 2");
+      assert.deepEqual(ids(), ["environment_2"]);
+      await click(button("Refresh profiles"));
+      await waitFor(() => rosterReads.length === 3, "Refresh starts a read");
+      await act(async () => rosterReads[2]!.resolve(failRead()));
+      await waitFor(() => !!recovery(), "Refresh failure marks retained rows as stale");
+      assert.match(recovery()!.textContent, /Showing the last loaded list/);
+      assert.deepEqual(ids(), ["environment_2"]);
+      await click(button("Retry", recovery()!));
+      await waitFor(() => rosterReads.length === 4, "Retry refreshes the roster");
+      await act(async () => rosterReads[3]!.resolve(rosterResponse([])));
+      await waitFor(() => !recovery() && /No profiles yet/.test(empty()?.textContent ?? ""), "Only a successful empty response shows the canonical empty state");
+      assert.equal(search().value, "Environment 2");
+      assert.deepEqual(unexpected, []);
+      return;
+    }
     if (heldCatalog) {
       await waitFor(() => visible(".rail-toggle").length > 0, "The sidebar is usable before catalog loading completes");
       const toggle = button("Expand sidebar");
@@ -294,7 +335,7 @@ async function run(scenario: string) {
         assert.equal(time.getAttribute("title"), new Date(source.lastOpenAt).toLocaleString("en-US"));
         assert.ok(time.textContent.includes("Last launch ·"));
       }
-      assert.ok(views().textContent.includes("Sorted by the most recent launch on this computer."));
+      assert.equal(views().querySelector(".roster-view-note")?.textContent, "Most recent launch first.");
       await select(groupSelect(), "A"); assert.deepEqual(ids(), [profiles[1]!.id, profiles[2]!.id]);
       await click(status("Running")); assert.deepEqual(ids(), [profiles[2]!.id]); return;
     }
@@ -302,7 +343,7 @@ async function run(scenario: string) {
       for (const [scope, title] of [["favorites", "Your favorites start here"], ["recent", "No recent launches yet"], ["attention", "Nothing needs attention"]]) {
         await select(viewSelect(), scope!); assert.ok(empty().textContent.includes(title!));
         await type(search(), "not-an-environment"); await select(groupSelect(), "B"); await click(status("Running")); assert.ok(empty().textContent.includes("No matches"));
-        await click(button("Clear filters", empty())); assert.equal(viewSelect().value, scope); assert.equal(search().value, ""); assert.equal(groupSelect().value, "all"); assert.equal(status("All environments").getAttribute("aria-pressed"), "true");
+        await click(button("Clear filters", empty())); assert.equal(viewSelect().value, scope); assert.equal(search().value, ""); assert.equal(groupSelect().value, "all"); assert.equal(status("All").getAttribute("aria-pressed"), "true");
         assert.ok(empty().textContent.includes(title!));
         await click(button("Browse all environments", empty())); assert.equal(viewSelect().value, "all"); assert.equal(rows().length, profiles.length);
       }

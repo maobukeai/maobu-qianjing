@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, mkdir, open, readFile, readdir, rm } from "node:fs/promises";
+import { lstat, open, readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Launcher } from "./launcher.ts";
 import type { ProfileStore } from "./store.ts";
@@ -10,6 +10,7 @@ import { validAgentAuthorization } from "./agent-control.ts";
 import { WorkspaceCatalog, writeWorkspaceJson } from "./workspaces.ts";
 import { validateBackupPassword, WorkspaceBackupService } from "./workspace-backups.ts";
 import { WorkspaceBusyError, WorkspaceMaintenance, workspaceRequestMutates } from "./workspace-maintenance.ts";
+import { recoverWorkspaceUploads, stageWorkspaceUpload } from "./workspace-upload-staging.ts";
 import { GROUP_DISCLOSURE_KEY, isGroupDisclosureValue } from "./profile-group-state.ts";
 import { FAVORITE_PROFILES_KEY, SAVED_PROFILE_VIEWS_KEY, parseFavoriteProfiles, parseSavedProfileViews } from "./profile-view-state.ts";
 import { ROSTER_DENSITY_KEY, isRosterDensity } from "./roster-density-state.ts";
@@ -43,6 +44,7 @@ export class WorkspaceManagement {
   readonly backups: WorkspaceBackupService;
   private readonly token = randomBytes(32).toString("hex");
   private scripts?: ScriptSupervisor;
+  private readonly uploadRecovery: Promise<void>;
   private upload: Promise<Response> | null = null;
   private cleanups = new Set<Promise<unknown>>();
   private pendingMutations = new Set<Promise<void>>();
@@ -57,11 +59,13 @@ export class WorkspaceManagement {
       assertIdle: () => this.assertIdle(),
       exclusive: (work) => this.maintenance.exclusive(work),
     });
+    this.uploadRecovery = recoverWorkspaceUploads(this.backups.directory).catch(() => {});
     options.launcher.setWorkspaceMaintenanceGuard?.(() => this.maintenance.assertWritable());
   }
 
   attachScripts(scripts?: ScriptSupervisor): void { this.scripts = scripts; }
   async settled(): Promise<void> {
+    await this.uploadRecovery;
     await this.upload?.catch(() => {});
     await Promise.all(this.backups.jobs().filter((job) => job.status === "queued" || job.status === "running").map((job) => this.backups.wait(job.id)));
     await Promise.allSettled([...this.cleanups, ...this.pendingMutations]);
@@ -279,21 +283,17 @@ export class WorkspaceManagement {
       } catch { throw new Error("Backup password must contain at least 10 characters and at most 1024 UTF-8 bytes."); }
       password = validateBackupPassword(decoded);
     }
-    const directory = join(this.options.paths.root, "backups", ".uploads");
-    const backupDirectory = await lstat(this.backups.directory);
-    if (!backupDirectory.isDirectory() || backupDirectory.isSymbolicLink()) throw new Error("The backup directory is unsafe");
-    await mkdir(directory, { recursive: true });
-    const entry = await lstat(directory);
-    if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error("The backup upload directory is unsafe");
-    const path = join(directory, `upload_${randomBytes(16).toString("hex")}.mqbackup`);
+    this.catalog.pathFor(this.currentId());
+    await this.uploadRecovery;
+    const staging = await stageWorkspaceUpload(this.backups.directory);
+    let restoring = false;
     try {
-      this.catalog.pathFor(this.currentId());
       const stream = request.body;
       if (!stream) throw new Error("The backup file is empty");
       const reader = stream.getReader();
       let size = 0;
       try {
-        const sink = await open(path, "wx", 0o600);
+        const sink = await open(staging.path, "wx", 0o600);
         try {
           while (true) {
             const chunk = await reader.read();
@@ -310,10 +310,15 @@ export class WorkspaceManagement {
         } finally { await sink.close(); }
       } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
       if (!size) throw new Error("The backup file is empty");
-      const job = this.backups.startRestore({ archivePath: path, password });
-      void this.backups.wait(job.id).finally(() => rm(path, { force: true })).catch(() => {});
+      const job = this.backups.startRestore({ archivePath: staging.path, password });
+      restoring = true;
+      const cleanup = this.backups.wait(job.id).finally(staging.dispose).catch(() => {});
+      this.cleanups.add(cleanup);
+      void cleanup.then(() => this.cleanups.delete(cleanup));
       return json({ ok: true, job: this.jobView(job) }, 202);
-    } catch (error) { await rm(path, { force: true }); throw error; }
+    } finally {
+      if (!restoring) await staging.dispose().catch(() => {});
+    }
   }
 
   async handle(request: Request): Promise<Response | null> {

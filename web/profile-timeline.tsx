@@ -5,9 +5,9 @@ import type {
   ProfileRecoveryKind,
   ProfileTimelineEvent,
 } from "../profile-timeline.ts";
-import { getStandaloneSessionToken, type ProxyCheckResult } from "./api.ts";
+import { getStandaloneSessionToken, notifyAppLockedFromResponse, notifyUnauthorizedResponse, type ProxyCheckResult } from "./api.ts";
 import { useTranslation } from "./i18n.tsx";
-import { AppIcon } from "./ui-primitives.tsx";
+import { AppIcon, ConfirmDialog } from "./ui-primitives.tsx";
 import "./profile-timeline.css";
 
 export type { ProfileTimelineEvent };
@@ -39,16 +39,24 @@ function timelineFetch(path: string, init?: RequestInit): Promise<Response> {
 
 async function readJson(response: Response, path: string): Promise<any> {
   const text = await response.text();
+  let parsed: any;
   try {
-    return text.trim() ? JSON.parse(text) : {};
+    parsed = text.trim() ? JSON.parse(text) : {};
   } catch {
+    notifyUnauthorizedResponse(response.status, path);
     throw new Error(`API ${path} returned non-JSON (${response.status}).`);
   }
+  if (response.status === 401) {
+    notifyUnauthorizedResponse(401, path, typeof parsed?.error === "string" ? parsed.error : "");
+  } else if (response.status === 423) {
+    notifyAppLockedFromResponse(423, parsed);
+  }
+  return parsed;
 }
 
 export async function fetchProfileTimeline(
   profileId: string,
-  options: { limit?: number; beforeId?: number; type?: ProfileEventType | "" } = {},
+  options: { limit?: number; beforeId?: number; type?: ProfileEventType | ""; signal?: AbortSignal } = {},
 ): Promise<ProfileTimelinePage> {
   const params = new URLSearchParams();
   if (options.limit !== undefined) params.set("limit", String(options.limit));
@@ -56,17 +64,31 @@ export async function fetchProfileTimeline(
   if (options.type) params.set("type", options.type);
   const query = params.toString();
   const path = `/ui/api/profiles/${encodeURIComponent(profileId)}/timeline${query ? `?${query}` : ""}`;
-  const response = await timelineFetch(path, { method: "GET" });
+  const response = await timelineFetch(path, { method: "GET", signal: options.signal });
   const body = await readJson(response, path);
-  if (!response.ok || body?.ok !== true || !Array.isArray(body.events)) {
-    throw new Error(typeof body?.error === "string" ? body.error : "Unable to load activity timeline.");
+  if (!response.ok || body?.ok !== true || (body.profileId !== undefined && body.profileId !== profileId)
+    || typeof body.hasMore !== "boolean" || !Array.isArray(body.events)
+    || !body.events.every((event: unknown) => isTimelineEvent(event, profileId))
+    || (body.hasMore && (body.events.length === 0 || !Number.isSafeInteger(body.nextBeforeId) || body.nextBeforeId <= 0
+      || (options.beforeId !== undefined && body.nextBeforeId >= options.beforeId)))) {
+    throw new Error("Unable to load activity timeline.");
   }
   return {
-    profileId: String(body.profileId ?? profileId),
+    profileId,
     events: body.events as ProfileTimelineEvent[],
     hasMore: body.hasMore === true,
     nextBeforeId: typeof body.nextBeforeId === "number" ? body.nextBeforeId : null,
   };
+}
+
+function isTimelineEvent(value: unknown, profileId: string): value is ProfileTimelineEvent {
+  if (!value || typeof value !== "object") return false;
+  const event = value as Partial<ProfileTimelineEvent>;
+  return event.profileId === profileId && typeof event.id === "number" && Number.isSafeInteger(event.id) && event.id > 0
+    && typeof event.createdAt === "number" && Number.isFinite(new Date(event.createdAt).getTime())
+    && typeof event.summary === "string" && !!event.detail && typeof event.detail === "object" && !Array.isArray(event.detail)
+    && typeof event.eventType === "string" && typeof event.actor === "string" && typeof event.status === "string"
+    && typeof event.recoveryKind === "string";
 }
 
 export async function clearProfileTimeline(profileId: string): Promise<{ removed: number }> {
@@ -218,60 +240,97 @@ export function ProfileTimeline({
   const [confirmClear, setConfirmClear] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [failedRead, setFailedRead] = useState<{ beforeId?: number } | null>(null);
   const [proxyResult, setProxyResult] = useState<ProfileProxyCheckResponse | null>(null);
   const [proxyError, setProxyError] = useState<string | null>(null);
 
-  const generationRef = useRef(0);
-  const activeProfileRef = useRef(profileId);
-  activeProfileRef.current = profileId;
+  const activeProfileRef = useRef<string | null>(profileId);
+  const activeRead = useRef<AbortController | null>(null);
+  const scope = useRef({ profileId, typeFilter, compact });
+  scope.current = { profileId, typeFilter, compact };
+  const refreshButton = useRef<HTMLButtonElement>(null);
+  const retryReadButton = useRef<HTMLButtonElement>(null);
+  const loadMoreButton = useRef<HTMLButtonElement>(null);
+  const list = useRef<HTMLOListElement>(null);
+
+  const cancelRead = useCallback(() => {
+    activeRead.current?.abort();
+    activeRead.current = null;
+  }, []);
 
   const loadPage = useCallback(
-    async (options: { append?: boolean; beforeId?: number; filter?: "" | ProfileEventType } = {}) => {
-      const targetId = profileId;
-      const filter = options.filter ?? typeFilter;
-      const generation = ++generationRef.current;
-      if (options.append) setLoadingMore(true);
-      else setLoading(true);
-      setError(null);
+    async (beforeId?: number) => {
+      const target = scope.current;
+      if (activeProfileRef.current !== target.profileId) return;
+      cancelRead();
+      const request = new AbortController();
+      activeRead.current = request;
+      const ownsRead = () => activeRead.current === request && scope.current.profileId === target.profileId
+        && scope.current.typeFilter === target.typeFilter && scope.current.compact === target.compact;
+      setLoading(beforeId === undefined);
+      setLoadingMore(beforeId !== undefined);
       try {
-        const page = await fetchProfileTimeline(targetId, {
-          limit: compact ? 25 : 50,
-          beforeId: options.beforeId,
-          type: filter,
+        const page = await fetchProfileTimeline(target.profileId, {
+          limit: target.compact ? 25 : 50,
+          beforeId,
+          type: target.typeFilter,
+          signal: AbortSignal.any([request.signal, AbortSignal.timeout(10_000)]),
         });
-        if (generationRef.current !== generation || activeProfileRef.current !== targetId) return;
-        setEvents((prev) => (options.append ? [...prev, ...page.events] : page.events));
+        if (!ownsRead()) return;
+        const document = refreshButton.current?.ownerDocument;
+        const restoreFocus = beforeId === undefined
+          ? document?.activeElement === retryReadButton.current
+          : !page.hasMore && document?.activeElement === loadMoreButton.current;
+        setEvents((previous) => {
+          if (beforeId === undefined) return page.events;
+          const known = new Set(previous.map(event => event.id));
+          return [...previous, ...page.events.filter(event => !known.has(event.id))];
+        });
         setHasMore(page.hasMore);
         setNextBeforeId(page.nextBeforeId);
-      } catch (err) {
-        if (generationRef.current !== generation || activeProfileRef.current !== targetId) return;
-        setError(err instanceof Error ? err.message : t("Unable to load activity timeline."));
+        setFailedRead(null);
+        if (restoreFocus) document?.defaultView?.requestAnimationFrame(() => {
+          if (activeProfileRef.current === target.profileId && document.activeElement === document.body) {
+            const firstAdded = beforeId === undefined ? null : page.events[0];
+            (firstAdded ? list.current?.querySelector<HTMLElement>(`[data-event-id="${firstAdded.id}"]`) : refreshButton.current)?.focus();
+          }
+        });
+      } catch {
+        if (ownsRead()) setFailedRead({ beforeId });
       } finally {
-        if (generationRef.current === generation && activeProfileRef.current === targetId) {
+        if (ownsRead()) {
+          activeRead.current = null;
           setLoading(false);
           setLoadingMore(false);
         }
       }
     },
-    [profileId, typeFilter, compact, t],
+    [cancelRead],
   );
+
+  useEffect(() => {
+    activeProfileRef.current = profileId;
+    setProxyResult(null);
+    setProxyError(null);
+    setConfirmClear(false);
+    setCheckingProxy(false);
+    setRetrying(false);
+    setClearing(false);
+    setError(null);
+    return () => { activeProfileRef.current = null; };
+  }, [profileId]);
 
   useEffect(() => {
     setEvents([]);
     setHasMore(false);
     setNextBeforeId(null);
-    setProxyResult(null);
-    setProxyError(null);
-    setConfirmClear(false);
-    setError(null);
-    void loadPage({ append: false, filter: typeFilter });
-    return () => {
-      generationRef.current++;
-    };
-  }, [profileId, typeFilter, loadPage]);
+    setFailedRead(null);
+    void loadPage();
+    return cancelRead;
+  }, [profileId, typeFilter, compact, loadPage, cancelRead]);
 
   async function handleCheckProxy() {
-    if (!hasProxy || checkingProxy) return;
+    if (!hasProxy || checkingProxy || clearing) return;
     const targetId = profileId;
     setCheckingProxy(true);
     setProxyError(null);
@@ -280,11 +339,11 @@ export function ProfileTimeline({
       if (activeProfileRef.current !== targetId) return;
       setProxyResult(result);
       onCheckProxyComplete?.(result);
-      await loadPage({ append: false });
+      await loadPage();
     } catch (err) {
       if (activeProfileRef.current !== targetId) return;
       setProxyError(err instanceof Error ? err.message : t("Proxy check failed."));
-      await loadPage({ append: false });
+      await loadPage();
     } finally {
       if (activeProfileRef.current === targetId) {
         setCheckingProxy(false);
@@ -293,8 +352,11 @@ export function ProfileTimeline({
   }
 
   async function handleClear() {
-    if (clearing) return;
+    if (clearing || checkingProxy || retrying) return;
     const targetId = profileId;
+    cancelRead();
+    setLoading(false);
+    setLoadingMore(false);
     setClearing(true);
     setError(null);
     try {
@@ -303,10 +365,17 @@ export function ProfileTimeline({
       setEvents([]);
       setHasMore(false);
       setNextBeforeId(null);
+      setFailedRead(null);
       setConfirmClear(false);
-    } catch (err) {
+      const refresh = refreshButton.current;
+      const document = refresh?.ownerDocument;
+      document?.defaultView?.requestAnimationFrame(() => {
+        if (activeProfileRef.current === targetId && document.activeElement === document.body) refresh?.focus();
+      });
+    } catch {
       if (activeProfileRef.current !== targetId) return;
-      setError(err instanceof Error ? err.message : t("Unable to clear activity timeline."));
+      setError(t("Unable to clear activity timeline."));
+      setConfirmClear(false);
     } finally {
       if (activeProfileRef.current === targetId) {
         setClearing(false);
@@ -315,19 +384,24 @@ export function ProfileTimeline({
   }
 
   async function handleRetryLaunch() {
-    if (!onRetryLaunch || retrying || running) return;
+    if (!onRetryLaunch || retrying || running || clearing) return;
+    const targetId = profileId;
     setRetrying(true);
     try {
-      await onRetryLaunch(profileId);
-      await loadPage({ append: false });
+      await onRetryLaunch(targetId);
+      if (activeProfileRef.current === targetId) await loadPage();
+    } catch {
+      if (activeProfileRef.current === targetId) setError(t("Could not retry the environment."));
     } finally {
-      setRetrying(false);
+      if (activeProfileRef.current === targetId) setRetrying(false);
     }
   }
 
-  function formatTime(ts: number): string {
-    const date = new Date(ts);
-    return Number.isFinite(date.getTime()) ? date.toLocaleString(language) : "";
+  function formatTime(date: Date): string {
+    return date.toLocaleString(language, {
+      ...(date.getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}),
+      month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+    });
   }
 
   function renderRecoveryActions(event: ProfileTimelineEvent) {
@@ -347,7 +421,7 @@ export function ProfileTimeline({
           <button
             type="button"
             className="btn xs"
-            disabled={checkingProxy}
+            aria-disabled={checkingProxy || clearing}
             onClick={() => void handleCheckProxy()}
           >
             {checkingProxy ? t("Checking proxy…") : t("Check proxy")}
@@ -366,7 +440,7 @@ export function ProfileTimeline({
           <button
             type="button"
             className="btn xs"
-            disabled={retrying}
+            aria-disabled={retrying || clearing}
             onClick={() => void handleRetryLaunch()}
           >
             {retrying ? t("Starting…") : t("Retry launch")}
@@ -392,6 +466,7 @@ export function ProfileTimeline({
           className="timeline-filter-select"
           aria-label={t("Filter activity by type")}
           value={typeFilter}
+          disabled={clearing}
           onChange={(event) => setTypeFilter(event.target.value as "" | ProfileEventType)}
         >
           {FILTER_OPTIONS.map((option) => (
@@ -402,59 +477,34 @@ export function ProfileTimeline({
         </select>
 
         <div className="timeline-toolbar-actions">
-          <button
+          {hasProxy && <button
             type="button"
             className="btn xs"
-            disabled={!hasProxy || checkingProxy}
+            aria-disabled={checkingProxy || clearing}
             aria-busy={checkingProxy}
-            title={hasProxy ? t("Check saved proxy on server") : t("No profile proxy")}
+            title={t("Check saved proxy on server")}
             onClick={() => void handleCheckProxy()}
           >
             <AppIcon name="activity" className="xs" />
             {checkingProxy ? t("Checking proxy…") : t("Check proxy")}
-          </button>
+          </button>}
 
           <button
             type="button"
+            ref={refreshButton}
             className="btn xs ghost"
-            disabled={loading}
+            aria-disabled={loading || loadingMore || clearing}
             aria-label={t("Refresh timeline")}
-            onClick={() => void loadPage({ append: false })}
+            title={t("Refresh timeline")}
+            onClick={() => { if (!activeRead.current && !clearing) void loadPage(); }}
           >
             <AppIcon name="refresh" className="xs" />
           </button>
 
-          {events.length > 0 &&
-            (confirmClear ? (
-              <span className="timeline-clear-confirm">
-                <button
-                  type="button"
-                  className="btn xs danger"
-                  disabled={clearing}
-                  onClick={() => void handleClear()}
-                >
-                  {clearing ? t("Clearing…") : t("Confirm clear")}
-                </button>
-                <button
-                  type="button"
-                  className="btn xs ghost"
-                  disabled={clearing}
-                  onClick={() => setConfirmClear(false)}
-                >
-                  {t("Cancel")}
-                </button>
-              </span>
-            ) : (
-              <button
-                type="button"
-                className="btn xs ghost"
-                disabled={clearing}
-                aria-label={t("Clear timeline")}
-                onClick={() => setConfirmClear(true)}
-              >
-                <AppIcon name="trash" className="xs" />
-              </button>
-            ))}
+          {events.length > 0 && <button type="button" className="btn xs ghost" disabled={clearing || checkingProxy || retrying}
+            aria-label={t("Clear timeline")} title={t("Clear timeline")} onClick={() => setConfirmClear(true)}>
+            <AppIcon name="trash" className="xs" />
+          </button>}
         </div>
       </div>
 
@@ -485,18 +535,26 @@ export function ProfileTimeline({
         </p>
       )}
 
-      {loading ? (
-        <p className="timeline-state">{t("Loading activity timeline…")}</p>
+      {failedRead && failedRead.beforeId === undefined && <div className="timeline-error timeline-error-action">
+        <span role="alert">{t("Unable to load activity timeline.")}</span>
+        <button type="button" className="btn xs" ref={retryReadButton} aria-disabled={loading || loadingMore || clearing}
+          onClick={() => { if (!activeRead.current && !clearing) void loadPage(failedRead.beforeId); }}>{t("Retry")}</button>
+      </div>}
+
+      {loading && events.length === 0 && !failedRead ? (
+        <p className="timeline-state" role="status">{t("Loading activity timeline…")}</p>
       ) : events.length === 0 ? (
-        <p className="timeline-state">{t("No activity recorded for this environment yet.")}</p>
+        !failedRead && <p className="timeline-state">{t(typeFilter ? "No matching activity." : "No activity recorded for this environment yet.")}</p>
       ) : (
-        <ol className="timeline-list">
+        <ol className="timeline-list" ref={list}>
           {events.map((event) => {
             const pills = safeDetailPills(event.detail);
+            const occurred = new Date(event.createdAt);
             return (
               <li
                 key={event.id}
                 className={`timeline-item is-${event.status}`}
+                tabIndex={-1}
                 data-event-id={event.id}
                 data-event-type={event.eventType}
               >
@@ -511,9 +569,10 @@ export function ProfileTimeline({
                     </span>
                     <time
                       className="timeline-time"
-                      dateTime={new Date(event.createdAt).toISOString()}
+                      dateTime={occurred.toISOString()}
+                      title={occurred.toLocaleString(language)}
                     >
-                      {formatTime(event.createdAt)}
+                      {formatTime(occurred)}
                     </time>
                   </div>
                   <p className="timeline-summary">{event.summary}</p>
@@ -532,16 +591,29 @@ export function ProfileTimeline({
         </ol>
       )}
 
+      {failedRead?.beforeId !== undefined && <p className="timeline-error" role="alert">{t("Unable to load older activity.")}</p>}
       {hasMore && nextBeforeId !== null && (
         <button
           type="button"
+          ref={loadMoreButton}
           className="btn xs ghost timeline-load-more"
-          disabled={loadingMore}
-          onClick={() => void loadPage({ append: true, beforeId: nextBeforeId })}
+          aria-disabled={loading || loadingMore || clearing}
+          onClick={() => { if (!activeRead.current && !clearing) void loadPage(nextBeforeId); }}
         >
-          {loadingMore ? t("Loading…") : t("Load older activity")}
+          {loadingMore ? t("Loading…") : t(failedRead?.beforeId !== undefined ? "Retry loading older activity" : "Load older activity")}
         </button>
       )}
+      <ConfirmDialog
+        open={confirmClear}
+        title={t("Clear activity timeline?")}
+        message={t("This removes all activity for this environment, including entries outside the current filter.")}
+        confirmLabel={t(clearing ? "Clearing…" : "Confirm clear")}
+        tone="danger"
+        busy={clearing}
+        portal
+        onConfirm={() => void handleClear()}
+        onCancel={() => setConfirmClear(false)}
+      />
     </div>
   );
 }

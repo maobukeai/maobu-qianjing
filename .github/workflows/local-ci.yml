@@ -25,6 +25,17 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun test --timeout 10000
+      - name: Verify the dashboard in Chrome
+        run: bun run ui:qa --rows 2000
+      - name: Upload dashboard evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: maobu-dashboard-qa
+          path: |
+            reports/ui-qa/*/ui-upgrade/*.png
+            reports/ui-qa/*/ui-upgrade/result.json
+          if-no-files-found: ignore
       - run: bun run docs:public:check
       - run: bun run i18n:locales:check
       - run: bun run desktop:prepare

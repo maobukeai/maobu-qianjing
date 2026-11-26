@@ -155,7 +155,6 @@ async function run(scenario: string) {
     await waitFor(() => !!newButton(), "Actual App bootstrap did not reach the roster");
     assert.ok(appRoot, "The actual bootstrap must create a React root");
     assert.deepEqual(unexpected, []); assert.equal(creations.length, 0);
-    if (scenario === "success") await waitFor(() => dom.container.textContent.includes("When you start an environment for the first time, the app downloads its browser engine if needed."), "A new workspace should show the first-start download guidance");
     if (recoveringLaunch) {
       const row = (id: string) => dom.container.querySelector<HTMLElement>(`tr[data-profile-id="${id}"]`);
       const errorFor = (id: string) => dom.container.querySelector<HTMLElement>(`#profile-launch-failure-${id}`);
@@ -352,7 +351,7 @@ async function run(scenario: string) {
       assert.ok(dialog()?.querySelector("details[open] .local-proxy-draft-note")?.textContent?.includes("SOCKS5 requires authentication."));
       assert.equal(label<HTMLSelectElement>("Proxy type", "select").value, "socks5");
       assert.deepEqual([value("Host"), value("Port"), value("Proxy user"), value("Proxy pass")], ["::1", "18080", "", ""]);
-      assert.equal(dialog()?.querySelector(".proxy-settings")?.previousElementSibling?.querySelector(".automatic-badge")?.textContent, "[::1]:18080");
+      assert.equal(dialog()?.querySelector(".profile-editor-proxy-summary")?.textContent, "[::1]:18080");
       await typeName("Keep this existing draft");
       await act(async () => { entry.click(); });
       assert.equal(nameInput().value, "Keep this existing draft", "Another discovery activation must not reset an open form");
@@ -391,7 +390,7 @@ async function run(scenario: string) {
       assert.equal(tab("account").getAttribute("aria-selected"), "true");
       assert.ok(panel.textContent?.includes("Local workspace"));
       await act(async () => { tab("fingerprints").click(); });
-      await waitFor(() => !!panel.textContent?.includes("Create a profile to inspect its fingerprint configuration."), "Fingerprint tab did not load its inert report");
+      await waitFor(() => !!panel.querySelector(".quality-overview + .feature-card .feature-empty"), "Fingerprint tab did not load its empty report");
       panel.scrollTop = 536; assert.equal(panel.scrollTop, 536);
       await act(async () => { tab("network").click(); });
       assert.equal(dom.container.querySelector("#settings-panel"), panel, "Settings tabs must reuse the same scroll container");
@@ -405,14 +404,30 @@ async function run(scenario: string) {
       assert.equal(dom.container.querySelector("#settings-panel"), panel);
       assert.equal(panel.scrollTop, 0, "Returning to General must reveal its first section");
       assert.equal(tab("account").getAttribute("aria-selected"), "true");
-      assert.equal([...panel.querySelectorAll<HTMLElement>("h2")].find(node => !node.closest("[hidden], [inert]"))?.textContent, "Local workspace");
+      const workspaceContext = panel.querySelector(".settings-context");
+      assert.equal(workspaceContext?.querySelector("p")?.textContent, "Local workspace");
+      assert.equal(workspaceContext?.querySelector("h2")?.textContent, "Inert fixture workspace");
       assert.equal(creations.length, 0); assert.deepEqual(unexpected, []);
       assert.equal(requests.filter(item => item.path === "/ui/api/settings").length, 3, "Startup proxy check, page preloading and memory saver each read their settings once");
       assert.equal(requests.filter(item => item.path === "/ui/api/settings/fingerprints").length, 1);
       assert.ok(requests.every(item => item.method === "GET"), "Navigating settings must not create profiles, scan ports, or write preferences");
       return;
     }
-    await act(async () => { newButton()!.click(); });
+    let createEntry = newButton()!;
+    if (scenario === "success") {
+      const emptyState = () => dom.container.querySelector<HTMLElement>(".workspace-empty");
+      await waitFor(() => !!emptyState(), "A confirmed empty workspace must provide its own starting actions");
+      const empty = emptyState()!;
+      const importEntry = button(empty, "Import profiles");
+      createEntry = button(empty, "New Profile");
+      assert.equal(importEntry.disabled, false);
+      assert.equal(createEntry.disabled, false);
+      await act(async () => { importEntry.click(); });
+      const importer = dom.container.querySelector<HTMLElement>('.profile-import-dialog[role="dialog"]');
+      assert.ok(importer, "The empty workspace import action must open the upload dialog");
+      await act(async () => { button(importer, "Cancel").click(); });
+    }
+    await act(async () => { createEntry.click(); });
     await typeName("Pending draft");
     if (scenario === "forced-host-auto") {
       await act(async () => { dialog()!.querySelector<HTMLElement>(".profile-templates > summary")!.click(); }); await dom.flush();

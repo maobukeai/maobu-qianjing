@@ -8,11 +8,14 @@ import { activityTrigger, viewActivityTask } from "./activity-interaction.ts";
 
 function deferred<T>() { let resolve!: (value: T) => void; return { promise: new Promise<T>(yes => { resolve = yes; }), resolve: (value: T) => resolve(value) }; }
 async function run(scenario: string) {
-  const profile = (id: string) => ({ id, name: id, engine: "chromium", chromiumRuntime: "aliasmode", group: "Source", platform: "example.com", tags: [], extensions: [], proxy: null, timezone: "UTC", cookieCount: 0, seeded: true, screen: "1920x1080", has2fa: false, serial: id.charCodeAt(id.length - 1), createdAt: 1, lastOpenAt: 0, customNo: "", running: false, mobilePersona: false });
+  const pendingReview = scenario.startsWith("pending-review-");
+  const profile = (id: string) => ({ id, name: id, engine: "chromium", chromiumRuntime: "aliasmode", group: "Source", platform: "example.com", tags: [], extensions: [], proxy: null, timezone: "UTC", cookieCount: 0, pendingCookieCount: pendingReview ? 1 : 0, seeded: true, screen: "1920x1080", has2fa: false, serial: id.charCodeAt(id.length - 1), createdAt: 1, lastOpenAt: 0, customNo: "", running: false, mobilePersona: false });
   const profiles = [profile("cookie_a"), profile("cookie_b"), profile("cookie_c")], groups = ["Source"];
   const workspace = { id: "default", name: "Cookie fixture workspace", color: "#8169c8", icon: "laptop", archived: false, createdAt: 1, updatedAt: 1, lastOpenedAt: 1 }, records = [workspace, { ...workspace, id: "other", name: "Other workspace" }];
   const requests: Array<{ path: string; method: string }> = [], unexpected: string[] = [];
   const imports: Array<{ ids: string[]; input: Record<string, string>; response: ReturnType<typeof deferred<Response>>; options?: RequestInit }> = [];
+  const pendingReads: Array<{ id: string; response: ReturnType<typeof deferred<Response>>; signal?: AbortSignal | null }> = [];
+  const pendingRemovals: Array<{ id: string; response: ReturnType<typeof deferred<Response>> }> = [];
   const rosters: Array<ReturnType<typeof deferred<Response>>> = [], views: Array<{ response: ReturnType<typeof deferred<Response>>; body: unknown }> = [];
   let holdRoster = false, holdViews = false, rosterReads = 0, currentWorkspace = "default";
   const json = (body: unknown, status = 200) => Response.json(body, { status });
@@ -22,6 +25,13 @@ async function run(scenario: string) {
     const path = String(input), method = options?.method ?? "GET"; requests.push({ path, method });
     if (path === "/ui/api/profiles/cookies" && method === "POST") {
       const { ids, ...payload } = JSON.parse(String(options?.body)); const response = deferred<Response>(); imports.push({ ids, input: payload, response, options }); return response.promise;
+    }
+    const pendingRoute = /^\/ui\/api\/profiles\/([^/]+)\/pending-cookies(\/clear)?$/.exec(path);
+    if (pendingReview && pendingRoute && method === (pendingRoute[2] ? "POST" : "GET")) {
+      const response = deferred<Response>();
+      const entry = { id: pendingRoute[1]!, response, signal: options?.signal };
+      (pendingRoute[2] ? pendingRemovals : pendingReads).push(entry);
+      return response.promise;
     }
     if (path === "/ui/api/profiles" && method === "GET") { rosterReads++; if (holdRoster) { const response = deferred<Response>(); rosters.push(response); return response.promise; } return json(roster()); }
     if (path === "/ui/api/workspace/preferences" && ["GET", "POST"].includes(method)) return json({ ok: true, preferences: { "aliasmode.roster.groupDisclosure": JSON.stringify(["", ...groups].map(name => [name, false])) } });
@@ -76,6 +86,59 @@ async function run(scenario: string) {
   try {
     await act(async () => { await import("../web/app.tsx"); });
     await waitFor(() => visible('tr[data-profile-id]').length === 3 && !visible<HTMLButtonElement>('[role="radio"]').find(node => node.textContent === "Compact")?.disabled, "App must load the roster and workspace preferences");
+    if (pendingReview) {
+      const dialog = () => visible<HTMLElement>('[role="dialog"]')[0]!;
+      const open = (id: string) => click(button("1 cookie(s) at next start", row(id)));
+      const resolveRead = (index: number, reply: unknown, status = 200) => act(async () => pendingReads[index]!.response.resolve(json(reply, status)));
+      const oneCookie = (domain: string) => ({ ok: true, cookies: [{ domain, name: "synthetic-session" }] });
+      const clear = () => button("Remove pending cookies", dialog());
+      const canRemove = () => visible<HTMLButtonElement>("button", dialog()).some(item => item.textContent?.trim() === "Remove pending cookies" && !item.disabled);
+      await open("cookie_a");
+      if (scenario === "pending-review-ownership") {
+        await click(button("Close", dialog()));
+        await open("cookie_b");
+        assert.deepEqual(pendingReads.map(entry => entry.id), ["cookie_a", "cookie_b"]);
+        assert.equal(pendingReads[0]!.signal?.aborted, true, "Closing a pending read aborts it");
+        await resolveRead(0, oneCookie("earlier.invalid"));
+        assert.equal(dialog().textContent?.includes("earlier.invalid"), false, "A stale read must not populate another environment's dialog");
+        assert.equal(clear().disabled, true, "Removal must wait for a verified result from the current environment");
+        await click(button("Close", dialog()));
+        await open("cookie_b");
+        await resolveRead(1, oneCookie("superseded.invalid"));
+        assert.equal(dialog().textContent?.includes("superseded.invalid"), false, "A closed request cannot replace a reopened dialog for the same environment");
+        await resolveRead(2, oneCookie("current.invalid"));
+        assert.ok(dialog().textContent?.includes("current.invalid"));
+        await click(clear(), true);
+        assert.deepEqual(pendingRemovals.map(entry => entry.id), ["cookie_b"], "Same-frame clicks must issue only one removal for the reviewed environment");
+        await act(async () => { pendingRemovals[0]!.response.resolve(json({ ok: true, removed: 1 })); });
+        await waitFor(() => !dialog(), "A successful removal closes its own dialog");
+      } else {
+        await resolveRead(0, { ok: false, error: "Fixture PRIVATE_COOKIE_VALUE" }, 503);
+        assert.match(dialog().querySelector('[role="alert"]')?.textContent ?? "", /Cookies could not be loaded/);
+        assert.equal(dialog().textContent?.includes("PRIVATE_COOKIE_VALUE"), false);
+        assert.equal(dialog().textContent?.includes("No cookies are queued for the next start."), false, "A failed read is not an empty queue");
+        assert.equal(canRemove(), false);
+        await click(button("Retry", dialog()), true);
+        assert.deepEqual(pendingReads.map(entry => entry.id), ["cookie_a", "cookie_a"], "Retry performs a single read for the same environment");
+        await resolveRead(1, { ok: true });
+        assert.match(dialog().querySelector('[role="alert"]')?.textContent ?? "", /Cookies could not be loaded/);
+        assert.equal(canRemove(), false);
+        await click(button("Retry", dialog()));
+        await resolveRead(2, oneCookie("current.invalid"));
+        await click(clear());
+        assert.deepEqual(pendingRemovals.map(entry => entry.id), ["cookie_a"]);
+        await act(async () => { pendingRemovals[0]!.response.resolve(json({ ok: true })); });
+        assert.match(dialog().querySelector('[role="alert"]')?.textContent ?? "", /Cookie removal could not be confirmed/);
+        assert.equal(canRemove(), false, "An unconfirmed removal must be rechecked before another removal is available");
+        await click(button("Retry", dialog()));
+        await resolveRead(3, { ok: true, cookies: [] });
+        assert.ok(dialog().textContent?.includes("No cookies are queued for the next start."));
+        assert.equal(clear().disabled, true);
+        assert.deepEqual(pendingRemovals.map(entry => entry.id), ["cookie_a"], "Retry never replays the removal");
+      }
+      assert.deepEqual(unexpected, []);
+      return;
+    }
     await click(select("cookie_a")); await click(select("cookie_c")); await click(button("More actions")); await click(button("Add cookies"));
     const textarea = visible<HTMLTextAreaElement>(".cookie-import-dialog textarea")[0]; assert.ok(textarea);
     await act(async () => { Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, '[{"name":"session","value":"PRIVATE_COOKIE_FIXTURE_219","domain":"example.com","path":"/"}]'); textarea.dispatchEvent(new dom.window.Event("input", { bubbles: true })); });
@@ -130,6 +193,7 @@ async function run(scenario: string) {
     assert.deepEqual(unexpected, []);
   } finally {
     holdRoster = false; holdViews = false; for (const response of rosters) response.resolve(json(roster())); for (const view of views) view.response.resolve(json(view.body)); for (const request of imports) request.response.resolve(json({ ok: false, error: "Fixture teardown" }, 400));
+    for (const entry of [...pendingReads, ...pendingRemovals]) entry.response.resolve(json({ ok: false, error: "Fixture teardown" }, 400));
     if (root) await act(async () => { root!.unmount(); }); await dom.cleanup();
     for (const [name, descriptor] of previousGlobals) { if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name); }
   }

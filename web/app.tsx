@@ -3,13 +3,14 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 import "./proxies.css";
 import "./workbench-layout.css";
+import "./global-select-menu.css";
 import maobuMarkUrl from "./maobu-mark.png";
 import { folderScope, type FolderInfo } from "../folders.ts";
 import { GROUP_DISCLOSURE_KEY, readGroupDisclosure, serializeGroupDisclosure, toggleProfileSelection } from "../profile-group-state.ts";
 import { profileTagsUpdate } from "../profile-tags.ts";
 import { FAVORITE_PROFILES_KEY, SAVED_PROFILE_VIEWS_KEY, parseFavoriteProfiles, parseSavedProfileViews, serializeFavoriteProfiles, serializeSavedProfileViews, type RosterScope, type SavedProfileView } from "../profile-view-state.ts";
 import { AboutPopover } from "./about-popover.tsx";
-import { assignExtensionBulk, closeProfile, convertMobileProfile, createGroup, deleteGroup, deleteProfiles, exportProfiles, fetchAppMode, fetchDiagnose, fetchDiskSpace, fetchExtensions, fetchGroupExtensionDefaults, fetchHealth, fetchLogs, fetchRuntimeDownloads, fetchTotp, installWebStoreExtension, isUnauthorizedError, moveGroup, openProfile, previewGroupExtensionDefaults, removeExtension, renameGroup, restartProfile, setGroupExtensionDefaults, setStandaloneSessionToken, subscribeUnauthorized, updateProfile, uploadExtensions, type AppModeConfig, type DiagnoseReport, type DiskSpace, type ExportFormat, type ExportProgress, type Extension, type GroupExtensionDefaults, type RuntimeDownload, type UiProfile } from "./api.ts";
+import { assignExtensionBulk, closeProfile, convertMobileProfile, createGroup, deleteGroup, deleteProfiles, exportProfiles, fetchAppMode, fetchDiagnose, fetchDiskSpace, fetchExtensions, fetchGroupExtensionDefaults, fetchHealth, fetchRuntimeDownloads, fetchTotp, installWebStoreExtension, isUnauthorizedError, moveGroup, openProfile, previewGroupExtensionDefaults, removeExtension, renameGroup, restartProfile, setGroupExtensionDefaults, setStandaloneSessionToken, subscribeAppLocked, subscribeUnauthorized, updateProfile, uploadExtensions, type AppModeConfig, type DiagnoseReport, type DiskSpace, type ExportFormat, type ExportProgress, type Extension, type GroupExtensionDefaults, type RuntimeDownload, type UiProfile } from "./api.ts";
 import { useAppLockController } from "./app-lock-api.ts";
 import { AppLockScreen } from "./app-lock-screen.tsx";
 import { backgroundScriptRuns, useBackgroundScriptRun } from "./background-script-run.tsx";
@@ -21,13 +22,15 @@ import { ToastStack, useToastStack, type ToastTone } from "./components/toast-st
 import { CookieImportTaskDialog, CookieImportTaskPanel, useCookieImportTask } from "./cookie-import-task-panel.tsx";
 import { DesktopCloseHost, DesktopCloseRegistryProvider, useDesktopCloseDraft, useDesktopCloseRegistry } from "./desktop-close.tsx";
 import { useDesktopMotion, usePanelMotion } from "./desktop-motion.tsx";
+import { useGlobalSelectMenus } from "./global-select-menu.ts";
+import { useGlobalSlidingIndicators } from "./global-sliding-indicators.ts";
 import { EnvironmentInspectionPage } from "./environment-inspection.tsx";
 import { ErrorBoundary } from "./error-boundary.tsx";
 import { createExtensionDefaultDrafts } from "./extension-default-drafts.ts";
 import { ExtensionsPage, type GroupDefaultsSnapshot } from "./extensions-page.tsx";
 import { installExternalLinkHandler } from "./external-links.ts";
 import { copyPlainText } from "./features/copy-field.tsx";
-import { LogModal } from "./features/log-modal.tsx";
+import { LogModal, useLogViewer } from "./features/log-modal.tsx";
 import { MoveFolderModal } from "./features/move-folder-modal.tsx";
 import { ProfileCreateModal, ReuseRequestBanner, useProfileCreateModal, useSyncReuseCanOpen } from "./features/profile-create-modal.tsx";
 import { ProfileDetailsPanel } from "./features/profile-details.tsx";
@@ -37,7 +40,7 @@ import { ProfileImportModal, useProfileImportModal } from "./features/profile-im
 import type { ProfileRosterRowHandlers } from "./features/profile-roster-row.tsx";
 import { ProfileRosterTable } from "./features/profile-roster-table.tsx";
 import { RosterNavigation } from "./features/roster-navigation.tsx";
-import { SettingsPanel } from "./features/settings-panel.tsx";
+import { focusSettingsSection, SettingsPanel } from "./features/settings-panel.tsx";
 import { WorkbenchSidebar } from "./features/workbench-sidebar.tsx";
 import { buildFingerprintAssistantBrief } from "./fingerprint-assistant-brief.ts";
 import { useProfileMetrics } from "./hooks/use-profile-selection.ts";
@@ -73,8 +76,9 @@ import { useSignedUpdateStartup } from "./signed-updates.tsx";
 import { readThemeChoice, THEME_KEY, themeCookie, type ThemeChoice } from "./theme.ts";
 import { TrashPage } from "./trash.tsx";
 import type { TrashTaskSnapshot } from "./trash-task.ts";
-import { AppIcon, useConfirmDialog } from "./ui-primitives.tsx";
-import { DesktopStartupBar, useWindowBackdrop, useWindowChrome, WindowActionError, WindowControls } from "./window-chrome.tsx";
+import { AppIcon, ModalDialog, useConfirmDialog } from "./ui-primitives.tsx";
+import { useWindowBackdrop, useWindowChrome, WindowActionError, WindowControls } from "./window-chrome.tsx";
+import { StartupScreen } from "./features/startup-screen.tsx";
 import { WorkbenchActivity, type WorkbenchActivityItem } from "./workbench-activity.tsx";
 import { getWorkbenchShortcut, readWorkbenchShortcutContext, type WorkbenchShortcutAction } from "./workbench-shortcuts.ts";
 import { DevicePanel, useWorkspaceCatalog, WorkspaceActivity, WorkspaceManagementPage, WorkspaceProvider, WorkspaceSwitcher, type WorkspacePageIntent, type WorkspacePageRequest } from "./workspace-manager.tsx";
@@ -144,6 +148,8 @@ function desktopInvoke(): DesktopInvoke | undefined { return (window as any).__T
 
 function App() {
   const motion = useDesktopMotion(), { t, language, setLanguage } = useTranslation();
+  useGlobalSlidingIndicators();
+  useGlobalSelectMenus();
   useEffect(() => { if (typeof document !== "undefined") document.documentElement.lang = language; }, [language]);
   const { requestConfirm, confirmDialogNode, isConfirmOpen } = useConfirmDialog(), windowChrome = useWindowChrome();
   const { currentName: savedWorkspaceName, catalog, error: workspaceCatalogError, refresh: refreshWorkspaceCatalog } = useWorkspaceCatalog();
@@ -152,15 +158,19 @@ function App() {
   useEffect(() => { document.title = `${currentName} · 猫步·千境`; }, [currentName]);
 
   const [profiles, setProfiles] = useState<UiProfile[]>([]), [registeredGroups, setRegisteredGroups] = useState<string[]>([]), [localFolders, setLocalFolders] = useState<FolderInfo[]>([]);
-  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set()), [folderMenu, setFolderMenu] = useState<string | null>(null), [folderMenuPosition, setFolderMenuPosition] = useState({ left: 0, top: 0 });
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set()), [folderMenu, setFolderMenu] = useState<string | null>(null);
   const [newFolderParent, setNewFolderParent] = useState<string | null>(null), [movingFolder, setMovingFolder] = useState<string | null>(null), [folderParent, setFolderParent] = useState(""), [folderMoveBusy, setFolderMoveBusy] = useState(false), [folderMoveErr, setFolderMoveErr] = useState<string | null>(null);
-  const [appMode, setAppMode] = useState<AppModeConfig | null>(null), [appModeErr, setAppModeErr] = useState<string | null>(null), [authRequired, setAuthRequired] = useState(false), [authTokenInput, setAuthTokenInput] = useState(""), [authTokenErr, setAuthTokenErr] = useState<string | null>(null);
+  const [appMode, setAppMode] = useState<AppModeConfig | null>(null);
+  const [appModeBusy, setAppModeBusy] = useState(true), [appModeFailed, setAppModeFailed] = useState(false);
+  const appModeRead = useRef<AbortController | null>(null);
+  const startupOwnsFocus = useRef(false);
+  const [authRequired, setAuthRequired] = useState(false), [authTokenInput, setAuthTokenInput] = useState(""), [authTokenErr, setAuthTokenErr] = useState<string | null>(null);
   const appLock = useAppLockController({ enabled: appMode?.appLockAvailable === true });
   const appUnlocked = !!appMode && (appMode.appLockAvailable !== true || (appLock.status !== null && !appLock.status.locked));
   const [runtimeDownloads, setRuntimeDownloads] = useState<RuntimeDownload[]>([]), [runtimeDownloadsStale, setRuntimeDownloadsStale] = useState(false);
   const runtimeTransfersObserved = useRef(false), initialDownloadsFetched = useRef(false);
   const bulkOwnerActive = useRef(true);
-  const { loaded, connErr, connectionAlertDismissed, dismissConnectionAlert, retryConnection, refreshing, setRefreshing, load, readFreshRoster, lastRosterResult, transport } = useRosterEvents({
+  const { loaded, hasRoster, connErr, connectionAlertDismissed, dismissConnectionAlert, retryConnection, refreshing, load, readFreshRoster, lastRosterResult, transport } = useRosterEvents({
     enabled: appUnlocked, sseEnabled: appMode?.eventsStream === true, intervalMs: REFRESH_MS, bulkOwnerActiveRef: bulkOwnerActive,
     onRoster: (roster) => { setProfiles(roster.profiles); setRegisteredGroups(roster.groups); setLocalFolders(roster.folders ?? []); },
     onLifecyclePatch: (ev) => {
@@ -179,8 +189,21 @@ function App() {
       try { backgroundScriptRuns.observe(run); } catch { /* Ignore malformed stream frames; explicit reads still validate. */ }
     },
   });
-  const effectiveConnErr = appModeErr ?? connErr, [modeErr] = useState<string | null>(null);
+  const [modeErr] = useState<string | null>(null);
   const [view, setView] = useState<"profiles" | "inspection" | "scripts" | "settings" | "extensions" | "proxies" | "trash" | "workspaces" | "assistant">("profiles");
+  const bannerConnectionError = authRequired ? t("Session token required") : view !== "profiles" ? connErr : null;
+  const rosterUnavailable = connErr !== null && (!hasRoster || profiles.length === 0);
+  const rosterRetryOwnsFocus = useRef(false);
+  useLayoutEffect(() => {
+    if (!appUnlocked || !startupOwnsFocus.current) return;
+    startupOwnsFocus.current = false;
+    if (document.activeElement === document.body) document.getElementById("profiles-page-title")?.focus({ preventScroll: true });
+  }, [appUnlocked]);
+  useLayoutEffect(() => {
+    if (view === "profiles" && connErr) return;
+    if (view === "profiles" && rosterRetryOwnsFocus.current) document.getElementById("profiles-page-title")?.focus({ preventScroll: true });
+    rosterRetryOwnsFocus.current = false;
+  }, [view, connErr]);
   const [detailsTarget, setDetailsTarget] = useState<{ id: string; workspaceId: string | null } | null>(null);
   const detailsHeading = useRef<HTMLHeadingElement>(null), detailsTrigger = useRef<HTMLButtonElement | null>(null), focusDetailsOnOpen = useRef(false), settingsVisited = useRef(false);
   if (view === "settings") settingsVisited.current = true;
@@ -208,7 +231,8 @@ function App() {
   useLayoutEffect(() => {
     if (view !== "settings" || settingsTab !== "network" || !returnToLocalProxy.current) return;
     returnToLocalProxy.current = false; const target = localProxyTrigger.current; localProxyTrigger.current = null;
-    if (target?.isConnected && !target.disabled) target.focus(); else document.getElementById("settings-tab-network")?.focus();
+    if (target?.isConnected && !target.disabled) target.focus();
+    else focusSettingsSection(settingsPanelRef.current, "network");
   }, [view, settingsTab]);
   const startLocalProxyAssignment = (candidate: LocalProxyDraftCandidate, trigger: HTMLButtonElement) => {
     if (!currentWorkspaceId || workspaceCoordinator.getSnapshot().blocked || localProxyTrigger.current) return;
@@ -221,15 +245,18 @@ function App() {
   const [fingerprintRefreshVersion, setFingerprintRefreshVersion] = useState(0), [assistantDraftSuggestion, setAssistantDraftSuggestion] = useState<AssistantDraftSuggestion | null>(null);
   const assistantDraftSequence = useRef(0), settingsPanelRef = useRef<HTMLDivElement>(null);
   usePanelMotion(settingsTab, view === "settings", settingsPanelRef);
-  const updateTabRef = useRef<HTMLButtonElement>(null), focusUpdateTabOnOpen = useRef(false), focusRuntimePanelOnOpen = useRef(false);
+  const focusUpdateTabOnOpen = useRef(false), focusRuntimePanelOnOpen = useRef(false);
   useLayoutEffect(() => { if (settingsPanelRef.current) settingsPanelRef.current.scrollTop = 0; }, [settingsTab]);
-  useLayoutEffect(() => { if (view !== "settings" || settingsTab !== "updates" || !focusUpdateTabOnOpen.current) return; focusUpdateTabOnOpen.current = false; updateTabRef.current?.focus({ preventScroll: true }); }, [view, settingsTab]);
+  useLayoutEffect(() => { if (view !== "settings" || settingsTab !== "updates" || !focusUpdateTabOnOpen.current) return; focusUpdateTabOnOpen.current = false; focusSettingsSection(settingsPanelRef.current, "updates"); }, [view, settingsTab]);
   useLayoutEffect(() => { if (view !== "settings" || settingsTab !== "updates" || !focusRuntimePanelOnOpen.current) return; focusRuntimePanelOnOpen.current = false; focusRuntimePanel(); }, [view, settingsTab]);
   function focusRuntimePanel() { const target = settingsPanelRef.current?.querySelector<HTMLElement>("[data-browser-runtime-settings-heading]"); target?.focus({ preventScroll: true }); target?.scrollIntoView({ block: "start", behavior: "instant" }); }
   function viewRuntimeDownloads() { if (view === "settings" && settingsTab === "updates") { focusRuntimePanel(); return; } focusRuntimePanelOnOpen.current = true; setSettingsTab("updates"); setView("settings"); }
   function viewSignedUpdate() {
     signedUpdateStartup.dismissNotice();
-    if (view === "settings" && settingsTab === "updates") { if (settingsPanelRef.current) settingsPanelRef.current.scrollTop = 0; updateTabRef.current?.focus({ preventScroll: true }); }
+    openSignedUpdateSettings();
+  }
+  function openSignedUpdateSettings() {
+    if (view === "settings" && settingsTab === "updates") { if (settingsPanelRef.current) settingsPanelRef.current.scrollTop = 0; focusSettingsSection(settingsPanelRef.current, "updates"); }
     else { focusUpdateTabOnOpen.current = true; setSettingsTab("updates"); setView("settings"); }
   }
   const [commandOpen, setCommandOpen] = useState(false), [shortcutHelpOpen, setShortcutHelpOpen] = useState(false), shortcutAction = useRef<(action: WorkbenchShortcutAction) => void>(() => {});
@@ -242,12 +269,27 @@ function App() {
   useEffect(() => { setGithubUpdateAvailable(false); }, [currentWorkspaceId]);
   const hasUpdateNotice = Boolean(signedUpdateStartup.noticeVersion || githubUpdateAvailable);
   const [logDir, setLogDir] = useState<string | undefined>(undefined), [diskSpace, setDiskSpace] = useState<DiskSpace | null>(null), [diskWarningDismissed, setDiskWarningDismissed] = useState(false);
-  const [logView, setLogView] = useState<{ file: string; content: string } | null>(null), [logErr, setLogErr] = useState<string | null>(null), [diag, setDiag] = useState<DiagnoseReport | null>(null), [showDiag, setShowDiag] = useState(false);
+  const logs = useLogViewer(appUnlocked && !authRequired, catalog?.currentId);
+  const [diag, setDiag] = useState<DiagnoseReport | null>(null), [showDiag, setShowDiag] = useState(false);
   const [q, setQ] = useState(""), [profileStatus, setProfileStatus] = useState<"all" | "running" | "stopped">("all"), [group, setGroup] = useState("all"), [profilePage, setProfilePage] = useState(0), [pageSize, setPageSize] = useState(readPageSize);
   const [selectedTags, setSelectedTags] = useState<string[]>([]), [tagMode, setTagMode] = useState<TagFilterMode>("any"), [locatedProfileIds, setLocatedProfileIds] = useState<string[] | null>(null);
   const [explicitOnboardingState, setExplicitOnboardingState] = useState<OnboardingChecklistState | null>(readOnboardingState), [diagnosticsRun, setDiagnosticsRun] = useState(false);
-  const onboardingState: OnboardingChecklistState = explicitOnboardingState ?? (profiles.some((p) => p.running || (p.lastOpenAt ?? 0) > 0) ? "collapsed" : "open");
-  const updateOnboardingState = useCallback((next: OnboardingChecklistState) => { setExplicitOnboardingState(next); writeSetting(ONBOARDING_STATE_KEY, next); }, []);
+  const [onboardingToolVisits, setOnboardingToolVisits] = useState<ReadonlySet<string | null>>(() => new Set());
+  const updateOnboardingState = useCallback((next: OnboardingChecklistState) => {
+    setExplicitOnboardingState(next);
+    writeSetting(ONBOARDING_STATE_KEY, next);
+    if (next === "dismissed") requestAnimationFrame(() => {
+      if (document.activeElement === document.body) document.getElementById("profiles-page-title")?.focus();
+    });
+  }, []);
+  const reopenOnboarding = () => {
+    updateOnboardingState("open");
+    setView("profiles");
+    requestAnimationFrame(() => {
+      const heading = document.querySelector<HTMLElement>(".onboarding-banner .onboarding-title");
+      (heading ?? document.getElementById("profiles-page-title"))?.focus();
+    });
+  };
   const [packageExportOpen, setPackageExportOpen] = useState(false), [packageImportOpen, setPackageImportOpen] = useState(false), [packageImportFile, setPackageImportFile] = useState<File | null>(null);
   const openPackageImport = useCallback((file?: File | null) => { setPackageImportFile(file ?? null); setPackageImportOpen(true); }, []);
   useEffect(() => { setLocatedProfileIds(null); setSelectedTags([]); setTagMode("any"); }, [currentWorkspaceId]);
@@ -259,10 +301,14 @@ function App() {
   const [viewPreferencesLoading, setViewPreferencesLoading] = useState(true), [viewPreferenceReadError, setViewPreferenceReadError] = useState<string | null>(null), [viewPreferenceBusy, setViewPreferenceBusy] = useState(false), [preferenceLoadAttempt, setPreferenceLoadAttempt] = useState(0), viewPreferenceWrite = useRef(false);
   const favoriteProfileIds = useMemo(() => new Set(favoriteProfiles), [favoriteProfiles]);
   const paletteSavedViews = useMemo(() => (viewPreferencesReady ? savedProfileViews.map(({ id, name, filters }) => ({ id, name, group: filters.group, scope: filters.scope, status: filters.status })) : []), [savedProfileViews, viewPreferencesReady]);
-  const [colsOpen, setColsOpen] = useState(false), [groupDisclosure, setGroupDisclosure] = useState(() => readGroupDisclosure(null)), [groupManagerOpen, setGroupManagerOpen] = useState(false), [bulkToolsOpen, setBulkToolsOpen] = useState(false), [groupsOpen, setGroupsOpen] = useState(true);
+  const [colsOpen, setColsOpen] = useState(false), [groupDisclosure, setGroupDisclosure] = useState(() => readGroupDisclosure(null)), [groupManagerOpen, setGroupManagerOpen] = useState(false), [bulkToolsOpen, setBulkToolsOpen] = useState(false);
+  const [groupEditBusy, setGroupEditBusy] = useState(false), [groupManagerError, setGroupManagerError] = useState<string | null>(null);
+  const groupEditInFlight = useRef(false), folderMoveInFlight = useRef(false);
   const groupDisclosureKey = useMemo(() => serializeGroupDisclosure(groupDisclosure), [groupDisclosure]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed), sidebarChoice = useRef<{ workspaceId: string | null } | null>(null), [railForced, setRailForced] = useState(readRailForced), sidebarIsCompact = sidebarCollapsed || railForced;
-  const [tableScrolled, setTableScrolled] = useState(false), [theme, setTheme] = useState<ThemeChoice>(readTheme), [manualBusy, setBusy] = useState<Record<string, boolean>>({});
+  const onboardingState = explicitOnboardingState ?? (railForced || profiles.some((p) => p.running || (p.lastOpenAt ?? 0) > 0) ? "collapsed" : "open");
+  const [tableScrolled, setTableScrolled] = useState(false), [theme, setTheme] = useState<ThemeChoice>(readTheme), [systemDark, setSystemDark] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)").matches : false), [manualBusy, setBusy] = useState<Record<string, boolean>>({});
+  const effectiveTheme = theme === "system" ? (systemDark ? "dark" : "light") : theme;
   const profileMove = useProfileMove({ readRoster: () => readFreshRoster() }), moveUiInFlight = useRef(false), moveDraftRevision = useRef(0);
   const [bulkTask, setBulkTask] = useState<BulkProfileTask | null>(null), bulkTaskRef = useRef<BulkProfileTask | null>(null), bulkBatchBusy = useRef(false);
   const bulkTaskLease = useRef<WorkspaceOperationLease | null>(null), bulkTaskWorkspace = useRef<string | null>(null), [bulkTaskExpanded, setBulkTaskExpanded] = useState(false), [bulkTaskRefreshing, setBulkTaskRefreshing] = useState(false);
@@ -446,13 +492,18 @@ function App() {
     onLoadRoster: load, onRefreshImportedProfiles: refreshImportedProfiles, onActionError: setActionErr, onFlash: flash, onOpenProfilesView: () => setView("profiles"), t,
   });
   const reuseCanOpen = view === "profiles" && !createModal.showCreate && !editModal.editId && !importModal.showBulk && !showUpdate && !cookieTargets && !importModal.pendingView
-    && !movingFolder && !logView && !logErr && !scriptRunOpen && !commandOpen && !shortcutHelpOpen && !tagsTarget && !showDiag && !resourceDrawerOpen && !windowSyncOpen && !packageExportOpen && !packageImportOpen;
+    && !movingFolder && !logs.state && !scriptRunOpen && !commandOpen && !shortcutHelpOpen && !tagsTarget && !showDiag && !resourceDrawerOpen && !windowSyncOpen && !packageExportOpen && !packageImportOpen;
   useSyncReuseCanOpen(createModal, reuseCanOpen);
 
   useWindowBackdrop(theme);
   useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      document.documentElement.dataset.theme = theme === "system" ? "light" : theme;
+      return;
+    }
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
+      setSystemDark(media.matches);
       document.documentElement.dataset.theme = theme === "system" ? (media.matches ? "dark" : "light") : theme;
     };
     apply(); if (theme !== "system") return;
@@ -466,11 +517,7 @@ function App() {
     if (packageExportOpen) { setPackageExportOpen(false); return; }
     if (packageImportOpen) { setPackageImportOpen(false); setPackageImportFile(null); return; }
     if (windowSyncOpen) { setWindowSyncOpen(false); return; }
-    if (resourceDrawerOpen) { setResourceDrawerOpen(false); return; }
     if (movingFolder) { if (!folderMoveBusy) setMovingFolder(null); return; }
-    if (logView || logErr) { setLogView(null); setLogErr(null); return; }
-    if (showUpdate) { setShowUpdate(false); return; }
-    if (importModal.showBulk) { importModal.closeBulk(); return; }
     if (importModal.pendingView) { importModal.closePendingCookies(); return; }
     if (cookieTargets) { closeCookie(); return; }
     if (editModal.editId) { editModal.closeEdit(); return; }
@@ -491,12 +538,43 @@ function App() {
   const openWorkspaceManagement = (intent: WorkspacePageIntent) => { setWorkspacePageRequest((current) => ({ ...intent, id: current.id + 1 })); setView("workspaces"); };
   const showRunningProfiles = () => { setRosterScope("all"); setQ(""); setGroup("all"); setSelectedTags([]); setTagMode("any"); setLocatedProfileIds(null); setSelected(new Set()); setProfilePage(0); setProfileStatus("running"); setView("profiles"); };
 
-  const loadAppMode = useCallback(() => {
-    fetchAppMode().then((config) => { setAuthRequired(false); setAuthTokenErr(null); setAppModeErr(null); setAppMode({ ...config, mode: "local", localAnalytics: false }); })
-      .catch((error) => { if (isUnauthorizedError(error)) setAuthRequired(true); setAppModeErr(error instanceof Error ? error.message : String(error)); });
+  const loadAppMode = useCallback(async (checkingToken = false) => {
+    if (appModeRead.current) return;
+    const request = new AbortController();
+    appModeRead.current = request;
+    setAppModeBusy(true);
+    try {
+      const config = await fetchAppMode(request.signal);
+      if (appModeRead.current !== request) return;
+      setAuthRequired(false);
+      setAuthTokenErr(null);
+      setAppModeFailed(false);
+      setAppMode({ ...config, mode: "local", localAnalytics: false });
+    } catch (error) {
+      if (appModeRead.current !== request) return;
+      const needsToken = isUnauthorizedError(error);
+      setAppModeFailed(!needsToken);
+      if (needsToken) {
+        setAuthRequired(true);
+        if (checkingToken) setAuthTokenErr("Session token could not be verified.");
+      }
+    } finally {
+      if (appModeRead.current === request) {
+        appModeRead.current = null;
+        setAppModeBusy(false);
+      }
+    }
   }, []);
-  useEffect(() => { loadAppMode(); }, [loadAppMode]);
+  useEffect(() => {
+    void loadAppMode();
+    return () => {
+      const request = appModeRead.current;
+      appModeRead.current = null;
+      request?.abort();
+    };
+  }, [loadAppMode]);
   useEffect(() => subscribeUnauthorized(() => { setAuthRequired(true); }), []);
+  useEffect(() => subscribeAppLocked(() => { appLock.notifyLocked(); }), [appLock.notifyLocked]);
   useEffect(() => { const invoke = desktopInvoke(); if (!appMode || !invoke) return; void invoke("agent_runtime_ready", { readiness: "local" }).catch(() => undefined); }, [appMode]);
   useEffect(() => {
     if (!appUnlocked) return; load();
@@ -524,6 +602,7 @@ function App() {
   const appLockedRef = useRef(false);
   appLockedRef.current = appMode?.appLockAvailable === true && appLock.status?.locked === true;
   useEffect(() => {
+    if (!appUnlocked) return;
     let live = true, lastCheckedAt = 0;
     const runCheck = () => { if (appLockedRef.current) return; lastCheckedAt = Date.now(); void fetchDiskSpace().then((next) => { if (live) setDiskSpace(next); }).catch((error) => console.warn("[disk-space]", error)); };
     const check = () => { if (typeof document !== "undefined" && document.hidden) return; runCheck(); };
@@ -531,11 +610,11 @@ function App() {
     check(); const timer = setInterval(check, 60_000);
     if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisibility);
     return () => { live = false; clearInterval(timer); if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisibility); };
-  }, []);
+  }, [appUnlocked]);
 
   const anyBusy = Object.values(busy).some(Boolean);
   useEffect(() => {
-    if (appMode?.appLockAvailable === true && appLock.status?.locked === true) return;
+    if (!appUnlocked) return;
     if (transport === "sse" && initialDownloadsFetched.current) return;
     let live = true, timer: number | undefined, failures = 0;
     const poll = () => {
@@ -552,7 +631,7 @@ function App() {
       });
     };
     poll(); return () => { live = false; window.clearTimeout(timer); };
-  }, [anyBusy, profiles.length, transport, appMode?.appLockAvailable, appLock.status?.locked]);
+  }, [appUnlocked, anyBusy, profiles.length, transport]);
 
   const {
     deferredQ, folders, tree, folderLabels, groups, existingGroups, missingRosterGroup, hasRosterRefinements,
@@ -572,8 +651,7 @@ function App() {
 
   const rangeViewKey = JSON.stringify([catalog?.currentId ?? "", view, rosterScope, deferredQ, group, profileStatus, selectedTagsKey, tagMode, locatedIdsKey, sort.key, sort.dir, visibleProfilePage, pageSize]);
   rangeSelectionAnchor.current = reconcileProfileSelectionAnchor(rangeSelectionAnchor.current, rangeViewKey, rangeVisibleIds);
-  const folderMenuRef = useDismiss<HTMLSpanElement>(folderMenu !== null, () => setFolderMenu(null)), colsRef = useDismiss<HTMLDivElement>(colsOpen, () => setColsOpen(false));
-  const groupManagerRef = useDismiss<HTMLDivElement>(groupManagerOpen, () => { setGroupManagerOpen(false); setFolderMenu(null); }), exportRef = useDismiss<HTMLDivElement>(exportOpen, () => setExportOpen(false));
+  const colsRef = useDismiss<HTMLDivElement>(colsOpen, () => setColsOpen(false)), exportRef = useDismiss<HTMLDivElement>(exportOpen, () => setExportOpen(false));
   useEffect(() => { if (selected.size === 0) setBulkToolsOpen(false); }, [selected.size]);
 
   const columnVisible = (key: ColumnKey) => !hiddenCols.has(key);
@@ -582,7 +660,7 @@ function App() {
   const chooseTheme = (choice: ThemeChoice) => { setTheme(choice); writeSetting(THEME_KEY, choice); try { document.cookie = themeCookie(choice); } catch {} };
   const toggleSidebar = () => { sidebarChoice.current = { workspaceId: workspaceCoordinator.getSnapshot().workspaceId }; setSidebarCollapsed((collapsed) => { writeSetting(SIDEBAR_KEY, collapsed ? "0" : "1"); return !collapsed; }); };
   const toggleSort = (key: SortKey) => setSort((current) => (current.key === key ? { key, dir: current.dir === 1 ? -1 : 1 } : { key, dir: 1 }));
-  const refreshRoster = async () => { setRefreshing(true); try { await Promise.all([load(), Promise.resolve()]); } finally { setRefreshing(false); } };
+  const refreshRoster = retryConnection;
 
   const changeProfileSelection = (id: string, event: React.ChangeEvent<HTMLInputElement>) => {
     const keyboard = rangeKeyboardActivation.current; rangeKeyboardActivation.current = null;
@@ -593,7 +671,15 @@ function App() {
     rangeSelectionAnchor.current = result.anchor; latestSelection.current = result.selected; setSelected(result.selected);
   };
   const allVisibleSelected = selectableProfiles.length > 0 && selectableProfiles.every((p) => selected.has(p.id));
-  const selectedFilteredCount = filtered.filter((p) => selected.has(p.id)).length, selectedOutsideFilter = selected.size - selectedFilteredCount, allFilteredSelected = filtered.length > 0 && selectedFilteredCount === filtered.length && selectedOutsideFilter === 0;
+  const selectedFilteredCount = useMemo(() => {
+    if (!selected.size) return 0;
+    let count = 0;
+    for (const profile of filtered) {
+      if (selected.has(profile.id)) count++;
+    }
+    return count;
+  }, [filtered, selected]);
+  const selectedOutsideFilter = selected.size - selectedFilteredCount, allFilteredSelected = filtered.length > 0 && selectedFilteredCount === filtered.length && selectedOutsideFilter === 0;
   const selectionKind = q.trim() ? t("matching profiles") : t("profiles"), selectionScope = group === "all" ? t("{count} {kind}", { count: filtered.length.toLocaleString(), kind: selectionKind }) : t("{count} {kind} in “{group}”", { count: filtered.length.toLocaleString(), kind: selectionKind, group });
   const selectAllFiltered = () => setSelected(new Set(filtered.map((p) => p.id)));
   const toggleAll = () => setSelected((s) => { const n = new Set(s); if (allVisibleSelected) selectableProfiles.forEach((p) => n.delete(p.id)); else selectableProfiles.forEach((p) => n.add(p.id)); return n; });
@@ -612,7 +698,19 @@ function App() {
     catch { if (bulkOwnerActive.current) setActionErr(t("The move could not be confirmed. Check the result before trying again.")); }
     finally { moveUiInFlight.current = false; }
   };
-  const moveSelected = () => { const ids = [...selected], destination = newMode ? newGroup.trim() : moveTarget; if (ids.length && destination !== null && (!newMode || !!destination)) void runMoveAction(() => profileMove.submit({ ids, group: destination })); };
+  const revealMoveFeedback = (block: ScrollLogicalPosition = "nearest") => requestAnimationFrame(() => {
+    const panel = moveTaskPanelRef.current;
+    if (!panel?.firstElementChild) return;
+    panel.focus({ preventScroll: true });
+    panel.scrollIntoView?.({ block, behavior: "auto" });
+  });
+  const moveSelected = () => {
+    const ids = [...selected], destination = newMode ? newGroup.trim() : moveTarget;
+    if (!ids.length || destination === null || (newMode && !destination) || moveUiInFlight.current || profileMove.busy) return;
+    void runMoveAction(() => profileMove.submit({ ids, group: destination }));
+    if (window.matchMedia("(max-width: 760px)").matches) setBulkToolsOpen(false);
+    revealMoveFeedback("start");
+  };
   const deleteSelected = async () => {
     const ids = [...selected]; if (ids.length === 0 || deleteInFlight.current) return;
     const confirmed = await requestConfirm({ title: t("Move to Trash"), message: t("Move all {count} selected environments to Trash? This includes every selected page. You can restore them with their saved data.", { count: ids.length.toLocaleString() }), confirmLabel: t("Move to Trash"), cancelLabel: t("Cancel"), tone: "danger" });
@@ -853,19 +951,56 @@ function App() {
   const showFileUpdateResult = () => { setView("profiles"); requestAnimationFrame(() => { fileUpdatePanelRef.current?.focus({ preventScroll: true }); fileUpdatePanelRef.current?.scrollIntoView({ block: "nearest", behavior: "auto" }); }); };
 
   // ---- Group create / rename / move / delete ----
-  const createSidebarGroup = async () => {
-    const name = sidebarGroupName.trim(); if (!name) return;
-    if (name === "all") { setActionErr("This name is reserved."); return; }
-    setActionErr(null);
-    try {
+  const focusGroupAction = (name?: string) => {
+    requestAnimationFrame(() => {
+      const dialog = document.querySelector(".group-management-dialog");
+      const action = [...(dialog?.querySelectorAll<HTMLButtonElement>("[data-managed-group]") ?? [])].find(button => button.dataset.managedGroup === name);
+      (action ?? dialog?.querySelector<HTMLButtonElement>(".group-management-new"))?.focus();
+    });
+  };
+  const closeGroupManager = () => { setGroupManagerOpen(false); setFolderMenu(null); };
+  const openGroupCreate = (parent: string | null) => {
+    setNewFolderParent(parent); setSidebarGroupName(""); setAddingGroup(true);
+    setRenaming(null); setFolderMenu(null); setGroupManagerError(null);
+    requestAnimationFrame(() => document.querySelector<HTMLInputElement>(".group-management-create input")?.focus());
+  };
+  const cancelGroupCreate = () => {
+    setAddingGroup(false); setSidebarGroupName(""); setGroupManagerError(null);
+    focusGroupAction(newFolderParent ?? undefined);
+  };
+  const runGroupEdit = async (operation: () => Promise<void>) => {
+    if (groupEditInFlight.current) return;
+    groupEditInFlight.current = true;
+    setGroupEditBusy(true); setGroupManagerError(null);
+    try { await operation(); }
+    catch (error) { setGroupManagerError(error instanceof Error ? error.message : String(error)); }
+    finally { groupEditInFlight.current = false; setGroupEditBusy(false); }
+  };
+  const createSidebarGroup = () => {
+    const name = sidebarGroupName.trim();
+    if (!name) return;
+    if (name === "all") { setGroupManagerError("This name is reserved."); return; }
+    void runGroupEdit(async () => {
       const result = await createGroup(name, newFolderParent);
-      if (result.ok === false) { setActionErr(result.error || "create failed"); return; }
-      await Promise.all([load(), Promise.resolve()]); selectFolder(result.folder?.name ?? name);
+      if (result.ok === false) throw new Error(result.error || "Could not create the group.");
+      await load(); selectFolder(result.folder?.name ?? name);
       setCollapsedFolders((current) => new Set([...current].filter((folder) => folder !== newFolderParent)));
       setSidebarGroupName(""); setAddingGroup(false);
-    } catch (error) { setActionErr(error instanceof Error ? error.message : String(error)); }
+      focusGroupAction(result.folder?.name ?? name);
+    });
   };
-  const startRename = (g: string) => { setRenaming(g); setRenameVal(folderLabel(g)); };
+  const startRename = (g: string) => {
+    setRenaming(g); setRenameVal(folderLabel(g)); setAddingGroup(false); setFolderMenu(null); setGroupManagerError(null);
+  };
+  const cancelRename = (g: string) => {
+    setRenaming(null); setGroupManagerError(null); focusGroupAction(g);
+  };
+  const openFolderMove = (name: string, trigger: HTMLButtonElement) => {
+    trigger.closest(".group-management-item")?.querySelector<HTMLButtonElement>("[data-managed-group]")?.focus();
+    setFolderMenu(null); setMovingFolder(name);
+    setFolderParent(folders.find((folder) => folder.name === name)?.parentName ?? "");
+    setFolderMoveErr(null);
+  };
   const remapSelectedFolder = (from: string, to: string) => {
     if (folderScope(folders, from).has(group)) selectFolder(to + group.slice(from.length));
     const next = new Map(groupDisclosure); let changed = false;
@@ -873,35 +1008,39 @@ function App() {
     if (changed) saveGroupDisclosure(next);
   };
   const commitFolderMove = async () => {
-    if (!movingFolder) return;
+    const source = folders.find(({ name }) => name === movingFolder);
+    if (!source || (source.parentName ?? "") === folderParent || folderMoveInFlight.current) return;
+    folderMoveInFlight.current = true;
     setFolderMoveBusy(true); setFolderMoveErr(null);
     try {
-      const result = await moveGroup(movingFolder, folderParent);
+      const result = await moveGroup(source.name, folderParent);
       if (result.ok === false) throw new Error(result.error || "Move failed");
-      remapSelectedFolder(movingFolder, result.folder.name); setMovingFolder(null); await Promise.all([load(), Promise.resolve()]);
+      remapSelectedFolder(source.name, result.folder.name); setMovingFolder(null); await load();
+      focusGroupAction(result.folder.name);
     } catch (error) { setFolderMoveErr(error instanceof Error ? error.message : String(error)); }
-    finally { setFolderMoveBusy(false); }
+    finally { folderMoveInFlight.current = false; setFolderMoveBusy(false); }
   };
-  const commitRename = async () => {
-    const from = renaming, to = renameVal.trim(); setRenaming(null);
+  const commitRename = () => {
+    const from = renaming, to = renameVal.trim();
     if (!from || !to || to === folderLabel(from)) return;
-    setActionErr(null);
-    try {
-      const r = await renameGroup(from, to);
-      if (r.ok === false) setActionErr(r.error || "rename failed");
-      else { remapSelectedFolder(from, r.folder?.name ?? to); await Promise.all([load(), Promise.resolve()]); }
-    } catch (e) { setActionErr(String(e)); }
+    void runGroupEdit(async () => {
+      const result = await renameGroup(from, to);
+      if (result.ok === false) throw new Error(result.error || "Could not rename the group.");
+      const destination = result.folder?.name ?? to;
+      remapSelectedFolder(from, destination); setRenaming(null); await load();
+      focusGroupAction(destination);
+    });
   };
   const removeGroup = async (g: string) => {
     const n = countFor(g), prompt = n ? t("Delete group “{group}”? Its {count} profile(s) move to Ungrouped (not deleted).", { group: g, count: n }) : t("Delete group “{group}”?", { group: g });
     const confirmed = await requestConfirm({ title: t("Delete group"), message: prompt, confirmLabel: t("Delete"), cancelLabel: t("Cancel"), tone: "danger" });
     if (!confirmed) return;
-    setActionErr(null);
-    try {
-      const r = await deleteGroup(g);
-      if (r.ok === false) setActionErr(r.error || t("Delete failed"));
-      else { if (group === g) setGroup("all"); await Promise.all([load(), Promise.resolve()]); }
-    } catch (e) { setActionErr(e instanceof Error ? e.message : String(e)); }
+    void runGroupEdit(async () => {
+      const result = await deleteGroup(g);
+      if (result.ok === false) throw new Error(result.error || t("Delete failed"));
+      if (group === g) setGroup("all");
+      await load(); focusGroupAction();
+    });
   };
 
   useDesktopCloseDraft("extension-install", { dirty: !!extSource.trim(), busy: extInstallBusy || extBusy });
@@ -938,54 +1077,111 @@ function App() {
   const submitStandaloneAuthToken = (event: React.FormEvent) => {
     event.preventDefault();
     if (!setStandaloneSessionToken(authTokenInput)) { setAuthTokenErr(t("Paste the session token or tokenized dashboard URL printed by the CLI.")); return; }
-    setAuthTokenInput(""); setAuthTokenErr(null); setAuthRequired(false); setAppModeErr(null);
-    if (!appMode) loadAppMode(); else void retryConnection();
+    setAuthTokenInput(""); setAuthTokenErr(null); setAuthRequired(false);
+    if (!appMode) {
+      startupOwnsFocus.current = event.currentTarget.contains(document.activeElement);
+      void loadAppMode(true);
+    } else void retryConnection();
   };
 
-  if (!appMode)
-    return <div className={`desktop-loading-shell${windowChrome.enabled ? " desktop-frameless" : ""}`}><DesktopStartupBar chrome={windowChrome}><MaobuMark />猫步·千境</DesktopStartupBar><WindowActionError chrome={windowChrome} /><main className="onboarding"><section className="onboarding-card"><h1>猫步·千境</h1><p>{effectiveConnErr ?? t("Loading your configuration…")}</p>{authRequired && (<form className="auth-token-form" onSubmit={submitStandaloneAuthToken}><label className="sr-only" htmlFor="standalone-auth-token">{t("Session token")}</label><input id="standalone-auth-token" className="input" type="password" autoComplete="off" value={authTokenInput} onChange={(event) => setAuthTokenInput(event.target.value)} placeholder={t("Paste token or /?token=… URL")} /><button type="submit" className="btn primary">{t("Unlock dashboard")}</button>{authTokenErr && <p className="field-error" role="alert">{authTokenErr}</p>}</form>)}{effectiveConnErr && <button className="btn" onClick={() => (authRequired ? loadAppMode() : window.location.reload())}>{t("Try again")}</button>}</section></main></div>;
+  const startupBrand = <><MaobuMark />猫步·千境</>;
+  if (!appMode) {
+    const phase = appModeBusy ? "loading" : appModeFailed ? "failed" : authRequired ? "session" : "loading";
+    const title = t(phase === "failed" ? "Could not load the dashboard." : phase === "session" ? "Session token required" : "Loading your configuration…");
+    return (
+      <StartupScreen chrome={windowChrome} brand={startupBrand} phase={phase} title={title}>
+        {phase === "session" && (
+          <form className="auth-token-form" onSubmit={submitStandaloneAuthToken}>
+            <label className="fld">
+              <span>{t("Session token")}</span>
+              <input className="input" type="password" autoComplete="off" aria-describedby="startup-token-hint" aria-invalid={!!authTokenErr || undefined}
+                value={authTokenInput} onChange={(event) => { setAuthTokenInput(event.target.value); setAuthTokenErr(null); }} />
+            </label>
+            <small id="startup-token-hint" className={authTokenErr ? "field-error" : "muted"} role={authTokenErr ? "alert" : undefined}>
+              {t(authTokenErr ?? "Paste the session token or tokenized dashboard URL printed by the CLI.")}
+            </small>
+            <button type="submit" className="btn primary">{t("Unlock dashboard")}</button>
+          </form>
+        )}
+        {appModeFailed && <button type="button" className="btn primary" aria-disabled={appModeBusy || undefined} aria-busy={appModeBusy || undefined} onClick={(event) => {
+          if (appModeRead.current) return;
+          startupOwnsFocus.current = document.activeElement === event.currentTarget;
+          void loadAppMode();
+        }}>{t("Try again")}</button>}
+      </StartupScreen>
+    );
+  }
+
+  if (appMode.appLockAvailable === true && appLock.status === null) {
+    const failed = !!appLock.error && !appLock.loading;
+    return (
+      <StartupScreen chrome={windowChrome} brand={startupBrand} phase={failed ? "failed" : "loading"}
+        title={t(failed ? "Could not load app lock status." : "Checking app lock status…")}>
+        {appLock.error && <button type="button" className="btn primary" aria-disabled={appLock.loading || undefined} aria-busy={appLock.loading || undefined} onClick={(event) => {
+          if (appLock.loading) return;
+          startupOwnsFocus.current = document.activeElement === event.currentTarget;
+          void appLock.refresh();
+        }}>{t("Try again")}</button>}
+      </StartupScreen>
+    );
+  }
 
   const diagWhen = diag ? new Date(diag.generatedAt).toLocaleTimeString() : null, shownColumns = COLUMNS.filter((column) => columnVisible(column.key)), visibleColumnCount = 1 + shownColumns.length;
   const tableMinWidth = CHECKBOX_COLUMN_WIDTH + shownColumns.reduce((total, column) => total + column.width, 0);
 
-  const groupNavigation = (
-    <div className="sidesection group-management">
-      <button className="sidehead" onClick={() => setGroupsOpen((o) => !o)}><span className={`chev${groupsOpen ? " open" : ""}`}><Icon name="chevronRight" className="sm" /></span><span>{t("Groups")}</span><span className="grow" /><span className="cnt">{existingGroups.length}</span></button>
-      {groupsOpen && <>
-        <div className="folders">
-          {existingGroups.length === 0 && <div className="folders-empty">{t("No groups yet")}</div>}
-          {tree.filter((folder) => !folder.ancestors.some((name) => collapsedFolders.has(name))).map(({ name: g, label, depth }) => (
-            <div key={g} style={{ paddingLeft: 10 + depth * 16 }} className={`folder${view === "profiles" && group === g ? " active" : ""}`} onClick={() => { if (renaming !== g) selectFolder(g); }}>
-              {renaming === g ? (<input className="renameinput" autoFocus value={renameVal} onClick={(e) => e.stopPropagation()} onChange={(e) => setRenameVal(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") commitRename(); else if (e.key === "Escape") setRenaming(null); }} onBlur={commitRename} />) : (<>
-                {folders.some((folder) => folder.parentName === g) ? <button className="folder-toggle" type="button" aria-label={t("Expand or collapse {folder}", { folder: g })} aria-expanded={!collapsedFolders.has(g)} onClick={(event) => { event.stopPropagation(); setCollapsedFolders((current) => { const next = new Set(current); if (next.has(g)) next.delete(g); else next.add(g); return next; }); }}><Icon name={collapsedFolders.has(g) ? "chevronRight" : "chevronDown"} className="sm" /></button> : <Icon name="folder" className="sm" />}
-                <button className="fname folder-select" title={g} onClick={() => selectFolder(g)}>{label ?? g}</button>
-                <span className="gactions menuwrap" ref={folderMenu === g ? folderMenuRef : undefined} onClick={(event) => event.stopPropagation()}>
-                  <button type="button" title={t("Folder actions")} aria-label={t("Actions for {folder}", { folder: g })} aria-expanded={folderMenu === g} onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setFolderMenuPosition({ left: Math.max(8, Math.min(rect.right + 8, window.innerWidth - 230)), top: Math.max(8, Math.min(rect.top, window.innerHeight - 240)) }); setFolderMenu(folderMenu === g ? null : g); }}><Icon name="more" className="sm" /></button>
-                  {folderMenu === g && <span className="popover folder-menu" style={folderMenuPosition} onClick={() => setFolderMenu(null)}>
-                    <button className="pop-item" onClick={() => { setNewFolderParent(g); setSidebarGroupName(""); setAddingGroup(true); }}><Icon name="plus" className="sm" />{t("New subfolder")}</button>
-                    <button className="pop-item" onClick={() => startRename(g)}><Icon name="edit" className="sm" />{t("Rename")}</button>
-                    <button className="pop-item" onClick={() => { setMovingFolder(g); setFolderParent(folders.find((folder) => folder.name === g)?.parentName ?? ""); setFolderMoveErr(null); }}><Icon name="move" className="sm" />{t("Move to…")}</button>
-                    <button className="pop-item danger" disabled={folders.some((folder) => folder.parentName === g)} onClick={() => void removeGroup(g)}><Icon name="trash" className="sm" />{t("Delete")}</button>
-                  </span>}
-                </span><span className="cnt">{countFor(g)}</span>
-              </>)}
-            </div>
-          ))}
-        </div>
-        {addingGroup ? (<div className="newgroup" title={newFolderParent ?? undefined}>
-          {newFolderParent && <small>{t("In {folder}", { folder: folderLabel(newFolderParent) })}</small>}
-          <input autoFocus aria-label={t("New group name")} value={sidebarGroupName} onChange={(event) => setSidebarGroupName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void createSidebarGroup(); else if (event.key === "Escape") { setAddingGroup(false); setSidebarGroupName(""); } }} />
-          <button type="button" title={t("Create")} onClick={() => void createSidebarGroup()}><Icon name="check" className="sm" /></button>
-          <button type="button" title={t("Cancel")} onClick={() => { setAddingGroup(false); setSidebarGroupName(""); }}><Icon name="close" className="sm" /></button>
-        </div>) : (<button className="newgroup" type="button" onClick={() => { setNewFolderParent(null); setAddingGroup(true); }}><Icon name="plus" className="sm" />{t("New group")}</button>)}
-      </>}
-    </div>
+  const groupNavigation = groupManagerOpen && (
+    <ModalDialog open={view === "profiles"} title={t("Manage groups")} onClose={closeGroupManager} busy={groupEditBusy}
+      className="group-management-dialog" backdropClassName="group-dialog-backdrop" portal footer={addingGroup ? (
+        <form className="group-management-create" onSubmit={(event) => { event.preventDefault(); createSidebarGroup(); }}>
+          <label className="fld">
+            <span>{newFolderParent ? t("In {folder}", { folder: newFolderParent }) : t("New group name")}</span>
+            <input aria-label={t("New group name")} value={sidebarGroupName} disabled={groupEditBusy} onChange={(event) => setSidebarGroupName(event.target.value)} />
+          </label>
+          <div className="group-edit-actions">
+            <button type="button" className="btn ghost" disabled={groupEditBusy} onClick={cancelGroupCreate}>{t("Cancel")}</button>
+            <button type="submit" className="btn primary" disabled={!sidebarGroupName.trim() || groupEditBusy}>{t("Create")}</button>
+          </div>
+        </form>
+      ) : <button className="btn primary group-management-new" type="button" disabled={groupEditBusy} onClick={() => openGroupCreate(null)}><Icon name="plus" className="sm" />{t("New group")}</button>}>
+      {groupManagerError && <p className="modal-err" role="alert">{t(groupManagerError)}</p>}
+      {tree.length === 0 ? <p className="group-management-empty"><Icon name="folders" />{t("No groups yet")}</p> : (
+        <ul className="group-management-list">
+          {tree.filter((folder) => !folder.ancestors.some((name) => collapsedFolders.has(name))).map(({ name: g, label, depth }) => {
+            const hasChildren = folders.some((folder) => folder.parentName === g);
+            return <li key={g} className="group-management-item" style={{ "--group-depth": Math.min(depth, 4) } as React.CSSProperties}>
+              {renaming === g ? <form className="group-management-rename" onSubmit={(event) => { event.preventDefault(); commitRename(); }}>
+                <label className="fld"><span>{t("Group name")}</span><input autoFocus disabled={groupEditBusy} value={renameVal} onChange={(event) => setRenameVal(event.target.value)} /></label>
+                <div className="group-edit-actions">
+                  <button type="button" className="btn ghost" disabled={groupEditBusy} onClick={() => cancelRename(g)}>{t("Cancel")}</button>
+                  <button type="submit" className="btn primary" disabled={!renameVal.trim() || renameVal.trim() === folderLabel(g) || groupEditBusy}>{t("Save")}</button>
+                </div>
+              </form> : <>
+                <div className={`group-management-row${group === g ? " is-current" : ""}`}>
+                  {hasChildren ? <button className="iconbtn group-management-fold" type="button" aria-label={t("Expand or collapse {folder}", { folder: g })} aria-expanded={!collapsedFolders.has(g)} onClick={() => setCollapsedFolders((current) => { const next = new Set(current); if (next.has(g)) next.delete(g); else next.add(g); return next; })}><Icon name={collapsedFolders.has(g) ? "chevronRight" : "chevronDown"} className="sm" /></button> : <Icon name="folder" className="sm group-management-icon" />}
+                  <button type="button" className="group-management-target" title={g} aria-current={group === g || undefined} disabled={groupEditBusy} onClick={() => { selectFolder(g); closeGroupManager(); }}>{label ?? g}</button>
+                  <span className="group-management-count" aria-label={t("{count} environments", { count: countFor(g) })}>{countFor(g)}</span>
+                  <button type="button" className="iconbtn" data-managed-group={g} title={t("Folder actions")} aria-label={t("Actions for {folder}", { folder: g })} aria-expanded={folderMenu === g} disabled={groupEditBusy} onClick={() => setFolderMenu(folderMenu === g ? null : g)}><Icon name="more" className="sm" /></button>
+                </div>
+                {folderMenu === g && <div className="group-management-actions">
+                  <button className="btn xs ghost" type="button" disabled={groupEditBusy} onClick={() => openGroupCreate(g)}><Icon name="plus" className="sm" />{t("New subfolder")}</button>
+                  <button className="btn xs ghost" type="button" disabled={groupEditBusy} onClick={() => startRename(g)}><Icon name="edit" className="sm" />{t("Rename")}</button>
+                  <button className="btn xs ghost" type="button" disabled={groupEditBusy} onClick={(event) => openFolderMove(g, event.currentTarget)}><Icon name="move" className="sm" />{t("Move to…")}</button>
+                  <button className="btn xs ghost group-management-delete" type="button" disabled={groupEditBusy || hasChildren} onClick={() => void removeGroup(g)}><Icon name="trash" className="sm" />{t("Delete")}</button>
+                </div>}
+              </>}
+            </li>;
+          })}
+        </ul>
+      )}
+    </ModalDialog>
   );
 
   const focusProfileSearch = () => { setView("profiles"); requestAnimationFrame(() => document.querySelector<HTMLInputElement>(".heading-search input")?.focus()); };
   const openSettingsFromPalette = (tab: SettingsTab) => {
     setSettingsTab(tab); setView("settings");
-    requestAnimationFrame(() => { const target = document.getElementById(`settings-tab-${tab}`); if (target?.getAttribute("aria-selected") === "true" && !target.closest("[hidden], [inert]") && !readWorkbenchShortcutContext(document.activeElement).modalOpen) target.focus({ preventScroll: true }); });
+    requestAnimationFrame(() => {
+      if (!readWorkbenchShortcutContext(document.activeElement).modalOpen) focusSettingsSection(settingsPanelRef.current, tab);
+    });
   };
   const locateProfile = (id: string) => {
     chooseRosterScope("all"); setGroup("all"); setProfileStatus("all"); setQ(`id:${id}`); setProfilePage(0); setView("profiles");
@@ -1025,7 +1221,7 @@ function App() {
     else if (action === "go-assistant") setView("assistant");
     else if (action === "go-extensions") openExtensions();
   };
-  const showMoveTask = () => { setView("profiles"); requestAnimationFrame(() => { moveTaskPanelRef.current?.focus({ preventScroll: true }); moveTaskPanelRef.current?.scrollIntoView({ block: "nearest", behavior: "auto" }); }); };
+  const showMoveTask = () => { setView("profiles"); revealMoveFeedback(); };
   const showTrashTask = () => { setView("trash"); requestAnimationFrame(() => { const target = document.querySelector<HTMLElement>(".trash-task-panel h3") ?? document.getElementById("trash-page-title"); target?.focus({ preventScroll: true }); target?.scrollIntoView({ block: "nearest", behavior: "auto" }); }); };
   const showProxyTask = () => { if (!currentWorkspaceId || workspaceCoordinator.getSnapshot().workspaceId !== currentWorkspaceId) return; setProxyTaskFocusRequest({ workspaceId: currentWorkspaceId }); setView("proxies"); };
 
@@ -1037,7 +1233,7 @@ function App() {
     openEdit: editModal.openEdit, openPendingCookies: importModal.openPendingCookies, openCookie, act, openInspection,
     reuseProfileConfiguration: createModal.reuseProfileConfiguration, openProfileTags, copy2fa, toggleFavorite,
     changeProfileSelection, setLaunchFailure, openNetworkSettings: () => { setSettingsTab("network"); openSettings(); },
-    openLogs: () => { setLogErr(null); void fetchLogs().then(setLogView).catch((error) => setLogErr(error instanceof Error ? error.message : String(error))); },
+    openLogs: logs.open,
     trimMemory: async (id) => {
       try {
         const res = await trimProfileMemoryApi(id);
@@ -1132,8 +1328,8 @@ function App() {
 
         <WorkbenchSidebar compact={sidebarIsCompact} collapsed={sidebarCollapsed} forced={railForced} view={view} profileCount={profiles.length} extensionCount={extensions.length} loaded={loaded} onToggle={toggleSidebar} onNavigate={setView} onProfiles={() => { chooseRosterScope("all"); selectFolder("all"); }} onExtensions={openExtensions} onSettings={openSettings} navigationRef={navigationMotion.navRef} error={modeErr}
           switcher={<WorkspaceSwitcher variant="rail" compact={sidebarIsCompact} profileCount={profiles.length} runningCount={runningCount} connection={loaded && !connErr} onShowRunning={showRunningProfiles} onOpenManagement={openWorkspaceManagement} onShowBatchTask={showBulkTask} managementActive={view === "workspaces"} />}
-          device={<DevicePanel variant="rail" runningCount={runningCount} downloads={runtimeDownloads} downloadStatusUnavailable={runtimeDownloadsStale} connection={loaded && !connErr} connectionLoading={!loaded} version={appVersion ?? ""} theme={theme} chooseTheme={chooseTheme} language={language} setLanguage={setLanguage} onShowRunning={showRunningProfiles} onSettings={(section) => { setSettingsTab(section === "advanced" ? "advanced" : "account"); setView("settings"); }} onViewLogs={() => { setLogErr(null); fetchLogs().then(setLogView).catch((error) => setLogErr(error instanceof Error ? error.message : String(error))); }} onRetryConnection={refreshRoster} />}>
-          <RosterNavigation compact={sidebarIsCompact} active={view === "profiles"} group={group} total={profiles.length} ungrouped={countFor("")} groups={tree.map((folder) => ({ name: folder.name, label: folder.label ?? folderLabel(folder.name), depth: folder.depth, count: countFor(folder.name) }))} onGroup={selectFolder}>
+          device={<DevicePanel variant="rail" runningCount={runningCount} downloads={runtimeDownloads} downloadStatusUnavailable={runtimeDownloadsStale} connection={loaded && !connErr} connectionLoading={!loaded} version={appVersion ?? ""} theme={theme} chooseTheme={chooseTheme} language={language} setLanguage={setLanguage} onShowRunning={showRunningProfiles} onSettings={(section) => { setSettingsTab(section === "advanced" ? "advanced" : "account"); setView("settings"); }} onViewLogs={logs.open} onRetryConnection={refreshRoster} />}>
+          <RosterNavigation compact={sidebarIsCompact} active={view === "profiles"} scope={rosterScope} onScope={chooseRosterScope} group={group} total={profiles.length} ungrouped={countFor("")} groups={tree.map((folder) => ({ name: folder.name, label: folder.label ?? folderLabel(folder.name), depth: folder.depth, count: countFor(folder.name) }))} onGroup={selectFolder}>
             <RosterViews current={{ scope: rosterScope, query: q, group, status: profileStatus, ...(selectedTags.length > 0 ? { tags: selectedTags, tagMode } : {}), sort, hiddenColumns: [...hiddenCols], pageSize }} views={viewPreferencesReady ? savedProfileViews : []} counts={rosterViewCounts} ready={viewPreferencesReady} loading={!workspaceCatalogError && viewPreferencesLoading} readError={viewPreferenceReadError || workspaceCatalogError} busy={viewPreferenceBusy} onRetry={() => { if (workspaceCatalogError) void refreshWorkspaceCatalog(); else setPreferenceLoadAttempt((value) => value + 1); }} onScope={chooseRosterScope} onApply={applyProfileView} onSave={saveProfileView} onRemove={removeProfileView} />
           </RosterNavigation>
         </WorkbenchSidebar>
@@ -1144,32 +1340,56 @@ function App() {
               <MaobuMark /><strong>猫步·千境</strong>
               {sidebarIsCompact && savedWorkspaceName && <span className="desktop-workspace-name" title={savedWorkspaceName}>{savedWorkspaceName}</span>}
               {appVersion && <span className="appversion" title={appVersion}>{appVersion}</span>}
-              {hasUpdateNotice && <span className="desktop-brand-dot" data-update-available="true" aria-hidden="true" />}
+              <span className="desktop-brand-dot" data-update-available={hasUpdateNotice ? "true" : undefined} aria-hidden="true" />
             </button>
+            <button type="button" className="command-palette-trigger" data-no-drag aria-label={t("Command palette")} title={t("Command palette")} aria-haspopup="dialog" aria-expanded={commandOpen} onClick={() => setCommandOpen(true)}><Icon name="search" className="sm" /><span>{t("Command palette")}</span><kbd>{typeof navigator !== "undefined" && /Mac/.test(navigator.platform) ? "⌘ K" : "Ctrl K"}</kbd></button>
             <div className="topbar-actions">
               <ResourceTopCapsule runningCount={runningCount} snapshot={resourceMonitor.snapshot} open={resourceDrawerOpen} onToggle={() => setResourceDrawerOpen((open) => !open)} />
               <button type="button" className="iconbtn tip wsync-topbar-trigger" data-tip={t("Window layout & synchronizer")} aria-label={t("Window layout & synchronizer")} aria-haspopup="dialog" aria-expanded={windowSyncOpen} onClick={() => setWindowSyncOpen((open) => !open)}><Icon name="window" />{syncState.active && <span className="wsync-topbar-dot" aria-hidden="true" />}</button>
               <WorkbenchActivity items={activityItems} />
-              <button type="button" className="command-palette-trigger" aria-label={t("Command palette")} title={t("Command palette")} aria-haspopup="dialog" aria-expanded={commandOpen} onClick={() => setCommandOpen(true)}><Icon name="search" className="sm" /><span>{t("Command palette")}</span><kbd>{typeof navigator !== "undefined" && /Mac/.test(navigator.platform) ? "⌘ K" : "Ctrl K"}</kbd></button>
+              <div className="topbar-theme-toggle" role="radiogroup" aria-label={t("Theme")} data-no-drag>
+                <button
+                  type="button"
+                  role="radio"
+                  className="topbar-theme-btn tip"
+                  data-tip={t("Light")}
+                  aria-label={t("Light")}
+                  aria-checked={effectiveTheme === "light"}
+                  onClick={() => chooseTheme("light")}
+                >
+                  <Icon name="sun" className="sm" />
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  className="topbar-theme-btn tip"
+                  data-tip={t("Dark")}
+                  aria-label={t("Dark")}
+                  aria-checked={effectiveTheme === "dark"}
+                  onClick={() => chooseTheme("dark")}
+                >
+                  <Icon name="moon" className="sm" />
+                </button>
+              </div>
               <button type="button" className="iconbtn tip shortcut-help-trigger" data-tip={`${t("Keyboard shortcuts")} · ?`} aria-label={t("Keyboard shortcuts")} aria-haspopup="dialog" aria-expanded={shortcutHelpOpen} onClick={() => setShortcutHelpOpen(true)}><Icon name="help" /></button>
               <button type="button" className="iconbtn tip topbar-settings" data-tip={t("Settings")} aria-label={t("Settings")} onClick={openSettings}><Icon name="settings" /></button>
               <WindowControls chrome={windowChrome} />
             </div>
           </header>
           <AboutPopover open={aboutOpen} onClose={() => setAboutOpen(false)} anchorRef={aboutTriggerRef} appVersion={appVersion} signedUpdateStartup={signedUpdateStartup} dialogId="about-popover-dialog"
-            onOpenUpdateSettings={() => { setAboutOpen(false); if (view === "settings" && settingsTab === "updates") { if (settingsPanelRef.current) settingsPanelRef.current.scrollTop = 0; updateTabRef.current?.focus({ preventScroll: true }); } else { focusUpdateTabOnOpen.current = true; setSettingsTab("updates"); setView("settings"); } }}
+            onOpenUpdateSettings={() => { setAboutOpen(false); openSignedUpdateSettings(); }}
             onGithubUpdateResult={(result) => setGithubUpdateAvailable(result?.status === "available")} />
 
           <div className="workspace-content" ref={navigationMotion.contentRef} role="main" aria-label={t(PAGE_TITLES[view])}>
             <ErrorBoundary scope={t(PAGE_TITLES[view])} resetKeys={[view, currentWorkspaceId]}>
               <WorkspaceActivity hidden={view === "workspaces"} onOpen={() => openWorkspaceManagement({ mode: "backups" })} />
               {signedUpdateStartup.noticeVersion && <div className="update-banner signed-update-notice"><Icon name="refresh" className="sm" /><span role="status">{t("Signed desktop update {version} is available.", { version: signedUpdateStartup.noticeVersion })}</span><button className="btn xs" type="button" onClick={viewSignedUpdate}>{t("View update")}</button><button className="update-result-dismiss" type="button" aria-label={t("Dismiss")} onClick={signedUpdateStartup.dismissNotice}><Icon name="close" className="sm" /></button></div>}
-              {(actionErr ?? (!connectionAlertDismissed ? effectiveConnErr : null)) && (
+              {(actionErr ?? (!connectionAlertDismissed ? bannerConnectionError : null)) && (
                 <div className="error" role="alert">
-                  <Icon name="alert" /><span>{t(actionErr ?? effectiveConnErr ?? "")}</span>
+                  <Icon name="alert" /><span>{t(actionErr ?? bannerConnectionError ?? "")}</span>
                   {authRequired && <form className="auth-token-form inline" onSubmit={submitStandaloneAuthToken}><label className="sr-only" htmlFor="standalone-banner-auth-token">{t("Session token")}</label><input id="standalone-banner-auth-token" className="input" type="password" autoComplete="off" value={authTokenInput} onChange={(event) => setAuthTokenInput(event.target.value)} placeholder={t("Paste token or /?token=… URL")} /><button type="submit" className="btn xs primary">{t("Unlock dashboard")}</button>{authTokenErr && <span className="field-error">{authTokenErr}</span>}</form>}
-                  {!actionErr && effectiveConnErr && <button type="button" className="btn xs ghost" disabled={refreshing} onClick={() => void retryConnection()}>{t("Retry")}</button>}
-                  <button className="dismiss" aria-label={t("Dismiss error")} onClick={() => { setActionErr(null); if (effectiveConnErr) dismissConnectionAlert(); }}><Icon name="close" className="sm" /></button>
+                  {!actionErr && bannerConnectionError && <button type="button" className="btn xs ghost" disabled={refreshing} onClick={() => void retryConnection()}>{t("Retry")}</button>}
+                  <button className="dismiss" aria-label={t("Dismiss error")} onClick={() => { if (actionErr) setActionErr(null); else dismissConnectionAlert(); }}><Icon name="close" className="sm" /></button>
                 </div>
               )}
               <ToastStack toasts={toasts} onDismiss={dismissToast} />
@@ -1192,30 +1412,32 @@ function App() {
                 <div className="workspace profiles-workspace">
                   <ReuseRequestBanner request={createModal.reuseRequest} onRetry={(id, name) => void createModal.reuseProfileConfiguration(id, name)} onCancel={createModal.cancelReuseRead} />
                   <div className="page-heading">
-                    <div className="profile-heading-copy"><h1 id="profiles-page-title" tabIndex={-1}>{t("Environments")}</h1><span className="profile-total">{t("{count} environments", { count: profiles.length })}</span></div>
+                    <h1 id="profiles-page-title" tabIndex={-1}>{t("Environments")}</h1>
                     <div className="page-actions">
                       <button className="btn" title={t("Import profiles from AdsPower, GoLogin, Multilogin, Donut, and other readable exports")} onClick={importModal.openBulk}><Icon name="fileImport" className="sm" />{t("Import profiles")}</button>
                       <button className="btn primary" onClick={createModal.openCreate}><Icon name="plus" className="sm" />{t("New Profile")}</button>
                     </div>
                   </div>
-                  {loaded && onboardingState !== "dismissed" && (
+                  {hasRoster && !connErr && onboardingState !== "dismissed" && (
                     <OnboardingChecklist
                       profiles={profiles}
                       appLockEnabled={appLock.status?.enabled === true}
                       diagnosticsRun={diagnosticsRun}
+                      toolsExplored={onboardingToolVisits.has(currentWorkspaceId)}
                       state={onboardingState}
                       onStateChange={updateOnboardingState}
                       onCreateProfile={createModal.openCreate}
                       onImportProfiles={importModal.openBulk}
                       onOpenProxies={() => setView("proxies")}
                       onLaunchFirstProfile={(id) => void act(id, openProfile)}
+                      onVisitTool={() => setOnboardingToolVisits((visited) => new Set(visited).add(currentWorkspaceId))}
                       onOpenDiagnostics={() => { setSettingsTab("advanced"); setView("settings"); }}
                       onOpenAppLock={() => { setSettingsTab("account"); setView("settings"); }}
                       onOpenScripts={() => setView("scripts")}
                     />
                   )}
                   {!!breadcrumb?.ancestors.length && <nav className="folder-breadcrumb" aria-label={t("Folder path")}><button className="btn ghost xs" onClick={() => selectFolder("all")}>{t("All profiles")}</button>{breadcrumb.ancestors.map((name) => <span key={name}> / <button className="btn ghost xs" onClick={() => selectFolder(name)}>{folderLabel(name)}</button></span>)}<span aria-current="location"> / {folderLabel(group)}</span></nav>}
-                  <div className="profile-filter-row">
+                  <div className="profile-filter-row" hidden={rosterUnavailable}>
                     <div className="searchfield heading-search"><Icon name="search" className="sm" /><input className="input search" placeholder={t("Search name, No., tag or proxy…")} aria-label={t("Search profiles")} value={q} onChange={(e) => setQ(e.target.value)} />{q && <button type="button" className="clear" aria-label={t("Clear search")} onClick={() => setQ("")}><Icon name="close" className="sm" /></button>}</div>
                     <select className="select group-filter" aria-label={t("Group filter")} hidden={!sidebarIsCompact} value={group} onChange={(event) => selectFolder(event.target.value)}>
                       <option value="all">{t("All groups")} · {profiles.length}</option>
@@ -1224,7 +1446,7 @@ function App() {
                       {tree.map((folder) => <option key={folder.name} value={folder.name}>{[...folder.ancestors, folder.name].map(folderLabel).join(" / ")} · {countFor(folder.name)}</option>)}
                     </select>
                     <div className="profile-status-filter"><div className="profile-status-tabs" role="group" aria-label={t("Filter by status")}>
-                      <button type="button" className={profileStatus === "all" ? "active" : ""} aria-pressed={profileStatus === "all"} onClick={() => setProfileStatus("all")}>{t("All environments")}<span>{matchingProfiles.length}</span></button>
+                      <button type="button" className={profileStatus === "all" ? "active" : ""} aria-pressed={profileStatus === "all"} onClick={() => setProfileStatus("all")}>{t("All")}<span>{matchingProfiles.length}</span></button>
                       <button type="button" className={profileStatus === "running" ? "active" : ""} aria-pressed={profileStatus === "running"} onClick={() => setProfileStatus("running")}>{t("Running")}<span>{matchingRunningCount}</span></button>
                       <button type="button" className={profileStatus === "stopped" ? "active" : ""} aria-pressed={profileStatus === "stopped"} onClick={() => setProfileStatus("stopped")}>{t("Stopped")}<span>{matchingProfiles.length - matchingRunningCount}</span></button>
                     </div></div>
@@ -1242,9 +1464,8 @@ function App() {
                           </div>)}
                         </div>
                       </div>
-                      <div className="profile-group-manager menuwrap" ref={groupManagerRef}>
-                        <button type="button" className={`iconbtn tip${groupManagerOpen ? " on" : ""}`} aria-label={t("Manage groups")} data-tip={t("Manage groups")} aria-expanded={groupManagerOpen} onClick={() => setGroupManagerOpen((open) => !open)}><Icon name="folders" /></button>
-                        {groupManagerOpen && <div className="popover group-manager-panel"><div className="pop-head">{t("Manage groups")}</div>{groupNavigation}</div>}
+                      <div className="profile-group-manager">
+                        <button type="button" className={`iconbtn tip${groupManagerOpen ? " on" : ""}`} aria-label={t("Manage groups")} data-tip={t("Manage groups")} aria-haspopup="dialog" aria-expanded={groupManagerOpen} onClick={() => setGroupManagerOpen(true)}><Icon name="folders" /></button>
                       </div>
                     </div>
                   </div>
@@ -1270,7 +1491,23 @@ function App() {
                   )}
                   {bulkTaskSnapshot && <BulkProfileTaskPanel snapshot={bulkTaskSnapshot} expanded={bulkTaskExpanded} refreshing={bulkTaskRefreshing} onExpandedChange={setBulkTaskExpanded} onStopPending={() => bulkTaskRef.current?.stopPending()} onRetryFailed={retryBulkFailures} onDismiss={dismissBulkTask} />}
 
-                  <ProfileRosterTable loaded={loaded} profilesCount={profiles.length} filteredCount={filtered.length} flatItems={flatItems} selectableProfilesCount={selectableProfiles.length} numbering={numbering} rosterScope={rosterScope} rosterDensity={rosterDensity} missingRosterGroup={missingRosterGroup} hasRosterRefinements={hasRosterRefinements} revealGroupMatches={revealGroupMatches} sort={sort} hiddenCols={hiddenCols} shownColumns={shownColumns} visibleColumnCount={visibleColumnCount} tableMinWidth={tableMinWidth} tableScrolled={tableScrolled} onTableScrolledChange={setTableScrolled} selected={selected} allVisibleSelected={allVisibleSelected} busy={busy} favoriteProfileIds={favoriteProfileIds} reuseLoadingId={createModal.reuseRequest?.status === "loading" ? createModal.reuseRequest.id : null} twoFaFlashId={twoFaFlash?.id ?? null} viewPreferencesReady={viewPreferencesReady} viewPreferenceBusy={viewPreferenceBusy} language={language} rangeKeyboardActivation={rangeKeyboardActivation} profilePageCount={profilePageCount} visibleProfilePage={visibleProfilePage} pageSize={pageSize} onPageChange={setProfilePage} onPageSizeChange={applyPageSize} runningCount={runningCount} diag={diag} diagWhen={diagWhen} showDiag={showDiag} onToggleDiag={() => setShowDiag((s) => !s)} hasDetails={!!detailsProfile} detailsPanel={<ProfileDetailsPanel profile={detailsProfile} headingRef={detailsHeading} onClose={closeDetails} onEdit={(id) => editModal.openEdit(id, undefined, detailsTrigger.current ?? undefined)} onInspect={openInspection} onSaveNotes={handleDetailsSaveNotes} onOpenLogs={stableRowHandlers.openLogs} onRetryLaunch={(id) => void act(id, openProfile)} onEditProxy={(id) => editModal.openEdit(id, "proxy", detailsTrigger.current ?? undefined)} />} groupDisclosureKey={groupDisclosureKey} motionAllowed={motion.effective === "full"} renderResourceChips={renderResourceChips} onInlineNameSaved={handleInlineNameSaved} onQuickNotesSaved={handleQuickNotesSaved} onInlineEditorError={setActionErr} folderLabel={folderLabel} openLabel={openLabel} onToggleSort={toggleSort} onToggleAll={() => { rangeSelectionAnchor.current = null; toggleAll(); }} onToggleProfileGroup={toggleProfileGroup} onToggleGroupSelection={(matches) => { rangeSelectionAnchor.current = null; setSelected((current) => toggleProfileSelection(current, matches)); }} onCreateInGroup={openCreateInGroup} onManageGroup={(name) => { selectFolder(name); setGroupManagerOpen(true); }} onNewSubfolder={(name) => { setNewFolderParent(name || null); setSidebarGroupName(""); setAddingGroup(true); setGroupManagerOpen(true); }} onOpenCreate={createModal.openCreate} onOpenBulk={importModal.openBulk} onSelectAllGroups={() => setGroup("all")} onChooseRosterScope={chooseRosterScope} onClearRosterRefinements={clearRosterRefinements} rowHandlers={stableRowHandlers} t={t} />
+                  {connErr && (
+                    <div className="roster-recovery" data-unavailable={rosterUnavailable}>
+                      <Icon name="warning" className="sm" />
+                      <span role="status">{t(rosterUnavailable ? "Could not load environments." : "Refresh failed. Showing the last loaded list.")}</span>
+                      <button type="button" className="btn xs" aria-disabled={refreshing}
+                        onFocus={() => { rosterRetryOwnsFocus.current = true; }}
+                        onBlur={() => { rosterRetryOwnsFocus.current = false; }}
+                        onClick={() => { if (!refreshing) void retryConnection(); }}>
+                        {t(refreshing ? "Refreshing…" : "Retry")}
+                      </button>
+                    </div>
+                  )}
+
+                  {!rosterUnavailable && (
+                  <ProfileRosterTable loaded={loaded} profilesCount={profiles.length} filteredCount={filtered.length} flatItems={flatItems} selectableProfilesCount={selectableProfiles.length} numbering={numbering} rosterScope={rosterScope} rosterDensity={rosterDensity} missingRosterGroup={missingRosterGroup} hasRosterRefinements={hasRosterRefinements} revealGroupMatches={revealGroupMatches} sort={sort} hiddenCols={hiddenCols} shownColumns={shownColumns} visibleColumnCount={visibleColumnCount} tableMinWidth={tableMinWidth} tableScrolled={tableScrolled} onTableScrolledChange={setTableScrolled} selected={selected} allVisibleSelected={allVisibleSelected} busy={busy} favoriteProfileIds={favoriteProfileIds} reuseLoadingId={createModal.reuseRequest?.status === "loading" ? createModal.reuseRequest.id : null} twoFaFlashId={twoFaFlash?.id ?? null} viewPreferencesReady={viewPreferencesReady} viewPreferenceBusy={viewPreferenceBusy} language={language} rangeKeyboardActivation={rangeKeyboardActivation} profilePageCount={profilePageCount} visibleProfilePage={visibleProfilePage} pageSize={pageSize} onPageChange={setProfilePage} onPageSizeChange={applyPageSize} runningCount={runningCount} diag={diag} diagWhen={diagWhen} showDiag={showDiag} onToggleDiag={() => setShowDiag((s) => !s)} hasDetails={!!detailsProfile} detailsPanel={<ProfileDetailsPanel profile={detailsProfile} headingRef={detailsHeading} onClose={closeDetails} onEdit={(id) => editModal.openEdit(id, undefined, detailsTrigger.current ?? undefined)} onInspect={openInspection} onSaveNotes={handleDetailsSaveNotes} onOpenLogs={stableRowHandlers.openLogs} onRetryLaunch={(id) => act(id, openProfile)} onEditProxy={(id) => editModal.openEdit(id, "proxy", detailsTrigger.current ?? undefined)} />} groupDisclosureKey={groupDisclosureKey} motionAllowed={motion.effective === "full"} renderResourceChips={renderResourceChips} onInlineNameSaved={handleInlineNameSaved} onQuickNotesSaved={handleQuickNotesSaved} onInlineEditorError={setActionErr} folderLabel={folderLabel} openLabel={openLabel} onToggleSort={toggleSort} onToggleAll={() => { rangeSelectionAnchor.current = null; toggleAll(); }} onToggleProfileGroup={toggleProfileGroup} onToggleGroupSelection={(matches) => { rangeSelectionAnchor.current = null; setSelected((current) => toggleProfileSelection(current, matches)); }} onCreateInGroup={openCreateInGroup} onManageGroup={(name) => { selectFolder(name); setGroupManagerOpen(true); }} onNewSubfolder={(name) => { openGroupCreate(name || null); setGroupManagerOpen(true); }} onOpenCreate={createModal.openCreate} onOpenBulk={importModal.openBulk} onSelectAllGroups={() => setGroup("all")} onChooseRosterScope={chooseRosterScope} onClearRosterRefinements={clearRosterRefinements} rowHandlers={stableRowHandlers} t={t} />
+
+                  )}
 
                   <ActionDock
                     selectedCount={selected.size}
@@ -1288,6 +1525,16 @@ function App() {
                     moreOpen={bulkToolsOpen}
                     onMoreOpenChange={setBulkToolsOpen}
                   >
+                    <div className="movewrap">
+                      {newMode ? (<input className="input" autoFocus placeholder={t("new group name")} value={newGroup} disabled={profileMove.busy} onChange={(e) => { if (moveUiInFlight.current) return; moveDraftRevision.current++; setNewGroup(e.target.value); }} />) : (
+                        <select className="select move-group" aria-label={t("Move to group")} title={moveTarget === null ? t("Choose destination group") : moveTarget || t("Ungrouped")} disabled={!selected.size || profileMove.busy} value={moveTarget === null ? "choose" : `group:${moveTarget}`} onChange={(e) => { if (moveUiInFlight.current) return; moveDraftRevision.current++; if (e.target.value === "new") setNewMode(true); else if (e.target.value.startsWith("group:")) setMoveTarget(e.target.value.slice(6)); else setMoveTarget(null); }}>
+                          <option value="choose">{t("Move to…")}</option><option value="group:">{t("Ungrouped")}</option>{existingGroups.map((g) => <option key={g} value={`group:${g}`}>{g}</option>)}<option value="new">{t("+ new group…")}</option>
+                        </select>
+                      )}
+                      {newMode && <button className="btn ghost" disabled={profileMove.busy} onClick={() => { if (moveUiInFlight.current) return; moveDraftRevision.current++; setNewMode(false); setNewGroup(""); }}>{t("cancel")}</button>}
+                      <button className="btn accent" disabled={!selected.size || profileMove.busy || workspaceOperationState.blocked || (newMode ? !newGroup.trim() : moveTarget === null)} onClick={moveSelected}><Icon name="move" className="sm" />{t(profileMove.busy ? "Moving…" : "Move")}</button>
+                    </div>
+                    <span className="vsep" />
                     <button className="btn" type="button" onClick={() => { setScriptRunProfiles(profiles.filter((profile) => selected.has(profile.id))); setScriptRunOpen(true); }}><Icon name="play" className="sm" />{t("Run script")}</button>
                     <button className="btn tip" type="button" data-tip={t("Open browsers get the cookies now; closed profiles at their next start")} onClick={() => openCookie(profiles.filter((profile) => selected.has(profile.id)))}><Icon name="cookie" className="sm" />{t("Add cookies")}</button>
                     <span className="vsep" />
@@ -1304,16 +1551,6 @@ function App() {
                       )}
                     </div>
                     <button className="btn tip" data-tip={t("Export → edit → re-upload")} disabled={!selected.size || !!exportProgress} onClick={openUpdate} title={t("Export → edit → re-upload to change credentials in bulk")}><Icon name="edit" className="sm" />{t("Edit from file")}</button>
-                    <span className="vsep" />
-                    <div className="movewrap">
-                      {newMode ? (<input className="input" autoFocus placeholder={t("new group name")} value={newGroup} disabled={profileMove.busy} onChange={(e) => { if (moveUiInFlight.current) return; moveDraftRevision.current++; setNewGroup(e.target.value); }} />) : (
-                        <select className="select move-group" aria-label={t("Move to group")} title={moveTarget === null ? t("Choose destination group") : moveTarget || t("Ungrouped")} disabled={!selected.size || profileMove.busy} value={moveTarget === null ? "choose" : `group:${moveTarget}`} onChange={(e) => { if (moveUiInFlight.current) return; moveDraftRevision.current++; if (e.target.value === "new") setNewMode(true); else if (e.target.value.startsWith("group:")) setMoveTarget(e.target.value.slice(6)); else setMoveTarget(null); }}>
-                          <option value="choose">{t("Move to…")}</option><option value="group:">{t("Ungrouped")}</option>{existingGroups.map((g) => <option key={g} value={`group:${g}`}>{g}</option>)}<option value="new">{t("+ new group…")}</option>
-                        </select>
-                      )}
-                      {newMode && <button className="btn ghost" disabled={profileMove.busy} onClick={() => { if (moveUiInFlight.current) return; moveDraftRevision.current++; setNewMode(false); setNewGroup(""); }}>{t("cancel")}</button>}
-                      <button className="btn accent" disabled={!selected.size || profileMove.busy || workspaceOperationState.blocked || (newMode ? !newGroup.trim() : moveTarget === null)} onClick={moveSelected}><Icon name="move" className="sm" />{t(profileMove.busy ? "Moving…" : "Move")}</button>
-                    </div>
                     {extensions.length > 0 && selectedProfilesSupportChromeExtensions && (<>
                       <span className="vsep" />
                       <div className="extctl">
@@ -1333,16 +1570,17 @@ function App() {
 
               {scriptsVisit.current.visited && <ScriptsPage key={currentWorkspaceId} active={view === "scripts"} onViewRun={() => setScriptRunOpen(true)} />}
               {settingsVisited.current && (
-                <SettingsPanel visible={view === "settings"} workspaceId={catalog?.currentId} tabs={SETTINGS_TABS} activeTab={settingsTab} onTabChange={setSettingsTab} updateTabRef={updateTabRef} settingsPanelRef={settingsPanelRef} signedUpdateStartup={signedUpdateStartup} onProfilesImported={refreshImportedProfiles} onLocateSnapshotProfile={locateProfile} onOpenAssistant={() => setView("assistant")} onCreateWithLocalProxy={createModal.beginCreate} runtimeDownloads={runtimeDownloads} runtimeDownloadsStale={runtimeDownloadsStale} onAssignLocalProxy={startLocalProxyAssignment} onResumeLocalProxyAssignment={activeLocalProxyIntent ? () => setView("proxies") : undefined} localProxyAssignmentBlocked={workspaceOperationState.blocked} fingerprintRefreshVersion={fingerprintRefreshVersion} onInspectProfile={openInspection} onEditProfile={(id) => { if (!editModal.isEditSessionOpen()) editModal.openEdit(id); }} onExplainFingerprint={explainFingerprint} currentWorkspaceName={currentName} profileCount={profiles.length} language={language} onLanguageChange={setLanguage} onLanguageError={setActionErr} themes={THEMES} theme={theme} onThemeChange={chooseTheme} rosterDensity={rosterDensity} onRosterDensityChange={chooseRosterDensity} viewPreferencesReady={viewPreferencesReady} viewPreferencesLoading={viewPreferencesLoading} viewPreferenceBusy={viewPreferenceBusy} viewPreferenceReadError={viewPreferenceReadError} onRetryViewPreferences={() => setPreferenceLoadAttempt((value) => value + 1)} motionPreference={motion.preference} onMotionPreferenceChange={motion.setPreference} logErr={logErr} onLogErr={setLogErr} onLogView={setLogView} logDir={logDir} modeErr={modeErr} onDone={() => setView("profiles")} appLockAvailable={appMode.appLockAvailable === true} appLockStatus={appLock.status} onAppLockStatusChange={appLock.setStatus} onboardingState={onboardingState} onReopenOnboarding={() => updateOnboardingState("open")} onDiagnosticsRun={() => setDiagnosticsRun(true)} />
+                <SettingsPanel visible={view === "settings"} workspaceId={catalog?.currentId} tabs={SETTINGS_TABS} activeTab={settingsTab} onTabChange={setSettingsTab} settingsPanelRef={settingsPanelRef} signedUpdateStartup={signedUpdateStartup} onProfilesImported={refreshImportedProfiles} onLocateSnapshotProfile={locateProfile} onOpenAssistant={() => setView("assistant")} onCreateWithLocalProxy={createModal.beginCreate} runtimeDownloads={runtimeDownloads} runtimeDownloadsStale={runtimeDownloadsStale} onAssignLocalProxy={startLocalProxyAssignment} onResumeLocalProxyAssignment={activeLocalProxyIntent ? () => setView("proxies") : undefined} localProxyAssignmentBlocked={workspaceOperationState.blocked} fingerprintRefreshVersion={fingerprintRefreshVersion} onInspectProfile={openInspection} onEditProfile={(id) => { if (!editModal.isEditSessionOpen()) editModal.openEdit(id); }} onExplainFingerprint={explainFingerprint} currentWorkspaceName={currentName} profileCount={profiles.length} language={language} onLanguageChange={setLanguage} onLanguageError={setActionErr} themes={THEMES} theme={theme} onThemeChange={chooseTheme} rosterDensity={rosterDensity} onRosterDensityChange={chooseRosterDensity} viewPreferencesReady={viewPreferencesReady} viewPreferencesLoading={viewPreferencesLoading} viewPreferenceBusy={viewPreferenceBusy} viewPreferenceReadError={viewPreferenceReadError} onRetryViewPreferences={() => setPreferenceLoadAttempt((value) => value + 1)} motionPreference={motion.preference} onMotionPreferenceChange={motion.setPreference} onOpenLogs={logs.open} logDir={logDir} modeErr={modeErr} onDone={() => setView("profiles")} appLockAvailable={appMode.appLockAvailable === true} appLockStatus={appLock.status} beginAppLockSettingsChange={appLock.beginSettingsStatusChange} onReopenOnboarding={reopenOnboarding} onDiagnosticsRun={() => setDiagnosticsRun(true)} />
               )}
             </ErrorBoundary>
           </div>
-          <footer className="workspace-footer"><span><Icon name="laptop" className="sm" />{t("Data stays on this device")}</span><span>猫步·千境{appVersion ? ` · ${appVersion}` : ""}</span></footer>
+          <footer className="workspace-footer"><span><Icon name="laptop" className="sm" />{t("Data stays on this device")}</span></footer>
         </div>
 
-        <LogModal logView={logView} logErr={logErr} onClose={() => { setLogView(null); setLogErr(null); }} />
+        <LogModal state={logs.state} onReload={logs.open} onClose={logs.close} />
         <CookieImportTaskDialog task={cookieImport.task} open={!!cookieTargets} targets={cookieTargets ?? lastCookieTargets.current} onClose={closeCookie} />
-        <MoveFolderModal movingFolder={movingFolder} folderParent={folderParent} folderMoveBusy={folderMoveBusy} folderMoveErr={folderMoveErr} tree={tree} onParentChange={setFolderParent} onClose={() => { if (!folderMoveBusy) setMovingFolder(null); }} onCommit={() => void commitFolderMove()} />
+        {groupNavigation}
+        <MoveFolderModal movingFolder={movingFolder} folderParent={folderParent} folderMoveBusy={folderMoveBusy} folderMoveErr={folderMoveErr} tree={tree} onParentChange={(value) => { setFolderParent(value); setFolderMoveErr(null); }} onClose={() => { if (!folderMoveBusy) setMovingFolder(null); }} onCommit={() => void commitFolderMove()} />
         <ProfileCreateModal controller={createModal} appMode={appMode} existingGroups={existingGroups} windowChrome={windowChrome} editorScroll={editorScroll} />
         <ProfileEditModal controller={editModal} existingGroups={existingGroups} windowChrome={windowChrome} editorScroll={editorScroll} onFlash={flash} />
         <ProfileImportModal controller={importModal} existingGroups={existingGroups} />

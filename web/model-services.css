@@ -6,19 +6,20 @@
 .model-services-header, .model-services-detail-head, .model-services-footer, .model-services-remove { justify-content: space-between; }
 .model-services-header > div { min-width: 0; }
 .model-services h2, .model-services h3, .model-services p { margin: 0; overflow-wrap: anywhere; }
-.model-services-header h2 { font-size: 20px; letter-spacing: -.35px; font-weight: 650; }
-.model-services-header p { color: var(--muted); margin-top: 4px; font-size: 12px; line-height: 1.55; }
-.model-services > .feature-alert > .btn { margin-top: 7px; }
+.model-services-header h2 { font-size: 14px; letter-spacing: -.01em; font-weight: 650; margin: 0; }
+.model-services-header p { color: var(--muted); margin-top: 4px; font-size: 12px; line-height: 1.5; }
+.model-services-card .model-services-banner-note,
+.model-services-card .model-services-banner-alert { margin: 12px 18px 0; }
 .model-services-grid {
-  display: grid; grid-template-columns: minmax(158px, .68fr) minmax(0, 1.65fr);
-  border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface);
+  display: grid; grid-template-columns: minmax(204px, .72fr) minmax(0, 1.65fr);
+  border: 0; border-radius: 0; overflow: hidden; background: var(--surface);
 }
 .model-services-list { min-width: 0; padding: 12px 8px; border-right: 1px solid var(--line); background: var(--surface-sunken); }
 .model-services-list h3 { padding: 0 7px 8px; color: var(--muted); font-size: 12px; font-weight: 550; }
 .model-services-list-item {
-  display: flex; width: 100%; align-items: center; gap: 7px; padding: 8px 7px; min-height: 48px;
+  display: flex; width: 100%; align-items: center; gap: 7px; padding: 8px 9px; min-height: 48px;
   margin-bottom: 3px; text-align: left; font: inherit; color: var(--ink); background: transparent;
-  border: 1px solid transparent; border-radius: 8px; cursor: pointer;
+  border: 1px solid transparent; border-radius: 9px; cursor: pointer;
 }
 .model-services-list-item:hover:not(:disabled) { background: var(--surface-hover); }
 .model-services-list-item[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-ink); border-color: var(--accent-line); }

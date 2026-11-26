@@ -35,11 +35,23 @@ import { isStandaloneRequestAuthorized, serveDashboard, STANDALONE_SESSION_HEADE
 import { rejectUntrustedLocalRequest } from "../server.ts";
 import { WorkspaceManagement } from "../workspace-management.ts";
 import { LocalAssistantService } from "../local-assistant.ts";
+import { AppLockService } from "../app-lock.ts";
+import { UiEventBus } from "../src/ui/events-bus.ts";
+import { MetricsService } from "../src/metrics/metrics-service.ts";
+import { ProcessTreeMetricsCollector, type ProcessMetricsBackend } from "../src/metrics/process-metrics.ts";
+import { MemoryWatermarkGuard } from "../src/metrics/memory-watermark-guard.ts";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const packageVersion = JSON.parse(readFileSync(join(projectRoot, "package.json"), "utf8")).version as string;
+function nextQaVersion(current: string): string {
+  const match = /^(\d+\.\d+\.)(\d+)/.exec(current);
+  return match ? `${match[1]}${Number(match[2]) + 1}-ui-qa` : `${current}-ui-qa`;
+}
+const FRAMELESS_QA_PATH = "/__qa/desktop-bridge.js";
+const FRAMELESS_QA_TAG = `<script data-qa-frameless-bridge src="${FRAMELESS_QA_PATH}"></script>`;
 // This fixture-only bridge follows the installed Tauri SDK's core/window/event
 // IPC protocol. It only changes in-page state; it cannot control an OS window.
-const FRAMELESS_QA_SCRIPT = String.raw`<script data-qa-frameless-bridge>
+const FRAMELESS_QA_SCRIPT = String.raw`
 (() => {
   "use strict";
   const root = document.documentElement;
@@ -50,9 +62,88 @@ const FRAMELESS_QA_SCRIPT = String.raw`<script data-qa-frameless-bridge>
   const scriptCapability = __UI_QA_SCRIPT_CAPABILITY__;
   const signedFixture = __UI_QA_SIGNED_UPDATE__;
   let updateChecks = 0;
+  const qaMonitor = {
+    id: "mon-primary",
+    name: "DISPLAY1 (1920x1080 · Primary)",
+    isPrimary: true,
+    bounds: { left: 0, top: 0, right: 1920, bottom: 1080 },
+    workArea: { left: 0, top: 0, right: 1920, bottom: 1040 },
+    dpi: 96,
+    scalePercent: 100,
+  };
+  const qaWindowState = new Map();
+  let syncState = {
+    supported: true,
+    active: false,
+    paused: false,
+    pausedByUser: false,
+    pausedByFocus: false,
+    masterProfileId: null,
+    slaveProfileIds: [],
+    droppedSlaveProfileIds: [],
+    syncMouseClick: true,
+    syncMouseMove: false,
+    syncScroll: true,
+    syncKeyboard: true,
+    jitterMinMs: 15,
+    jitterMaxMs: 85,
+    clickPosJitterPx: 2,
+    emergencyHotkey: "Ctrl+Shift+F12",
+    activeInjectionJobs: 0,
+    forwardedEvents: 0,
+    lastStopReason: null,
+    updatedAtMs: 0,
+  };
+  function syncSnapshot() {
+    return { ...syncState, slaveProfileIds: [...syncState.slaveProfileIds], droppedSlaveProfileIds: [...syncState.droppedSlaveProfileIds], updatedAtMs: Date.now() };
+  }
+  function defaultRect(index) {
+    const col = index % 2, row = Math.floor(index / 2) % 2;
+    const left = 40 + col * 920, top = 40 + row * 480;
+    return { left, top, right: left + 880, bottom: top + 450 };
+  }
+  async function readQaWindows() {
+    if (typeof fetch !== "function") return [];
+    const res = await fetch("/ui/api/windows/registered-launches", { credentials: "same-origin", cache: "no-store", headers: { Accept: "application/json" } });
+    if (!res.ok) return [];
+    const body = await res.json().catch(() => null);
+    const launches = Array.isArray(body && body.launches) ? body.launches : [];
+    return launches.map((launch, index) => {
+      let saved = qaWindowState.get(launch.profileId);
+      if (!saved) {
+        saved = {
+          hwndHex: "0x" + (0x10000 + index * 16).toString(16),
+          rect: defaultRect(index),
+          isMinimized: false,
+          isMaximized: false,
+          isTopmost: false,
+        };
+        qaWindowState.set(launch.profileId, saved);
+      }
+      return {
+        profileId: launch.profileId,
+        name: launch.name,
+        displayNo: launch.displayNo || String(index + 1),
+        engine: launch.engine || "chromium",
+        pid: launch.pid,
+        windowPid: launch.pid,
+        hwndHex: saved.hwndHex,
+        title: launch.windowLabel || launch.name,
+        className: launch.engine === "firefox" ? "MozillaWindowClass" : "Chrome_WidgetWin_1",
+        rect: saved.rect,
+        clientRect: saved.rect,
+        isMinimized: saved.isMinimized,
+        isMaximized: saved.isMaximized,
+        isTopmost: saved.isTopmost,
+        monitorId: qaMonitor.id,
+        dpi: qaMonitor.dpi,
+        windowCount: 1,
+      };
+    });
+  }
   function signedStatus() {
     if (!signedFixture) return { configured: false, status: "disabled", currentVersion: "", endpoint: null, update: null, message: "Signed updates are disabled in the isolated UI fixture." };
-    const currentVersion = "0.1.0-local.1", version = "0.2.0-ui-qa";
+    const currentVersion = __UI_QA_APP_VERSION__, version = __UI_QA_NEXT_VERSION__;
     return { configured: true, status: updateChecks ? "available" : "idle", currentVersion, endpoint: "https://updates.example.invalid/latest.json",
       message: updateChecks ? "【模拟更新】发现可用版本。" : "【模拟更新】可信通道已就绪。",
       update: updateChecks ? { version, currentVersion, notes: "【模拟更新】仅用于验收启动提醒和更新设置；未联网、下载或安装。", publishedAt: null } : null };
@@ -100,6 +191,142 @@ const FRAMELESS_QA_SCRIPT = String.raw`<script data-qa-frameless-bridge>
   async function invoke(command, args = {}) {
     if (command === "open_external_resource") { root.setAttribute("data-qa-external-resource", String(args.url)); return; }
     if (command === "agent_runtime_ready") return;
+    if (command === "set_window_theme") {
+      if (!["light", "dark", "system"].includes(String(args.theme))) reject("invalid window theme", command);
+      root.setAttribute("data-qa-window-theme", String(args.theme));
+      return;
+    }
+    if (command === "system_diagnostic_probe") {
+      return {
+        platform: "win32",
+        arch: "x64",
+        osName: "Windows 11",
+        osVersion: "10.0.22631",
+        osBuild: 22631,
+        webview2Version: "130.0.2849.68",
+        webview2Channel: "Stable",
+        webview2Available: true,
+      };
+    }
+    if (command === "window_list_monitors") return [qaMonitor];
+    if (command === "window_list_managed") return await readQaWindows();
+    if (command === "window_arrange") {
+      const req = args.req && typeof args.req === "object" ? args.req : {};
+      const wins = await readQaWindows();
+      const targetIds = Array.isArray(req.profileIds) && req.profileIds.length ? new Set(req.profileIds) : null;
+      const picked = targetIds ? wins.filter((w) => targetIds.has(w.profileId)) : wins;
+      const gap = typeof req.gapPx === "number" ? req.gapPx : 8;
+      const pad = typeof req.paddingPx === "number" ? req.paddingPx : 8;
+      const cols = req.mode === "custom_grid" && typeof req.cols === "number" && req.cols > 0 ? req.cols : Math.max(1, Math.ceil(Math.sqrt(picked.length || 1)));
+      const rowsCount = req.mode === "custom_grid" && typeof req.rows === "number" && req.rows > 0 ? req.rows : Math.max(1, Math.ceil((picked.length || 1) / cols));
+      const areaW = qaMonitor.workArea.right - qaMonitor.workArea.left - pad * 2;
+      const areaH = qaMonitor.workArea.bottom - qaMonitor.workArea.top - pad * 2;
+      const arranged = picked.map((w, idx) => {
+        const entry = qaWindowState.get(w.profileId);
+        let rect;
+        if (req.mode === "cascade") {
+          const offset = (typeof req.cascadeOffsetPx === "number" ? req.cascadeOffsetPx : 36) * idx;
+          rect = { left: pad + offset, top: pad + offset, right: Math.min(1920 - pad, pad + offset + 960), bottom: Math.min(1040 - pad, pad + offset + 640) };
+        } else if (req.mode === "gather" && req.gatherAction === "minimize") {
+          if (entry) entry.isMinimized = true;
+          rect = w.rect;
+        } else {
+          if (entry && req.restoreMinimized !== false) entry.isMinimized = false;
+          const col = idx % cols, row = Math.floor(idx / cols) % rowsCount;
+          const tileW = Math.max(240, Math.floor((areaW - gap * (cols - 1)) / cols));
+          const tileH = Math.max(180, Math.floor((areaH - gap * (rowsCount - 1)) / rowsCount));
+          const left = pad + col * (tileW + gap), top = pad + row * (tileH + gap);
+          rect = { left, top, right: left + tileW, bottom: top + tileH };
+        }
+        if (entry) entry.rect = rect;
+        return { profileId: w.profileId, hwndHex: w.hwndHex, monitorId: qaMonitor.id, rect };
+      });
+      return { ok: true, mode: String(req.mode || "grid"), arranged, skipped: [] };
+    }
+    if (command === "window_action") {
+      const req = args.req && typeof args.req === "object" ? args.req : {};
+      const wins = await readQaWindows();
+      const byId = new Map(wins.map((w) => [w.profileId, w]));
+      const ids = Array.isArray(req.profileIds) ? req.profileIds : [];
+      const affected = [], missing = [];
+      for (const id of ids) {
+        const win = byId.get(id);
+        const entry = qaWindowState.get(id);
+        if (!win || !entry) { missing.push(String(id)); continue; }
+        if (req.action === "minimize") entry.isMinimized = true;
+        else if (req.action === "restore" || req.action === "focus") entry.isMinimized = false;
+        else if (req.action === "topmost") entry.isTopmost = true;
+        else if (req.action === "untopmost") entry.isTopmost = false;
+        affected.push(String(id));
+      }
+      return { ok: true, action: String(req.action || "focus"), affected, missing, failed: [] };
+    }
+    if (command === "sync_status") return syncSnapshot();
+    if (command === "sync_start") {
+      const cfg = args.config && typeof args.config === "object" ? args.config : {};
+      const masterProfileId = typeof cfg.masterProfileId === "string" && cfg.masterProfileId ? cfg.masterProfileId : null;
+      const slaveProfileIds = Array.isArray(cfg.slaveProfileIds) ? cfg.slaveProfileIds.filter((id) => typeof id === "string" && id !== masterProfileId) : [];
+      syncState = {
+        ...syncState,
+        active: !!masterProfileId && slaveProfileIds.length > 0,
+        paused: false,
+        pausedByUser: false,
+        pausedByFocus: false,
+        masterProfileId,
+        slaveProfileIds,
+        syncMouseClick: cfg.syncMouseClick !== false,
+        syncMouseMove: cfg.syncMouseMove === true,
+        syncScroll: cfg.syncScroll !== false,
+        syncKeyboard: cfg.syncKeyboard !== false,
+        jitterMinMs: typeof cfg.jitterMinMs === "number" ? cfg.jitterMinMs : 15,
+        jitterMaxMs: typeof cfg.jitterMaxMs === "number" ? cfg.jitterMaxMs : 85,
+        clickPosJitterPx: typeof cfg.clickPosJitterPx === "number" ? cfg.clickPosJitterPx : 2,
+        lastStopReason: null,
+      };
+      const snap = syncSnapshot();
+      emit("maobu-sync-state", snap);
+      return snap;
+    }
+    if (command === "sync_stop") {
+      syncState = { ...syncState, active: false, paused: false, pausedByUser: false, pausedByFocus: false, lastStopReason: "user_stopped" };
+      const snap = syncSnapshot();
+      emit("maobu-sync-state", snap);
+      return snap;
+    }
+    if (command === "sync_pause") {
+      const paused = args.paused === true;
+      syncState = { ...syncState, paused: syncState.active && paused, pausedByUser: syncState.active && paused };
+      const snap = syncSnapshot();
+      emit("maobu-sync-state", snap);
+      return snap;
+    }
+    if (command === "sync_update_slaves") {
+      const next = Array.isArray(args.profileIds) ? args.profileIds.filter((id) => typeof id === "string" && id !== syncState.masterProfileId) : [];
+      syncState = { ...syncState, slaveProfileIds: next };
+      const snap = syncSnapshot();
+      emit("maobu-sync-state", snap);
+      return snap;
+    }
+    if (command === "sync_inject_texts") {
+      const req = args.req && typeof args.req === "object" ? args.req : {};
+      const queuedProfiles = Array.isArray(req.targetProfileIds) && req.targetProfileIds.length
+        ? req.targetProfileIds.map(String)
+        : [syncState.masterProfileId, ...syncState.slaveProfileIds].filter(Boolean);
+      return { ok: true, jobId: "qa-inject-1", queuedProfiles, skippedProfiles: [] };
+    }
+    if (command === "system_trim_process_memory") {
+      const ids = Array.isArray(args.profileIds) ? args.profileIds.map(String) : [];
+      return ids.map((profileId) => ({
+        profileId,
+        ok: true,
+        processCount: 3,
+        trimmedCount: 3,
+        beforeRssBytes: 420 * 1024 * 1024,
+        afterRssBytes: 290 * 1024 * 1024,
+        freedBytes: 130 * 1024 * 1024,
+        error: null,
+      }));
+    }
     if (command === "signed_update_status") return signedStatus();
     if (command === "signed_update_check" && signedFixture) {
       root.setAttribute("data-qa-signed-check-count", String(++updateChecks));
@@ -163,31 +390,44 @@ const FRAMELESS_QA_SCRIPT = String.raw`<script data-qa-frameless-bridge>
   window.addEventListener("focus", () => { focused = true; state(); emit("tauri://focus", null); });
   window.addEventListener("blur", () => { focused = false; state(); emit("tauri://blur", null); });
   action("ready");
-})();
-</script>`;
+})();`;
 
-function framelessQaHtml(html: string, scriptCapability: string, signedUpdate = false): string {
-  if (!/<head(?:\s[^>]*)?>/i.test(html)) throw new Error("Production HTML has no head for the isolated frameless QA bridge");
+function framelessBridgeSource(scriptCapability: string, signedUpdate = false): string {
   if (!/^[a-f0-9]{64}$/.test(scriptCapability)) throw new Error("Invalid isolated script capability");
-  const bridge = FRAMELESS_QA_SCRIPT.replace("__UI_QA_SCRIPT_CAPABILITY__", JSON.stringify(scriptCapability)).replace("__UI_QA_SIGNED_UPDATE__", JSON.stringify(signedUpdate));
-  return html.replace(/<head(?:\s[^>]*)?>/i, (head) => head + bridge);
+  return FRAMELESS_QA_SCRIPT
+    .replace("__UI_QA_SCRIPT_CAPABILITY__", JSON.stringify(scriptCapability))
+    .replace("__UI_QA_SIGNED_UPDATE__", JSON.stringify(signedUpdate))
+    .replace("__UI_QA_APP_VERSION__", JSON.stringify(packageVersion))
+    .replace("__UI_QA_NEXT_VERSION__", JSON.stringify(nextQaVersion(packageVersion)));
+}
+
+function framelessQaHtml(html: string): string {
+  const head = /<head(?:\s[^>]*)?>/i;
+  if (!head.test(html)) throw new Error("Production HTML has no head for the isolated frameless QA bridge");
+  // An external, same-origin script runs before the UI under the existing CSP.
+  return html.replace(head, (tag) => tag + FRAMELESS_QA_TAG);
 }
 
 function scriptLibraryRequest(request: Request): boolean {
   const path = new URL(request.url).pathname;
   return path === "/ui/api/scripts" && ["GET", "POST"].includes(request.method)
     || /^\/ui\/api\/scripts\/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(path) && ["GET", "PATCH", "DELETE"].includes(request.method)
-    || request.method === "GET" && ["/ui/api/scripts/run", "/ui/api/scripts/python-runtime", "/ui/api/scripts/log"].includes(path);
+    || request.method === "GET" && [
+      "/ui/api/scripts/run",
+      "/ui/api/scripts/python-runtime",
+      "/ui/api/scripts/log",
+      "/ui/api/scripts/templates",
+      "/ui/api/scripts/runs",
+      "/ui/api/scripts/recorder/status",
+    ].includes(path);
 }
 
 const executionDisabled = () => Response.json({ ok: false, error: "Script execution and runtime changes are disabled in the isolated UI fixture" }, { status: 503, headers: { "Cache-Control": "no-store" } });
 
 /** Check the actual installed SDK against an in-memory DOM, without opening UI. */
-async function smokeFramelessBridge(html: string, scriptCapability: string, signedUpdate: boolean) {
+async function smokeFramelessBridge(script: string, scriptCapability: string, signedUpdate: boolean) {
   const attributes = new Map<string, string>(), browserEvents = new Map<string, () => void>();
   const qaWindow: any = { innerWidth: 1280, innerHeight: 800, addEventListener: (name: string, handler: () => void) => browserEvents.set(name, handler) };
-  const script = html.match(/<script data-qa-frameless-bridge>([\s\S]*?)<\/script>/)?.[1];
-  assert(script, "Frameless QA bridge must precede the application bundle");
   runInNewContext(script, { window: qaWindow, queueMicrotask, document: { documentElement: { setAttribute: (name: string, value: string) => attributes.set(name, value) } } });
   assert.equal(qaWindow.__MAOBU_FRAMELESS__, true);
   assert.equal(attributes.get("data-qa-window-controls"), "simulated");
@@ -241,10 +481,23 @@ async function smokeFramelessBridge(html: string, scriptCapability: string, sign
     assert.equal(await bridge.invoke("script_capability"), scriptCapability);
     assert.equal((await bridge.invoke("signed_update_status")).configured, signedUpdate);
     if (signedUpdate) {
-      assert.equal((await bridge.invoke("signed_update_check", { startup: true })).update.version, "0.2.0-ui-qa");
+      assert.equal((await bridge.invoke("signed_update_check", { startup: true })).update.version, nextQaVersion(packageVersion));
       assert.equal(attributes.get("data-qa-signed-check-count"), "1");
       assert.equal(attributes.get("data-qa-signed-check-mode"), "startup");
     }
+    await bridge.invoke("set_window_theme", { theme: "dark" });
+    assert.equal(attributes.get("data-qa-window-theme"), "dark");
+    const diagProbe = await bridge.invoke("system_diagnostic_probe");
+    assert.equal(diagProbe.webview2Available, true);
+    const monitors = await bridge.invoke("window_list_monitors");
+    assert.equal(monitors.length, 1);
+    const initialSync = await bridge.invoke("sync_status");
+    assert.equal(initialSync.supported, true);
+    assert.equal(initialSync.active, false);
+    const startedSync = await bridge.invoke("sync_start", { config: { masterProfileId: "uiqa0001", slaveProfileIds: ["uiqa0002"] } });
+    assert.equal(startedSync.active, true);
+    const stoppedSync = await bridge.invoke("sync_stop");
+    assert.equal(stoppedSync.active, false);
     await assert.rejects(bridge.invoke("signed_update_install"), /unsupported command/);
     await assert.rejects(bridge.invoke("open_workspace_location"), /unsupported command/);
     await assert.rejects(bridge.invoke("plugin:window|close", { label: "other-window" }), /unknown window label/);
@@ -403,6 +656,7 @@ export async function createUiQaFixture(rows = 8, preview: { frameless?: boolean
   }
   for (const group of new Set(examples.map(example => example.group))) store.createGroup(group);
   const scriptCapability = randomBytes(32).toString("hex");
+  const desktopBridge = frameless ? framelessBridgeSource(scriptCapability, preview.signedUpdate) : null;
   const library = new ScriptLibrary(root);
   const fixtureScript = await library.save({ name: "验收示例 · 不执行", description: "仅用于隔离脚本库列表验收；此 fixture 禁止执行脚本。", language: "javascript", source: "// Isolated UI library fixture. Never executed.\nvoid 0;\n" });
   const sessionDirectory = join(paths.profiles, initial[0]!.id);
@@ -411,11 +665,13 @@ export async function createUiQaFixture(rows = 8, preview: { frameless?: boolean
 
   // Fake launch rows exist only in this newly-created store. No process is spawned,
   // scanned, focused or killed; no WebSocket/CDP connection is ever attempted.
+  let nextSyntheticPid = 910_000;
   function start(id: string) {
     const profile = store.getProfile(id);
     if (!profile) throw new Error("No such fixture profile");
+    const syntheticPid = nextSyntheticPid++;
     store.recordLaunch({
-      profileId: id, engine: profile.engine ?? "chromium", pid: 0, debugPort: 0,
+      profileId: id, engine: profile.engine ?? "chromium", pid: syntheticPid, debugPort: 0,
       ws: `ws://127.0.0.1:0/ui-qa/${id}`, startedAt: Date.now(),
       persona: structuredClone(profile),
     });
@@ -435,7 +691,7 @@ export async function createUiQaFixture(rows = 8, preview: { frameless?: boolean
     profileDeletionBlocked: (id: string) => !!store.getLaunch(id),
     removeUserDataDir: () => true,
     bringToFront: async () => {},
-    clearCache: async () => ({ cleared: 0 }),
+    clearCache: async () => ({ cleared: true }),
     dataDriveFreeBytes: () => 120 * 1024 ** 3,
     prefetchFirefoxFontPacks: () => {},
   } as unknown as Launcher;
@@ -453,8 +709,81 @@ export async function createUiQaFixture(rows = 8, preview: { frameless?: boolean
   store.trashProfile(archived.id);
 
   const health = {
-    version: JSON.parse(readFileSync(join(projectRoot, "package.json"), "utf8")).version as string,
+    version: packageVersion,
     root, instance: randomBytes(32).toString("hex"),
+  };
+  const eventBus = new UiEventBus({
+    workspaceId: health.instance,
+    launcher,
+    store,
+  });
+  // Synthetic in-memory process metrics backend for the isolated UI fixture:
+  // computes realistic RSS/CPU from store.listLaunches() without scanning any OS processes.
+  const trimmedSyntheticRss = new Map<number, number>();
+  const syntheticMetricsBackend: ProcessMetricsBackend = {
+    supportsWorkingSetTrim: true,
+    cpuCount: () => 8,
+    readHostMemory: () => {
+      const totalBytes = 16 * 1024 ** 3;
+      const browserRss = store.listLaunches().reduce((sum, launch, idx) => {
+        const base = trimmedSyntheticRss.get(launch.pid) ?? (380 + (idx % 4) * 75) * 1024 * 1024;
+        return sum + base;
+      }, 0);
+      const usedBytes = Math.min(totalBytes - 2 * 1024 ** 3, 6 * 1024 ** 3 + browserRss);
+      const availableBytes = Math.max(0, totalBytes - usedBytes);
+      return {
+        totalBytes,
+        availableBytes,
+        usedBytes,
+        memoryLoadPercent: Math.round((usedBytes / totalBytes) * 100),
+      };
+    },
+    listProcessEdges: () => {
+      const edges: Array<{ pid: number; parentPid: number }> = [];
+      for (const launch of store.listLaunches()) {
+        if (launch.pid <= 0) continue;
+        edges.push({ pid: launch.pid, parentPid: 0 });
+        edges.push({ pid: launch.pid * 10 + 1, parentPid: launch.pid });
+        edges.push({ pid: launch.pid * 10 + 2, parentPid: launch.pid });
+      }
+      return edges;
+    },
+    readProcessStats: (pid) => {
+      const launch = store.listLaunches().find((l) => l.pid === pid || l.pid * 10 + 1 === pid || l.pid * 10 + 2 === pid);
+      if (!launch) return null;
+      const isRoot = pid === launch.pid;
+      const fullRss = trimmedSyntheticRss.get(launch.pid) ?? 420 * 1024 * 1024;
+      const rssBytes = isRoot ? Math.round(fullRss * 0.45) : Math.round(fullRss * 0.275);
+      return {
+        pid,
+        rssBytes,
+        privateBytes: Math.round(rssBytes * 0.8),
+        cpuTime100ns: null,
+        creationTime100ns: 1n,
+        directCpuPercent: isRoot ? 1.8 : 0.9,
+      };
+    },
+    emptyWorkingSet: (pid) => {
+      const launch = store.listLaunches().find((l) => l.pid === pid);
+      if (!launch) return false;
+      const current = trimmedSyntheticRss.get(launch.pid) ?? 420 * 1024 * 1024;
+      trimmedSyntheticRss.set(launch.pid, Math.max(120 * 1024 * 1024, Math.round(current * 0.65)));
+      return true;
+    },
+  };
+  const collector = new ProcessTreeMetricsCollector({ backend: syntheticMetricsBackend });
+  const metricsService = new MetricsService({
+    store,
+    launcher,
+    collector,
+    watermarkGuard: new MemoryWatermarkGuard({ readHostMemory: () => collector.readHostMemory() }),
+    purgeCdpMemory: async () => false,
+  });
+  store.onMutation = (event) => {
+    if (event.kind === "lifecycle" && event.running) {
+      metricsService.clearHibernated(event.profileId);
+    }
+    eventBus.handleStoreMutation(event);
   };
   // Browser GET fetches omit Origin. Use the real session authorization hook,
   // rather than treating an Origin/Referer as a credential or mocking the API.
@@ -470,6 +799,9 @@ export async function createUiQaFixture(rows = 8, preview: { frameless?: boolean
   } });
   const options: UiRuntimeOptions = {
     paths, appConfig, health, workspaceManagement: management,
+    events: eventBus,
+    metrics: metricsService,
+    appLock: new AppLockService({ home: root }),
     // The test UI never scans real listeners. Only these synthetic endpoints reply.
     discoverLocalProxies: async ({ host = "127.0.0.1", ports = [] } = {}) => ({
       host, checkedAt: new Date().toISOString(), results: ports.map(port => host === "::1" && port === 18080
@@ -530,6 +862,8 @@ export async function createUiQaFixture(rows = 8, preview: { frameless?: boolean
     await production?.stopScripts();
     await management.settled();
     await production?.stop(true);
+    metricsService.close();
+    eventBus.closeAll();
     for (const launch of store.listLaunches()) store.clearLaunch(launch.profileId);
     store.close();
   }
@@ -558,6 +892,15 @@ export async function createUiQaFixture(rows = 8, preview: { frameless?: boolean
         const url = new URL(request.url);
         const origin = request.headers.get("origin");
         if (origin && origin !== url.origin) return Response.json({ error: "Cross-origin fixture access is forbidden" }, { status: 403 });
+        if (url.pathname === FRAMELESS_QA_PATH) {
+          if (!desktopBridge || request.method !== "GET") return new Response(null, { status: 404 });
+          return new Response(desktopBridge, { headers: {
+            "Content-Type": "text/javascript; charset=utf-8",
+            "Cache-Control": "no-store",
+            "Cross-Origin-Resource-Policy": "same-origin",
+            "X-Content-Type-Options": "nosniff",
+          } });
+        }
         if (url.pathname === "/__qa/capture") return captureScreenshot(request, root);
         if (preview.runtimeDownloadProgress && url.pathname === "/ui/api/runtime-downloads" && request.method === "GET") {
           return Response.json({ downloads: syntheticRuntimeDownloads }, { headers: { "Cache-Control": "no-store", "X-Maobu-UI-QA": "simulated-runtime-downloads" } });
@@ -616,7 +959,7 @@ export async function createUiQaFixture(rows = 8, preview: { frameless?: boolean
           if (frameless) {
             for (const name of ["Content-Length", "Content-Encoding", "ETag", "Last-Modified"]) headers.delete(name);
             headers.set("X-Maobu-Frameless-QA", "simulated-window-controls");
-            return new Response(framelessQaHtml(await response.text(), scriptCapability, preview.signedUpdate), { status: response.status, headers });
+            return new Response(framelessQaHtml(await response.text()), { status: response.status, headers });
           }
           return new Response(response.body, { status: response.status, headers });
         }
@@ -667,6 +1010,23 @@ async function smoke(fixture: Awaited<ReturnType<typeof createUiQaFixture>>) {
   };
   const health = await read("/ui/api/health");
   assert.equal(health.root, fixture.root);
+  const appMode = await read("/ui/api/app-mode");
+  assert.equal(appMode.eventsStream, true);
+  assert.equal(appMode.appLockAvailable, true);
+  const sseRes = await request("/ui/api/events", { headers: { Accept: "text/event-stream" } });
+  assert.equal(sseRes.status, 200);
+  await sseRes.body?.cancel().catch(() => {});
+  const metricsSnap = await read("/ui/api/metrics/snapshot");
+  assert.equal(metricsSnap.snapshot.profiles.length, 2);
+  assert(metricsSnap.snapshot.totals.totalRssBytes > 0);
+  const metricsStreamRes = await request("/ui/api/metrics/stream", { headers: { Accept: "text/event-stream" } });
+  assert.equal(metricsStreamRes.status, 200);
+  await metricsStreamRes.body?.cancel().catch(() => {});
+  const policyBefore = await read("/ui/api/profiles/uiqa0001/resource-policy");
+  assert.equal(policyBefore.policy.memorySaverMode, "inherit");
+  const policyAfter = await send("PATCH", "/ui/api/profiles/uiqa0001/resource-policy", { memorySaverMode: "on" });
+  assert.equal(policyAfter.policy.memorySaverMode, "on");
+  assert.equal(policyAfter.effective.memorySaver, true);
   assert.equal((await request("/ui/api/workspaces")).status, 401, "Workspace metadata requires a capability");
   assert.equal((await request("/ui/api/workspace/capability")).status, 401, "Capability bootstrap requires a fixture session");
   const browserContext = { referer: `${fixture.url}/`, "sec-fetch-site": "same-origin", accept: "application/json" };
@@ -710,11 +1070,18 @@ async function smoke(fixture: Awaited<ReturnType<typeof createUiQaFixture>>) {
   assert.equal(html.status, 200);
   const sourceHtml = await html.text();
   assert(sourceHtml.includes("<title>猫步·千境</title>"));
-  assert.equal(sourceHtml.includes("<script data-qa-frameless-bridge>"), fixture.frameless);
+  assert.equal(sourceHtml.includes(FRAMELESS_QA_TAG), fixture.frameless);
+  const bridge = await request(FRAMELESS_QA_PATH);
+  assert.equal(bridge.status, fixture.frameless ? 200 : 404);
   if (fixture.frameless) {
     assert.equal(html.headers.get("X-Maobu-Frameless-QA"), "simulated-window-controls");
-    assert(sourceHtml.indexOf("<script data-qa-frameless-bridge>") < sourceHtml.indexOf("<title>"));
-    await smokeFramelessBridge(sourceHtml, fixture.scriptCapability, fixture.signedUpdate);
+    assert(sourceHtml.indexOf(FRAMELESS_QA_TAG) < sourceHtml.indexOf("<title>"));
+    assert.doesNotMatch(sourceHtml, new RegExp(fixture.scriptCapability));
+    assert.match(html.headers.get("Content-Security-Policy") ?? "", /(?:^|;)\s*script-src 'self'(?:;|$)/);
+    assert.match(bridge.headers.get("Content-Type") ?? "", /^text\/javascript\b/);
+    assert.equal(bridge.headers.get("Cross-Origin-Resource-Policy"), "same-origin");
+    assert.equal((await request(FRAMELESS_QA_PATH, { headers: { origin: "https://outside.invalid" } })).status, 403);
+    await smokeFramelessBridge(await bridge.text(), fixture.scriptCapability, fixture.signedUpdate);
   }
   await post("/ui/api/profiles/uiqa0003/open");
   await post("/ui/api/profiles/uiqa0001/close");

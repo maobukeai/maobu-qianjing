@@ -12,7 +12,7 @@ import type { PythonRuntimeStatus } from "../python-runtime.ts";
 import type { UiProfile } from "./api.ts";
 import { useTranslation } from "./i18n.tsx";
 import { MotionPresence } from "./desktop-motion.tsx";
-import { useConfirmDialog } from "./ui-primitives.tsx";
+import { AppIcon, useConfirmDialog } from "./ui-primitives.tsx";
 import { useDesktopCloseDraft } from "./desktop-close.tsx";
 import { hasActiveWorkbenchModal } from "./workbench-shortcuts.ts";
 import { backgroundScriptRuns, useBackgroundScriptRun } from "./background-script-run.tsx";
@@ -152,6 +152,7 @@ export function ScriptsPage({ onViewRun, active = true }: { onViewRun: () => voi
   const { t } = useTranslation();
   const { requestConfirm, confirmDialogNode } = useConfirmDialog();
   const [studioTab, setStudioTab] = useState<RpaStudioTab>("scripts");
+  const [langFilter, setLangFilter] = useState<"all" | ScriptLanguage>("all");
   const [scripts, setScripts] = useState<ScriptSummary[]>([]);
   const [script, setScript] = useState<ScriptRecord | null>(null);
   const [drafts] = useState(createScriptDetailsDrafts);
@@ -547,57 +548,108 @@ export function ScriptsPage({ onViewRun, active = true }: { onViewRun: () => voi
 
   const visibility = { hidden: !active, inert: !active || undefined, style: !active ? { display: "none" } : undefined };
   if (!desktop) {
-    return <div className="workspace scripts-page" {...visibility}><header className="scripts-head page-heading"><div><h2 className="sect-title">{t("Scripts")}</h2><p className="page-subtitle">{t("Scripts, runs, and logs stay on this computer.")}</p></div></header><div className="emptystate scripts-empty"><span className="scripts-empty-symbol" aria-hidden="true">{"</>"}</span><b>{t("Scripts require the desktop app.")}</b><p>{t("Open the desktop app to manage local scripts.")}</p></div></div>;
+    return <div className="workspace scripts-page" {...visibility}>
+      <header className="scripts-head page-heading"><h1>{t("Scripts")}</h1></header>
+      <div className="emptystate scripts-empty"><span className="scripts-empty-symbol"><AppIcon name="file" /></span><b>{t("Scripts require the desktop app.")}</b></div>
+    </div>;
   }
+  const showScriptList = scripts.length > 0 || missingDrafts.length > 0;
+  const jsCount = scripts.filter((item) => item.language === "javascript").length;
+  const pyCount = scripts.filter((item) => item.language === "python").length;
+  const filteredScripts = langFilter === "all" ? scripts : scripts.filter((item) => item.language === langFilter);
+  const unsavedDraftCount = new Set([...drafts.ids(), ...sourceDrafts.keys()]).size;
+  const sourceLineCount = Math.max(1, activeSourceValue.split(/\r?\n/).length);
 
   return (
     <div className="workspace scripts-page" {...visibility} aria-busy={busy} aria-labelledby="scripts-page-title">
       <header className="scripts-head page-heading">
-        <div>
-          <h2 className="sect-title" id="scripts-page-title">{t("Scripts")}</h2>
-          <p className="page-subtitle">{t("Scripts, runs, and logs stay on this computer.")}</p>
+        <div className="scripts-header-left">
+          <h1 id="scripts-page-title">{t("Scripts")}</h1>
+          <nav className="rpa-studio-tabs" role="group" aria-label={t("RPA Studio sections")} data-sliding-group>
+            <button
+              type="button"
+              className={`rpa-studio-tab${studioTab === "scripts" ? " active" : ""}`}
+              aria-pressed={studioTab === "scripts"}
+              onClick={() => setStudioTab("scripts")}
+            >
+              {t("Saved scripts")}
+              <span className="rpa-studio-tab-badge">{scripts.length}</span>
+            </button>
+            <button
+              type="button"
+              className={`rpa-studio-tab${studioTab === "templates" ? " active" : ""}`}
+              aria-pressed={studioTab === "templates"}
+              onClick={() => setStudioTab("templates")}
+            >
+              {t("Templates")}
+            </button>
+            <button
+              type="button"
+              className={`rpa-studio-tab${studioTab === "recorder" ? " active" : ""}`}
+              aria-pressed={studioTab === "recorder"}
+              onClick={() => setStudioTab("recorder")}
+            >
+              {t("Visual recorder")}
+            </button>
+            <button
+              type="button"
+              className={`rpa-studio-tab${studioTab === "runs" ? " active" : ""}`}
+              aria-pressed={studioTab === "runs"}
+              onClick={() => setStudioTab("runs")}
+            >
+              {t("Runs & receipts")}
+            </button>
+          </nav>
         </div>
         <div className="page-actions">
-          <button className="btn ghost" type="button" disabled={busy} onClick={() => void refreshList()}>{t("Refresh scripts")}</button>
-          <button className="btn primary" type="button" disabled={busy} onClick={() => importRef.current?.click()}>{t("Import script")}</button>
+          <button className="btn" type="button" disabled={busy} onClick={() => void refreshList()}><AppIcon name="refresh" className="sm" />{t("Refresh scripts")}</button>
+          <button className="btn primary" type="button" disabled={busy} onClick={() => importRef.current?.click()}><AppIcon name="fileImport" className="sm" />{t("Import script")}</button>
         </div>
       </header>
 
-      <nav className="rpa-studio-tabs" aria-label={t("RPA Studio sections")}>
-        <button
-          type="button"
-          className={`rpa-studio-tab${studioTab === "scripts" ? " active" : ""}`}
-          aria-pressed={studioTab === "scripts"}
-          onClick={() => setStudioTab("scripts")}
-        >
-          {t("Saved scripts")}
-          <span className="rpa-studio-tab-badge">{scripts.length}</span>
-        </button>
-        <button
-          type="button"
-          className={`rpa-studio-tab${studioTab === "templates" ? " active" : ""}`}
-          aria-pressed={studioTab === "templates"}
-          onClick={() => setStudioTab("templates")}
-        >
-          {t("Templates")}
-        </button>
-        <button
-          type="button"
-          className={`rpa-studio-tab${studioTab === "recorder" ? " active" : ""}`}
-          aria-pressed={studioTab === "recorder"}
-          onClick={() => setStudioTab("recorder")}
-        >
-          {t("Visual recorder")}
-        </button>
-        <button
-          type="button"
-          className={`rpa-studio-tab${studioTab === "runs" ? " active" : ""}`}
-          aria-pressed={studioTab === "runs"}
-          onClick={() => setStudioTab("runs")}
-        >
-          {t("Runs & receipts")}
-        </button>
-      </nav>
+      <div className="scripts-kpi-ribbon">
+        <div>
+          <div className="scripts-kpi-head">
+            <span>{t("Saved scripts")}</span>
+            <small>{jsCount} JS · {pyCount} PY</small>
+          </div>
+          <div className="scripts-kpi-val">
+            <strong>{scripts.length.toLocaleString()}</strong>
+          </div>
+        </div>
+        <div>
+          <div className="scripts-kpi-head">
+            <span>Python</span>
+            <small className={python?.state === "ready" ? "tone-good" : ""}>
+              {python?.state === "ready" ? t("Ready") : python?.state === "downloading" ? "…" : t("Idle")}
+            </small>
+          </div>
+          <div className="scripts-kpi-val">
+            <strong className={python?.state === "ready" ? "tone-good" : ""}>{pyCount.toLocaleString()}</strong>
+          </div>
+        </div>
+        <div>
+          <div className="scripts-kpi-head">
+            <span>{t("Unsaved drafts")}</span>
+          </div>
+          <div className="scripts-kpi-val">
+            <strong className={unsavedDraftCount > 0 ? "tone-warn" : ""}>{unsavedDraftCount.toLocaleString()}</strong>
+          </div>
+        </div>
+        <div>
+          <div className="scripts-kpi-head">
+            <span>{t("Runs & receipts")}</span>
+            {currentRun && <small>{currentRun.scriptName}</small>}
+          </div>
+          <div className="scripts-kpi-val">
+            <strong className={currentRun?.status === "running" ? "tone-accent" : ""}>
+              {currentRun
+                ? (runSnapshot.state === "unavailable" ? t("Idle") : scriptStatusLabel(currentRun.status, t))
+                : t("Idle")}
+            </strong>
+          </div>
+        </div>
+      </div>
 
       {error && <div className="modal-err" role="alert">{error}</div>}
       {notice && <p className="script-notice" role="status">{t(notice)}{undo && <button className="btn xs ghost" type="button" disabled={busy} onClick={undoDiscard}>{t("Undo discard")}</button>}</p>}
@@ -630,12 +682,41 @@ export function ScriptsPage({ onViewRun, active = true }: { onViewRun: () => voi
       )}
 
       {studioTab === "scripts" && (
-        <div className="scripts-layout">
-          <aside className="scripts-list" aria-label={t("Saved scripts")}>
-            <div className="scripts-list-head"><h3>{t("Saved scripts")}</h3><span>{scripts.length.toLocaleString()}</span></div>
-            <div className="scripts-list-body">{scripts.length === 0 ? <p className="scripts-list-empty">{t("No scripts yet.")}</p> : scripts.map((item) => (
+        <div className={`scripts-layout${showScriptList ? "" : " is-empty"}`}>
+          {showScriptList && <aside className="scripts-list" aria-label={t("Saved scripts")}>
+            {scripts.length > 0 && (
+              <div className="scripts-lang-filter" role="group" aria-label={t("Saved scripts")} data-sliding-disabled>
+                {(
+                  [
+                    { key: "all", label: t("All"), count: scripts.length },
+                    { key: "javascript", label: "JS", count: jsCount },
+                    { key: "python", label: "Python", count: pyCount },
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    className={`scripts-lang-chip${langFilter === opt.key ? " active" : ""}`}
+                    aria-pressed={langFilter === opt.key}
+                    onClick={() => setLangFilter(opt.key)}
+                  >
+                    {opt.label} <span>{opt.count}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div
+              className="scripts-list-body"
+              data-sliding-group
+              data-sliding-axis="vertical"
+              data-sliding-accent-bar="true"
+            >{filteredScripts.map((item) => (
               <button className={`script-row${script?.id === item.id ? " active" : ""}`} type="button" key={item.id} data-script-id={item.id} disabled={busy} aria-pressed={script?.id === item.id} onClick={() => void select(item.id)}>
-                <b>{item.name}{(drafts.get(item.id) || sourceDrafts.has(item.id)) && <em className="script-draft-badge">{t("Unsaved")}</em>}</b><span>{languageName(item.language)}</span>
+                <div className="script-row-top">
+                  <b>{item.name}{(drafts.get(item.id) || sourceDrafts.has(item.id)) && <em className="script-draft-badge">{t("Unsaved")}</em>}</b>
+                  <span className="rpa-lang-pill" data-lang={item.language}>{item.language === "python" ? "PY" : "JS"}</span>
+                </div>
+                <span>{languageName(item.language)} · Rev {item.revision}</span>
                 {item.description && <small>{item.description}</small>}
               </button>
             ))}</div>
@@ -657,121 +738,136 @@ export function ScriptsPage({ onViewRun, active = true }: { onViewRun: () => voi
                 })}
               </div>
             )}
-          </aside>
+          </aside>}
           {script ? (
-            <section className="settings-card script-detail">
-              <header><h2>{script.name}</h2>{(dirty || sourceDirty) && <span className="script-draft-badge">{t("Unsaved")}</span>}<span className="chip">{languageName(script.language)}</span></header>
-              <div className="card-body">
-                {needsReload && (
-                  <div className="script-draft-note has-conflict">
-                    <p role="status">{t("Reload the saved script before making another change.")}</p>
-                    <button className="btn xs" type="button" disabled={busy} onClick={() => void refreshList()}>{t("Reload saved script")}</button>
-                  </div>
-                )}
-                {dirty && (
-                  <div className={`script-draft-note${staleDraft ? " has-conflict" : ""}`}>
-                    <div role="status">
-                      <strong>{t(restoredDraft ? "Unsaved draft restored." : "Your changes are not saved yet.")}</strong>
-                      <p>{t(staleDraft ? "The saved script changed since this draft began. Review the latest source before saving." : "You can switch scripts or pages. This draft stays in memory until you close or reload the app.")}</p>
-                    </div>
-                    <button className="btn xs ghost" type="button" disabled={busy} onClick={discardDraft}>{t("Discard draft")}</button>
-                  </div>
-                )}
-                {staleDraft && !needsReload && savedRecord.current && (
-                  <section className="script-draft-review" aria-labelledby="script-draft-review-title">
-                    <h3 id="script-draft-review-title">{t("Latest saved details")}</h3>
-                    <dl>
-                      <dt>{t("Title")}</dt><dd>{savedRecord.current.name}</dd>
-                      <dt>{t("Description")}</dt><dd>{savedRecord.current.description || "—"}</dd>
-                    </dl>
-                    <button className="btn xs" type="button" disabled={busy} onClick={reviewDraft}>{t("Keep my edits on this version")}</button>
-                  </section>
-                )}
-                {!dirty && undo && !notice && <p className="script-notice" role="status">{t("A discarded draft is available for this script.")} <button className="btn xs ghost" type="button" disabled={busy} onClick={undoDiscard}>{t("Restore draft")}</button></p>}
-                <label className="fld"><span>{t("Title")}</span><input className="input" value={script.name} disabled={busy} onChange={(event) => editDetails("name", event.target.value)} /></label>
-                <label className="fld"><span>{t("Description")}</span><input className="input" value={script.description} disabled={busy} onChange={(event) => editDetails("description", event.target.value)} /></label>
-                <div className="script-actions">
-                  <button className="btn primary" type="button" disabled={busy || !dirty || staleDraft || needsReload || !script.name.trim()} onClick={() => void saveDetails()}>{mutation === "save" ? t("Saving…") : t("Save details")}</button>
-                  <button className="btn" type="button" disabled={busy || needsReload} onClick={() => replaceRef.current?.click()}>{t("Replace file")}</button>
-                  <button className="btn danger" type="button" disabled={busy || needsReload} onClick={() => void remove()}>{t("Delete")}</button>
+            <section className="script-detail">
+              {needsReload && (
+                <div className="script-draft-note has-conflict">
+                  <p role="status">{t("Reload the saved script before making another change.")}</p>
+                  <button className="btn xs" type="button" disabled={busy} onClick={() => void refreshList()}>{t("Reload saved script")}</button>
                 </div>
-
-                {staleSourceDraft && !needsReload && (
-                  <div className="script-draft-note has-conflict">
-                    <div role="status">
-                      <strong>{t("Source revision conflict detected.")}</strong>
-                      <p>{t("This script was updated to revision {rev} while you edited the source.", { rev: script.revision })}</p>
-                    </div>
-                    <button className="btn xs" type="button" disabled={busy} onClick={rebaseSourceDraft}>
-                      {t("Keep my source edits on this version")}
-                    </button>
+              )}
+              {dirty && (
+                <div className={`script-draft-note${staleDraft ? " has-conflict" : ""}`}>
+                  <div role="status">
+                    <strong>{t(restoredDraft ? "Unsaved draft restored." : "Your changes are not saved yet.")}</strong>
+                    <p>{t(staleDraft ? "The saved script changed since this draft began. Review the latest source before saving." : "You can switch scripts or pages. This draft stays in memory until you close or reload the app.")}</p>
                   </div>
-                )}
+                  <button className="btn xs ghost" type="button" disabled={busy} onClick={discardDraft}>{t("Discard draft")}</button>
+                </div>
+              )}
+              {staleDraft && !needsReload && savedRecord.current && (
+                <section className="script-draft-review" aria-labelledby="script-draft-review-title">
+                  <h3 id="script-draft-review-title">{t("Latest saved details")}</h3>
+                  <dl>
+                    <dt>{t("Title")}</dt><dd>{savedRecord.current.name}</dd>
+                    <dt>{t("Description")}</dt><dd>{savedRecord.current.description || "—"}</dd>
+                  </dl>
+                  <button className="btn xs" type="button" disabled={busy} onClick={reviewDraft}>{t("Keep my edits on this version")}</button>
+                </section>
+              )}
+              {!dirty && undo && !notice && <p className="script-notice" role="status">{t("A discarded draft is available for this script.")} <button className="btn xs ghost" type="button" disabled={busy} onClick={undoDiscard}>{t("Restore draft")}</button></p>}
 
-                <div className="fld">
-                  <div className="script-source-header">
-                    <span>{t("Source")}</span>
-                    <div className="script-source-meta">
-                      <span>{t("Rev {rev}", { rev: script.revision })}</span>
-                      <span>{t("{lines} lines", { lines: activeSourceValue.split(/\r?\n/).length })}</span>
-                      {editingSource ? (
-                        <>
-                          <button
-                            type="button"
-                            className="btn xs primary"
-                            disabled={busy || !sourceDirty || staleSourceDraft || needsReload || !activeSourceValue.trim()}
-                            onClick={() => void saveSource()}
-                          >
-                            {mutation === "save-source" ? t("Saving…") : t("Save source")}
-                          </button>
-                          {sourceDirty && (
-                            <button type="button" className="btn xs ghost" disabled={busy} onClick={discardSourceDraft}>
-                              {t("Discard source edits")}
-                            </button>
-                          )}
-                          <button type="button" className="btn xs ghost" disabled={busy} onClick={() => setEditingSource(false)}>
-                            {t("Preview source")}
-                          </button>
-                        </>
-                      ) : (
-                        <button type="button" className="btn xs" disabled={busy} onClick={() => setEditingSource(true)}>
-                          {sourceDirty ? t("Continue editing source") : t("Edit source")}
-                        </button>
-                      )}
-                    </div>
+              <div className="script-meta-card">
+                <div className="script-meta-grid">
+                  <label className="fld"><span>{t("Title")}</span><input className="input" value={script.name} disabled={busy} onChange={(event) => editDetails("name", event.target.value)} /></label>
+                  <label className="fld"><span>{t("Description")}</span><input className="input" value={script.description} disabled={busy} onChange={(event) => editDetails("description", event.target.value)} /></label>
+                  <div className="script-actions">
+                    <button className="btn primary" type="button" disabled={busy || !dirty || staleDraft || needsReload || !script.name.trim()} onClick={() => void saveDetails()}>{mutation === "save" ? t("Saving…") : t("Save details")}</button>
+                    <button className="btn" type="button" disabled={busy || needsReload} onClick={() => replaceRef.current?.click()}>{t("Replace file")}</button>
+                    <button className="btn danger" type="button" disabled={busy || needsReload} onClick={() => void remove()}>{t("Delete")}</button>
                   </div>
-                  {editingSource ? (
-                    <textarea
-                      className="script-source-editor"
-                      aria-label={t("Script source editor")}
-                      value={activeSourceValue}
-                      disabled={busy}
-                      spellCheck={false}
-                      onKeyDown={(event) => {
-                        if (event.key === "Tab") {
-                          event.preventDefault();
-                          const target = event.currentTarget;
-                          const start = target.selectionStart;
-                          const end = target.selectionEnd;
-                          const next = `${activeSourceValue.slice(0, start)}  ${activeSourceValue.slice(end)}`;
-                          editSource(next);
-                          requestAnimationFrame(() => {
-                            target.selectionStart = target.selectionEnd = start + 2;
-                          });
-                        } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
-                          event.preventDefault();
-                          void saveSource();
-                        }
-                      }}
-                      onChange={(event) => editSource(event.target.value)}
-                    />
-                  ) : (
-                    <pre className="script-source">{script.source}</pre>
-                  )}
                 </div>
               </div>
+
+              {staleSourceDraft && !needsReload && (
+                <div className="script-draft-note has-conflict">
+                  <div role="status">
+                    <strong>{t("Source revision conflict detected.")}</strong>
+                    <p>{t("This script was updated to revision {rev} while you edited the source.", { rev: script.revision })}</p>
+                  </div>
+                  <button className="btn xs" type="button" disabled={busy} onClick={rebaseSourceDraft}>
+                    {t("Keep my source edits on this version")}
+                  </button>
+                </div>
+              )}
+
+              <div className="fld script-code-card">
+                <div className="script-source-header">
+                  <div className="script-code-title-group">
+                    <h2>{script.name}</h2>
+                    {(dirty || sourceDirty) && <span className="script-draft-badge">{t("Unsaved")}</span>}
+                    <span className="chip">{languageName(script.language)}</span>
+                    <span className="script-rev-pill">{t("Rev {rev}", { rev: script.revision })}</span>
+                    <span className="script-line-count">{t("{lines} lines", { lines: sourceLineCount })}</span>
+                  </div>
+                  <div className="script-source-meta">
+                    {editingSource ? (
+                      <>
+                        <button
+                          type="button"
+                          className="btn xs primary"
+                          disabled={busy || !sourceDirty || staleSourceDraft || needsReload || !activeSourceValue.trim()}
+                          onClick={() => void saveSource()}
+                        >
+                          {mutation === "save-source" ? t("Saving…") : t("Save source")}
+                        </button>
+                        {sourceDirty && (
+                          <button type="button" className="btn xs ghost" disabled={busy} onClick={discardSourceDraft}>
+                            {t("Discard source edits")}
+                          </button>
+                        )}
+                        <button type="button" className="btn xs ghost" disabled={busy} onClick={() => setEditingSource(false)}>
+                          {t("Preview source")}
+                        </button>
+                      </>
+                    ) : (
+                      <button type="button" className="btn xs" disabled={busy} onClick={() => setEditingSource(true)}>
+                        {sourceDirty ? t("Continue editing source") : t("Edit source")}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {editingSource ? (
+                  <textarea
+                    className="script-source-editor"
+                    aria-label={t("Script source editor")}
+                    value={activeSourceValue}
+                    disabled={busy}
+                    spellCheck={false}
+                    onKeyDown={(event) => {
+                      if (event.key === "Tab") {
+                        event.preventDefault();
+                        const target = event.currentTarget;
+                        const start = target.selectionStart;
+                        const end = target.selectionEnd;
+                        const next = `${activeSourceValue.slice(0, start)}  ${activeSourceValue.slice(end)}`;
+                        editSource(next);
+                        requestAnimationFrame(() => {
+                          target.selectionStart = target.selectionEnd = start + 2;
+                        });
+                      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+                        event.preventDefault();
+                        void saveSource();
+                      }
+                    }}
+                    onChange={(event) => editSource(event.target.value)}
+                  />
+                ) : (
+                  <div className="script-code-view">
+                    <div className="script-code-gutter" aria-hidden="true">
+                      {Array.from({ length: sourceLineCount }, (_, idx) => idx + 1).join("\n")}
+                    </div>
+                    <pre className="script-source">{script.source}</pre>
+                  </div>
+                )}
+              </div>
             </section>
-          ) : <div className="emptystate scripts-empty"><span className="scripts-empty-symbol" aria-hidden="true">{"</>"}</span><b>{busy ? t("Loading…") : t("Select a script")}</b><p>{t("Import a .js, .mjs, or .py file to begin.")}</p></div>}
+          ) : <div className="emptystate scripts-empty">
+            <span className="scripts-empty-symbol"><AppIcon name="file" /></span>
+            <b>{t(busy ? "Loading…" : scripts.length ? "Select a script" : "No scripts yet.")}</b>
+            {!busy && !scripts.length && <p>{t("Import a .js, .mjs, or .py file to begin.")}</p>}
+          </div>}
         </div>
       )}
 

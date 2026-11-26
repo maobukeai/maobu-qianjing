@@ -95,7 +95,7 @@ async function run(scenario: string) {
 
   try {
     await render();
-    await act(async () => { dom.container.querySelectorAll<HTMLButtonElement>(".tools-tabs button")[1]!.click(); });
+    await act(async () => { dom.container.querySelector<HTMLButtonElement>('.tools-tabs button[data-proxy-tab="replace"]')!.click(); });
     await act(async () => { dom.container.querySelectorAll<HTMLInputElement>(".folder-chip input")[2]!.click(); });
     await type(manualInput(), manualText);
     await click("Preview changes");

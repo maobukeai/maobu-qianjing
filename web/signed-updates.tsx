@@ -7,6 +7,7 @@ import { checkSignedUpdate, desktopUpdaterAvailable, fetchSignedUpdateStatus, in
 import { SignedUpdateDraftDialog, SignedUpdateProgressView } from "./signed-update-draft-dialog.tsx";
 import { fetchSettings, patchSettings } from "./settings-api.ts";
 import { useOptionalWorkspaceOperations, workspaceOperationMessage } from "./workspace-operations.tsx";
+import { AppIcon } from "./ui-primitives.tsx";
 
 const STARTUP_DELAY_MS = 1_000;
 const STATUS_ERROR = "Could not read the desktop update channel.";
@@ -314,27 +315,37 @@ export function SignedUpdateCard({ startup }: { startup?: SignedUpdateStartupCon
   }
   const statusLabel = !status ? error || startupError ? "Status unavailable" : "Loading…" : installed ? "Restart requested" : operation === "install" || status.status === "downloading" || status.status === "installing" ? "Update in progress" : operation === "check" || startupChecking || status.status === "checking" ? "Checking…" : error || status.status === "error" ? "Check again" : status.update ? "Update available" : !status.configured ? "Installation unavailable" : status.status === "up-to-date" ? "Up to date" : "Ready to check";
   const statusPositive = !error && !startupError && !busy && !nativeBusy && !startupChecking && (installed || status?.status === "up-to-date" || !!status?.update);
-  return <section className="feature-card signed-update-card"><div className="feature-card-title"><div><h3 ref={cardHeading} tabIndex={-1}>{t("Install app updates")}</h3><p>{t("Install releases from the trusted channel included in this app build.")}</p></div><span className={`feature-badge ${statusPositive ? "positive" : ""}`}>{t(statusLabel)}</span></div>
-    {(error || startupError) && <div className="feature-alert" role="alert" ref={errorAlert} tabIndex={-1}>{t(error || startupError || "")}{!status && <button className="btn xs" type="button" disabled={statusLoading} aria-busy={statusLoading} onClick={() => { setError(""); void loadStatus(true); }}>{t("Try again")}</button>}</div>}
-    {!status && !error && !startupError && <p role="status">{t("Loading…")}</p>}
-    {status && <><p>{t(status.message)}</p>{status.currentVersion && <p className="signed-update-current">{t("Current version")}: {status.currentVersion}</p>}
-      {!status.configured && <p className="feature-inline-note">{t("The publisher has not enabled installation for this build. You can still read GitHub release announcements below.")}</p>}
-      {status.endpoint && <details className="feature-details signed-update-source"><summary>{t("Installation source")}</summary><p>{t("This source is set by the app publisher and is independent of your GitHub announcement repository.")}</p><p className="signed-update-endpoint mono">{status.endpoint}</p></details>}
-      {status.update && <div className="signed-update-release"><strong>{status.currentVersion} → {status.update.version}</strong><pre className="release-notes">{status.update.notes || t("No release notes provided.")}</pre><p>{t("Installation saves and closes browser sessions before replacing the app.")}</p></div>}
-      <div className="feature-actions"><button className="btn" ref={checkButton} type="button" disabled={busy || nativeBusy || startupChecking || !status.configured || installed} onClick={() => void check()}>{t(operation === "check" || startupChecking ? "Checking…" : "Check trusted channel")}</button>{status.update && <button className="btn primary" ref={installButton} type="button" disabled={busy || nativeBusy || startupChecking || !status.configured || !!installationBlock} onClick={requestInstall}>{t("Install verified update")}</button>}</div>
-      {installationBlock && !busy && <p className="feature-inline-note" role="status">{t(installationBlock)}</p>}
-    </>}
-    {startup && desktopUpdaterAvailable() && <>
-      <label className="feature-toggle"><span><strong>{t("Check the trusted channel on startup")}</strong><small>{t("Check once when this workspace starts. Review available versions before choosing to install.")}</small></span>
-        <input type="checkbox" role="switch" checked={startup.preference === true}
-          disabled={startup.preference === null || startup.preferenceBusy || (!status?.configured && !startup.preference) || !!confirmation || operation === "install"}
-          onChange={event => void startup.savePreference(event.target.checked)} /></label>
-      {startup.preferenceBusy && <p className="feature-inline-note" role="status">{t(startup.preference === null ? "Loading…" : "Saving…")}</p>}
-      {startup.preferenceError && <div className="feature-alert" role="alert">{t(startup.preferenceError)}{startup.preference === null && <button type="button" className="btn xs" disabled={startup.preferenceBusy} onClick={startup.retryPreference}>{t("Try again")}</button>}</div>}
-    </>}
-    {(operation === "install" || status?.status === "downloading" || status?.status === "installing") && <p className="feature-inline-note" role="status">{t("Keep the app open while the update downloads and installs. Closing and restarting are blocked until it finishes.")}</p>}
-    {progress && <SignedUpdateProgressView progress={progress} />}
-    {installed && <p className="feature-success" role="status">{t("Update installed. Restart requested.")}</p>}
+  return <section className="feature-card signed-update-card">
+    <div className="feature-card-title">
+      <div className="feature-card-head-main">
+        <div className="feature-card-heading">
+          <AppIcon name="import" className="sm" />
+          <h3 ref={cardHeading} tabIndex={-1}>{t("Install app updates")}</h3>
+        </div>
+      </div>
+      <span className={`feature-badge ${statusPositive ? "positive" : ""}`}>{t(statusLabel)}</span>
+    </div>
+    <div className="feature-card-body">
+      {(error || startupError) && <div className="feature-alert" role="alert" ref={errorAlert} tabIndex={-1}>{t(error || startupError || "")}{!status && <button className="btn xs" type="button" disabled={statusLoading} aria-busy={statusLoading} onClick={() => { setError(""); void loadStatus(true); }}>{t("Try again")}</button>}</div>}
+      {!status && !error && !startupError && <p role="status">{t("Loading…")}</p>}
+      {status && <><p>{t(status.message)}</p>{status.currentVersion && <p className="signed-update-current">{t("Current version")} {status.currentVersion}</p>}
+        {status.endpoint && <details className="feature-details signed-update-source"><summary>{t("Installation source")}</summary><p>{t("This source is set by the app publisher and is independent of your GitHub announcement repository.")}</p><p className="signed-update-endpoint mono">{status.endpoint}</p></details>}
+        {status.update && <div className="signed-update-release"><strong>{status.currentVersion} → {status.update.version}</strong><pre className="release-notes">{status.update.notes || t("No release notes provided.")}</pre><p>{t("Installation saves and closes browser sessions before replacing the app.")}</p></div>}
+        <div className="feature-actions"><button className="btn" ref={checkButton} type="button" disabled={busy || nativeBusy || startupChecking || !status.configured || installed} onClick={() => void check()}>{t(operation === "check" || startupChecking ? "Checking…" : "Check trusted channel")}</button>{status.update && <button className="btn primary" ref={installButton} type="button" disabled={busy || nativeBusy || startupChecking || !status.configured || !!installationBlock} onClick={requestInstall}>{t("Install verified update")}</button>}</div>
+        {installationBlock && !busy && <p className="feature-inline-note" role="status">{t(installationBlock)}</p>}
+      </>}
+      {startup && desktopUpdaterAvailable() && <>
+        <label className="feature-toggle"><span><strong>{t("Check the trusted channel on startup")}</strong><small>{t("Check once when this workspace starts. Review available versions before choosing to install.")}</small></span>
+          <input type="checkbox" role="switch" checked={startup.preference === true}
+            disabled={startup.preference === null || startup.preferenceBusy || (!status?.configured && !startup.preference) || !!confirmation || operation === "install"}
+            onChange={event => void startup.savePreference(event.target.checked)} /></label>
+        {startup.preferenceBusy && <p className="feature-inline-note" role="status">{t(startup.preference === null ? "Loading…" : "Saving…")}</p>}
+        {startup.preferenceError && <div className="feature-alert" role="alert">{t(startup.preferenceError)}{startup.preference === null && <button type="button" className="btn xs" disabled={startup.preferenceBusy} onClick={startup.retryPreference}>{t("Try again")}</button>}</div>}
+      </>}
+      {(operation === "install" || status?.status === "downloading" || status?.status === "installing") && <p className="feature-inline-note" role="status">{t("Keep the app open while the update downloads and installs. Closing and restarting are blocked until it finishes.")}</p>}
+      {progress && <SignedUpdateProgressView progress={progress} />}
+      {installed && <p className="feature-success" role="status">{t("Update installed. Restart requested.")}</p>}
+    </div>
     <SignedUpdateDraftDialog confirmation={confirmation} blocked={installationBlock} installing={installDialog} progress={progress} onKeepEditing={keepEditing} onConfirm={confirmInstall} returnFocus={returnFocus} />
   </section>;
 }

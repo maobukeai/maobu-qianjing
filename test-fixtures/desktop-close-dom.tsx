@@ -53,6 +53,14 @@ async function run(scenario: string) {
       await request(); assert.deepEqual(calls, ["proceed"]); assert.ok(activeDialog()?.textContent?.includes("Waiting for the desktop"));
       assert.equal(input().value, "baseline"); await resolved(); assert.equal(activeDialog(), undefined); assert.equal(dom.window.document.activeElement, input()); return;
     }
+    if (scenario === "busy-clean") {
+      await render({ busy: true }); await request();
+      assert.equal(activeDialog()?.querySelector("h2")?.textContent, "A change is still in progress");
+      await render({ busy: false });
+      assert.equal(activeDialog()?.querySelector("h2")?.textContent, "Close app?");
+      assert.ok(button("Close app")); assert.deepEqual(calls, ["hold"], "Resolving a clean busy guard still requires a decision");
+      await click("Keep editing"); assert.equal(input().value, "baseline"); return;
+    }
     await act(async () => setValue("INVALID_PRIVATE_DRAFT"));
     if (scenario === "busy") {
       await render({ busy: true }); await request(); assert.deepEqual(calls, ["hold"]);
@@ -71,6 +79,32 @@ async function run(scenario: string) {
     await request(); assert.ok(activeDialog()); assert.equal(dom.window.document.activeElement, button("Keep editing"));
     assert.ok(dom.container.hasAttribute("inert")); assert.equal(dom.container.getAttribute("aria-hidden"), "true");
     assert.ok(!activeDialog()!.outerHTML.includes("INVALID_PRIVATE_DRAFT")); assert.ok(!activeDialog()!.outerHTML.includes("PRIVATE_PASSWORD_VALUE"));
+    if (scenario === "sending-focus") {
+      const pending = deferred<DesktopCloseResolution>();
+      native.resolve = async (_value, decision) => { calls.push(decision); return pending.promise; };
+      await click("Keep editing");
+      const panel = activeDialog()!;
+      assert.equal(dom.window.document.activeElement, panel, "The disabled action must yield to the active dialogue while sending");
+      assert.equal(panel.getAttribute("aria-busy"), "true");
+      assert.ok(panel.textContent.includes("Working…"));
+      await key("Tab"); assert.equal(dom.window.document.activeElement, panel);
+      await key("Escape"); assert.deepEqual(calls, ["hold", "cancel"]);
+      await act(async () => pending.resolve("cancelled"));
+      assert.equal(activeDialog(), undefined); assert.equal(dom.window.document.activeElement, input());
+      assert.equal(input().value, "INVALID_PRIVATE_DRAFT"); return;
+    }
+    if (scenario === "draft-scroll") {
+      const panel = activeDialog()!;
+      const list = panel.querySelector<HTMLElement>(".desktop-close-body")!;
+      assert.equal(list.querySelector('[role="list"]')?.getAttribute("aria-label"), "Unsaved drafts");
+      assert.ok(panel.querySelector(":scope > footer.desktop-close-actions"));
+      Object.defineProperties(list, { clientHeight: { value: 120 }, scrollHeight: { value: 300 } });
+      await key("PageDown"); assert.equal(list.scrollTop, 120);
+      await key("End"); assert.equal(list.scrollTop, 180);
+      await key("Home"); assert.equal(list.scrollTop, 0);
+      assert.equal(dom.window.document.activeElement, button("Keep editing"));
+      await key("Escape"); assert.equal(dom.window.document.activeElement, input()); return;
+    }
     if (scenario === "keyboard") {
       await key("Tab", { shiftKey: true }); assert.equal(dom.window.document.activeElement, button("Discard and close app"));
       await key("Tab"); assert.equal(dom.window.document.activeElement, button("Keep editing"));
@@ -91,7 +125,7 @@ async function run(scenario: string) {
     if (scenario === "cancel-rejection") {
       native.resolve = async () => { throw new Error("PRIVATE_NATIVE_ERROR"); };
       await click("Keep editing");
-      assert.ok(activeDialog()?.textContent?.includes("Your draft has not been cleared"));
+      assert.ok(activeDialog()?.textContent?.includes("Your drafts are kept"));
       assert.ok(!activeDialog()?.textContent?.includes("PRIVATE_NATIVE_ERROR"));
       assert.ok(dom.container.hasAttribute("inert")); assert.equal(input().value, "INVALID_PRIVATE_DRAFT");
       await resolved(); assert.equal(activeDialog(), undefined); assert.equal(dom.window.document.activeElement, input()); return;

@@ -17,7 +17,8 @@ async function run(scenario: string) {
   const roster = () => ({ ok: true, profiles, groups: ["Override team"], folders: [{ name: "Override team" }] });
   const workspace = { id: "default", name: "Inert fixture workspace", color: "#8169c8", icon: "laptop", archived: false, createdAt: 1, updatedAt: 1, lastOpenedAt: 1 };
   const workspaceGate = scenario === "workspace-maintenance-gate", secondWorkspace = { ...workspace, id: "second", name: "Inert second workspace" };
-  const usingPaste = scenario === "paste-modal" || scenario === "pending-draft-freeze";
+  const switchingSource = scenario === "source-switch-file" || scenario === "source-switch-paste";
+  const usingPaste = scenario === "paste-modal" || scenario === "source-switch-paste" || scenario === "pending-draft-freeze";
   const fakeFetch = Object.assign(async (input: RequestInfo | URL, options?: RequestInit): Promise<Response> => {
     const path = String(input), method = options?.method ?? "GET"; requests.push({ path, method });
     if (path === "/ui/api/import/upload" && method === "POST") {
@@ -57,7 +58,8 @@ async function run(scenario: string) {
   mock.module("react-dom/client", () => ({ ...client, createRoot(...args: Parameters<typeof createRealRoot>) { const root = createRealRoot(...args); appRoot = root; return root; } }));
   const visible = <T extends HTMLElement>(selector: string, scope: HTMLElement = dom.window.document.body): T[] => [...scope.querySelectorAll<T>(selector)].filter(node => !node.closest('[hidden], [inert], [aria-hidden="true"]'));
   const button = (label: string, scope: HTMLElement = dom.window.document.body) => { const node = visible<HTMLButtonElement>("button", scope).find(item => item.textContent?.trim() === label || item.getAttribute("aria-label") === label); assert.ok(node, `Missing ${label}`); return node; };
-  const dialog = () => visible<HTMLElement>('[role="dialog"][aria-label="Import profiles"]')[0];
+  const dialog = () => visible<HTMLElement>('.profile-import-dialog[role="dialog"]').find(node =>
+    dom.window.document.getElementById(node.getAttribute("aria-labelledby") ?? "")?.textContent === "Import profiles");
   const receipt = () => visible<HTMLElement>(".import-receipt")[0];
   const tableIds = () => visible<HTMLElement>("tr[data-profile-id]").map(node => node.dataset.profileId).sort();
   const click = (node: HTMLButtonElement, twice = false) => act(async () => { node.click(); if (twice) node.click(); });
@@ -83,7 +85,7 @@ async function run(scenario: string) {
       if (scenario === "global-drop-cross-page") await click(button("AI workspace"));
       if (workspaceGate) {
         await openWorkspacePage(); assert.ok(dom.container.textContent?.includes("An import is in progress."));
-        await click(button("Inert second workspaceLocal workspace")); assert.equal(button("Switch to this workspace").disabled, true);
+        await click(button("Inert second workspace")); assert.equal(button("Switch to this workspace").disabled, true);
         await click(button("Backup and restore")); assert.equal(button("Create full backup").disabled, true); assert.equal(button("Restore from file").disabled, true);
         assert.ok((await activityTask(dom, "Import profiles")).classList.contains("is-running"));
       }
@@ -108,7 +110,23 @@ async function run(scenario: string) {
         const platform = selects.find(node => [...node.options].some(option => option.value === "x.com")); assert.ok(group); assert.ok(platform);
         await act(async () => { group.value = "Override team"; group.dispatchEvent(new dom.window.Event("change", { bubbles: true })); platform.value = "x.com"; platform.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
       }
-      if (usingPaste) { await click(button("Paste text", dialog()!)); await type(dialog()!.querySelector<HTMLTextAreaElement>("textarea")!, "id=fixture_imported\nname=Imported healthy"); }
+      if (switchingSource) {
+        const active = dialog()!, sourceText = "id=fixture_imported\nname=Imported healthy";
+        const submit = button("Import profiles", active);
+        await click(button("Paste text", active));
+        await type(active.querySelector<HTMLTextAreaElement>("textarea")!, sourceText);
+        await click(button("From file", active));
+        assert.equal(submit.disabled, true, "Inactive pasted content cannot enable a file import");
+        await choose([file()]);
+        await click(button("Paste text", active));
+        assert.equal(active.querySelector<HTMLTextAreaElement>("textarea")?.value, sourceText, "Switching back must restore the pasted draft");
+        await type(active.querySelector<HTMLTextAreaElement>("textarea")!, "");
+        assert.equal(submit.disabled, true, "Inactive staged files cannot enable a paste import");
+        await type(active.querySelector<HTMLTextAreaElement>("textarea")!, sourceText);
+        await click(button("From file", active));
+        assert.ok(active.querySelector(".filelist")?.textContent?.includes("source.json"), "Switching back must restore staged files");
+        if (usingPaste) await click(button("Paste text", active));
+      } else if (usingPaste) { await click(button("Paste text", dialog()!)); await type(dialog()!.querySelector<HTMLTextAreaElement>("textarea")!, "id=fixture_imported\nname=Imported healthy"); }
       else if (scenario === "modal-drop-stage-only") {
         await drop(dialog()!.querySelector<HTMLElement>(".bulkdrop")!, [file("staged.json")]); await dom.flush(); assert.equal(uploads.length, 0, "Dropping inside the dialog only stages files");
         assert.ok(dialog()!.textContent?.includes("staged.json")); await choose([file("chosen.json")]);
@@ -123,6 +141,7 @@ async function run(scenario: string) {
         await act(async () => { await new Promise(resolve => setTimeout(resolve, 160)); }); assert.ok(dialog(), "The previous exit timeout cannot remove a freshly reopened import draft"); assert.equal(uploads.length, 0); return;
       }
       await click(button("Import profiles", dialog()!), true); await waitFor(() => uploads.length === 1, "Submitting must dispatch exactly one upload");
+      assert.equal(uploads[0]!.files.length, 1, "Only the active source may enter the upload");
       assert.equal(uploads[0]!.files[0]!.name, usingPaste ? "pasted-adspower.txt" : scenario === "modal-drop-stage-only" ? "chosen.json" : "source.json");
       if (usingPaste) assert.ok(uploads[0]!.files[0]!.text.includes("id=fixture_imported"));
     }
@@ -180,12 +199,19 @@ async function run(scenario: string) {
     await waitFor(() => !!receipt(), "A confirmed import must produce a persistent inline receipt"); assert.equal(alerts, 0); assert.equal(uploads.length, 1);
     assert.ok(receipt()!.textContent?.includes("2 environment records imported or updated")); assert.deepEqual(visible<HTMLElement>(".import-receipt-totals strong", receipt()!).map(node => node.textContent), ["1", "3", "1"]);
     if (!visible<HTMLElement>(".import-receipt-details", receipt()!).length) await click(button("View import details", receipt()!));
-    assert.ok(!receipt()!.textContent?.includes("PRIVATE")); assert.ok(receipt()!.textContent?.includes("do not establish that every invalid record was imported")); assert.ok(receipt()!.textContent?.includes("reported_but_unknown"));
+    assert.ok(!receipt()!.textContent?.includes("PRIVATE")); assert.ok(receipt()!.textContent?.includes("do not show which records were imported")); assert.ok(receipt()!.textContent?.includes("reported_but_unknown"));
     await click(button("View environments needing attention", receipt()!));
     await waitFor(() => tableIds().length === 2, "Attention must include earlier environments from the workspace"); assert.deepEqual(tableIds(), ["existing_proxy_review", "existing_restart_review"]);
     await click(button("Browse all environments", receipt()!)); await waitFor(() => tableIds().length === 4, "Browse all must clear the attention scope");
     assert.ok(tableIds().includes("fixture_imported")); await click(button("Dismiss import result", receipt()!)); assert.equal(receipt(), undefined);
     assert.equal(activityTrigger(dom), null); assert.deepEqual(unexpected, []);
+    if (switchingSource) {
+      await click(button("Import profiles", visible<HTMLElement>(".profiles-workspace")[0]!));
+      assert.equal(dialog()!.querySelector(".filelist"), null, "Completed imports must clear staged files");
+      await click(button("Paste text", dialog()!));
+      assert.equal(dialog()!.querySelector<HTMLTextAreaElement>("textarea")?.value, "", "Completed imports must clear pasted drafts");
+      await click(button("Cancel", dialog()!));
+    }
   } finally {
     if (appRoot) await act(async () => { appRoot!.unmount(); });
     for (const upload of uploads) upload.response.resolve(Response.json({ ok: false })); for (const pending of heldRosters) pending.resolve(Response.json(roster())); await dom.cleanup();

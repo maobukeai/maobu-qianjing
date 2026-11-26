@@ -14,10 +14,11 @@ import {
   computeRosterPipeline,
   DEFAULT_HIDDEN_COLUMNS,
   displayNo,
+  useRosterQuery,
   type ColumnKey,
   type RosterSort,
 } from "./hooks/use-roster-query.ts";
-import { findOffsetIndex } from "./hooks/use-virtual-list.ts";
+import { findOffsetIndex, useVirtualList } from "./hooks/use-virtual-list.ts";
 import { I18nProvider, translate } from "./i18n.tsx";
 import { changeProfileRangeSelection, reconcileProfileSelectionAnchor, type ProfileSelectionAnchor } from "./profile-range-selection.ts";
 
@@ -72,6 +73,53 @@ const noopHandlers: ProfileRosterRowHandlers = {
   openLogs() {},
 };
 
+test("changing only the page reuses filtered rows and full group matches", async () => {
+  const dom = await createWebDomHarness();
+  const { profiles, groups } = createSyntheticProfiles(10_000, 2);
+  profiles[3]!.running = true;
+  const options: Omit<Parameters<typeof useRosterQuery>[0], "profilePage" | "profileStatus"> = {
+    profiles,
+    registeredGroups: groups,
+    localFolders: [],
+    loaded: true,
+    q: "",
+    group: "all",
+    sort: { key: "no", dir: 1 },
+    pageSize: 20,
+    rosterScope: "all",
+    favoriteProfileIds: new Set(),
+    groupDisclosure: new Map(),
+    launchFailures: null,
+  };
+  let current: ReturnType<typeof useRosterQuery>;
+  function Harness({ page, status = "all" }: { page: number; status?: "all" | "running" }) {
+    current = useRosterQuery({ ...options, profilePage: page, profileStatus: status });
+    return null;
+  }
+  const firstGroup = () => current.flatItems.find(item => item.kind === "group-header")?.section;
+  try {
+    await dom.render(<Harness page={0} />);
+    const firstFiltered = current!.filtered;
+    const firstMatches = firstGroup()?.matches;
+    expect(current!.rangeVisibleIds[0]).toBe("p_3");
+    expect(firstMatches?.length).toBe(5_000);
+    expect(firstGroup()?.running).toBe(1);
+
+    await dom.render(<Harness page={1} />);
+    expect(current!.filtered === firstFiltered).toBe(true);
+    expect(firstGroup()?.matches === firstMatches).toBe(true);
+    expect(current!.rangeVisibleIds[0]).toBe("p_20");
+    expect(firstGroup()?.running).toBe(1);
+
+    await dom.render(<Harness page={1} status="running" />);
+    expect(current!.filtered.map(profile => profile.id)).toEqual(["p_3"]);
+    expect(current!.visibleProfilePage).toBe(0);
+    expect(firstGroup()?.matches.map(profile => profile.id)).toEqual(["p_3"]);
+  } finally {
+    await dom.cleanup();
+  }
+});
+
 interface VirtualHarnessProps {
   profiles: UiProfile[];
   groups: string[];
@@ -96,7 +144,40 @@ test("findOffsetIndex binary-searches Float64Array prefix-sum tables in O(log N)
   expect(findOffsetIndex(offsets, count, 600_000)).toBe(9999);
 });
 
-test("lists with <= 60 items pass through directly with zero virtual spacers", async () => {
+test("virtual scroll leaves space for the sticky table header", async () => {
+  const dom = await createWebDomHarness();
+  const items = Array.from({ length: 100 }, (_, index) => `row-${index}`);
+  const estimateHeight = () => 40;
+  const getKey = (key: string) => key;
+  function Harness() {
+    const containerRef = useRef<HTMLDivElement | null>(null);
+    const headerRef = useRef<HTMLDivElement | null>(null);
+    const list = useVirtualList({ items, getKey, estimateHeight, scrollContainerRef: containerRef, stickyHeaderRef: headerRef });
+    return (
+      <div data-row-viewport={list.viewportHeight} ref={(element) => {
+        containerRef.current = element;
+        if (element) Object.defineProperty(element, "clientHeight", { configurable: true, value: 120 });
+      }}>
+        <div ref={(element) => {
+          headerRef.current = element;
+          if (element) Object.defineProperty(element, "offsetHeight", { configurable: true, value: 36 });
+        }} />
+        <button type="button" onClick={() => list.scrollToIndex(items.length - 1)}>Go to last row</button>
+      </div>
+    );
+  }
+  try {
+    await dom.render(<Harness />);
+    const scroll = dom.container.querySelector<DomElement>("[data-row-viewport]")!;
+    expect(scroll.dataset.rowViewport).toBe("84");
+    await act(async () => { scroll.querySelector<HTMLButtonElement>("button")!.click(); });
+    expect(scroll.scrollTop).toBe(3_916);
+  } finally {
+    await dom.cleanup();
+  }
+});
+
+test("empty roster actions remain available without presenting an empty table or losing keyboard focus", async () => {
   const dom = await createWebDomHarness();
   try {
     const { profiles, groups } = createSyntheticProfiles(20, 2);
@@ -108,22 +189,25 @@ test("lists with <= 60 items pass through directly with zero virtual spacers", a
     const disclosure = new Map<string, boolean>(groups.map((g) => [g, false]));
     const sections = profileGroupSections(profiles, profiles, groups, false);
     const flatItems = buildFlatRosterItems(sections, disclosure, false, "all", null);
+    const emptyGroupItems = buildFlatRosterItems(profileGroupSections([], [], groups, true), disclosure, false, "all", null);
     const rangeKeyboardActivation = { current: null };
+    let clears = 0;
 
-    await dom.render(
+    const renderRoster = (loaded: boolean, showProfiles: boolean, filteredOut = false, showEmptyGroups = false) => dom.render(
       <I18nProvider>
         <div className="profiles-workspace">
+          <label className="heading-search"><input type="search" aria-label="Search profiles" /></label>
           <ProfileRosterTable
-            loaded={true}
-            profilesCount={profiles.length}
-            filteredCount={profiles.length}
-            flatItems={flatItems}
-            selectableProfilesCount={profiles.length}
+            loaded={loaded}
+            profilesCount={showProfiles || filteredOut ? profiles.length : 0}
+            filteredCount={showProfiles ? profiles.length : 0}
+            flatItems={showProfiles ? flatItems : showEmptyGroups ? emptyGroupItems : []}
+            selectableProfilesCount={showProfiles ? profiles.length : 0}
             numbering={numbering}
             rosterScope="all"
             rosterDensity="comfortable"
             missingRosterGroup={null}
-            hasRosterRefinements={false}
+            hasRosterRefinements={filteredOut}
             revealGroupMatches={false}
             sort={{ key: "no", dir: 1 }}
             hiddenCols={hiddenCols}
@@ -166,7 +250,7 @@ test("lists with <= 60 items pass through directly with zero virtual spacers", a
             onOpenBulk={() => {}}
             onSelectAllGroups={() => {}}
             onChooseRosterScope={() => {}}
-            onClearRosterRefinements={() => {}}
+            onClearRosterRefinements={() => { clears++; }}
             rowHandlers={noopHandlers}
             t={t}
           />
@@ -174,10 +258,37 @@ test("lists with <= 60 items pass through directly with zero virtual spacers", a
       </I18nProvider>,
     );
 
-    const tablewrap = dom.container.querySelector<DomElement>(".tablewrap")!;
-    expect(tablewrap.dataset.virtualized).toBe("false");
+    await renderRoster(false, false);
+    expect(dom.container.querySelector('table[aria-busy="true"] [role="status"]')).toBeTruthy();
+    expect(dom.container.querySelector("[aria-rowcount], [aria-rowindex]")).toBeNull();
+
+    await renderRoster(true, false);
+    expect(dom.container.querySelector(".workspace-empty .empty-actions")).toBeTruthy();
+    expect(dom.container.querySelector(".profile-table[hidden]")).toBeTruthy();
+    expect(dom.container.querySelector(".pager[hidden]")).toBeTruthy();
+
+    await renderRoster(true, false, true);
+    expect(dom.container.querySelector(".workspace-empty")).toBeNull();
+    expect(dom.container.querySelector(".roster-empty-results [role=status]")?.textContent).toBe("No matches");
+    expect(dom.container.querySelector(".profile-table[hidden]")).toBeTruthy();
+    expect(dom.container.querySelector(".pager[hidden]")).toBeTruthy();
+    expect(dom.container.querySelector("[aria-rowcount], [aria-rowindex]")).toBeNull();
+    const clear = dom.container.querySelector<HTMLButtonElement>(".roster-empty-results button")!;
+    clear.focus();
+    await act(async () => { clear.click(); });
+    expect(clears).toBe(1);
+    expect(dom.window.document.activeElement).toBe(dom.container.querySelector(".heading-search input")!);
+
+    await renderRoster(true, false, true, true);
+    expect(dom.container.querySelector(".profile-table[hidden]")).toBeNull();
+    expect(dom.container.querySelectorAll(".profile-group-row")).toHaveLength(groups.length);
+    expect(dom.container.querySelector(".pager[hidden]")).toBeTruthy();
+
+    await renderRoster(true, true);
+    expect(dom.container.querySelector<DomElement>(".tablewrap")?.dataset.virtualized).toBe("false");
     expect(dom.container.querySelectorAll("tr.virtual-spacer").length).toBe(0);
     expect(dom.container.querySelectorAll("tr[data-profile-id]").length).toBe(20);
+    expect(dom.container.querySelector("[aria-rowcount], [aria-rowindex]")).toBeNull();
   } finally {
     await dom.cleanup();
   }
@@ -422,9 +533,12 @@ test("10,000 synthetic profiles in virtual scroll mode keep mounted tr[data-prof
       });
     };
 
-    // 1. Initial mount at scrollTop = 0 with 10,000 profiles + 10 group headers = 10,010 items.
+    // 1. Initial mount has 10,000 profiles, 10 group headings, and the table header.
     expect(tablewrap().dataset.virtualized).toBe("true");
-    expect(table().getAttribute("aria-rowcount")).toBe("10010");
+    expect(table().getAttribute("aria-rowcount")).toBe("10011");
+    expect(table().querySelector("thead tr")?.getAttribute("aria-rowindex")).toBe("1");
+    expect(table().querySelector(".profile-group-row")?.getAttribute("aria-rowindex")).toBe("2");
+    expect(table().querySelector('tr[data-profile-id="p_0"]')?.getAttribute("aria-rowindex")).toBe("3");
     expect(dom.container.querySelector(".page-of")?.textContent).toContain("All 10,000");
     expect(mountedProfileRows().length).toBeGreaterThan(10);
     expect(mountedProfileRows().length).toBeLessThan(60);
@@ -450,6 +564,7 @@ test("10,000 synthetic profiles in virtual scroll mode keep mounted tr[data-prof
     expect(mountedProfileRows().length).toBeLessThan(60);
     expect(mountedIds()).toContain("p_9999");
     expect(mountedIds()).not.toContain("p_0");
+    expect(table().querySelector('tr[data-profile-id="p_9999"]')?.getAttribute("aria-rowindex")).toBe("10011");
 
     // 4. Return to top and test group collapse / expand on Group-0 (1,000 profiles)
     await scrollTo(0);
@@ -457,7 +572,7 @@ test("10,000 synthetic profiles in virtual scroll mode keep mounted tr[data-prof
     const group0Toggle = dom.container.querySelector<HTMLButtonElement>('button.profile-group-toggle[aria-label="Collapse Group-0"]')!;
     expect(group0Toggle).toBeTruthy();
     await act(async () => { group0Toggle.click(); });
-    expect(table().getAttribute("aria-rowcount")).toBe("9010");
+    expect(table().getAttribute("aria-rowcount")).toBe("9011");
     expect(mountedProfileRows().length).toBeLessThan(60);
     expect(mountedIds()).not.toContain("p_0");
     expect(mountedIds()).toContain("p_1000"); // Group-1 immediately moves into the viewport
@@ -465,7 +580,7 @@ test("10,000 synthetic profiles in virtual scroll mode keep mounted tr[data-prof
     const group0Expand = dom.container.querySelector<HTMLButtonElement>('button.profile-group-toggle[aria-label="Expand Group-0"]')!;
     expect(group0Expand).toBeTruthy();
     await act(async () => { group0Expand.click(); });
-    expect(table().getAttribute("aria-rowcount")).toBe("10010");
+    expect(table().getAttribute("aria-rowcount")).toBe("10011");
     expect(mountedIds()).toContain("p_0");
     expect(mountedProfileRows().length).toBeLessThan(60);
 
@@ -558,6 +673,7 @@ test("10,000 synthetic profiles in virtual scroll mode keep mounted tr[data-prof
 
     // 8. Shared ResizeObserver dynamic measurement + upward scroll-jump compensation
     await scrollTo(0);
+    await act(async () => { setInlineRenameExternal("p_0", "Pinned resize target"); });
     const row0 = mountedProfileRows().find((r) => r.dataset.profileId === "p_0")!;
     expect(row0).toBeTruthy();
     await scrollTo(2000);
@@ -565,7 +681,7 @@ test("10,000 synthetic profiles in virtual scroll mode keep mounted tr[data-prof
     expect(beforeScrollTop).toBe(2000);
 
     // Simulate ResizeObserver reporting row p_0 (above current scrollTop) expanded from 74px -> 114px (+40px delta)
-    const rowObserver = observers.find((obs) => obs.targets.size > 1)!;
+    const rowObserver = observers.find((obs) => obs.targets.has(row0 as unknown as Element))!;
     expect(rowObserver).toBeTruthy();
     await act(async () => {
       rowObserver.callback([
@@ -576,6 +692,7 @@ test("10,000 synthetic profiles in virtual scroll mode keep mounted tr[data-prof
       ]);
     });
     expect(tablewrap().scrollTop).toBe(2040); // Upward scroll-jump compensated by exact +40px delta!
+    await act(async () => { setInlineRenameExternal(null); });
 
     // 9. Three-tier density switch (comfortable -> standard -> compact) preserves top anchor row
     const topAnchorBefore = mountedIds()[0]!;

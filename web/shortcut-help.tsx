@@ -3,6 +3,7 @@ import { createPortal, flushSync } from "react-dom";
 import { MotionPresence } from "./desktop-motion.tsx";
 import { useTranslation } from "./i18n.tsx";
 import { hasActiveWorkbenchModal, workbenchShortcutCatalog, type WorkbenchShortcutAction } from "./workbench-shortcuts.ts";
+import { AppIcon } from "./ui-primitives.tsx";
 import "./shortcut-help.css";
 
 export interface ShortcutHelpProps {
@@ -21,10 +22,23 @@ function controls(container: HTMLElement): HTMLElement[] {
     .filter(node => !node.closest('[hidden], [inert], [aria-hidden="true"]'));
 }
 
+function scrollShortcutList(body: HTMLDivElement | null, event: KeyboardEvent): boolean {
+  if (!body || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+  switch (event.key) {
+    case "PageDown": body.scrollTop += body.clientHeight; break;
+    case "PageUp": body.scrollTop -= body.clientHeight; break;
+    case "Home": body.scrollTop = 0; break;
+    case "End": body.scrollTop = Math.max(0, body.scrollHeight - body.clientHeight); break;
+    default: return false;
+  }
+  return true;
+}
+
 export function ShortcutHelp({ open, desktop, mac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform), onClose, onAction, returnFocus }: ShortcutHelpProps) {
   const { t } = useTranslation();
   const id = useId(), titleId = `${id}-title`, descriptionId = `${id}-description`;
   const dialog = useRef<HTMLDivElement>(null), closeButton = useRef<HTMLButtonElement>(null);
+  const body = useRef<HTMLDivElement>(null);
   const close = useRef(onClose); close.current = onClose;
   const returnTarget = useRef(returnFocus); returnTarget.current = returnFocus;
   const executing = useRef(false), mounted = useRef(open);
@@ -42,6 +56,7 @@ export function ShortcutHelp({ open, desktop, mac = typeof navigator !== "undefi
     const key = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close.current(); return; }
+      if (scrollShortcutList(body.current, event)) { event.preventDefault(); event.stopPropagation(); return; }
       if (event.key !== "Tab") return;
       const targets = controls(container), first = targets[0], last = targets.at(-1);
       if (!first) { event.preventDefault(); container.focus(); return; }
@@ -74,23 +89,30 @@ export function ShortcutHelp({ open, desktop, mac = typeof navigator !== "undefi
 
   const content = () => <div className="shortcut-help-backdrop" onPointerDown={event => { if (event.target === event.currentTarget) close.current(); }}>
     <div className="shortcut-help" ref={dialog} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId} tabIndex={-1}>
-      <header className="shortcut-help-header"><div><span className="shortcut-help-eyebrow">{t("Your workbench, a little quicker")}</span><h2 id={titleId}>{t("Keyboard shortcuts")}</h2></div>
-        <button type="button" className="shortcut-help-close" ref={closeButton} onClick={onClose} aria-label={t("Close keyboard shortcuts")}><kbd>Esc</kbd><span aria-hidden="true">×</span></button>
+      <header className="shortcut-help-header">
+        <div><h2 id={titleId}>{t("Keyboard shortcuts")}</h2><p id={descriptionId}>{t("Select an action to run it.")}</p></div>
+        <button type="button" className="shortcut-help-close" ref={closeButton} onClick={onClose} aria-label={t("Close keyboard shortcuts")}><AppIcon name="close" className="sm" /></button>
       </header>
-      <p className="shortcut-help-description" id={descriptionId}>{t("Use a shortcut or choose an action below.")}</p>
-      {(["everyday", "navigation"] as const).map(group => {
-        const rows = shortcuts.filter(shortcut => shortcut.group === group);
-        return rows.length ? <section className="shortcut-help-group" key={group} aria-labelledby={`${id}-${group}`}>
-          <h3 id={`${id}-${group}`}>{t(group === "everyday" ? "Everyday actions" : "Move between pages")}</h3>
-          <div className="shortcut-help-rows">{rows.map(shortcut => {
-            const keys = <span className="shortcut-help-keys" aria-label={shortcut.keys.join(" + ")}>{shortcut.keys.map((key, index) => <kbd key={`${key}-${index}`}>{key}</kbd>)}</span>;
-            return shortcut.action === "open-shortcut-help"
-              ? <div className="shortcut-help-row current" key={shortcut.action}><span>{t(shortcut.label)}<small>{t("You are here")}</small></span>{keys}</div>
-              : <button type="button" className="shortcut-help-row" key={shortcut.action} onClick={() => execute(shortcut.action)}><span>{t(shortcut.label)}</span>{keys}</button>;
-          })}</div>
-        </section> : null;
-      })}
-      <footer className="shortcut-help-footer"><span className="shortcut-help-platform">{t(desktop ? "Desktop shortcuts" : "Browser shortcuts")}</span><p>{t("Shortcuts pause while you type, compose text or work in a dialog.")}</p></footer>
+      <div className="shortcut-help-body" ref={body}>
+        {(["everyday", "navigation"] as const).map(group => {
+          const rows = shortcuts.filter(shortcut => shortcut.group === group);
+          return rows.length ? <section className="shortcut-help-group" key={group} aria-labelledby={desktop ? `${id}-${group}` : undefined}>
+            {desktop && <h3 id={`${id}-${group}`}>{t(group === "everyday" ? "Everyday actions" : "Move between pages")}</h3>}
+            <ul className="shortcut-help-rows" role="list">{rows.map(shortcut => {
+              const keys = <>
+                <span className="shortcut-help-keys" aria-hidden="true">{shortcut.keys.map(key => <kbd key={key}>{key}</kbd>)}</span>
+                <span className="sr-only">{shortcut.keys.join(" + ")}</span>
+              </>;
+              return <li key={shortcut.action}>
+                {shortcut.action === "open-shortcut-help"
+                  ? <div className="shortcut-help-row current" aria-current="true"><span>{t(shortcut.label)}</span>{keys}</div>
+                  : <button type="button" className="shortcut-help-row" onClick={() => execute(shortcut.action)}><span>{t(shortcut.label)}</span>{keys}</button>}
+              </li>;
+            })}</ul>
+          </section> : null;
+        })}
+      </div>
+      <footer className="shortcut-help-note">{t("Shortcuts pause in fields and dialogs.")}</footer>
     </div>
   </div>;
   if (typeof document === "undefined") return open ? content() : null;

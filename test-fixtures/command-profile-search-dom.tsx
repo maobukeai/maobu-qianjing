@@ -14,6 +14,8 @@ async function run(scenario: string) {
     unexpected.push(String(input)); throw new Error(`Profile locator must not read details or launch browsers: ${String(input)}`);
   }, { preconnect: globalThis.fetch.preconnect });
   const dom = await createWebDomHarness({ fetch: fakeFetch });
+  const revealedOptions: DomElement[] = [];
+  Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", { configurable: true, value(this: DomElement) { revealedOptions.push(this); } });
   Object.defineProperty(dom.window, "fetch", { configurable: true, value: () => { unexpected.push("window.fetch"); throw new Error("Window networking disabled"); } });
   Object.defineProperty(dom.window.HTMLElement.prototype, "getClientRects", { configurable: true, value(this: DomElement) { return this.closest('[hidden], [inert], [aria-hidden="true"]') ? [] : [{ x: 0, y: 0, width: 600, height: 32, top: 0, left: 0, right: 600, bottom: 32 }]; } });
   const now = Date.now(), size = scenario === "cap-count" ? 5000 : scenario === "public-search" ? 1600 : 3;
@@ -59,8 +61,13 @@ async function run(scenario: string) {
     if (scenario === "tabs-focus") {
       tab("commands").focus(); await key("ArrowRight", {}, tab("commands")); assert.equal(tab("profiles").getAttribute("aria-selected"), "true"); assert.ok(dom.window.document.activeElement === tab("profiles"));
       assert.equal(palette()!.querySelector('[role="tabpanel"]')?.getAttribute("aria-labelledby"), tab("profiles").id);
-      await key("Tab", { shiftKey: true }, tab("profiles")); assert.ok(dom.window.document.activeElement === palette()!.querySelector('[aria-label="Close command palette"]'), "Shift+Tab from the first active tab must wrap to the last control");
-      await key("Tab", {}, dom.window.document.activeElement as DomElement); assert.ok(dom.window.document.activeElement === tab("profiles"));
+      const close = palette()!.querySelector<DomButton>('[aria-label="Close command palette"]')!;
+      close.focus();
+      await key("Tab", { shiftKey: true }, close);
+      assert.ok(dom.window.document.activeElement === input(), "Shift+Tab from the header button wraps to search");
+      await key("Tab", {}, input());
+      assert.ok(dom.window.document.activeElement === close, "Tab from the last control wraps to the header button");
+      tab("profiles").focus();
       await key("Home", {}, tab("profiles")); assert.equal(tab("commands").getAttribute("aria-selected"), "true"); assert.ok(dom.window.document.activeElement === tab("commands")); return;
     }
     await click(tab("profiles")); assert.equal(options()[0]?.dataset.profileId, profiles[0]!.id, "Favorites must lead an empty environment query");
@@ -76,8 +83,37 @@ async function run(scenario: string) {
     }
     if (scenario === "empty-live") {
       await type("unmatched"); assert.equal(options().length, 0); assert.ok(palette()!.textContent.includes("No matching environments")); assert.equal(input().hasAttribute("aria-activedescendant"), false);
+      assert.equal(input().getAttribute("aria-expanded"), "false"); assert.ok(palette()!.querySelector('[role="listbox"][hidden]'));
       await key("Enter"); assert.ok(palette()); assert.equal(located.length, 0);
+      assert.equal(palette()!.querySelector(".command-palette-footer"), null, "Empty results should not advertise an available keyboard action");
+      const clear = [...palette()!.querySelectorAll<DomButton>("button")].find(button => button.textContent === "Clear search")!;
+      clear.focus();
+      await click(clear);
+      assert.equal(input().value, "");
+      assert.equal(input(), dom.window.document.activeElement);
+      assert.ok(options().length > 0);
+      await type("unmatched");
       await click(dom.container.querySelector<DomButton>("[data-remove]")!); assert.ok(palette()!.textContent.includes("No environments available")); assert.equal(options().length, 0); assert.equal(input().hasAttribute("aria-activedescendant"), false); return;
+    }
+    if (scenario === "pointer-scroll") {
+      const [first, second, third] = options();
+      assert.equal(selectedOption(), first);
+      revealedOptions.length = 0;
+      const move = (target: DomElement, pointerType: string) => act(async () => {
+        target.dispatchEvent(new dom.window.PointerEvent("pointermove", { bubbles: true, pointerType }));
+      });
+      await move(second!, "mouse");
+      assert.equal(selectedOption(), second);
+      assert.deepEqual(revealedOptions, [], "Pointer hover should leave the current list scroll position intact");
+      await move(third!, "touch");
+      assert.equal(selectedOption(), second, "Touch scrolling should leave the previous selection intact");
+      const touch = new dom.window.PointerEvent("pointerdown", { bubbles: true, cancelable: true, pointerType: "touch" });
+      await act(async () => { third!.dispatchEvent(touch); });
+      assert.equal(touch.defaultPrevented, false);
+      await key("ArrowDown");
+      assert.equal(selectedOption(), third);
+      assert.deepEqual(revealedOptions, [third], "Keyboard navigation should bring the selected option into view");
+      return;
     }
     if (scenario === "keyboard-ime" || scenario === "locate-new-dialog") {
       await key("ArrowDown"); assert.equal(selectedOption()?.dataset.profileId, profiles[2]!.id);

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { compileSidecar, loadVerifiedNodeArchive, NODE_WINDOWS_X64_CACHE_NAME, prepareWindowsBundle, sidecarCompileEnvironment, WINDOWS_SIDECAR_TARGET } from "./prepare-windows-bundle.ts";
+import { compileSidecar, loadVerifiedNodeArchive, NODE_WINDOWS_X64_CACHE_NAME, prepareWindowsBundle, sidecarCompileEnvironment, stageAgentRuntime, WINDOWS_SIDECAR_TARGET } from "./prepare-windows-bundle.ts";
 import { MCP_MODE } from "../sidecar-entry.ts";
 import { ALIASMODE_VERSION } from "../version.ts";
 
@@ -86,6 +86,7 @@ function workspace(): string {
     "mcp-scope.mjs",
     "playwright-proxy.mjs",
     "playwright-runner.mjs",
+    "script-recorder.mjs",
     "script-runner.mjs",
     "script-runner.py",
     "runtime-client.mjs",
@@ -225,6 +226,16 @@ function fakePreparation(cwd: string) {
     installNode: async (root: string) => { mkdirSync(join(root, "node"), { recursive: true }); writeFileSync(join(root, "node", "node.exe"), "node"); },
   };
 }
+
+test("agent runtime staging requires the recorder that the desktop loads", () => {
+  const cwd = workspace();
+  try {
+    unlinkSync(join(cwd, "agent", "script-recorder.mjs"));
+    expect(() => stageAgentRuntime(cwd, join(cwd, "stage"))).toThrow("script-recorder.mjs");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
 function cachePath(cwd: string): string { return join(cwd, "node_modules", ".cache", "maobu-desktop", NODE_WINDOWS_X64_CACHE_NAME); }
 
 test("preparation refuses an unrelated explicit workspace before removing existing output", async () => {

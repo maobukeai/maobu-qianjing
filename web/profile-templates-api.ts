@@ -1,4 +1,5 @@
 import type { ProfileTemplate, ProfileTemplateCatalog, ProfileTemplateInput, ProfileTemplateSettings } from "../profile-templates.ts";
+import { notifyAppLockedFromResponse, notifyUnauthorizedResponse, withStandaloneAuthHeaders } from "./api.ts";
 export type { ProfileTemplate, ProfileTemplateCatalog, ProfileTemplateInput, ProfileTemplateSettings };
 
 const FIELDS = ["engine", "chromiumRuntime", "platformOs", "screen", "platform"] as const;
@@ -38,19 +39,31 @@ function catalog(value: unknown): value is ProfileTemplateCatalog {
   });
 }
 async function request(path: string, method: "GET" | "POST", value?: unknown, signal?: AbortSignal): Promise<ProfileTemplateCatalog> {
+  const fullPath = `/ui/api/settings/templates${path}`;
   let response: Response;
   try {
-    response = await fetch(`/ui/api/settings/templates${path}`, {
+    response = await fetch(fullPath, {
       method, credentials: "same-origin", cache: "no-store", signal,
-      headers: { "X-Maobu-Settings": "1", Accept: "application/json", ...(method === "POST" ? { "Content-Type": "application/json" } : {}) },
+      headers: withStandaloneAuthHeaders({ "X-Maobu-Settings": "1", Accept: "application/json", ...(method === "POST" ? { "Content-Type": "application/json" } : {}) }),
       ...(method === "POST" ? { body: JSON.stringify(value) } : {}),
     });
   } catch (error) {
     if (signal?.aborted) throw error;
     throw new Error("Could not reach the profile preset service. Try again.");
   }
-  const result: unknown = await response.json().catch(() => { throw new Error("The profile preset service returned an invalid response."); });
-  if (!object(result)) throw new Error("The profile preset service returned an invalid response.");
+  const result: unknown = await response.json().catch(() => {
+    notifyUnauthorizedResponse(response.status, fullPath);
+    throw new Error("The profile preset service returned an invalid response.");
+  });
+  if (!object(result)) {
+    notifyUnauthorizedResponse(response.status, fullPath);
+    throw new Error("The profile preset service returned an invalid response.");
+  }
+  if (response.status === 401) {
+    notifyUnauthorizedResponse(401, fullPath, typeof result.error === "string" ? result.error : "");
+  } else if (response.status === 423) {
+    notifyAppLockedFromResponse(423, result);
+  }
   if (!response.ok || result.ok !== true) throw new ProfileTemplateRequestError(typeof result.error === "string" ? result.error : "Profile preset request failed.", typeof result.code === "string" ? result.code : "request-failed", response.status);
   if (!catalog(result.catalog)) throw new Error("The profile preset service returned an invalid response.");
   return result.catalog;

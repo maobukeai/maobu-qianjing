@@ -13,6 +13,8 @@ export type VirtualBlock =
 export interface UseVirtualListOptions<T> {
   items: readonly T[];
   scrollContainerRef: React.RefObject<HTMLElement | null>;
+  /** Sticky content above the list occupies space even when the container is scrolled. */
+  stickyHeaderRef?: React.RefObject<HTMLElement | null>;
   getKey: (item: T) => string;
   estimateHeight: (item: T) => number;
   /** Render all rows directly with zero spacers when item count <= threshold. Default: 60. */
@@ -89,6 +91,7 @@ function computeVisibleSlice(
 export function useVirtualList<T>({
   items,
   scrollContainerRef,
+  stickyHeaderRef,
   getKey,
   estimateHeight,
   threshold = DEFAULT_VIRTUAL_THRESHOLD,
@@ -194,12 +197,17 @@ export function useVirtualList<T>({
   });
   latestRef.current = { offsets, keyToIndex, estimates, count, virtualized, overscan };
 
+  const readViewportHeight = useCallback((container: HTMLElement) => {
+    if (container.clientHeight <= 0) return fallbackViewportHeight;
+    return Math.max(1, container.clientHeight - (stickyHeaderRef?.current?.offsetHeight ?? 0));
+  }, [fallbackViewportHeight, stickyHeaderRef]);
+
   // Keep viewport height synced with the scroll container.
   useLayoutEffect(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
     const syncViewport = () => {
-      const next = el.clientHeight > 0 ? el.clientHeight : fallbackViewportHeight;
+      const next = readViewportHeight(el);
       if (next !== viewportHeightRef.current) {
         viewportHeightRef.current = next;
         setViewportHeight(next);
@@ -209,8 +217,10 @@ export function useVirtualList<T>({
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(syncViewport);
     observer.observe(el);
+    const header = stickyHeaderRef?.current;
+    if (header) observer.observe(header);
     return () => observer.disconnect();
-  }, [scrollContainerRef, fallbackViewportHeight]);
+  }, [scrollContainerRef, stickyHeaderRef, readViewportHeight]);
 
   // Restore scroll anchor after density / resetKey recalculates offsets.
   useLayoutEffect(() => {
@@ -312,7 +322,7 @@ export function useVirtualList<T>({
     scrollTopRef.current = nextTop;
     const current = latestRef.current;
     if (!current.virtualized) return;
-    const vp = el.clientHeight > 0 ? el.clientHeight : viewportHeightRef.current;
+    const vp = readViewportHeight(el);
     if (vp !== viewportHeightRef.current) {
       viewportHeightRef.current = vp;
       setViewportHeight(vp);
@@ -325,7 +335,7 @@ export function useVirtualList<T>({
     ) {
       setScrollTop(nextTop);
     }
-  }, [scrollContainerRef]);
+  }, [scrollContainerRef, readViewportHeight]);
 
   const scrollToIndex = useCallback(
     (index: number, align: VirtualScrollAlign = "nearest") => {
@@ -333,7 +343,7 @@ export function useVirtualList<T>({
       if (current.count <= 0) return;
       const clamped = Math.max(0, Math.min(current.count - 1, index));
       const el = scrollContainerRef.current;
-      const vp = el && el.clientHeight > 0 ? el.clientHeight : viewportHeightRef.current;
+      const vp = el ? readViewportHeight(el) : viewportHeightRef.current;
       const itemTop = current.offsets[clamped]!;
       const itemBottom = current.offsets[clamped + 1]!;
       const curTop = el ? el.scrollTop : scrollTopRef.current;
@@ -356,7 +366,7 @@ export function useVirtualList<T>({
       scrollTopRef.current = targetTop;
       setScrollTop(targetTop);
     },
-    [scrollContainerRef],
+    [scrollContainerRef, readViewportHeight],
   );
 
   // Compute visible slice + pinned keep-alive blocks.

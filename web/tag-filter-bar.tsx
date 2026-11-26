@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { MAX_PROFILE_TAGS } from "../profile-tags.ts";
 import {
   aggregateProfileTagCounts,
@@ -26,6 +26,8 @@ function tagKey(tag: string): string {
   return tag.trim().normalize("NFC").toLowerCase();
 }
 
+const TAG_RESULTS_PER_PAGE = 50;
+
 /**
  * Independent multi-tag filter bar with live tag count aggregation, internal search,
  * removable active tag chips, and OR ("any") / AND ("all") match mode toggle.
@@ -42,15 +44,19 @@ export function TagFilterBar({
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const optionsRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
 
-  const aggregated = useMemo(() => aggregateProfileTagCounts(profiles), [profiles]);
+  const aggregated = useMemo(() => open ? aggregateProfileTagCounts(profiles) : [], [open, profiles]);
   const selectedKeySet = useMemo(() => new Set(selectedTags.map(tagKey)), [selectedTags]);
 
   // Include currently selected tags even if no visible profile currently carries them.
   const allOptions = useMemo(() => {
+    if (!open) return [];
     const map = new Map<string, AggregatedTagCount>();
     for (const item of aggregated) map.set(item.key, item);
     for (const raw of selectedTags) {
@@ -60,13 +66,23 @@ export function TagFilterBar({
       if (!map.has(key)) map.set(key, { tag: label, key, count: 0 });
     }
     return Array.from(map.values());
-  }, [aggregated, selectedTags]);
+  }, [aggregated, open, selectedTags]);
 
+  const query = tagKey(search);
   const filteredOptions = useMemo(() => {
-    const q = search.trim().normalize("NFC").toLowerCase();
-    if (!q) return allOptions;
-    return allOptions.filter((item) => item.key.includes(q));
-  }, [allOptions, search]);
+    if (!query) return allOptions;
+    return allOptions.filter((item) => item.key.includes(query));
+  }, [allOptions, query]);
+  const pageCount = Math.ceil(filteredOptions.length / TAG_RESULTS_PER_PAGE);
+  const currentPage = Math.min(page, Math.max(0, pageCount - 1));
+  const start = currentPage * TAG_RESULTS_PER_PAGE;
+  const visibleOptions = filteredOptions.slice(start, start + TAG_RESULTS_PER_PAGE);
+  const firstPage = currentPage === 0;
+  const lastPage = currentPage + 1 >= pageCount;
+
+  useLayoutEffect(() => {
+    if (optionsRef.current) optionsRef.current.scrollTop = 0;
+  }, [currentPage, query]);
 
   useEffect(() => {
     if (!open) return;
@@ -77,10 +93,12 @@ export function TagFilterBar({
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.isComposing || event.keyCode === 229) return;
+      if (event.isComposing || event.keyCode === 229 || !rootRef.current?.contains(event.target as Node)) return;
       if (event.key === "Escape") {
+        event.preventDefault();
         event.stopPropagation();
         setOpen(false);
+        triggerRef.current?.focus({ preventScroll: true });
       }
     };
     document.addEventListener("mousedown", onPointerDown);
@@ -119,18 +137,18 @@ export function TagFilterBar({
     <div ref={rootRef} className={["tag-filter-bar", className].filter(Boolean).join(" ")}>
       <div className="tag-filter-picker">
         <button
+          ref={triggerRef}
           type="button"
           className={`btn xs ghost tag-filter-trigger${open ? " is-open" : ""}${selectedTags.length > 0 ? " has-selection" : ""}`}
-          aria-haspopup="listbox"
           aria-expanded={open}
           aria-controls={menuId}
           disabled={disabled}
           onClick={() => {
-            setOpen((prev) => {
-              const next = !prev;
-              if (!next) setSearch("");
-              return next;
-            });
+            if (!open) {
+              setSearch("");
+              setPage(0);
+            }
+            setOpen(!open);
           }}
         >
           <AppIcon name="filter" className="sm" />
@@ -150,7 +168,10 @@ export function TagFilterBar({
                 value={search}
                 placeholder={t("Search tags…")}
                 aria-label={t("Search tags")}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setPage(0);
+                }}
               />
             </div>
 
@@ -160,13 +181,23 @@ export function TagFilterBar({
               </p>
             )}
 
-            <div className="tag-filter-options" role="listbox" aria-multiselectable="true">
+            {pageCount > 1 && (
+              <div className="tag-filter-pagination">
+                <button type="button" className="btn xs ghost" aria-label={t("Previous page")} aria-disabled={firstPage || undefined}
+                  onClick={() => { if (!firstPage) setPage(currentPage - 1); }}><AppIcon name="chevronLeft" /></button>
+                <span role="status">{t("{from}–{to} of {total}", { from: start + 1, to: start + visibleOptions.length, total: filteredOptions.length })}</span>
+                <button type="button" className="btn xs ghost" aria-label={t("Next page")} aria-disabled={lastPage || undefined}
+                  onClick={() => { if (!lastPage) setPage(currentPage + 1); }}><AppIcon name="chevronRight" /></button>
+              </div>
+            )}
+
+            <div ref={optionsRef} className="tag-filter-options" role="group" aria-label={t("Tags")}>
               {allOptions.length === 0 ? (
                 <p className="tag-filter-empty">{t("No tags yet")}</p>
               ) : filteredOptions.length === 0 ? (
                 <p className="tag-filter-empty">{t("No matching tags")}</p>
               ) : (
-                filteredOptions.map((item) => {
+                visibleOptions.map((item) => {
                   const selected = selectedKeySet.has(item.key);
                   const optionDisabled = disabled || (!selected && atLimit);
                   return (

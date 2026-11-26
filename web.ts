@@ -17,6 +17,7 @@ import type { StatePaths } from "./paths.ts";
 import type { RuntimeInventoryDeployment } from "./runtime-inventory.ts";
 import { handleRequest, isLoopbackAddress, rejectUntrustedLocalRequest, type BrowserLifecycleContext } from "./server.ts";
 import { handleUiRequest, type UiHealthMetadata } from "./ui.ts";
+import type { UiRosterTags } from "./src/ui/shared.ts";
 import { UiEventBus } from "./src/ui/events-bus.ts";
 import { MemoryWatermarkGuard } from "./src/metrics/memory-watermark-guard.ts";
 import { MetricsService } from "./src/metrics/metrics-service.ts";
@@ -307,6 +308,7 @@ export function serveDashboard(opts: DashboardServerOptions) {
         log,
     });
     const attachStoreMutation = store instanceof ProfileStore;
+    const rosterTags: UiRosterTags | undefined = attachStoreMutation ? new WeakMap() : undefined;
     const previousStoreMutation = attachStoreMutation ? store.onMutation : undefined;
     const storeMutationHandler: NonNullable<ProfileStore["onMutation"]> = (event) => {
         previousStoreMutation?.(event);
@@ -515,6 +517,7 @@ export function serveDashboard(opts: DashboardServerOptions) {
 
             const execute = () => dispatchWithLifecycleAdmission(req, admission, async () => {
                 const ui = await handleUiRequest(req, launcher, store, {
+                    rosterTags,
                     workspaceManagement: management,
                     appConfig: opts.appConfig,
                     paths: opts.paths,

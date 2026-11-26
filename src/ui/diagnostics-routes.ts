@@ -1,16 +1,35 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Launcher } from "../../launcher.ts";
 import type { ProfileStore } from "../../store.ts";
 import {
   createDiagnosticZip,
   runSystemDiagnostics,
   type ClientDesktopProbeInput,
+  type SystemDiagnosticReport,
   type SystemDiagnosticsOptions,
 } from "../../system-diagnostics.ts";
 import { noStoreJson, rejectUntrustedJsonMutation, type UiRuntimeOptions } from "./shared.ts";
 
 const DIAGNOSTICS_PREFIX = "/ui/api/diagnostics";
 const MAX_JSON_BYTES = 32 * 1024;
+const MAX_REPORTS_PER_STORE = 4;
+const DIAGNOSTIC_REPORT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const reviewedReports = new WeakMap<ProfileStore, Map<string, SystemDiagnosticReport>>();
+
+function rememberReport(store: ProfileStore, report: SystemDiagnosticReport): string {
+  let reports = reviewedReports.get(store);
+  if (!reports) {
+    reports = new Map();
+    reviewedReports.set(store, reports);
+  }
+  const id = randomUUID();
+  reports.set(id, report);
+  if (reports.size > MAX_REPORTS_PER_STORE) {
+    const oldest = reports.keys().next().value;
+    if (oldest !== undefined) reports.delete(oldest);
+  }
+  return id;
+}
 
 export interface DiagnosticsRouteOptions extends UiRuntimeOptions {
   workspaceHome?: string;
@@ -134,10 +153,10 @@ export async function handleDiagnosticsRoutes(
         return noStoreJson({ ok: false, error: "Unexpected fields in diagnostics run request" }, 400);
       }
       const report = await runSystemDiagnostics(diagnosticOptions);
-      return noStoreJson({ ok: true, report });
+      return noStoreJson({ ok: true, report, reportId: rememberReport(store, report) });
     }
 
-    const allowed = new Set(["format", "includeMcpProbe", "includeLogs", "desktopProbe"]);
+    const allowed = new Set(["format", "includeMcpProbe", "includeLogs", "desktopProbe", "reportId"]);
     if (Object.keys(body).some((key) => !allowed.has(key))) {
       return noStoreJson({ ok: false, error: "Unexpected fields in diagnostics export request" }, 400);
     }
@@ -146,9 +165,21 @@ export async function handleDiagnosticsRoutes(
       return noStoreJson({ ok: false, error: "Diagnostics export format must be zip or json" }, 400);
     }
 
-    const stamp = formatFileTimestamp(now());
+    let report: SystemDiagnosticReport;
+    if (body.reportId !== undefined) {
+      if (typeof body.reportId !== "string" || !DIAGNOSTIC_REPORT_ID.test(body.reportId)) {
+        return noStoreJson({ ok: false, error: "Invalid diagnostics report ID" }, 400);
+      }
+      const reviewed = reviewedReports.get(store)?.get(body.reportId);
+      if (!reviewed) {
+        return noStoreJson({ ok: false, error: "Diagnostics report is no longer available. Run diagnostics again." }, 409);
+      }
+      report = reviewed;
+    } else {
+      report = await runSystemDiagnostics(diagnosticOptions);
+    }
+    const stamp = formatFileTimestamp(new Date(report.generatedAt));
     if (format === "json") {
-      const report = await runSystemDiagnostics(diagnosticOptions);
       const jsonText = `${JSON.stringify(report, null, 2)}\n`;
       const sha256 = createHash("sha256").update(jsonText, "utf8").digest("hex");
       const fileName = `maobu-diagnostics-${stamp}.json`;
@@ -168,6 +199,7 @@ export async function handleDiagnosticsRoutes(
 
     const bundle = await createDiagnosticZip({
       ...diagnosticOptions,
+      report,
       includeLogs: body.includeLogs !== false,
     });
     const fileName = `maobu-diagnostics-${stamp}.zip`;

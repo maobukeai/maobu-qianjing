@@ -200,4 +200,50 @@ describe("handleDiagnosticsRoutes", () => {
     );
     expect(JSON.parse(jsonText).checks).toHaveLength(6);
   });
+
+  test("JSON and ZIP export the reviewed report even after the machine state changes", async () => {
+    const f = fixture();
+    let clock = new Date("2026-11-22T14:30:00.000Z");
+    let freeGiB = 80;
+    let diskReads = 0;
+    const launcher = { dataDriveFreeBytes: () => { diskReads++; return freeGiB * 1024 ** 3; } } as unknown as Launcher;
+    const options = { ...f.opts, now: () => clock };
+    const request = (action: "run" | "export", data: object, store = f.store) => {
+      const pathname = `/ui/api/diagnostics/${action}`;
+      return handleDiagnosticsRoutes(new Request(`http://127.0.0.1:50401${pathname}`, {
+        method: "POST",
+        headers: { "X-Maobu-Settings": "1", "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      }), pathname, launcher, store, options);
+    };
+
+    const run = await request("run", {});
+    const preview = await run!.json();
+    expect(preview.reportId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(preview.report.generatedAt).toBe(clock.toISOString());
+    expect(diskReads).toBe(1);
+    clock = new Date("2026-11-22T14:33:00.000Z");
+    freeGiB = 1;
+
+    const anotherStore = new ProfileStore(":memory:");
+    cleanups.push(() => anotherStore.close());
+    const foreign = await request("export", { format: "json", reportId: preview.reportId }, anotherStore);
+    expect(foreign?.status).toBe(409);
+    expect((await foreign!.json()).error).toBe("Diagnostics report is no longer available. Run diagnostics again.");
+    const malformed = await request("export", { format: "json", reportId: null });
+    expect(malformed?.status).toBe(400);
+
+    const json = await request("export", { format: "json", reportId: preview.reportId });
+    expect(json?.status).toBe(200);
+    expect(json?.headers.get("content-disposition")).toContain("maobu-diagnostics-20261122-143000.json");
+    expect(await json!.json()).toEqual(preview.report);
+
+    const zip = await request("export", { format: "zip", reportId: preview.reportId, includeLogs: false });
+    expect(zip?.status).toBe(200);
+    const outDir = mkdtempSync(join(tmpdir(), "maobu-diag-route-preview-"));
+    cleanups.push(() => rmSync(outDir, { recursive: true, force: true }));
+    await extractZipTo(new Uint8Array(await zip!.arrayBuffer()), outDir);
+    expect(JSON.parse(readFileSync(join(outDir, "diagnostic-report.json"), "utf8"))).toEqual(preview.report);
+    expect(diskReads).toBe(1);
+  });
 });

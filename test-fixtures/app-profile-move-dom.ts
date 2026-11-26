@@ -123,7 +123,7 @@ async function run(scenario: string) {
       const filter = dom.container.querySelector<HTMLSelectElement>('select[aria-label="Group filter"]')!; assert.ok(filter);
       await act(async () => { filter.value = ""; filter.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
       assert.deepEqual(visible<HTMLElement>('tr[data-profile-id]').map(node => node.getAttribute("data-profile-id")).sort(), ["move_a", "move_c"], "Ungrouped is a real filter scope even though the folder catalog has no empty-name folder");
-      assert.ok(button("All environments2").getAttribute("aria-pressed") === "true");
+      assert.equal(dom.container.querySelector(".profile-status-tabs button")?.getAttribute("aria-pressed"), "true");
       await click(check("move_a")); await click(check("move_c")); assert.deepEqual(checked(), ["move_a", "move_c"]);
       assert.equal(moves.length, 1, "Filtering and selecting an ungrouped destination must not replay the move");
     }

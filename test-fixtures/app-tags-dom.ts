@@ -78,9 +78,18 @@ async function run(scenario: string) {
       assert.equal(visible('[role="dialog"][aria-labelledby="create-profile-title"]').length, 0); assert.equal(saves.length, 0); assert.deepEqual(unexpected, []); return;
     }
     if (scenario === "ime-cancel") {
+      const backdropPress = () => act(async () => {
+        dialog()!.parentElement!.dispatchEvent(new dom.window.PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+      });
       await type(entry(), "输入中"); await act(async () => { entry().dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true, cancelable: true })); });
       assert.equal(entry().value, "输入中"); assert.equal(dialog()!.querySelectorAll(".profile-tags-chips li").length, 1); assert.equal(saves.length, 0);
-      await click(button("Cancel", dialog()!)); assert.equal(dialog(), undefined); assert.equal(preview()!.textContent, "Warmup"); assert.equal(rosterReads, initialReads); return;
+      await backdropPress(); assert.equal(entry().value, "输入中", "Clicking the backdrop preserves an unfinished tag");
+      await click(button("Add", dialog()!)); await backdropPress();
+      assert.equal(dialog()!.querySelectorAll(".profile-tags-chips li").length, 2, "Clicking the backdrop preserves staged tags");
+      await click(button("Cancel", dialog()!)); assert.equal(dialog(), undefined); assert.equal(preview()!.textContent, "Warmup");
+      await menuAction("Manage tags"); assert.ok(dialog()); await backdropPress();
+      assert.equal(dialog(), undefined, "The backdrop still dismisses an unedited dialog");
+      assert.equal(saves.length, 0); assert.equal(rosterReads, initialReads); return;
     }
     await click(button("Remove tag Warmup", dialog()!));
     if (scenario !== "clear") await type(entry(), "research, priority，regional");

@@ -1,6 +1,15 @@
 /** Real-time process metrics stream & trim/hibernate API client (fetch + ReadableStream, never EventSource). */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createSseParser, getStandaloneSessionToken, isUnauthorizedError } from "./api.ts";
+import {
+  AppLockedError,
+  getStandaloneSessionToken,
+  isAppLockedError,
+  isUnauthorizedError,
+  notifyAppLockedFromResponse,
+  notifyUnauthorizedResponse,
+  readSseBody,
+  UnauthorizedError,
+} from "./api.ts";
 
 export type WatermarkLevel = "normal" | "elevated" | "high" | "critical";
 
@@ -74,6 +83,7 @@ export interface HibernateActionResult {
 }
 
 const VALID_WATERMARKS = new Set<string>(["normal", "elevated", "high", "critical"]);
+const METRICS_READ_TIMEOUT_MS = 10_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -214,21 +224,31 @@ export async function fetchMetricsSnapshot(signal?: AbortSignal): Promise<{
   snapshot: MetricsSnapshot | null;
   unsupported: boolean;
 }> {
-  const response = await fetch("/ui/api/metrics/snapshot", {
+  const path = "/ui/api/metrics/snapshot";
+  const deadline = AbortSignal.timeout(METRICS_READ_TIMEOUT_MS);
+  const response = await fetch(path, {
     method: "GET",
     credentials: "same-origin",
     cache: "no-store",
     redirect: "error",
     headers: authHeaders({ Accept: "application/json" }),
-    ...(signal ? { signal } : {}),
+    signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
   });
-  if (response.status === 404 || response.status === 501 || response.status === 503) {
+  if (response.status === 404 || response.status === 501) {
     return { snapshot: null, unsupported: true };
+  }
+  const body = await response.json().catch(() => null);
+  if (response.status === 401) {
+    notifyUnauthorizedResponse(401, path, isRecord(body) && typeof body.error === "string" ? body.error : "");
+    return { snapshot: null, unsupported: false };
+  }
+  if (response.status === 423) {
+    notifyAppLockedFromResponse(423, body);
+    return { snapshot: null, unsupported: false };
   }
   if (!response.ok) {
     return { snapshot: null, unsupported: false };
   }
-  const body = await response.json().catch(() => null);
   if (!isRecord(body) || body.ok === false) return { snapshot: null, unsupported: false };
   const snapshot = normalizeMetricsSnapshot(body.snapshot ?? body);
   return { snapshot, unsupported: false };
@@ -243,7 +263,8 @@ export interface OpenMetricsStreamOptions {
 
 /** Open authenticated `GET /ui/api/metrics/stream` SSE stream via `fetch()` + `ReadableStream`. */
 export async function openMetricsStream(options: OpenMetricsStreamOptions): Promise<void> {
-  const response = await fetch("/ui/api/metrics/stream", {
+  const path = "/ui/api/metrics/stream";
+  const response = await fetch(path, {
     method: "GET",
     credentials: "same-origin",
     cache: "no-store",
@@ -251,9 +272,18 @@ export async function openMetricsStream(options: OpenMetricsStreamOptions): Prom
     headers: authHeaders({ Accept: "text/event-stream" }),
     signal: options.signal,
   });
-  if (response.status === 404 || response.status === 501 || response.status === 503) {
+  if (response.status === 404 || response.status === 501) {
     options.onUnsupported?.();
     return;
+  }
+  if (response.status === 401) {
+    throw notifyUnauthorizedResponse(401, path, "The local metrics session expired.") ?? new UnauthorizedError("The local metrics session expired.", path);
+  }
+  if (response.status === 423) {
+    const lockedBody = await response.json().catch(() => null);
+    if (notifyAppLockedFromResponse(423, lockedBody)) {
+      throw new AppLockedError(isRecord(lockedBody) && typeof lockedBody.error === "string" ? lockedBody.error : undefined);
+    }
   }
   if (!response.ok) {
     throw new Error(`Metrics stream failed (${response.status})`);
@@ -261,28 +291,18 @@ export async function openMetricsStream(options: OpenMetricsStreamOptions): Prom
   const contentType = (response.headers.get("content-type") ?? "").toLowerCase();
   if (!response.body || !contentType.includes("text/event-stream")) {
     try { void response.body?.cancel().catch(() => {}); } catch {}
-    options.onUnsupported?.();
-    return;
+    throw new Error("Metrics stream returned an unexpected response.");
   }
   options.onOpen?.();
-  const reader = response.body.getReader();
-  const parser = createSseParser((event) => {
-    if (event.type === "metrics" || event.type === "metrics.snapshot" || event.type === "message") {
-      const normalized = normalizeMetricsSnapshot(event.data);
-      if (normalized) options.onSnapshot(normalized);
-    }
+  await readSseBody(response.body, {
+    signal: options.signal,
+    onEvent: (event) => {
+      if (event.type === "metrics" || event.type === "metrics.snapshot" || event.type === "message") {
+        const normalized = normalizeMetricsSnapshot(event.data);
+        if (normalized) options.onSnapshot(normalized);
+      }
+    },
   });
-  try {
-    while (!options.signal.aborted) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (value && value.byteLength > 0) parser.push(value);
-    }
-    if (!options.signal.aborted) parser.finish();
-  } finally {
-    try { await reader.cancel().catch(() => {}); } catch {}
-    try { reader.releaseLock(); } catch {}
-  }
 }
 
 async function postMetricAction(path: string, body?: unknown): Promise<Record<string, unknown>> {
@@ -298,6 +318,11 @@ async function postMetricAction(path: string, body?: unknown): Promise<Record<st
     body: JSON.stringify(body ?? {}),
   });
   const parsed = await response.json().catch(() => null);
+  if (response.status === 401) {
+    notifyUnauthorizedResponse(401, path, isRecord(parsed) && typeof parsed.error === "string" ? parsed.error : "");
+  } else if (response.status === 423) {
+    notifyAppLockedFromResponse(423, parsed);
+  }
   if (!isRecord(parsed)) throw new Error("Resource action returned an invalid response.");
   if (!response.ok || parsed.ok === false) {
     throw new Error(
@@ -326,6 +351,154 @@ function normalizeTrimResult(raw: unknown): TrimMemoryEntryResult | null {
     afterBytes,
     freedBytes,
     ...(typeof raw.error === "string" && raw.error ? { error: raw.error } : {}),
+  };
+}
+
+export type ProfileResourcePolicyMode = "inherit" | "on" | "off";
+
+export interface ProfileDataSaverOverride {
+  mode: ProfileResourcePolicyMode;
+  blockImages?: boolean;
+  blockMedia?: boolean;
+  blockFonts?: boolean;
+}
+
+export interface ProfileResourcePolicy {
+  profileId: string;
+  memorySaverMode: ProfileResourcePolicyMode;
+  dataSaver: ProfileDataSaverOverride;
+  updatedAt: number;
+}
+
+export interface EffectiveProfileResourcePolicy {
+  memorySaver: boolean;
+  dataSaver: {
+    enabled: boolean;
+    blockImages: boolean;
+    blockMedia: boolean;
+    blockFonts: boolean;
+  };
+}
+
+function normalizeResourcePolicy(raw: unknown, fallbackProfileId: string): ProfileResourcePolicy {
+  const r = isRecord(raw) ? raw : {};
+  const modeVal = r.memorySaverMode;
+  const memorySaverMode: ProfileResourcePolicyMode =
+    modeVal === "on" || modeVal === "off" || modeVal === "inherit" ? modeVal : "inherit";
+  const dsRaw = isRecord(r.dataSaver) ? r.dataSaver : {};
+  const dsMode: ProfileResourcePolicyMode =
+    dsRaw.mode === "on" || dsRaw.mode === "off" || dsRaw.mode === "inherit" ? dsRaw.mode : "inherit";
+  const dataSaver: ProfileDataSaverOverride =
+    dsMode === "on"
+      ? {
+          mode: "on",
+          ...(typeof dsRaw.blockImages === "boolean" ? { blockImages: dsRaw.blockImages } : {}),
+          ...(typeof dsRaw.blockMedia === "boolean" ? { blockMedia: dsRaw.blockMedia } : {}),
+          ...(typeof dsRaw.blockFonts === "boolean" ? { blockFonts: dsRaw.blockFonts } : {}),
+        }
+      : { mode: dsMode };
+  return {
+    profileId: asStr(r.profileId, fallbackProfileId),
+    memorySaverMode,
+    dataSaver,
+    updatedAt: asNum(r.updatedAt, 0),
+  };
+}
+
+function normalizeEffectiveResourcePolicy(raw: unknown): EffectiveProfileResourcePolicy {
+  const r = isRecord(raw) ? raw : {};
+  const ds = isRecord(r.dataSaver) ? r.dataSaver : {};
+  return {
+    memorySaver: r.memorySaver === true,
+    dataSaver: {
+      enabled: ds.enabled === true,
+      blockImages: ds.blockImages === true,
+      blockMedia: ds.blockMedia === true,
+      blockFonts: ds.blockFonts === true,
+    },
+  };
+}
+
+export async function fetchProfileResourcePolicy(
+  profileId: string,
+  signal?: AbortSignal,
+): Promise<{
+  supported: boolean;
+  policy: ProfileResourcePolicy | null;
+  effective: EffectiveProfileResourcePolicy | null;
+}> {
+  const path = `/ui/api/profiles/${encodeURIComponent(profileId)}/resource-policy`;
+  const response = await fetch(path, {
+    method: "GET",
+    credentials: "same-origin",
+    cache: "no-store",
+    redirect: "error",
+    headers: authHeaders({ Accept: "application/json" }),
+    ...(signal ? { signal } : {}),
+  });
+  if (response.status === 404 || response.status === 501) {
+    return { supported: false, policy: null, effective: null };
+  }
+  const body = await response.json().catch(() => null);
+  if (response.status === 401) {
+    notifyUnauthorizedResponse(401, path, isRecord(body) && typeof body.error === "string" ? body.error : "");
+    throw new UnauthorizedError("Authentication required", path);
+  }
+  if (response.status === 423) {
+    notifyAppLockedFromResponse(423, body);
+  }
+  if (!isRecord(body) || !response.ok || body.ok === false) {
+    throw new Error(isRecord(body) && typeof body.error === "string" && body.error.trim()
+      ? body.error.trim()
+      : "Could not load resource policy.");
+  }
+  return {
+    supported: true,
+    policy: normalizeResourcePolicy(body.policy, profileId),
+    effective: normalizeEffectiveResourcePolicy(body.effective),
+  };
+}
+
+export async function updateProfileResourcePolicy(
+  profileId: string,
+  patch: {
+    memorySaverMode?: ProfileResourcePolicyMode;
+    dataSaver?: ProfileDataSaverOverride;
+  },
+): Promise<{
+  policy: ProfileResourcePolicy;
+  effective: EffectiveProfileResourcePolicy;
+  restartRequired: boolean;
+}> {
+  const path = `/ui/api/profiles/${encodeURIComponent(profileId)}/resource-policy`;
+  const response = await fetch(path, {
+    method: "PATCH",
+    credentials: "same-origin",
+    cache: "no-store",
+    redirect: "error",
+    headers: authHeaders({
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    }),
+    body: JSON.stringify(patch),
+  });
+  const body = await response.json().catch(() => null);
+  if (response.status === 401) {
+    notifyUnauthorizedResponse(401, path, isRecord(body) && typeof body.error === "string" ? body.error : "");
+    throw new UnauthorizedError("Authentication required", path);
+  }
+  if (response.status === 423) {
+    notifyAppLockedFromResponse(423, body);
+  }
+  if (!isRecord(body) || !response.ok || body.ok === false) {
+    throw new Error(isRecord(body) && typeof body.error === "string" && body.error.trim()
+      ? body.error.trim()
+      : "Could not update resource policy.");
+  }
+  return {
+    policy: normalizeResourcePolicy(body.policy, profileId),
+    effective: normalizeEffectiveResourcePolicy(body.effective),
+    restartRequired: body.restartRequired === true,
   };
 }
 
@@ -410,6 +583,7 @@ export interface UseResourceMonitorOptions {
   runningCount: number;
   panelOpen: boolean;
   eventsStream: boolean;
+  sampleTimeoutMs?: number;
 }
 
 export interface ResourceMonitorState {
@@ -417,6 +591,7 @@ export interface ResourceMonitorState {
   byProfileId: ReadonlyMap<string, ProfileResourceMetric>;
   hibernatedIds: ReadonlySet<string>;
   streaming: boolean;
+  reconnecting: boolean;
   unsupported: boolean;
   refreshNow: () => Promise<void>;
 }
@@ -426,39 +601,73 @@ export interface ResourceMonitorState {
  * - Zero requests when `runningCount === 0 && !panelOpen` or when `!eventsStream && !panelOpen`
  *   (protects all existing DOM test fixtures with strict URL whitelists).
  * - Automatically pauses while `document.hidden === true`.
- * - Silently degrades if `/ui/api/metrics/stream` is unavailable (404/501).
+ * - Distinguishes an unsupported endpoint (404/501) from a temporary outage.
  */
 export function useResourceMonitor({
   enabled,
   runningCount,
   panelOpen,
   eventsStream,
+  sampleTimeoutMs = METRICS_READ_TIMEOUT_MS,
 }: UseResourceMonitorOptions): ResourceMonitorState {
   const [snapshot, setSnapshot] = useState<MetricsSnapshot | null>(null);
   const [streaming, setStreaming] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
   const [unsupported, setUnsupported] = useState(false);
   const unsupportedRef = useRef(false);
+  const readOwnerEnabled = useRef(false);
+  const activeRead = useRef<AbortController | null>(null);
+  const latestSnapshot = useRef<MetricsSnapshot | null>(null);
 
   const shouldConnect = enabled && !unsupported && ((runningCount > 0 && eventsStream) || panelOpen);
 
+  const publishSnapshot = useCallback((next: MetricsSnapshot) => {
+    latestSnapshot.current = next;
+    setSnapshot(next);
+  }, []);
+
+  useEffect(() => {
+    readOwnerEnabled.current = enabled;
+    return () => {
+      readOwnerEnabled.current = false;
+      activeRead.current?.abort();
+    };
+  }, [enabled]);
+
   const refreshNow = useCallback(async () => {
-    if (!enabled) return;
+    if (!readOwnerEnabled.current) return;
+    activeRead.current?.abort();
+    const controller = new AbortController();
+    activeRead.current = controller;
+    const snapshotAtStart = latestSnapshot.current;
     try {
-      const result = await fetchMetricsSnapshot();
-      if (result.unsupported) {
+      const result = await fetchMetricsSnapshot(controller.signal);
+      if (controller.signal.aborted) return;
+      const current = latestSnapshot.current;
+      if (result.unsupported && !current) {
         unsupportedRef.current = true;
         setUnsupported(true);
         return;
       }
-      if (result.snapshot) setSnapshot(result.snapshot);
+      // A snapshot requested earlier can arrive after a newer streamed sample.
+      if (result.snapshot && (current === snapshotAtStart || !current || result.snapshot.ts > current.ts)) {
+        publishSnapshot(result.snapshot);
+      }
     } catch {
       // Quietly degrade; explicit user actions in drawer surface errors directly.
+    } finally {
+      if (activeRead.current === controller) activeRead.current = null;
     }
-  }, [enabled]);
+  }, [publishSnapshot]);
+
+  useEffect(() => {
+    if (enabled && panelOpen && (typeof document === "undefined" || !document.hidden)) void refreshNow();
+  }, [enabled, panelOpen, refreshNow]);
 
   useEffect(() => {
     if (!shouldConnect) {
       setStreaming(false);
+      setReconnecting(false);
       return;
     }
 
@@ -475,49 +684,55 @@ export function useResourceMonitor({
     };
 
     const connect = async () => {
-      while (alive && !unsupportedRef.current) {
-        if (typeof document !== "undefined" && document.hidden) {
-          setStreaming(false);
-          return;
-        }
-        const controller = new AbortController();
-        activeAbort = controller;
-        try {
-          await openMetricsStream({
-            signal: controller.signal,
-            onOpen: () => {
-              if (!alive) return;
-              attempt = 0;
-              setStreaming(true);
-            },
-            onSnapshot: (next) => {
-              if (alive) setSnapshot(next);
-            },
-            onUnsupported: () => {
-              unsupportedRef.current = true;
-              if (alive) {
-                setUnsupported(true);
-                setStreaming(false);
-              }
-            },
-          });
-          if (!alive || controller.signal.aborted || unsupportedRef.current) break;
-        } catch (error) {
-          if (!alive || controller.signal.aborted || isUnauthorizedError(error)) break;
-        } finally {
-          if (activeAbort === controller) activeAbort = null;
-        }
-        if (!alive || unsupportedRef.current) break;
-        setStreaming(false);
-        const delay = Math.min(15_000, 1_500 * 2 ** Math.min(4, attempt));
-        attempt += 1;
-        await new Promise<void>((resolve) => {
-          retryTimer = setTimeout(() => {
-            retryTimer = undefined;
-            resolve();
-          }, delay);
+      if (!alive || unsupportedRef.current || activeAbort || retryTimer !== undefined ||
+          (typeof document !== "undefined" && document.hidden)) return;
+      const controller = new AbortController();
+      activeAbort = controller;
+      const isCurrent = () => alive && activeAbort === controller && !controller.signal.aborted;
+      let timedOut = false, unauthorized = false, locked = false;
+      let watchdog: ReturnType<typeof setTimeout> | undefined;
+      const armWatchdog = () => {
+        clearTimeout(watchdog);
+        watchdog = setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+        }, sampleTimeoutMs);
+      };
+      armWatchdog();
+      try {
+        await openMetricsStream({
+          signal: controller.signal,
+          onSnapshot: (next) => {
+            if (!isCurrent()) return;
+            armWatchdog();
+            attempt = 0;
+            publishSnapshot(next);
+            setStreaming(true);
+            setReconnecting(false);
+          },
+          onUnsupported: () => {
+            if (!isCurrent()) return;
+            unsupportedRef.current = true;
+            setUnsupported(true);
+          },
         });
+      } catch (error) {
+        unauthorized = isUnauthorizedError(error);
+        locked = isAppLockedError(error);
+      } finally {
+        clearTimeout(watchdog);
       }
+      if (activeAbort !== controller) return;
+      activeAbort = null;
+      if (!alive) return;
+      setStreaming(false);
+      if (unsupportedRef.current || unauthorized || locked || (controller.signal.aborted && !timedOut)) return;
+      setReconnecting(true);
+      const delay = Math.min(15_000, 1_500 * 2 ** Math.min(4, attempt++));
+      retryTimer = setTimeout(() => {
+        retryTimer = undefined;
+        void connect();
+      }, delay);
     };
 
     const onVisibilityChange = () => {
@@ -527,16 +742,14 @@ export function useResourceMonitor({
         activeAbort?.abort();
         activeAbort = null;
         setStreaming(false);
-      } else if (!activeAbort) {
+        setReconnecting(false);
+      } else {
         void connect();
       }
     };
 
     if (typeof document !== "undefined") {
       document.addEventListener("visibilitychange", onVisibilityChange);
-    }
-    if (panelOpen) {
-      void refreshNow();
     }
     void connect();
 
@@ -550,7 +763,7 @@ export function useResourceMonitor({
         document.removeEventListener("visibilitychange", onVisibilityChange);
       }
     };
-  }, [shouldConnect, panelOpen, refreshNow]);
+  }, [shouldConnect, sampleTimeoutMs, publishSnapshot]);
 
   const byProfileId = useMemo(() => {
     const map = new Map<string, ProfileResourceMetric>();
@@ -570,6 +783,7 @@ export function useResourceMonitor({
     byProfileId,
     hibernatedIds,
     streaming,
+    reconnecting,
     unsupported,
     refreshNow,
   };

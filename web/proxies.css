@@ -1,45 +1,41 @@
 /* The bundled base stylesheet can load last. Keep scroll and visibility rules
    more specific than .workspace, including in the standalone web dashboard. */
 .workspace.proxy-page {
-  padding: 0 0 16px; overflow: auto; gap: 20px; background: var(--bg);
+  padding: 0 0 16px; overflow: auto; gap: 14px; background: var(--bg);
   border: 0; box-shadow: none; scrollbar-gutter: stable;
 }
 .workspace.proxy-page[hidden] { display: none; }
 .workspace.proxy-page > * { flex: 0 0 auto; min-width: 0; }
 .workspace.proxy-manager > * { width: 100%; max-width: 1320px; margin-inline: auto; }
-.proxy-workflow-navigation { position: sticky; top: 0; z-index: var(--z-sticky, 20); padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--sh-xs); }
-.proxy-workflow-scope { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; padding: 0 4px 8px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.proxy-workflow-navigation { position: sticky; top: 0; z-index: var(--z-sticky, 20); padding: 10px 12px 7px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--sh-xs); }
+.proxy-workflow-scope { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; padding: 0 4px 7px; border-bottom: 1px solid var(--line-soft); color: var(--muted); font-size: 12px; line-height: 1.5; }
 .proxy-workflow-scope-label { flex-shrink: 0; }
 .proxy-workflow-scope > strong { min-width: 0; color: var(--ink-soft); font-size: 12px; font-weight: 550; overflow-wrap: anywhere; }
 .proxy-workflow-count { margin-inline-start: auto; font-variant-numeric: tabular-nums; }
-.proxy-workflow-navigation ol { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; list-style: none; margin: 0; padding: 0; }
+.proxy-workflow-navigation ol { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; list-style: none; margin: 4px 0 0; padding: 0; }
 .proxy-workflow-navigation li { min-width: 0; }
-.proxy-workflow-navigation button { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 34px; padding: 5px 7px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--ink-soft); font: 12px/1.5 var(--font); text-align: start; cursor: pointer; }
-.proxy-workflow-navigation button > span { display: grid; place-items: center; width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%; background: var(--surface-sunken); color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.proxy-workflow-navigation button { display: flex; align-items: center; justify-content: space-between; gap: 5px; width: 100%; min-height: 31px; padding: 4px 7px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--ink-soft); font: 12px/1.5 var(--font); text-align: start; overflow-wrap: anywhere; cursor: pointer; }
+.proxy-workflow-navigation button > .icon { flex: 0 0 auto; color: var(--muted); }
+.proxy-workflow-navigation button:disabled > .icon { visibility: hidden; }
 .proxy-workflow-navigation button:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent-ink); }
 .proxy-workflow-navigation button:disabled { color: var(--muted); opacity: .55; cursor: default; }
 .proxy-workflow-target { scroll-margin-top: 118px; }
 .proxy-workflow-target:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
-.proxy-manager .tools-intro h1 { margin: 0 0 8px; color: var(--ink); font-size: 24px; font-weight: 550; line-height: 1.25; letter-spacing: -.035em; }
 .proxy-page h2, .proxy-page h3, .proxy-page p { margin: 0; }
-.proxy-page h3 { font-size: 13px; font-weight: 500; }
-.tools-intro { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
-.tools-eyebrow { color: var(--accent-ink); font-size: 11px; font-weight: 500; letter-spacing: .08em; }
-.tools-intro h2 { margin: 0 0 8px; color: var(--ink); font-size: 25px; font-weight: 600; line-height: 1.25; letter-spacing: -.04em; }
-.tools-intro p, .tools-panel-head p { color: var(--muted); font-size: 12px; line-height: 1.6; }
-.tools-count { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); color: var(--muted); background: var(--surface); font-size: 11px; white-space: nowrap; }
-.tools-count strong { color: var(--accent-ink); font-size: 14px; font-weight: 500; font-variant-numeric: tabular-nums; }
-.tools-panel { min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; }
-.tools-panel-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 20px; }
+.proxy-page h3 { color: var(--ink); font-size: 14px; font-weight: 650; }
+.proxy-page > .tools-intro { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 4px; }
+.tools-panel-head p { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.tools-panel { min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-xl); box-shadow: var(--sh-xs); overflow: hidden; }
+.tools-panel-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px 20px; }
 .tools-panel-head h3 { display: flex; align-items: center; gap: 8px; }
 .tools-panel-head p { margin-top: 5px; }
 .tools-panel-head > .btn { flex-shrink: 0; }
 .tools-panel-body { padding: 0 20px 20px; display: flex; flex-direction: column; gap: 14px; }
-.tools-tabs { display: flex; align-items: stretch; flex-wrap: wrap; gap: 12px 25px; padding: 0; background: transparent; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; }
-.tools-tabs button { flex: 0 1 auto; min-width: 0; text-align: left; padding: 0 1px 12px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); font-size: 12px; font-weight: 500; cursor: pointer; }
-.tools-tabs button small { display: block; margin-top: 3px; font-size: 11px; font-weight: 400; }
-.tools-tabs button.selected { color: var(--accent-ink); background: transparent; border-bottom-color: var(--accent); box-shadow: none; }
-.tools-tabs button:hover { color: var(--ink); }
+.tools-tabs { display: flex; align-items: stretch; flex-wrap: wrap; gap: 3px; padding: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); }
+.tools-tabs button { display: inline-flex; align-items: center; gap: 7px; min-width: 0; min-height: 34px; padding: 5px 11px; text-align: start; border: 1px solid transparent; border-radius: var(--r-md); background: transparent; color: var(--muted); font-size: 12px; font-weight: 550; cursor: pointer; }
+.tools-tabs button .icon { flex: 0 0 auto; }
+.tools-tabs button:hover { color: var(--ink); background: var(--surface-hover); }
+.tools-tabs button.selected { color: var(--accent-ink); background: var(--accent-soft); border-color: var(--accent-line); font-weight: 650; box-shadow: none; }
 .tools-tabs button:disabled { cursor: default; opacity: .6; }
 .tools-tabs button:disabled.selected { opacity: 1; }
 .tools-tabs button:focus-visible, .folder-all:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -52,16 +48,16 @@
 .proxy-choice { display: inline-flex; align-items: center; gap: 6px; color: var(--ink); font-size: 12px; }
 .proxy-page .tools-hint { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .proxy-scope > .tools-hint { padding: 0 20px 16px; }
-.proxy-scope-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin: 0 20px 18px; padding: 0 0 16px; border-bottom: 1px solid var(--line-soft); }
+.proxy-scope-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 0 20px 14px; padding: 9px 12px; border: 1px solid var(--line-soft); border-radius: var(--r-md); background: var(--surface-sunken); }
 .proxy-scope-summary > div { min-width: 0; }
-.proxy-scope-summary strong { display: block; color: var(--ink-soft); font-size: 22px; font-weight: 500; line-height: 1.4; font-variant-numeric: tabular-nums; }
+.proxy-scope-summary strong { display: block; color: var(--ink); font-size: 17px; font-weight: 650; line-height: 1.35; font-variant-numeric: tabular-nums; }
 .proxy-scope-summary span { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
 .proxy-scope .proxy-scope-note { padding-top: 0; margin-top: -4px; }
 .proxy-repair-return { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; }
 .proxy-repair-scope .proxy-affected { width: fit-content; max-width: 100%; }
 .proxy-affected > .btn { margin-top: 8px; white-space: normal; }
 .proxy-page .tools-footnote { font-size: 11px; color: var(--faint); line-height: 1.6; }
-.tools-step { display: inline-flex; align-items: center; justify-content: center; width: 23px; height: 23px; border-radius: 50%; background: var(--accent-soft); color: var(--accent-ink); font-size: 11px; }
+.proxy-check-help { display: grid; gap: 4px; }
 .tools-stats { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); background: var(--surface-sunken); }
 .tools-stats > div { padding: 14px 20px; border-right: 1px solid var(--line-soft); }
 .tools-stats > div:last-child { border-right: 0; }
@@ -70,7 +66,8 @@
 .tools-result-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 20px; flex-wrap: wrap; }
 .tools-panel-body .tools-result-bar { padding: 0; }
 .tools-empty { padding: 40px 24px 48px; text-align: center; }
-.tools-empty-symbol { display: inline-flex; justify-content: center; align-items: center; width: 38px; height: 38px; margin-bottom: 14px; border: 1px solid var(--accent-line); border-radius: var(--r-md); color: var(--accent); background: var(--accent-soft); font-size: 21px; }
+.tools-empty-symbol { display: inline-flex; justify-content: center; align-items: center; width: 44px; height: 44px; margin-bottom: 12px; border-radius: var(--r-lg); color: var(--accent-ink); background: var(--accent-soft); }
+.tools-empty-symbol .icon { width: 21px; height: 21px; }
 .tools-empty h3 { margin-bottom: 8px; }
 .tools-empty p { max-width: 380px; margin: 0 auto; font-size: 12px; color: var(--muted); line-height: 1.7; }
 .tools-empty.compact { padding: 20px 24px 28px; text-align: left; }
@@ -86,7 +83,6 @@
 .proxy-results-search { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 0 20px 15px; }
 .proxy-results-search > label { flex: 1; min-width: 220px; max-width: 620px; }
 .proxy-results-search .input { width: 100%; min-width: 0; font-size: 12px; }
-.proxy-results-search > span { color: var(--faint); font-size: 11px; line-height: 1.6; }
 .proxy-summary-help { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 0 20px 14px; color: var(--muted); font-size: 11px; line-height: 1.6; }
 .proxy-summary-help strong { color: var(--accent-ink); font-weight: 500; }
 .proxy-summary-fallback { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin: 0 20px 16px; padding: 12px; border: 1px solid var(--accent-line); border-radius: var(--r-sm); background: var(--accent-soft); font-size: 12px; line-height: 1.6; }
@@ -94,11 +90,13 @@
 .proxy-summary-fallback textarea { width: 100%; min-width: 0; resize: vertical; padding: 10px; color: var(--ink-soft); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm); font: 11px/1.6 var(--font-mono, monospace); }
 .proxy-summary-fallback textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .proxy-partial-note { padding: 0 20px 16px; }
-.proxy-format-help { color: var(--muted); font-size: 12px; line-height: 1.7; padding: 0 0 4px; }
-.proxy-format-help summary { width: fit-content; cursor: pointer; color: var(--accent-ink); }
+.proxy-format-help { color: var(--muted); font-size: 12px; line-height: 1.7; }
+.proxy-format-help summary { width: fit-content; padding: 3px 7px; background: var(--accent-soft); border-radius: var(--r-sm); cursor: pointer; color: var(--accent-ink); }
 .proxy-format-help pre { margin: 10px 0 8px; padding: 11px 13px; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r-sm); color: var(--ink-soft); background: var(--surface-sunken); font: 11px/1.8 var(--mono); }
 .proxy-format-help > p { font-size: 11px; }
-.proxy-per-proxy > input { width: 150px; max-width: 100%; }
+.proxy-replacement-fields { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; }
+.proxy-replacement-fields > .fld { flex: 1 1 220px; min-width: 0; max-width: 480px; }
+.proxy-replacement-fields > .proxy-per-proxy { flex: 0 1 170px; }
 .proxy-input-error { color: var(--danger-ink); font-size: 11px; }
 .proxy-input-feedback { display: flex; flex-direction: column; gap: 5px; padding: 12px 14px; color: var(--muted); background: var(--surface-sunken); border: 1px solid var(--line); border-radius: var(--r-sm); font-size: 11.5px; line-height: 1.7; overflow-wrap: anywhere; }
 .proxy-input-feedback strong { color: var(--ink-soft); font-weight: 500; }
@@ -108,8 +106,8 @@
 .proxy-preview-warning { display: flex; align-items: center; flex-wrap: wrap; gap: 7px 12px; padding: 14px 20px; color: var(--warn-ink); background: var(--warn-soft); border-top: 1px solid var(--warn-line); border-bottom: 1px solid var(--warn-line); font-size: 12px; line-height: 1.7; }
 .proxy-preview-warning > strong { width: 100%; font-weight: 550; }
 .proxy-preview-warning > span { flex: 1; min-width: 220px; font-size: 11px; }
-.proxy-upload { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--muted); font-size: 12px; }
-.proxy-upload input { max-width: 250px; font-size: 11px; }
+.tools-panel-body .proxy-replacement-actions { padding-top: 12px; border-top: 1px solid var(--line-soft); }
+.proxy-replacement-actions > .btn { margin-inline-start: auto; }
 .proxy-input-panel textarea { font: 12px/1.8 var(--mono); resize: vertical; min-height: 120px; }
 .proxy-input-panel select { max-width: 480px; }
 .proxy-table-wrap { overflow-x: auto; }
@@ -148,19 +146,17 @@
 .proxy-page .tools-result-empty { padding: 20px; }
 .trash-layout { display: grid; grid-template-columns: 222px minmax(0, 1fr); gap: 18px; align-items: start; }
 .trash-folders .tools-panel-head { padding-bottom: 8px; }
-.trash-folders > .tools-hint { padding: 0 20px 16px; }
 .folder-all, .folder-choice { display: flex; align-items: center; gap: 9px; width: 100%; padding: 11px 14px; border: 0; text-align: left; background: transparent; color: var(--ink); font-size: 12px; cursor: pointer; }
-.folder-all { border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); }
+.folder-all { width: calc(100% - 16px); margin: 4px 8px; padding: 8px 10px; border-radius: var(--r-md); }
 .folder-all span, .folder-choice small { margin-left: auto; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .folder-choice > span { overflow-wrap: anywhere; min-width: 0; }
 .folder-all.selected, .folder-choice.selected { color: var(--accent-ink); background: var(--accent-soft); }
 .folder-choice:hover { background: var(--surface-sunken); }
 .trash-folder-list { padding: 6px 0; }
-.trash-folder-list > .tools-hint { padding: 12px 20px; }
-.trash-folder-action { padding: 16px; border-top: 1px solid var(--line-soft); }
+.trash-folder-action { display: grid; gap: 9px; padding: 14px; border-top: 1px solid var(--line-soft); }
 .trash-folder-action .btn { width: 100%; justify-content: center; }
-.trash-folder-action .tools-hint { margin-top: 10px; font-size: 11px; }
-.trash-search { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0 20px 16px; }
+.trash-folder-action .tools-hint { font-size: 11px; }
+.trash-search { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px; }
 .trash-search input { flex: 1; min-width: 150px; width: 0; }
 .trash-selection { padding: 12px 20px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; background: var(--accent-soft); border-top: 1px solid var(--accent-line); border-bottom: 1px solid var(--accent-line); font-size: 12px; }
 .trash-selection > .tools-hint { width: 100%; }
@@ -172,27 +168,23 @@
 .tools-folder-tag { display: inline-block; padding: 3px 7px; border-radius: 5px; border: 1px solid var(--line-soft); color: var(--muted); background: var(--surface-sunken); font-size: 11px; overflow-wrap: anywhere; }
 .proxy-page :is(button, input, select, textarea, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .proxy-page .fld { min-width: 0; }
-.proxy-page .fld > :is(input, select, textarea) { min-width: 0; background: var(--surface); color: var(--ink-soft); border-color: var(--line); box-shadow: none; }
+.proxy-page .fld > :is(input, select, textarea) { min-width: 0; background-color: var(--surface); color: var(--ink-soft); border-color: var(--line); box-shadow: none; }
 .proxy-page .fld > :is(input, select, textarea):focus { border-color: var(--accent); box-shadow: var(--ring); }
 .proxy-upload input { min-width: 0; }
 .proxy-upload input::file-selector-button { padding: 6px 9px; margin-right: 8px; border: 1px solid var(--line); border-radius: var(--r-sm); color: var(--muted); background: var(--surface); font: inherit; cursor: pointer; }
 .trash-folders .tools-panel-head > span { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
-.trash-page .tools-empty { min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.trash-page .tools-empty { min-height: 200px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .trash-page .tools-empty h3 { color: var(--ink-soft); }
 @media (max-width: 1100px) {
   .trash-layout { grid-template-columns: 205px minmax(0, 1fr); gap: 12px; }
 }
 @media (max-width: 800px) {
-  .workspace.proxy-page { gap: 17px; }
   .proxy-workflow-navigation { padding: 9px 10px; }
   .proxy-workflow-navigation ol { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .proxy-workflow-target { scroll-margin-top: 165px; }
   .trash-layout { grid-template-columns: minmax(0, 1fr); }
   .trash-folder-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .tools-panel-head { flex-wrap: wrap; padding: 16px; }
-  .tools-intro h2 { font-size: 21px; }
-  .tools-count { display: none; }
-  .tools-tabs button { padding: 0 1px 11px; }
   .tools-stats { grid-template-columns: repeat(2, 1fr); }
   .proxy-scope-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
   .tools-stats > div { padding: 12px 16px; }
@@ -201,9 +193,9 @@
 @media (max-width: 480px) {
   .proxy-workflow-count { flex-basis: 100%; margin-inline-start: 0; }
   .proxy-workflow-target { scroll-margin-top: 195px; }
-  .tools-intro { align-items: flex-start; }
-  .tools-intro h2 { font-size: 23px; }
-  .tools-tabs { gap: 20px; }
+  .proxy-replacement-fields > :is(.fld, .proxy-per-proxy) { flex: 1 1 100%; }
+  .proxy-replacement-fields .proxy-per-proxy input { width: 135px; max-width: 100%; }
+  .tools-tabs button { padding-inline: 8px; }
   .tools-panel-head { padding: 16px 14px; gap: 11px; }
   .tools-panel-body { padding: 0 14px 16px; }
   .proxy-folder-list { padding-left: 14px; padding-right: 14px; }
@@ -226,4 +218,453 @@
   .proxy-page :is(.btn, .folder-all, .folder-choice, .folder-chip) { min-height: 44px; }
   .proxy-page .tools-tabs button { min-height: 48px; }
   .proxy-page :is(.fld input, .fld select, .fld textarea, .trash-search input) { font-size: 16px; }
+}
+
+/* ==================== Station 5 Scheme D Proxy Manager Polish ==================== */
+.folded-workbench .workspace-content:has(> .workspace.proxy-page.proxy-manager:not([hidden])) {
+  padding: 0;
+  background: #f5f4f9;
+}
+:root[data-theme="dark"] .folded-workbench .workspace-content:has(> .workspace.proxy-page.proxy-manager:not([hidden])) {
+  background: #10121b;
+}
+.airy-workbench .workspace.proxy-page.proxy-manager,
+.workspace.proxy-page.proxy-manager {
+  padding: 20px 24px 28px;
+  background: transparent;
+  gap: 14px;
+}
+.proxy-manager .proxy-header-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+}
+.proxy-manager .proxy-header-left {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  min-width: 0;
+}
+.proxy-manager .proxy-header-left > .tools-intro { margin-bottom: 0; }
+.folded-workbench .workspace.proxy-manager .proxy-header-left > .tools-intro h1,
+.proxy-manager .proxy-header-left > .tools-intro h1 {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.25;
+}
+.proxy-manager .proxy-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+}
+.proxy-manager .proxy-header-actions .btn {
+  height: 31px;
+  padding: 0 11px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  font-size: 12px;
+  font-weight: 550;
+}
+.proxy-manager .proxy-header-actions .btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+.proxy-manager .proxy-header-actions .btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.proxy-manager .proxy-header-actions .iconbtn {
+  width: 31px;
+  height: 31px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+}
+.proxy-manager .tools-tabs {
+  width: fit-content;
+  padding: 3px;
+  border-radius: 11px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--sh-xs);
+}
+.proxy-manager .tools-tabs button {
+  min-height: 29px;
+  padding: 6.5px 12px;
+  font-size: 12.5px;
+  border-radius: 8px;
+}
+.proxy-manager .tools-panel {
+  border-radius: 13px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--sh-xs);
+}
+
+/* Unified Scheme D Telemetry Ribbon for Check Scope & Replacement Stats */
+.proxy-manager .proxy-scope-summary {
+  margin: 0 20px 14px;
+  padding: 0;
+  gap: 0;
+  border-radius: 11px;
+  border: 1px solid var(--line);
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+.proxy-manager .proxy-scope-summary > div,
+.proxy-manager .tools-stats > div {
+  padding: 11px 16px;
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: center;
+  gap: 4px;
+}
+.proxy-manager .proxy-scope-summary > div:last-child,
+.proxy-manager .tools-stats > div:last-child {
+  border-right: 0;
+}
+.proxy-manager .proxy-scope-summary strong,
+.proxy-manager .tools-stats strong {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+.proxy-manager .proxy-scope-summary span,
+.proxy-manager .tools-stats span {
+  margin-top: 0;
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--muted);
+}
+
+/* Scheme D Scope Chips + Custom Rounded Checkboxes */
+.proxy-manager .folder-chip {
+  padding: 6px 11px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--surface-sunken);
+  color: var(--ink-soft);
+  font-weight: 550;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+}
+.proxy-manager .folder-chip:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-hover);
+}
+.proxy-manager .folder-chip.selected {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  color: var(--accent-ink);
+  font-weight: 650;
+}
+.proxy-manager .folder-chip input[type="checkbox"],
+.proxy-manager .proxy-choice input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 4.5px;
+  border: 1.5px solid var(--line-strong);
+  background: var(--surface);
+  display: inline-grid;
+  place-items: center;
+  margin: 0;
+}
+.proxy-manager .folder-chip input[type="checkbox"]:checked,
+.proxy-manager .proxy-choice input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.proxy-manager .folder-chip input[type="checkbox"]:checked::after,
+.proxy-manager .proxy-choice input[type="checkbox"]:checked::after {
+  content: "";
+  width: 7px;
+  height: 4px;
+  border-left: 1.6px solid #fff;
+  border-bottom: 1.6px solid #fff;
+  transform: rotate(-45deg) translate(0.5px, -0.5px);
+}
+.proxy-manager .folder-chip input[type="checkbox"]:indeterminate {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.proxy-manager .folder-chip input[type="checkbox"]:indeterminate::after {
+  content: "";
+  width: 7px;
+  height: 1.8px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+
+/* Check Results Distribution Bar */
+.proxy-manager .proxy-dist-bar {
+  display: flex;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  gap: 2px;
+  background: var(--surface-sunken);
+  margin: 14px 20px 0;
+}
+.proxy-manager .proxy-dist-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition: width 240ms var(--ease);
+}
+.proxy-manager .proxy-dist-bar .seg-ok { background: var(--success); }
+.proxy-manager .proxy-dist-bar .seg-warn { background: var(--warn); }
+.proxy-manager .proxy-dist-bar .seg-fail { background: var(--danger); }
+
+/* Unified Rounded Jewel Status Pills */
+.proxy-manager .tools-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2.5px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--line);
+  background: var(--surface-sunken);
+  color: var(--muted);
+}
+.proxy-manager .tools-status.working,
+.proxy-manager .tools-status.updated {
+  border-color: var(--success-line);
+  background: var(--success-soft);
+  color: var(--success-ink);
+}
+.proxy-manager .tools-status.ready,
+.proxy-manager .tools-status.applying {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+.proxy-manager .tools-status.failed,
+.proxy-manager .tools-status.invalid {
+  border-color: var(--danger-line);
+  background: var(--danger-soft);
+  color: var(--danger-ink);
+}
+.proxy-manager .tools-status.unstable,
+.proxy-manager .tools-status.skipped,
+.proxy-manager .tools-status.missing,
+.proxy-manager .tools-status.unknown,
+.proxy-manager .tools-status.not-started {
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+}
+
+/* Floating Row Cards for Check Results (Matching Vault Cards) */
+.proxy-manager .proxy-table-wrap:has(.proxy-check-table) {
+  padding: 4px 20px 14px;
+}
+.proxy-manager .proxy-check-table {
+  border-collapse: separate;
+  border-spacing: 0 7px;
+  background: transparent;
+}
+.proxy-page.proxy-manager .proxy-table.proxy-check-table thead th {
+  padding: 4px 12px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.proxy-manager .proxy-check-table tbody tr {
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(23, 24, 28, 0.045), 0 1px 2px rgba(23, 24, 28, 0.03);
+  transition: transform 150ms ease, box-shadow 150ms ease;
+}
+.proxy-manager .proxy-check-table tbody tr:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(23, 24, 28, 0.075), 0 1px 3px rgba(23, 24, 28, 0.04);
+}
+:root[data-theme="dark"] .proxy-manager .proxy-check-table tbody tr {
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.28);
+}
+:root[data-theme="dark"] .proxy-manager .proxy-check-table tbody tr:hover {
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.42);
+}
+.proxy-manager .proxy-check-table tbody td {
+  padding: 11px 14px;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.proxy-manager .proxy-check-table tbody td:first-child {
+  border-left: 1px solid var(--line);
+  border-radius: 12px 0 0 12px;
+}
+.proxy-manager .proxy-check-table tbody td:last-child {
+  border-right: 1px solid var(--line);
+  border-radius: 0 12px 12px 0;
+}
+.proxy-manager .proxy-check-table tbody tr:hover td {
+  border-top-color: var(--line-strong);
+  border-bottom-color: var(--line-strong);
+  background: var(--surface-hover);
+}
+.proxy-manager .proxy-check-table tbody tr:hover td:first-child { border-left-color: var(--line-strong); }
+.proxy-manager .proxy-check-table tbody tr:hover td:last-child { border-right-color: var(--line-strong); }
+.proxy-manager .proxy-check-table tbody tr:is([data-status="failed"], [data-status="invalid"]) td {
+  border-top-color: color-mix(in srgb, var(--danger) 26%, var(--line));
+  border-bottom-color: color-mix(in srgb, var(--danger) 26%, var(--line));
+  background: color-mix(in srgb, var(--danger) 2.5%, var(--surface));
+}
+.proxy-manager .proxy-check-table tbody tr:is([data-status="failed"], [data-status="invalid"]) td:first-child {
+  border-left-color: color-mix(in srgb, var(--danger) 26%, var(--line));
+}
+.proxy-manager .proxy-check-table tbody tr:is([data-status="failed"], [data-status="invalid"]) td:last-child {
+  border-right-color: color-mix(in srgb, var(--danger) 26%, var(--line));
+}
+.proxy-manager .proxy-check-table tbody tr[data-status="unstable"] td {
+  border-top-color: color-mix(in srgb, var(--warn) 28%, var(--line));
+  border-bottom-color: color-mix(in srgb, var(--warn) 28%, var(--line));
+  background: color-mix(in srgb, var(--warn) 2.5%, var(--surface));
+}
+.proxy-manager .proxy-check-table tbody tr[data-status="unstable"] td:first-child {
+  border-left-color: color-mix(in srgb, var(--warn) 28%, var(--line));
+}
+.proxy-manager .proxy-check-table tbody tr[data-status="unstable"] td:last-child {
+  border-right-color: color-mix(in srgb, var(--warn) 28%, var(--line));
+}
+
+/* 4-Step Numbered Rail (Replace Sub-view) */
+.proxy-manager .proxy-workflow-navigation {
+  position: static;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.proxy-manager .proxy-workflow-scope {
+  padding: 7px 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--sh-xs);
+}
+.proxy-manager .proxy-workflow-navigation ol {
+  gap: 8px;
+  margin: 0;
+}
+.proxy-manager .proxy-workflow-navigation button {
+  justify-content: flex-start;
+  gap: 8px;
+  min-height: 38px;
+  padding: 8px 12px;
+  border-radius: 11px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: var(--sh-xs);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+}
+.proxy-manager .proxy-workflow-navigation button:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+.proxy-manager .proxy-workflow-navigation button.is-active {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+.proxy-manager .proxy-workflow-navigation button:disabled {
+  opacity: 0.62;
+  background: var(--surface);
+}
+.proxy-manager .proxy-step-num {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.proxy-manager .proxy-workflow-navigation button.is-active .proxy-step-num {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.proxy-manager .proxy-step-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proxy-manager .proxy-replace-grid {
+  display: grid;
+  grid-template-columns: minmax(340px, 0.92fr) minmax(0, 1.18fr);
+  gap: 14px;
+  align-items: start;
+}
+.proxy-manager .proxy-replace-grid.is-receipt-only { grid-template-columns: minmax(0, 1fr); }
+.proxy-manager .proxy-input-panel .fld > :is(input, select, textarea) {
+  border-radius: 9px;
+}
+.proxy-page.proxy-manager .proxy-table.proxy-review-table {
+  min-width: 0;
+  width: 100%;
+  table-layout: fixed;
+}
+.proxy-page.proxy-manager .proxy-table.proxy-review-table th,
+.proxy-page.proxy-manager .proxy-table.proxy-review-table td {
+  padding: 10px 10px;
+}
+.proxy-page.proxy-manager .proxy-table.proxy-review-table th {
+  font-weight: 600;
+  color: var(--faint);
+  background: transparent;
+}
+.proxy-page.proxy-manager .proxy-table.proxy-review-table th:nth-child(1) { width: 20%; }
+.proxy-page.proxy-manager .proxy-table.proxy-review-table th:nth-child(2) { width: 14%; }
+.proxy-page.proxy-manager .proxy-table.proxy-review-table th:nth-child(3) { width: 23%; }
+.proxy-page.proxy-manager .proxy-table.proxy-review-table th:nth-child(4) { width: 23%; }
+.proxy-page.proxy-manager .proxy-table.proxy-review-table th:nth-child(5) { width: 20%; }
+.proxy-manager .proxy-review-table tbody tr:hover td {
+  background: var(--surface-hover);
+}
+
+@media (max-width: 1180px) {
+  .proxy-manager .proxy-replace-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 800px) {
+  .proxy-manager .proxy-scope-summary,
+  .proxy-manager .tools-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .proxy-manager .proxy-scope-summary > div,
+  .proxy-manager .tools-stats > div {
+    border-bottom: 1px solid var(--line);
+  }
 }

@@ -11,6 +11,7 @@ import { useOptionalWorkspaceOperations, type WorkspaceOperationCoordinator } fr
 import { readAssistantServices, requiresAssistantServiceKey, type AssistantServiceView } from "./assistant-services-api.ts";
 import { AssistantApiSidebar } from "./assistant-api-sidebar.tsx";
 import { AssistantProposalCard } from "./assistant-proposal-card.tsx";
+import { AppIcon } from "./ui-primitives.tsx";
 
 interface ChatMessage { id: number; role: "user" | "assistant"; content: string; model?: string; durationMs?: number; overview?: boolean; proposalMode?: boolean; proposal?: CompiledProposalView | null; proposalParseError?: string; source?: AssistantTaskSource }
 export interface AssistantTaskSource { title: string; description?: string; returnKey?: string }
@@ -39,9 +40,7 @@ interface ConversationCopy { replyId: number; status: "pending" | "copied" | "fa
 interface ConversationMatch { id: number; start: number; end: number }
 
 function visibleMessageContent(item: Pick<ChatMessage, "content" | "proposal">): string {
-  if (!item.proposal) return item.content;
-  const prose = stripProposalFence(item.content);
-  return prose || item.content;
+  return item.proposal ? stripProposalFence(item.content) : item.content;
 }
 
 function findConversationMatches(history: readonly ChatMessage[], lastReplyIndex: number, text: string): ConversationMatch[] {
@@ -99,6 +98,12 @@ function LocalAssistantSession({ active, onOpenMcp, onOpenModelServices, draftSu
   const [startedAt, setStartedAt] = useState<number | null>(null), [waitedSeconds, setWaitedSeconds] = useState(0);
   const connectionId = useId();
   const connectionInput = useRef<HTMLInputElement>(null);
+  const connectionPanel = useRef<HTMLElement>(null);
+  const settingsTrigger = useRef<HTMLButtonElement>(null);
+  const settingsClose = useRef<HTMLButtonElement>(null);
+  const settingsVisible = useRef(settingsOpen);
+  settingsVisible.current = settingsOpen;
+  const focusAfterSettings = useRef<"settings" | "composer" | null>(null);
   const [suggestionFeedback, setSuggestionFeedback] = useState<{ id: number; state: "dismissed" | "too-long" } | null>(null);
   const dismissedSuggestion = useRef<number | null>(null);
   const currentDraft = useRef("");
@@ -173,7 +178,31 @@ function LocalAssistantSession({ active, onOpenMcp, onOpenModelServices, draftSu
     }
     wasSending.current = sending;
   }, [sending, active, phase]);
-  useEffect(() => { if (settingsOpen && settingsMode === "local" && activePage.current) connectionInput.current?.focus(); }, [settingsOpen, settingsMode]);
+  useLayoutEffect(() => {
+    if (!activePage.current) {
+      focusAfterSettings.current = null;
+      return;
+    }
+    if (settingsOpen) {
+      const address = connectionInput.current;
+      const panel = connectionPanel.current;
+      if (settingsMode === "local" && address && !address.disabled) address.focus();
+      else if (panel && !panel.contains(panel.ownerDocument.activeElement)) settingsClose.current?.focus({ preventScroll: true });
+      return;
+    }
+    const target = focusAfterSettings.current;
+    focusAfterSettings.current = null;
+    if (target === "settings") settingsTrigger.current?.focus({ preventScroll: true });
+    if (target === "composer") input.current?.focus();
+  }, [settingsOpen, settingsMode]);
+  function closeSettings(target: "settings" | "composer") {
+    focusAfterSettings.current = target;
+    setSettingsOpen(false);
+  }
+  function returnToComposerAfterConnection() {
+    if (settingsVisible.current) closeSettings("composer");
+    else if (!settingsOpen && activePage.current) input.current?.focus();
+  }
   function updateDraft(value: string) {
     currentDraft.current = value;
     setDraft(value);
@@ -232,7 +261,7 @@ function LocalAssistantSession({ active, onOpenMcp, onOpenModelServices, draftSu
       return;
     }
     setKeyEditRequest(null);
-    setSettingsOpen(false); input.current?.focus();
+    returnToComposerAfterConnection();
   }
   async function useDefaultService() {
     if (!ownsSession() || coordinator?.getSnapshot().blocked || !activePage.current || abort.current || cancellationOwner.current?.status === "pending") return;
@@ -262,7 +291,7 @@ function LocalAssistantSession({ active, onOpenMcp, onOpenModelServices, draftSu
         setActiveService(null); setKeyRejected(false); setKeyEditRequest(null); setModelEvidence("list");
       }
       setCatalog(result); setEndpoint(result.endpoint); setModel(result.models.some(item => item.name === previousModel) ? previousModel : result.models[0]?.name ?? "");
-      if (result.models.length > 0) { setSettingsOpen(false); if (activePage.current) input.current?.focus(); }
+      if (result.models.length > 0) returnToComposerAfterConnection();
     } catch (error) { if (owns()) setConnectionError(errorMessage(error)); }
     finally { if (abort.current === controller) { abort.current = null; if (ownsSession()) setLoading(false); } }
   }
@@ -376,11 +405,22 @@ function LocalAssistantSession({ active, onOpenMcp, onOpenModelServices, draftSu
   const findStatus = !findQuery.trim() ? "" : !findMatches.length ? t("No matching messages.")
     : matchIndex < 0 ? t("{count} matching messages", { count: findMatches.length })
       : t("{current} of {count} matching messages", { current: matchIndex + 1, count: findMatches.length });
+  async function copyReply(content: string) {
+    if (!ownsSession() || !activePage.current) return;
+    try {
+      await copyText(content);
+      if (ownsSession() && activePage.current) setNotice("Copied");
+    } catch {
+      if (ownsSession() && activePage.current) setError("Copy failed. Select and copy the text.");
+    }
+  }
   async function copyConversation() {
     if (!ownsSession() || !activePage.current || copyInProgress.current || latestReplyId === null) return;
     // Only copy the displayed messages through the last completed reply.
-    const copiedText = history.slice(0, latestReplyIndex + 1)
-      .map(({ role, content }) => `${t(role === "user" ? "You" : "Assistant")}\n${content}`).join("\n\n");
+    const copiedText = history.slice(0, latestReplyIndex + 1).flatMap(item => {
+      const content = visibleMessageContent(item);
+      return content ? [`${t(item.role === "user" ? "You" : "Assistant")}\n${content}`] : [];
+    }).join("\n\n");
     copyInProgress.current = true;
     setConversationCopy({ replyId: latestReplyId, status: "pending" });
     let status: ConversationCopy["status"] = "copied";
@@ -406,48 +446,104 @@ function LocalAssistantSession({ active, onOpenMcp, onOpenModelServices, draftSu
     cancelled: "Request cancelled. Your draft is ready to edit.",
   }[phase];
   return <div className="workspace assistant-workspace" hidden={!active}>
-    <div className="page-heading"><div><h1>{t("AI workspace")}</h1><p className="page-subtitle">{t(onOpenModelServices ? "Ask questions, plan browser workflows and draft scripts with your selected model." : "Ask questions, plan browser workflows and draft scripts with a model service on this computer.")}</p></div></div>
-    <div className={`assistant-tools${connectionNeeded ? " needs-connection" : ""}`}>
-      <div className="assistant-model-summary"><span className={`assistant-status-dot ${statusTone}`} aria-hidden="true" /><div><strong>{loading ? t("Loading models…") : selectedModel || t(catalog ? "No local models found" : "Model not connected")}</strong>{activeService ? <span>{t("Selected service · {service}", { service: activeService.name })}</span> : !catalog && <span>{t(onOpenModelServices ? "Choose a model when you are ready to send." : "Connect a local model when you are ready to send.")}</span>}{evidenceStatus && <span className="assistant-model-evidence" data-tone={statusTone} role="status">{t(evidenceStatus)}</span>}</div></div>
-      <div className="assistant-tools-actions">
-        {needsKey && activeService && !settingsOpen && <button className="btn primary xs" type="button" aria-controls={connectionId} disabled={workspaceBlocked || loading || sending || cancelling} onClick={() => openApiKeyEditor(activeService.id)}>{t("Update API key")}</button>}
-        <button className={`btn xs ${connectionNeeded && !settingsOpen && !needsKey ? "primary" : "ghost"}`} type="button" aria-controls={connectionId} aria-expanded={settingsOpen} onClick={() => setSettingsOpen(value => !value)}>{t("Model settings")}</button>
+    <header className={`assistant-tools${settingsOpen ? " showing-settings" : connectionNeeded ? " needs-connection" : ""}`}>
+      <div className="assistant-header-left">
+        <h1>{t("AI workspace")}</h1>
+        <div className="assistant-model-summary">
+          <span className={`assistant-status-dot ${statusTone}`} aria-hidden="true" />
+          <div>
+            <strong>{loading ? t("Loading models…") : selectedModel || t(catalog ? "No local models found" : "Model not connected")}</strong>
+            {activeService && <span>{t("Selected service · {service}", { service: activeService.name })}</span>}
+            {evidenceStatus && <span className="assistant-model-evidence" data-tone={statusTone} role="status">{t(evidenceStatus)}</span>}
+          </div>
+        </div>
       </div>
-    </div>
+      <div className="assistant-tools-actions">
+        {needsKey && activeService && !settingsOpen && <button className="btn primary" type="button" aria-controls={connectionId} disabled={workspaceBlocked || loading || sending || cancelling} onClick={() => openApiKeyEditor(activeService.id)}>{t("Update API key")}</button>}
+        <button ref={settingsTrigger} className={`btn${connectionNeeded && !settingsOpen && !needsKey ? " primary" : ""}`} type="button" aria-controls={connectionId} aria-expanded={settingsOpen} onClick={() => {
+          if (settingsOpen) closeSettings("settings");
+          else setSettingsOpen(true);
+        }}><AppIcon name="settings" className="sm" />{t("Model settings")}</button>
+      </div>
+    </header>
     {connectionError && !settingsOpen && <div className="assistant-connection-recovery" role="alert"><div><strong>{t("Model connection needs attention")}</strong><p>{t(connectionError)}</p></div><button className="btn xs" type="button" disabled={loading || sending || cancelling} onClick={() => void connect()}>{t("Retry connection")}</button></div>}
-    <div className={`assistant-layout${settingsOpen ? " settings-open" : ""}`}><aside className="assistant-connection" id={connectionId} hidden={!settingsOpen} aria-label={t("Model connection")}><div className="assistant-connection-title"><span className={`assistant-status-dot ${statusTone}`} aria-hidden="true" /><h2>{t(onOpenModelServices ? "Model settings" : "Model connection")}</h2></div>
-      {onOpenModelServices && <div className="assistant-service-mode" role="group" aria-label={t("Model connection method")}>
+    <div className={`assistant-layout${settingsOpen ? " settings-open" : ""}`}>
+    <aside ref={connectionPanel} className="assistant-connection" id={connectionId} hidden={!settingsOpen} aria-labelledby={`${connectionId}-heading`} onKeyDown={event => {
+      if (event.key !== "Escape" || event.defaultPrevented || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || !event.currentTarget.contains(event.target as Node)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeSettings("settings");
+    }}>
+      <header className="assistant-connection-title">
+        <h2 id={`${connectionId}-heading`}>{t(onOpenModelServices ? "Model settings" : "Model connection")}</h2>
+        <button ref={settingsClose} className="btn xs ghost assistant-settings-close" type="button" aria-label={t("Close model settings")} title={t("Close model settings")} onClick={() => closeSettings("settings")}>
+          <AppIcon name="close" />
+        </button>
+      </header>
+      <div className="assistant-connection-body">
+      {onOpenModelServices && <div className="assistant-service-mode" role="group" aria-label={t("Model connection method")} data-sliding-group data-sliding-axis="horizontal">
         <button type="button" className="btn xs" aria-pressed={settingsMode === "local"} onClick={() => setSettingsMode("local")}>{t("Local Ollama")}</button>
         <button type="button" className="btn xs" aria-pressed={settingsMode === "api"} onClick={() => { setApiVisited(true); setSettingsMode("api"); }}>{t("API services")}</button>
       </div>}
       <div className="assistant-local-form" hidden={settingsMode !== "local"}>
       <label className="fld"><span>{t("Local service address")}</span><input ref={connectionInput} value={endpoint} spellCheck={false} disabled={loading || sending || cancelling} onChange={event => { setEndpoint(event.target.value); setCatalog(null); setModel(""); setConnectionError(""); if (!activeService) setModelEvidence("selected"); }} /></label>
-      <button className="btn" type="button" disabled={loading || sending || cancelling} aria-busy={loading} onClick={() => void connect()}>{t(loading ? "Loading models…" : connectionError ? "Retry connection" : "Connect & load models")}</button>
+      <button className="btn primary" type="button" disabled={loading || sending || cancelling} aria-busy={loading} onClick={() => void connect()}>{t(loading ? "Loading models…" : connectionError ? "Retry connection" : "Connect & load models")}</button>
       {connectionError && <p className="feature-alert assistant-connection-error" role="alert">{t(connectionError)}</p>}
       {catalog && <p className="assistant-note" role="status">{t("{count} local models available", { count: catalog.models.length })}</p>}
       {catalog && <><label className="fld"><span>{t("Model")}</span><select value={model} disabled={sending} onChange={event => { setModel(event.target.value); if (!activeService) setModelEvidence("list"); }}>{!catalog.models.length && <option value="">{t("No local models found")}</option>}{catalog.models.map(item => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label>{selected && <div className="assistant-model-meta">{selected.parameterSize && <span>{selected.parameterSize}</span>}{selected.quantization && <span>{selected.quantization}</span>}{selected.sizeBytes !== null && <span>{(selected.sizeBytes / 1024 ** 3).toFixed(1)} GB</span>}</div>}{catalog.excludedRemoteModels > 0 && <p className="assistant-note">{t("{count} remote models excluded", { count: catalog.excludedRemoteModels })}</p>}</>}
-      <p className="assistant-note">{t("This connects to a loopback service. Use Ollama's local-only mode when you need offline inference.")}</p><a className="assistant-docs" href="https://docs.ollama.com/faq" target="_blank" rel="noopener noreferrer">{t("Local model setup guide")} ↗</a>
+      <div className="assistant-local-help">
+        <p className="assistant-note">{t("This connects to a loopback service. Use Ollama's local-only mode when you need offline inference.")}</p>
+        <a className="assistant-docs" href="https://docs.ollama.com/faq" target="_blank" rel="noopener noreferrer">{t("Local model setup guide")} ↗</a>
+      </div>
       </div>
       {apiVisited && onOpenModelServices && <AssistantApiSidebar active={active && settingsOpen && settingsMode === "api"} disabled={workspaceBlocked || loading || sending || cancelling} keyEditRequest={keyEditRequest} onApply={applySavedService} />}
       {onOpenModelServices && <div className="assistant-api-actions assistant-service-shortcuts"><button className="btn xs" type="button" disabled={workspaceBlocked || loading || sending || cancelling} onClick={() => void useDefaultService()}>{t("Use default model")}</button><button className="btn xs ghost" type="button" disabled={sending} onClick={onOpenModelServices}>{t("Manage model services")}</button></div>}
       {defaultError && <p className="feature-alert assistant-connection-error" role="alert">{t(defaultError)}</p>}
-      <div className="assistant-privacy"><strong>{t("Choose the context you share")}</strong><label><input type="checkbox" checked={overview} disabled={sending} onChange={event => setOverview(event.target.checked)} /><span>{t("Include an anonymous workspace overview")}</span></label><p>{t("Adds counts of profiles, groups, engines and proxy configuration. Account details and session data are excluded.")}</p><label className="assistant-proposal-toggle"><input type="checkbox" data-assistant-proposal-toggle="true" checked={proposalMode} disabled={sending} onChange={event => setProposalMode(event.target.checked)} /><span>{t("Allow actionable proposals (review before running)")}</span></label><p>{t("Shares redacted profile metadata (ID, name, group, tags, health status) and safe Proxy Vault labels so the model can propose previewable actions. Passwords, cookies, 2FA, proxy credentials, sessions and notes are never sent, and nothing runs automatically.")}</p></div>
-      {onOpenMcp && <div className="assistant-session-info"><strong>{t("Browser tools")}</strong><p>{t("Connect your MCP client to run browser workflows alongside these plans and drafts.")}</p><button className="btn xs" type="button" onClick={onOpenMcp}>{t("Configure MCP connection")}</button></div>}
+      <details className="assistant-privacy">
+        <summary>
+          <AppIcon name="chevronRight" className="sm" />
+          <span>{t("Choose the context you share")}</span>
+          <small className={overview || proposalMode ? "enabled" : undefined}>{t(overview || proposalMode ? "Context sharing on" : "Context sharing off")}</small>
+        </summary>
+        <div className="assistant-privacy-options">
+          <div className="assistant-privacy-option">
+            <label><input type="checkbox" aria-describedby={`${connectionId}-overview`} checked={overview} disabled={sending} onChange={event => setOverview(event.target.checked)} /><span>{t("Include an anonymous workspace overview")}</span></label>
+            <p id={`${connectionId}-overview`}>{t("Adds counts of profiles, groups, engines and proxy configuration. Account details and session data are excluded.")}</p>
+          </div>
+          <div className="assistant-privacy-option">
+            <label><input type="checkbox" aria-describedby={`${connectionId}-proposals`} data-assistant-proposal-toggle="true" checked={proposalMode} disabled={sending} onChange={event => setProposalMode(event.target.checked)} /><span>{t("Allow actionable proposals (review before running)")}</span></label>
+            <p id={`${connectionId}-proposals`}>{t("Shares redacted profile metadata (ID, name, group, tags, health status) and safe Proxy Vault labels so the model can propose previewable actions. Passwords, cookies, 2FA, proxy credentials, sessions and notes are never sent, and nothing runs automatically.")}</p>
+          </div>
+        </div>
+      </details>
+      {onOpenMcp && <div className="assistant-session-info">
+        <button className="btn xs ghost" type="button" onClick={onOpenMcp}><AppIcon name="window" className="sm" />{t("Configure MCP connection")}</button>
+      </div>}
+      </div>
     </aside><section className="assistant-chat" aria-label={t("AI conversation")}>
-      <div className="assistant-chat-header">
-        {history.length === 0 && <span>{t("Plans, explanations and script drafts")}</span>}
-        {history.length > 0 && <div className="assistant-chat-actions">
-          {latestReplyId !== null && <button className="btn xs ghost" type="button" onClick={transcript.readLatestReply}>{t("Read latest response")}</button>}
-          {latestReplyId !== null && <button ref={findTrigger} className="btn xs ghost" type="button" aria-expanded={findOpen} aria-controls={findOpen ? findId : undefined} onClick={() => {
-            if (!ownsSession() || !activePage.current) return;
-            if (findOpen) closeFind(true); else setFindOpen(true);
-          }}>{t("Find in conversation")}</button>}
-          {latestReplyId !== null && <button className="btn xs ghost" type="button" disabled={conversationCopy?.status === "pending"} aria-busy={conversationCopy?.status === "pending"} onClick={() => void copyConversation()}>{t("Copy conversation")}</button>}
-          <button className="btn xs ghost" type="button" disabled={sending} onClick={() => {
-            closeFind(false);
-            setUndo({ history, source: taskSource }); setHistory([]); setTaskSource(null); setPhase("draft");
-            setNotice("Conversation cleared. You can undo this before sending a new message.");
-          }}>{t("New conversation")}</button>
+      <div className="assistant-stage-top">
+        <details className="assistant-session-guide">
+          <summary>{t("Conversation guide")}</summary>
+          <div className="assistant-session-guide-content">
+            <p className="assistant-session-caption">{t("Draft and conversation are kept while you navigate within this workspace.")}</p>
+            <p>{t("Your conversation stays in this app session. Restarting the app clears it.")}</p>
+            <p>{t("Changing workspaces clears this conversation and draft.")}</p>
+          </div>
+        </details>
+        {history.length > 0 && <div className="assistant-chat-header">
+          <div className="assistant-chat-actions">
+            {latestReplyId !== null && <button className="btn xs ghost" type="button" onClick={transcript.readLatestReply}>{t("Read latest response")}</button>}
+            {latestReplyId !== null && <button ref={findTrigger} className="btn xs ghost" type="button" aria-expanded={findOpen} aria-controls={findOpen ? findId : undefined} onClick={() => {
+              if (!ownsSession() || !activePage.current) return;
+              if (findOpen) closeFind(true); else setFindOpen(true);
+            }}>{t("Find in conversation")}</button>}
+            {latestReplyId !== null && <button className="btn xs ghost" type="button" disabled={conversationCopy?.status === "pending"} aria-busy={conversationCopy?.status === "pending"} onClick={() => void copyConversation()}>{t("Copy conversation")}</button>}
+            <button className="btn xs ghost" type="button" disabled={sending} onClick={() => {
+              closeFind(false);
+              setUndo({ history, source: taskSource }); setHistory([]); setTaskSource(null); setPhase("draft");
+              setNotice("Conversation cleared. You can undo this before sending a new message.");
+            }}>{t("New conversation")}</button>
+          </div>
         </div>}
       </div>
       {findOpen && latestReplyId !== null && <div id={findId} className="assistant-find" role="search" aria-label={t("Find in conversation")} onKeyDown={event => {
@@ -469,24 +565,22 @@ function LocalAssistantSession({ active, onOpenMcp, onOpenModelServices, draftSu
       </div>}
       {copyFeedback === "copied" && <p className="assistant-copy-feedback" role="status">{t("Conversation copied.")}</p>}
       {copyFeedback === "failed" && <p className="assistant-copy-feedback feature-alert" role="alert">{t("Could not copy the conversation. Select and copy the messages.")}</p>}
-      <details className="assistant-session-guide">
-        <summary>{t("Conversation guide")}</summary>
-        <div className="assistant-session-guide-content">
-          <strong>{t("Session memory")}</strong>
-          <p className="assistant-session-caption">{t("Draft and conversation are kept while you navigate within this workspace.")}</p>
-          <p>{t("Your conversation stays in this app session. Restarting the app clears it.")}</p>
-          <p>{t("Changing workspaces clears this conversation and draft.")}</p>
-          <ol className="assistant-workflow-steps"><li><span>1</span>{t("Prepare draft")}</li><li><span>2</span>{t("Generate suggestions")}</li><li><span>3</span>{t("Review and verify")}</li></ol>
-        </div>
-      </details>
       {taskSource && <section className="assistant-task-source" aria-label={t("Current task")}><div><span>{t("Current task")}</span><strong>{taskSource.title}</strong>{taskSource.description && <p>{taskSource.description}</p>}</div>{onReturnToTask && <button type="button" className="btn xs" onClick={() => onReturnToTask(taskSource)}>{t("Return to inspection")}</button>}</section>}
       <div className={`assistant-task-progress ${phase}`} hidden={phase === "draft" && !cancellation} data-cancellation={cancellation?.status} aria-label={t("Assistant task progress")}>
         <p role="status">{t(phaseMessage)}</p>
         {sending && <><p className="assistant-waiting-clock" aria-live="off">{t("Local waiting time: {seconds}s", { seconds: waitedSeconds })}</p><p className="assistant-waiting-policy">{t("Leaving this page stops waiting and attempts to cancel this generation.")}</p></>}
         {cancellation?.status === "unconfirmed" && <><p>{t("The response will be ignored. Your draft is ready to edit.")}</p><button className="btn xs" type="button" onClick={retryCancellation}>{t("Retry cancellation")}</button></>}
       </div>
-      <div ref={transcript.viewport} onScroll={transcript.onScroll} className="assistant-messages" role="log" aria-live="off" aria-label={t("Conversation history")} tabIndex={0}>
-        {!history.length && <div className="assistant-welcome"><span className="assistant-welcome-mark" aria-hidden="true">✦</span><h2>{t("What would you like to work on?")}</h2><p>{t("Start with a question or use one of these prompts as a draft.")}</p><div className="assistant-examples">{EXAMPLES.map(example => <button key={example.title} type="button" disabled={sending || loading} onClick={() => reuseMessage(t(example.prompt))}><strong>{t(example.title)}</strong><span aria-hidden="true">↗</span></button>)}</div></div>}
+      <div ref={transcript.viewport} onScroll={transcript.onScroll} className={`assistant-messages${history.length ? "" : " is-empty"}`} role="log" aria-live="off" aria-label={t("Conversation history")} tabIndex={0}>
+        {!history.length && <div className="assistant-welcome">
+          <span className="assistant-welcome-mark"><AppIcon name="bot" /></span>
+          <h2>{t("What would you like to work on?")}</h2>
+          <div className="assistant-examples">
+            {EXAMPLES.map(example => <button key={example.title} type="button" disabled={sending || loading} onClick={() => reuseMessage(t(example.prompt))}>
+              <span>{t(example.title)}</span><AppIcon name="chevronRight" className="sm" />
+            </button>)}
+          </div>
+        </div>}
         {history.map(item => {
           const displayContent = visibleMessageContent(item);
           return <article key={item.id} className={`assistant-message ${item.role}`} data-find-selected={selectedMatch?.id === item.id || undefined}>
@@ -495,11 +589,9 @@ function LocalAssistantSession({ active, onOpenMcp, onOpenModelServices, draftSu
               ? <h3 tabIndex={-1} data-assistant-reply-heading={item.id}>{t("Assistant")}</h3>
               : <h3>{t("You")}</h3>}
             {item.model && <span>{item.model}{item.durationMs !== undefined ? ` · ${(item.durationMs / 1000).toFixed(1)}s` : ""}</span>}
-            {item.role === "assistant" && <button className="btn xs ghost" type="button" onClick={() => {
-              void copyText(item.content).then(() => setNotice("Copied")).catch(() => setError("Copy failed. Select and copy the text."));
-            }}>{t("Copy")}</button>}
+            {item.role === "assistant" && displayContent && <button className="btn xs ghost" type="button" onClick={() => void copyReply(displayContent)}>{t("Copy")}</button>}
           </div>
-          <div className="assistant-message-content">{selectedMatch?.id === item.id ? <>{displayContent.slice(0, selectedMatch.start)}<mark data-assistant-find-match>{displayContent.slice(selectedMatch.start, selectedMatch.end)}</mark>{displayContent.slice(selectedMatch.end)}</> : displayContent}</div>
+          {displayContent && <div className="assistant-message-content">{selectedMatch?.id === item.id ? <>{displayContent.slice(0, selectedMatch.start)}<mark data-assistant-find-match>{displayContent.slice(selectedMatch.start, selectedMatch.end)}</mark>{displayContent.slice(selectedMatch.end)}</> : displayContent}</div>}
           {item.role === "assistant" && item.proposalParseError && <p className="assistant-proposal-parse-error" role="alert">{t("Action proposal could not be verified: {reason}", { reason: item.proposalParseError })}</p>}
           {item.role === "assistant" && item.proposal && <AssistantProposalCard proposal={item.proposal} disabled={workspaceBlocked} onLocateProfiles={onLocateProfiles} />}
           {item.overview && <span className="assistant-context-label">{t("Anonymous workspace overview included")}</span>}
@@ -508,7 +600,7 @@ function LocalAssistantSession({ active, onOpenMcp, onOpenModelServices, draftSu
             <span>{t("From task: {task}", { task: item.source.title })}</span>
             {onReturnToTask && <button className="btn xs ghost" type="button" onClick={() => onReturnToTask(item.source!)}>{t("Return to source inspection")}</button>}
           </div>}
-          <div className="assistant-message-actions"><button className="btn xs ghost" type="button" disabled={sending} onClick={() => reuseMessage(item.content, item.source)}>{t(item.role === "user" ? "Edit request" : "Use response as draft")}</button></div>
+          {displayContent && <div className="assistant-message-actions"><button className="btn xs ghost" type="button" disabled={sending} onClick={() => reuseMessage(displayContent, item.source)}>{t(item.role === "user" ? "Edit request" : "Use response as draft")}</button></div>}
         </article>;
         })}
         {sending && <div className="assistant-generating" aria-hidden="true"><span />{t("Generating a response…")}</div>}
@@ -530,7 +622,31 @@ function LocalAssistantSession({ active, onOpenMcp, onOpenModelServices, draftSu
           <button type="button" className="btn xs ghost" onClick={dismissSuggestion}>{t("Dismiss suggestion")}</button>
         </div>
       </section>}
-      <div ref={composer} className="assistant-composer"><div className="assistant-feedback">{error && <p className="feature-alert" role="alert">{t(error)}</p>}{notice && <p role="status">{t(notice)} {undo && <button className="btn xs" type="button" onClick={() => { setHistory(undo.history); setTaskSource(undo.source); setUndo(null); setNotice(""); }}>{t("Undo")}</button>}</p>}</div><label className="assistant-draft"><span className="sr-only">{t("Message the assistant")}</span><textarea ref={input} rows={3} maxLength={MESSAGE_BYTES} value={draft} disabled={sending} placeholder={t("Describe your task…")} onChange={event => { if (!activeRequest.current) updateDraft(event.target.value); }} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} /></label><div className="assistant-composer-footer"><span className="assistant-composer-meta">{isRemote && activeService ? t("Send to {service}", { service: activeService.name }) : t(selectedModel ? "Ctrl / ⌘ + Enter to send" : "Connect a model before sending.")}{proposalMode && <span className="assistant-proposal-mode-pill">{t("Action proposals on")}</span>}</span>{sending ? <button className="btn" type="button" onClick={() => cancel()}>{t("Cancel request")}</button> : <button className="btn primary" type="button" disabled={loading || cancelling || needsKey || !selectedModel || !draft.trim()} onClick={() => void send()}>{t("Send message")} ↑</button>}</div></div>
+      <div ref={composer} className="assistant-composer">
+        <div className="assistant-feedback">
+          {error && <p className="feature-alert" role="alert">{t(error)}</p>}
+          {notice && <p role="status">{t(notice)} {undo && <button className="btn xs" type="button" onClick={() => { setHistory(undo.history); setTaskSource(undo.source); setUndo(null); setNotice(""); }}>{t("Undo")}</button>}</p>}
+        </div>
+        <label className="assistant-draft">
+          <span className="sr-only">{t("Message the assistant")}</span>
+          <textarea ref={input} rows={3} maxLength={MESSAGE_BYTES} value={draft} disabled={sending} placeholder={t("Describe your task…")} onChange={event => { if (!activeRequest.current) updateDraft(event.target.value); }} onKeyDown={event => {
+            if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              void send();
+            }
+          }} />
+        </label>
+        <div className="assistant-composer-footer">
+          <span className="assistant-composer-meta">
+            <span>{isRemote && activeService ? t("Send to {service}", { service: activeService.name }) : t(selectedModel ? "Ctrl / ⌘ + Enter to send" : "Connect a model before sending.")}</span>
+            {overview && <span className="assistant-sharing-pill">{t("Anonymous overview on")}</span>}
+            {proposalMode && <span className="assistant-sharing-pill">{t("Action proposals on")}</span>}
+          </span>
+          {sending
+            ? <button className="btn" type="button" onClick={() => cancel()}>{t("Cancel request")}</button>
+            : <button className="btn primary" type="button" disabled={loading || cancelling || needsKey || !selectedModel || !draft.trim()} onClick={() => void send()}>{t("Send message")} ↑</button>}
+        </div>
+      </div>
     </section></div>
   </div>;
 }

@@ -17,9 +17,18 @@
 1. **六处版本号强一致预检**：构建前调用 `scripts/release-utils.mjs` 的 `validateProjectVersions`，验证 `version.ts`、`package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`agent/runtime-client.mjs` 六处版本号完全一致，发现漂移立即终止构建。
 2. **标准候选输出目录 `dist/rc-<version>/`**：
    - `MaobuBrowser_<version>_x64-setup.exe`（NSIS `currentUser` 安装器，按需下载浏览器内核）
-   - `SHA256SUMS.txt`（安装器 SHA-256 摘要）
+   - `SHA256SUMS.txt`（安装器、许可文件和构建清单的 SHA-256 摘要）
    - `LICENSE` 与 `NOTICE`
-   - `CANDIDATE-BUILD.json`（显式标注 `"signed": false`、`"updaterSigned": false`、`"authenticodeVerified": false`、`"gitCommit"`、`"sha256"` 与构建时间戳，防止未签名候选包与正式签名包混淆）
+   - `CANDIDATE-BUILD.json`（记录签名状态、Git 基准提交、工作树是否有未提交改动、构建源码摘要和安装器摘要）
+
+候选脚本在构建前后比对源码摘要，要求安装器由当次构建生成，并检查 Windows 产品版本和签名状态。若要保留标准目录中的旧包，可用 `-OutputDirectory dist/rc-review` 写入独立目录。
+
+```powershell
+node scripts/candidate-build.mjs verify --assets-dir dist/rc-0.20.0 --version 0.20.0
+node scripts/candidate-build.mjs verify --assets-dir dist/rc-0.20.0 --project .
+```
+
+第一条命令离线校验候选包文件。第二条还会核对当前工作树与构建清单中的源码摘要。
 
 ## 证书与 Minisign 公钥精确注入位（零代码改动切换正式签名）
 
@@ -79,6 +88,8 @@
 ```powershell
 ./scripts/release-build-windows.ps1 -ReleaseVersion 0.20.0 -Repository maobukeai/maobu-qianjing -NotesFile path/to/release-notes.md
 ```
+
+签名脚本从 Cargo 元数据定位实际构建目录，签名前确认安装器在本次打包开始后写入，且产品版本与发布版本一致。
 
 脚本准备运行时、构建 NSIS 安装包，将其命名为 `MaobuBrowser_<version>_x64-setup.exe`，再通过官方 Tauri signer 签名。随后生成 `latest.json` 和 `SHA256SUMS.txt`，运行结构、版本、来源和校验和检查，并用与官方 updater 相同的 Minisign 库离线验证真实签名。它不会上传、发布或运行该安装包。
 

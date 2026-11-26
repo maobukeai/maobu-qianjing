@@ -14,7 +14,8 @@ async function run(scenario: string) {
   let profiles = scenario === "pagination" ? Array.from({ length: 120 }, (_, index) => record(`p${index}`, `Profile ${index}`, "Parent")) : [record("one", "One", "Parent"), record("two", "Two", "Parent/Child"), record("three", "Three", "Other"), record("literal", "Literal", "Parent/Literal")];
   const folders = [{ name: "Parent" }, { name: "Parent/Child", parentName: "Parent" }, { name: "Parent/Literal" }, { name: "Other" }];
   const writes: Array<{ action: "restore" | "purge"; ids: string[]; options?: RequestInit; response: ReturnType<typeof deferred<Response>> }> = [], heldReads: Array<ReturnType<typeof deferred<Response>>> = [];
-  const snapshots: TrashTaskSnapshot[] = [], confirmations: string[] = [], approvalAnswers: boolean[] = [];
+  const snapshots: TrashTaskSnapshot[] = [];
+  let nativeConfirmations = 0;
   const coordinator = createWorkspaceOperationCoordinator({ currentId: "default", activeId: "default" });
   let reads = 0, failRead = scenario === "initial-load-error", holdRead = false, holdChanges = false, holdWorkspace = false, changed = 0, workspaceReads = 0;
   const changedReady = deferred<void>(), workspaceReady = deferred<void>();
@@ -26,12 +27,24 @@ async function run(scenario: string) {
     if (path === "/ui/api/trash/restore" || path === "/ui/api/trash/purge") { const body = JSON.parse(String(options?.body)), response = deferred<Response>(); writes.push({ action: path.endsWith("purge") ? "purge" : "restore", ids: body.ids, options, response }); return response.promise; }
     throw new Error(`Unexpected fixture request ${path}`);
   }, { preconnect: globalThis.fetch.preconnect }) });
-  Object.defineProperty(dom.window, "confirm", { configurable: true, value: (message: string) => { confirmations.push(String(message)); return approvalAnswers.shift() ?? true; } });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "getClientRects", {
+    configurable: true,
+    value(this: HTMLElement) {
+      return this.closest('[hidden], [inert], [aria-hidden="true"]') ? [] : [this.getBoundingClientRect()];
+    },
+  });
+  Object.defineProperty(dom.window, "confirm", { configurable: true, value: () => {
+    nativeConfirmations++;
+    return false;
+  } });
   let active = scenario !== "hidden-lifecycle";
   const render = () => dom.render(<I18nProvider><WorkspaceOperationsProvider coordinator={coordinator}><input id="outside-field" /><TrashPage active={active} folderTree={folders} onChanged={async () => { changed++; if (holdChanges) await changedReady.promise; }} onTaskSnapshotChange={snapshot => { snapshots.push(snapshot); }} /></WorkspaceOperationsProvider></I18nProvider>);
   const visible = <T extends HTMLElement>(selector: string, scope: HTMLElement = dom.container): T[] => [...scope.querySelectorAll<T>(selector)].filter(node => !node.closest('[hidden], [inert], [aria-hidden="true"]'));
   const button = (label: string, scope: HTMLElement = dom.container) => { const found = visible<HTMLButtonElement>("button", scope).find(node => node.textContent?.trim() === label || node.getAttribute("aria-label") === label); assert.ok(found, `Missing ${label}`); return found; };
   const click = (node: HTMLButtonElement | HTMLInputElement, twice = false) => act(async () => { node.click(); if (twice) node.click(); });
+  const pressEscape = () => act(async () => {
+    dom.window.document.activeElement?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  });
   const checkbox = (label: string) => { const found = visible<HTMLInputElement>('input[type="checkbox"]').find(node => node.getAttribute("aria-label") === label); assert.ok(found, label); return found; };
   const row = (id: string) => { const found = visible<HTMLElement>(`tr[data-trash-id="${id}"]`)[0]; assert.ok(found, id); return found; };
   const select = (id: string) => row(id).querySelector<HTMLInputElement>('input[type="checkbox"]')!;
@@ -41,6 +54,17 @@ async function run(scenario: string) {
   const finish = async (index: number, result: Array<{ id: string; status: string; code?: string }>, status = 200, mutate = true) => act(async () => { if (mutate) profiles = profiles.filter(profile => !result.some(row => row.id === profile.id && (row.status === "restored" || row.status === "purged"))); writes[index]!.response.resolve(Response.json(status === 200 ? { ok: true, results: result } : { ok: false, error: "PRIVATE_RESPONSE_ERROR", results: result }, { status })); });
   const success = (index: number) => writes[index]!.ids.map(id => ({ id, status: writes[index]!.action === "restore" ? "restored" : "purged" }));
   const settled = () => snapshots.at(-1)?.phase === "settled";
+  const purgeDialog = () => visible<HTMLElement>('[role="alertdialog"]', dom.window.document.body)[0];
+  const openPurge = async (trigger: HTMLButtonElement, count: number) => {
+    trigger.focus();
+    await click(trigger, true);
+    await waitFor(() => !!purgeDialog(), "Permanent deletion should open the in-app confirmation");
+    const dialog = purgeDialog()!;
+    assert.ok(dialog.textContent?.includes(`Permanently delete ${count} profiles`));
+    assert.equal(dialog.getAttribute("aria-modal"), "true");
+    assert.equal(dom.window.document.activeElement, button("Cancel", dialog));
+    return dialog;
+  };
   try {
     await render();
     if (scenario === "hidden-lifecycle") {
@@ -48,14 +72,25 @@ async function run(scenario: string) {
     }
     if (scenario === "initial-load-error") {
       await waitFor(() => dom.container.querySelector('[data-trash-empty-state="error"]') !== null, "A failed initial read is an error, not an empty list"); assert.equal(dom.container.querySelector('[data-trash-empty-state="empty"]'), null); assert.equal(text().includes("PRIVATE_READ_ERROR"), false);
-      failRead = false; await click(button("Retry reading Trash")); await waitFor(() => visible('tr[data-trash-id]').length === 4, "Retry should load the confirmed list"); return;
+      const retry = button("Retry reading Trash");
+      assert.equal(visible("button").filter(node => node.textContent?.trim() === retry.textContent?.trim()).length, 1);
+      failRead = false; retry.focus(); await click(retry);
+      await waitFor(() => visible('tr[data-trash-id]').length === 4, "Retry should load the confirmed list");
+      assert.equal(dom.window.document.activeElement, button("Refresh"));
+      return;
     }
     await waitFor(() => visible('tr[data-trash-id]').length === Math.min(50, profiles.length), "The actual Trash page should load local metadata");
     if (scenario === "workspace-blocked") {
       const acquired = { lease: null as ReturnType<typeof coordinator.acquire> }; await act(async () => { acquired.lease = coordinator.acquire("workspace-backup"); }); assert.ok(acquired.lease); await click(select("one")); assert.equal(button("Restore 1 selected profiles").disabled, true); assert.equal(button("Delete permanently").disabled, true); await search("Two"); assert.ok(text().includes("Hidden by filters 1")); assert.equal(writes.length, 0); await act(async () => { coordinator.release(acquired.lease!); }); return;
     }
     if (scenario === "search-selection") {
-      await click(select("one")); await search("Two"); assert.ok(text().includes("Matching current filters 0 · Hidden by filters 1")); await click(select("two"));
+      await click(select("one")); await search("No synthetic match");
+      const resets = visible<HTMLButtonElement>("button").filter(node => node.textContent?.trim() === "Reset Trash filters");
+      assert.equal(resets.length, 1, "A no-result state has one filter recovery action");
+      assert.ok(!text().includes("Select all 0 results"));
+      await click(resets[0]!);
+      assert.equal(select("one").checked, true);
+      await search("Two"); assert.ok(text().includes("Matching current filters 0 · Hidden by filters 1")); await click(select("two"));
       await click(checkbox("Folder Other")); await search(""); assert.ok(text().includes("2 selected in total")); assert.ok(text().includes("Hidden by filters 2")); await click(select("three"));
       await click(button("Reset Trash filters")); assert.ok(text().includes("3 selected in total")); assert.equal(select("one").checked, true); assert.equal(select("two").checked, true); assert.equal(select("three").checked, true); assert.equal(reads, 1); assert.equal(writes.length, 0); return;
     }
@@ -65,18 +100,90 @@ async function run(scenario: string) {
       assert.equal(writes[0]!.ids.length, 52); assert.ok(writes[0]!.ids.includes("p0")); assert.ok(writes[0]!.ids.includes("p70")); assert.ok(writes[0]!.ids.includes("p119")); await finish(0, success(0)); await waitFor(settled, "Bulk restore should settle"); return;
     }
     if (scenario === "folder-scope") {
-      await click(select("three")); await click(checkbox("Folder Parent")); await search("One"); assert.ok(text().includes("Whole folder scope: 2 · Visible now: 1 · Hidden by search: 1"));
+      const parent = checkbox("Folder Parent");
+      assert.equal(parent.closest("label")?.querySelector("small")?.textContent, "2");
+      await click(select("three")); await click(parent); await search("One"); assert.ok(text().includes("Whole folder scope: 2 · Visible now: 1 · Hidden by search: 1"));
       await click(button("Restore all 2 in folder scope"), true); await waitFor(() => writes.length === 1, "Folder scope submits one frozen request"); assert.deepEqual(writes[0]!.ids, ["one", "two"]); assert.equal(writes[0]!.ids.includes("literal"), false);
       await finish(0, success(0)); await waitFor(settled, "Folder restore should settle"); assert.ok(text().includes("1 selected in total"), "An unrelated hidden selection is preserved"); assert.ok(text().includes("Restore confirmed")); return;
     }
     await click(select("one"));
     if (["partial-new-selection", "purge-confirmation"].includes(scenario)) await click(select("two"));
     if (scenario === "purge-confirmation") {
-      approvalAnswers.push(false, true, false, true); await click(button("Delete permanently")); await dom.flush(); assert.equal(writes.length, 0);
-      await click(button("Delete permanently"), true); await waitFor(() => writes.length === 1, "Confirmed purge issues exactly one request"); assert.ok(confirmations[1]?.includes("2 profiles"));
+      const trigger = button("Delete permanently");
+      await openPurge(trigger, 2);
+      await pressEscape();
+      assert.equal(purgeDialog(), undefined);
+      assert.equal(dom.window.document.activeElement, trigger);
+      assert.equal(writes.length, 0);
+      assert.equal(select("one").checked, true);
+      assert.equal(select("two").checked, true);
+
+      const dialog = await openPurge(trigger, 2);
+      await click(button("Delete permanently", dialog), true);
+      await waitFor(() => writes.length === 1, "Confirmed purge issues exactly one request");
+      assert.deepEqual(writes[0]!.ids, ["one", "two"]);
       await click(button("Clear all selection")); await click(select("three")); await finish(0, [{ id: "one", status: "purged" }, { id: "two", status: "failed", code: "profile_open" }]); await waitFor(settled, "Partial purge should settle");
-      await click(button("Review and retry deleting 1 failed items")); await dom.flush(); assert.equal(writes.length, 1); assert.ok(confirmations[2]?.includes("1 profiles"));
-      await click(button("Review and retry deleting 1 failed items"), true); await waitFor(() => writes.length === 2, "Each retry has an explicit new confirmation"); assert.deepEqual(writes[1]!.ids, ["two"]); await finish(1, success(1)); await waitFor(settled, "Purge retry should settle"); assert.ok(text().includes("1 selected in total")); assert.equal(select("three").checked, true); return;
+      const retry = button("Review and retry deleting 1 failed items");
+      const retryDialog = await openPurge(retry, 1);
+      await click(button("Cancel", retryDialog));
+      assert.equal(purgeDialog(), undefined);
+      assert.equal(dom.window.document.activeElement, retry);
+      assert.equal(writes.length, 1);
+
+      const confirmedRetry = await openPurge(retry, 1);
+      await click(button("Delete permanently", confirmedRetry));
+      await waitFor(() => writes.length === 2, "Each retry has an explicit new confirmation"); assert.deepEqual(writes[1]!.ids, ["two"]); await finish(1, success(1)); await waitFor(settled, "Purge retry should settle"); assert.ok(text().includes("1 selected in total")); assert.equal(select("three").checked, true);
+      assert.equal(nativeConfirmations, 0);
+      return;
+    }
+    if (scenario === "purge-hidden") {
+      await openPurge(button("Delete permanently"), 1);
+      active = false;
+      await render();
+      const outside = dom.container.querySelector<HTMLInputElement>("#outside-field")!;
+      outside.focus();
+      await dom.flush();
+      assert.equal(dom.window.document.querySelector('[role="alertdialog"]'), null);
+      assert.equal(dom.window.document.activeElement, outside);
+      assert.equal(writes.length, 0);
+      assert.notEqual(snapshots.at(-1)?.phase, "confirming");
+
+      active = true;
+      await render();
+      await waitFor(() => !button("Delete permanently").disabled, "Returning from navigation should allow a new confirmation");
+      const dialog = await openPurge(button("Delete permanently"), 1);
+      await click(button("Cancel", dialog));
+      assert.equal(writes.length, 0);
+      assert.equal(nativeConfirmations, 0);
+      return;
+    }
+    if (scenario === "focus-after-actions") {
+      const clear = button("Clear all selection");
+      clear.focus(); await click(clear);
+      assert.equal(dom.window.document.activeElement, dom.container.querySelector(".trash-results"));
+      await click(select("one"));
+      const restore = button("Restore 1 selected profiles");
+      restore.focus(); await click(restore);
+      await waitFor(() => writes.length === 1, "Restore should submit");
+      await finish(0, success(0));
+      await waitFor(settled, "Restore should settle");
+      assert.equal(dom.window.document.activeElement, dom.container.querySelector("[data-trash-task-title]"));
+      await click(button("Details"));
+      assert.equal(visible('[data-trash-result-id="one"]').length, 1);
+      const dismiss = button("Dismiss Trash operation result");
+      dismiss.focus(); await click(dismiss);
+      assert.equal(dom.window.document.activeElement, button("Refresh"));
+      await click(select("two"));
+      const restoreAgain = button("Restore 1 selected profiles");
+      restoreAgain.focus(); await click(restoreAgain);
+      await waitFor(() => writes.length === 2, "The second restore should submit");
+      const outside = dom.container.querySelector<HTMLInputElement>("#outside-field")!;
+      outside.focus();
+      await finish(1, success(1));
+      await waitFor(settled, "The second restore should settle");
+      assert.equal(dom.window.document.activeElement, outside);
+      assert.equal(button("Details").getAttribute("aria-expanded"), "false", "A new receipt starts with its optional details collapsed");
+      return;
     }
     await click(button(scenario === "partial-new-selection" ? "Restore 2 selected profiles" : "Restore 1 selected profiles"), true); await waitFor(() => writes.length === 1, "Same-frame restore calls must not duplicate");
     assert.equal(writes[0]!.options?.signal, undefined); assert.equal(writes[0]!.options?.redirect, "error");
@@ -91,10 +198,16 @@ async function run(scenario: string) {
     }
     if (scenario === "unknown") {
       await finish(0, [{ id: "one", status: "restored" }], 409); await waitFor(settled, "409 with a result still has no confirmed success contract"); assert.ok(text().includes("Trash result needs confirmation")); assert.equal(snapshots.at(-1)?.receipt?.succeededIds.length, 0); assert.equal(snapshots.at(-1)?.receipt?.retryIds.length, 0);
-      await click(button("Refresh Trash without repeating the operation")); await dom.flush(); assert.equal(writes.length, 1); assert.equal(text().includes("PRIVATE_RESPONSE_ERROR"), false); return;
+      const counts = visible<HTMLElement>(".trash-task-counts strong");
+      assert.deepEqual(counts.map(node => node.textContent), ["1"], "The compact summary shows only the unconfirmed count");
+      assert.ok(text().includes("Unconfirmed items aren’t retried automatically."));
+      const readsBefore = reads;
+      await click(button("Refresh Trash without repeating the operation")); await dom.flush();
+      assert.equal(reads, readsBefore + 1);
+      assert.equal(writes.length, 1); assert.equal(text().includes("PRIVATE_RESPONSE_ERROR"), false); return;
     }
     if (scenario === "refresh-failure") {
-      failRead = true; await finish(0, success(0)); await waitFor(settled, "A failed refresh still settles a confirmed operation"); assert.ok(text().includes("Restore confirmed")); assert.ok(text().includes("does not undo confirmed restores")); assert.equal(visible('tr[data-trash-id="one"]').length, 0, "An old list cannot show the same confirmed-restored entry as still recoverable"); assert.equal(text().includes("PRIVATE_READ_ERROR"), false);
+      failRead = true; await finish(0, success(0)); await waitFor(settled, "A failed refresh still settles a confirmed operation"); assert.ok(text().includes("Restore confirmed")); assert.ok(text().includes("Some lists could not refresh. Confirmed results still apply.")); assert.equal(visible('tr[data-trash-id="one"]').length, 0, "An old list cannot show the same confirmed-restored entry as still recoverable"); assert.equal(text().includes("PRIVATE_READ_ERROR"), false);
       failRead = false; await click(button("Retry reading Trash")); await dom.flush(); profiles.push({ ...record("one", "One new entry", "Parent"), trashedAt: 2000 }); await click(button("Refresh")); await dom.flush(); assert.equal(row("one").getAttribute("data-trash-entry"), "2000:none"); assert.equal(select("one").checked, false); return;
     }
     if (scenario === "retry-entry-change" || scenario === "retry-entry-version") {

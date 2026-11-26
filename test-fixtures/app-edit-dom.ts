@@ -13,6 +13,7 @@ function deferred<T>() {
 }
 async function run(scenario: string) {
   const qualityScenario = scenario.startsWith("quality-"), qualityAssistant = scenario === "quality-assistant", otherId = "quality_other";
+  const timezoneRebase = scenario.startsWith("edit-timezone-rebase");
   const signedScenario = scenario.startsWith("signed-startup-");
   const id = qualityScenario ? "quality_selected" : "fixture_profile";
   const detail = (name = "Loaded fixture", password = "inert-saved-password") => ({ id, name, engine: "chromium", chromiumRuntime: "aliasmode", group: "", platform: "", proxyType: "http", proxy: "", proxyError: "", username: "inert-user", password, email: "", emailPassword: "", twofa: "", resolution: "1920*1080", platformOs: "windows", extensions: [] as string[], tags: "", customNo: "", timezone: "UTC", timezoneManual: false, locale: "en-US", cores: "8", fingerprintSeed: "777", cookieCount: 0, seeded: true, mobilePersona: false });
@@ -50,7 +51,7 @@ async function run(scenario: string) {
     requests.push({ path, method });
     if (path === `/ui/api/profiles/${id}` && method === "GET") { const result = deferred<Response>(); details.push(result); return result.promise; }
     if (path === `/ui/api/profiles/${id}/update` && method === "POST") { const result = deferred<Response>(); saves.push({ set: JSON.parse(String(options?.body)).set, response: result }); return result.promise; }
-    if (scenario === "edit-timezone-rebase" && path === `/ui/api/profiles/${id}/timezone` && method === "POST") { assert.deepEqual(JSON.parse(String(options?.body)), {}); const result = deferred<Response>(); timezones.push(result); return result.promise; }
+    if (timezoneRebase && path === `/ui/api/profiles/${id}/timezone` && method === "POST") { assert.deepEqual(JSON.parse(String(options?.body)), {}); const result = deferred<Response>(); timezones.push(result); return result.promise; }
     if (path === `/ui/api/profiles/${id}/totp` && method === "GET") {
       const result = deferred<Response>(); totps.push(result);
       if (scenario !== "totp-session") result.resolve(json({ ok: true, code: null }));
@@ -249,16 +250,16 @@ async function run(scenario: string) {
     assert.equal(button("Save changes").disabled, true); assert.equal(editor()!.querySelector("input"), null, "Loading cannot expose an editable blank draft");
     if (scenario.startsWith("edit-")) {
       if (scenario === "edit-quarantine-preserve" || scenario === "edit-quarantine-clear") await loaded(0, { ...detail(), proxyError: "Inert stored proxy needs repair" });
-      else if (scenario === "edit-timezone-rebase") await loaded(0, { ...detail(), proxy: "proxy.example:8080:person:inert-proxy-password", timezoneManual: true });
+      else if (timezoneRebase) await loaded(0, { ...detail(), proxy: "proxy.example:8080:person:inert-proxy-password", timezoneManual: true });
       else if (scenario === "edit-extensions-clear") await loaded(0, { ...detail(), extensions: ["inert-extension"] });
       else if (scenario === "edit-legacy-partial") await loaded(0, { ...detail(), tags: Array.from({ length: 21 }, (_, index) => `legacy${index}`).join(","), fingerprintSeed: "", resolution: "legacy screen" });
       else await loaded();
-      assert.ok(preview().textContent?.includes("No changes to save"));
-      assert.ok(!preview().textContent?.includes("inert-saved-password"));
+      assert.ok(editor()!.querySelector(".profile-editor-status-count")?.textContent?.includes("No changes to save"));
+      assert.equal(preview(), null, "The footer is the only empty change summary");
       if (scenario === "edit-noop") {
         await act(async () => { button("Save changes").click(); }); assert.equal(saves.length, 0);
         await fingerprintFields(); await type(field("Screen"), "1920x1080"); await type(field("CPU"), "08"); await type(field("Fingerprint seed"), "0777"); await type(field("Language"), "EN-us");
-        assert.equal(button("Save changes").disabled, true); assert.equal(preview().querySelectorAll("li").length, 0); assert.equal(confirmations, 0);
+        assert.equal(button("Save changes").disabled, true); assert.equal(preview(), null); assert.equal(confirmations, 0);
         await act(async () => { button("Cancel").click(); });
         await confirmDiscard();
       } else if (scenario === "edit-concurrent-fields") {
@@ -276,15 +277,30 @@ async function run(scenario: string) {
         await act(async () => { button("Save changes").click(); }); assert.deepEqual(saves[0]!.set, { proxy: "", proxyType: "http" });
         await respond(saves[0]!.response, json({ ok: false, error: "Inert clear refused" }, 500)); assert.ok(editor()); assert.equal(button("Save changes").disabled, false);
         await act(async () => { button("Save changes").click(); }); assert.deepEqual(saves[1]!.set, { proxy: "", proxyType: "http" }); await respond(saves[1]!.response, json({ ok: true })); await waitFor(() => !editor(), "An explicit quarantine clear must survive a failed first save"); assert.equal(confirmations, 0);
-      } else if (scenario === "edit-timezone-rebase") {
-        await type(name(), "Draft survives timezone refresh"); await act(async () => { button("Set timezone and language from proxy").click(); }); await confirmDialogButton("Continue"); assert.equal(timezones.length, 1); assert.equal(confirmations, 0); await assertLocked();
+      } else if (timezoneRebase) {
+        const timezoneDraft = scenario === "edit-timezone-rebase-timezone-draft" ? "Europe/Berlin" : undefined;
+        const localeDraft = scenario === "edit-timezone-rebase-locale-draft" ? "de-DE" : undefined;
+        await type(name(), "Draft survives timezone refresh");
+        await fingerprintFields();
+        if (timezoneDraft) await type(field("Timezone"), timezoneDraft);
+        if (localeDraft) await type(field("Language"), localeDraft);
+        await act(async () => { button("Set timezone and language from proxy").click(); });
+        await confirmDialogButton("Continue"); assert.equal(timezones.length, 1); assert.equal(confirmations, 0); await assertLocked();
         stored.timezone = "Europe/Paris"; stored.locale = "fr-FR"; stored.timezoneManual = false;
         roster = { ...roster, profiles: [{ ...uiProfile(), timezone: "Europe/Paris" }] };
         await respond(timezones[0]!, json({ ok: true, timezone: "Europe/Paris", locale: "fr-FR" }));
         await waitFor(() => !button("Save changes").disabled, "A persisted automatic timezone refresh must release the editor");
-        assert.equal(name().value, "Draft survives timezone refresh"); assert.equal(preview().querySelectorAll("li").length, 1); assert.ok(preview().textContent?.includes("Name"));
-        await act(async () => { button("Save changes").click(); }); assert.deepEqual(saves[0]!.set, { name: "Draft survives timezone refresh" }); assert.equal(confirmations, 0, "Rebased timezone and locale must not become another fingerprint edit");
-        Object.assign(stored, saves[0]!.set); await respond(saves[0]!.response, json({ ok: true })); await waitFor(() => !editor(), "The remaining name draft must save separately"); assert.equal(stored.timezoneManual, false);
+        assert.equal(name().value, "Draft survives timezone refresh");
+        assert.equal(field("Timezone").value, timezoneDraft ?? "Europe/Paris", "Keep a typed timezone and otherwise show the new saved timezone");
+        assert.equal(field("Language").value, localeDraft ?? "fr-FR", "Keep a typed language and otherwise show the new saved language");
+        const changedFields = [...preview().querySelectorAll("li > span")].map(node => node.textContent);
+        assert.deepEqual(changedFields, ["Name", ...(timezoneDraft ? ["Timezone"] : []), ...(localeDraft ? ["Language"] : [])]);
+        assert.equal(saves.length, 0, "Refreshing the connection must not save the draft");
+        await act(async () => { button("Save changes").click(); });
+        if (timezoneDraft || localeDraft) await confirmDialogButton("Save fingerprint changes");
+        assert.deepEqual(saves[0]!.set, { name: "Draft survives timezone refresh", ...(timezoneDraft ? { timezone: timezoneDraft } : {}), ...(localeDraft ? { locale: localeDraft } : {}) });
+        assert.equal(confirmations, 0);
+        Object.assign(stored, saves[0]!.set); await respond(saves[0]!.response, json({ ok: true })); await waitFor(() => !editor(), "The remaining draft must save separately");
       } else if (scenario === "edit-invalid-locale") {
         await fingerprintFields(); await type(field("Screen"), ""); assert.equal(button("Save changes").disabled, true); assert.ok(editor()!.querySelector('[role="alert"]')?.textContent?.includes("cannot clear the saved screen size"));
         await type(field("Screen"), "PRIVATE_BAD_SCREEN"); assert.equal(button("Save changes").disabled, true); assert.ok(!editor()!.querySelector('[role="alert"]')?.textContent?.includes("PRIVATE_BAD_SCREEN"));
@@ -306,7 +322,7 @@ async function run(scenario: string) {
         await act(async () => { button("Save changes").click(); }); assert.deepEqual(saves[1]!.set, { name: "Strict result draft" }); await respond(saves[1]!.response, json({ ok: true })); await waitFor(() => !editor(), "Only an explicit ok result may complete a save");
       } else throw new Error(`Unknown edit scenario: ${scenario}`);
       assert.equal(editor(), null); assert.deepEqual(unexpected, []);
-      assert.ok(requests.filter(request => request.method !== "GET" && request.path !== "/ui/api/workspace/preferences").every(request => request.path === `/ui/api/profiles/${id}/update` || scenario === "edit-timezone-rebase" && request.path === `/ui/api/profiles/${id}/timezone`));
+      assert.ok(requests.filter(request => request.method !== "GET" && request.path !== "/ui/api/workspace/preferences").every(request => request.path === `/ui/api/profiles/${id}/update` || timezoneRebase && request.path === `/ui/api/profiles/${id}/timezone`));
       return;
     }
     if (scenario === "load-retry") {
@@ -362,7 +378,7 @@ async function run(scenario: string) {
         assert.equal(editor(), active); await assertLocked();
         roster = { ...roster, profiles: [uiProfile("Saved draft")] }; holdRoster = false;
         await respond(rosterWaits[0]!, json(roster)); await waitFor(() => !editor(), "The completed edit did not close");
-        assert.ok(dom.container.textContent?.includes("The open browser keeps its current proxy and fingerprint until it restarts."));
+        assert.match(dom.container.querySelector(".notice")?.textContent ?? "", /restart.*proxy and fingerprint/i);
         await open(); await loaded(1, detail("Fresh reopened draft")); await type(name(), "New draft survives"); await dom.flush(); assert.equal(name().value, "New draft survives");
         await act(async () => { button("Cancel").click(); });
         await confirmDiscard();

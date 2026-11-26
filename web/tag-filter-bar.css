@@ -50,6 +50,7 @@
   z-index: 40;
   width: 248px;
   max-width: min(280px, 90vw);
+  max-width: min(280px, 90vw, 100cqi);
   padding: 8px;
   border-radius: var(--r-lg);
   border: 1px solid var(--line-strong);
@@ -85,6 +86,30 @@
   font-size: 11px;
 }
 
+.tag-filter-pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.tag-filter-pagination .btn {
+  flex: 0 0 auto;
+}
+
+.tag-filter-pagination > span {
+  min-width: 0;
+  text-align: center;
+}
+
+.tag-filter-pagination [aria-disabled="true"] {
+  opacity: 0.5;
+}
+
 .tag-filter-options {
   display: flex;
   flex-direction: column;
@@ -92,6 +117,10 @@
   max-height: 210px;
   margin-top: 6px;
   overflow: auto;
+}
+
+@container roster-browser (max-width: 280px) {
+  .tag-filter-options { max-height: 180px; }
 }
 
 .tag-filter-option {

@@ -1,0 +1,44 @@
+.profile-browser .roster-empty-results {
+  position: static;
+  width: 100%;
+  min-height: min(200px, 100%);
+  justify-content: center;
+}
+
+.profile-browser[data-roster-empty] .emptystate .glyph {
+  width: 42px;
+  height: 42px;
+  margin-bottom: 2px;
+}
+
+.profile-browser[data-roster-empty] .empty-actions {
+  margin-top: 4px;
+}
+
+.profile-browser[data-roster-empty] .empty-actions .btn {
+  margin-top: 0;
+}
+
+@media (max-width: 520px) and (max-height: 660px) {
+  .profiles-workspace:has(> .profile-browser[data-roster-empty="results"]) > .onboarding-banner {
+    display: none;
+  }
+
+  .profiles-workspace:has(> .profile-browser[data-roster-empty="workspace"]) > .profile-filter-row > :is(.heading-search, .group-filter, .profile-status-filter, .tag-filter-bar) {
+    display: none;
+  }
+
+  .folded-workbench .profile-browser[data-roster-empty]:not(.has-details) {
+    flex: 0 0 auto;
+    min-height: 0;
+  }
+
+  .profile-browser[data-roster-empty] .emptystate {
+    min-height: 0;
+    padding: 12px;
+  }
+
+  .profile-browser[data-roster-empty] .emptystate .glyph {
+    display: none;
+  }
+}

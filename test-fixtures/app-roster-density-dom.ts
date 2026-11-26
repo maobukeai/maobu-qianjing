@@ -85,6 +85,29 @@ async function run(scenario: string) {
     if (scenario === "missing-server-value" || scenario === "unknown-server-value") { assert.equal(density(), "comfortable"); assert.equal(selected(), "Comfortable"); assert.equal(densityWrites().length, 0); return; }
     assert.equal(density(), "compact"); assert.equal(selected(), "Compact"); assert.equal(dom.window.localStorage.getItem(ROSTER_DENSITY_KEY), "compact");
     if (scenario === "server-restore") { assert.equal(densityWrites().length, 0); await openSettings(); assert.equal(selected(), "Compact"); assert.equal(densityWrites().length, 0); return; }
+    if (scenario === "compact-select") {
+      await openSettings();
+      const select = control().parentElement!.querySelector<HTMLSelectElement>(".roster-density-select")!;
+      const choose = async (value: string) => act(async () => {
+        select.value = value;
+        select.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+      });
+      assert.equal(select.value, "compact");
+      select.focus();
+      await choose("comfortable");
+      await waitFor(() => densityWrites().length === 1, "The narrow selector saves the same workspace preference");
+      assert.equal(select.getAttribute("aria-busy"), "true");
+      assert.equal(select.getAttribute("aria-disabled"), "true");
+      await choose("standard");
+      assert.equal(densityWrites().length, 1, "The compact selector must block writes while a save is pending");
+      assert.equal(dom.window.document.activeElement, select);
+      await resolveWrite(0);
+      assert.equal(select.value, "comfortable");
+      assert.equal(density(), "comfortable");
+      assert.equal(preferences[ROSTER_DENSITY_KEY], "comfortable");
+      assert.equal(select.getAttribute("aria-busy"), null);
+      return;
+    }
     if (scenario === "save-failure-retry") {
       await openSettings(); radio("Comfortable").focus(); await click(radio("Comfortable"), true);
       await waitFor(() => densityWrites().length === 1, "Two events must share one density write");

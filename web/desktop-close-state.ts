@@ -8,6 +8,7 @@ export const DESKTOP_DRAFT_LABELS = {
   "update-settings": "Update settings",
   "workspace-task": "Workspace task",
   "network-settings": "Network settings",
+  "app-lock-settings": "App master password lock",
   "assistant-draft": "AI message draft",
   "assistant-service-draft": "Model service settings draft",
   "proxy-assignment-draft": "Local proxy assignment draft",

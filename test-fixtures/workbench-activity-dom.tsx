@@ -22,6 +22,7 @@ async function run(scenario: string) {
   const task = (id: string, state: WorkbenchActivityItem["state"], title: string): WorkbenchActivityItem => ({ id, state, title, description: `${title} detail`, onView: () => { calls.push(id); after().focus(); } });
   let items: WorkbenchActivityItem[] = [task("done", "complete", "Saved import receipt"), task("attention", "attention", "Some browsers need review"), { ...task("running", "running", "Starting browsers"), progress: { done: 2, total: 8 } }, task("running-2", "running", "Background script"), task("done-2", "complete", "Cookie import finished")];
   if (scenario === "empty") items = [];
+  if (scenario === "single-task") items = [task("download", "running", "Browser downloads")];
   const render = () => dom.render(<I18nProvider><button type="button" data-before>Before activity</button>{available && <WorkbenchActivity items={items} />}<button type="button" data-after>After activity</button></I18nProvider>);
   const trigger = () => dom.container.querySelector<HTMLButtonElement>(".workbench-activity-trigger")!;
   const panel = () => [...dom.window.document.querySelectorAll<HTMLElement>(".workbench-activity-popover")].find(node => !node.closest('[inert], [aria-hidden="true"]')) ?? null;
@@ -38,6 +39,17 @@ async function run(scenario: string) {
     if (scenario === "empty") {
       assert.equal(trigger(), null); assert.equal(panel(), null); assert.equal(host(), null);
       assert.equal(dom.container.querySelectorAll("button").length, 2); assert.deepEqual(calls, []);
+    } else if (scenario === "single-task") {
+      await click(trigger());
+      assert.equal(panel()?.getAttribute("aria-describedby"), null);
+      assert.equal(panel()?.querySelector(".workbench-activity-summary"), null, "One task has its own status without an extra summary");
+      assert.equal(panel()?.querySelector(".workbench-activity-state")?.textContent, "Running");
+      assert.equal(view("download").getAttribute("aria-label"), "View Browser downloads");
+      assert.equal(view("download").textContent, "", "Each arrow has a specific accessible name without repeated visible copy");
+      assert.equal(panel()?.querySelector("progress"), null, "Unknown totals must not become a determinate progress bar");
+      items = [{ ...items[0]!, progress: { done: 5, total: 0 } }]; await render();
+      assert.equal(panel()?.querySelector("progress"), null, "Zero is not a usable total");
+      assert.equal(dom.window.document.activeElement, view("download"));
     } else if (scenario === "sort-count-progress") {
       assert.equal(trigger().getAttribute("aria-label"), "Background activity, 5 tasks"); assert.equal(trigger().querySelector(".workbench-activity-count")?.textContent, "5"); assert.ok(trigger().querySelector(".workbench-activity-running"));
       await click(trigger()); assert.deepEqual(views().map(node => node.dataset.activityView), ["running", "running-2", "attention", "done", "done-2"]);
@@ -96,10 +108,10 @@ async function run(scenario: string) {
       assert.ok(parseFloat(popup.style.left) >= margin); assert.ok(parseFloat(popup.style.left) + popupWidth <= width - margin);
       assert.ok(parseFloat(popup.style.maxHeight) <= dom.window.innerHeight - rectangle.bottom - margin);
       assert.equal(host()?.parentElement, dom.window.document.body, "The task list must not be clipped inside the topbar");
-      for (const selector of ["header p", ".workbench-activity-state", ".workbench-activity-summary", ".workbench-activity-item p", ".workbench-activity-progress small"]) {
+      for (const selector of [".workbench-activity-state", ".workbench-activity-summary", ".workbench-activity-description", ".workbench-activity-progress small"]) {
         for (const text of popup.querySelectorAll<HTMLElement>(selector)) assert.ok(parseFloat(dom.window.getComputedStyle(text).fontSize) >= 11, `${selector} must remain readable at ${width}px`);
       }
-      assert.equal(dom.window.getComputedStyle(popup.querySelector<HTMLElement>("h2")!).fontSize, "14px"); assert.equal(dom.window.getComputedStyle(popup.querySelector<HTMLElement>("h3")!).fontSize, "12px");
+      assert.equal(dom.window.getComputedStyle(popup.querySelector<HTMLElement>("h2")!).fontSize, "14px"); assert.equal(dom.window.getComputedStyle(popup.querySelector<HTMLElement>("h3")!).fontSize, "13px");
     } else if (scenario === "unmount") {
       await click(trigger()); available = false; await render(); assert.equal(panel(), null); assert.equal(host(), null); assert.equal(dom.window.document.activeElement, after());
       assert.equal((await key(after(), "Escape")).defaultPrevented, false); await pause(); assert.deepEqual(calls, []);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { MotionPresence } from "../desktop-motion.tsx";
 import { useTranslation } from "../i18n.tsx";
 import { AppIcon } from "../ui-primitives.tsx";
@@ -50,8 +50,12 @@ export function ActionDock({
   className,
 }: ActionDockProps) {
   const { t } = useTranslation();
+  const trayId = useId();
   const [uncontrolledMoreOpen, setUncontrolledMoreOpen] = useState(false);
   const selcountRef = useRef<HTMLSpanElement | null>(null);
+  const trayRef = useRef<HTMLDivElement>(null);
+  const trayToggle = useRef<HTMLButtonElement>(null);
+  const focusTrayOnOpen = useRef(false);
   const present = selectedCount > 0;
   const isControlled = moreOpen !== undefined;
   const expanded = isControlled ? moreOpen : uncontrolledMoreOpen;
@@ -68,6 +72,12 @@ export function ActionDock({
       setExpanded(false);
     }
   }, [present, expanded, setExpanded]);
+
+  useIsomorphicLayoutEffect(() => {
+    if (!present || !expanded || !focusTrayOnOpen.current) return;
+    focusTrayOnOpen.current = false;
+    trayRef.current?.querySelector<HTMLElement>("button:not(:disabled), select:not(:disabled), input:not(:disabled)")?.focus();
+  }, [present, expanded]);
 
   // Keep `.selcount` visually identical during the 120ms exit while immediately
   // clearing the live `.selcount` selector when selection count drops to 0.
@@ -95,9 +105,16 @@ export function ActionDock({
           role="region"
           aria-label={t("Bulk actions")}
         >
-          <div className="action-dock">
+          <div className="action-dock" onKeyDown={(event) => {
+            if (!expanded || event.key !== "Escape" || event.defaultPrevented || event.nativeEvent.isComposing ||
+              event.keyCode === 229 || trayRef.current?.querySelector(".exportmenu")) return;
+            event.preventDefault();
+            event.stopPropagation();
+            setExpanded(false);
+            trayToggle.current?.focus();
+          }}>
             {hasSecondaryActions && (
-              <div className="bulk-advanced action-dock-tray" hidden={!expanded}>
+              <div ref={trayRef} id={trayId} className="bulk-advanced action-dock-tray" hidden={!expanded}>
                 {children}
               </div>
             )}
@@ -162,10 +179,15 @@ export function ActionDock({
               </button>
               {hasSecondaryActions && (
                 <button
+                  ref={trayToggle}
                   type="button"
                   className="btn ghost bulk-tools-toggle"
                   aria-expanded={expanded}
-                  onClick={() => setExpanded(!expanded)}
+                  aria-controls={trayId}
+                  onClick={(event) => {
+                    focusTrayOnOpen.current = !expanded && event.detail === 0;
+                    setExpanded(!expanded);
+                  }}
                 >
                   {t(expanded ? "Fewer actions" : "More actions")}
                   <AppIcon name={expanded ? "chevronUp" : "chevronDown"} className="sm" />

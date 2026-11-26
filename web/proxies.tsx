@@ -1,4 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
+import { notifyAppLockedFromResponse, notifyUnauthorizedResponse, withStandaloneAuthHeaders } from "./api.ts";
 import { useTranslation } from "./i18n.tsx";
 import { proxyExitNote } from "./proxy-check-presentation.ts";
 import { proxyProblemSummary } from "./proxy-problem-summary.ts";
@@ -9,6 +10,7 @@ import { useDesktopCloseDraft } from "./desktop-close.tsx";
 import { folderScope, type FolderInfo } from "../folders.ts";
 import { analyzeProxyList, matchingProxyChecks, proxyCheckOverview, proxyRosterSignature, proxyScopeOverview, type ProxyScopeProfile } from "./proxy-workflow.ts";
 import { ProxyVaultPanel, ProxyVaultPickerModal } from "./proxy-vault-panel.tsx";
+import { AppIcon } from "./ui-primitives.tsx";
 import type {
   ProxyCheckView,
   ProxyPreview,
@@ -88,14 +90,14 @@ export function retryProxyProfileIds(rows: ProxyReplacementView[]): string[] {
 
 export function proxyRequest(path: string, body: unknown, signal?: AbortSignal): Promise<Response> {
   return fetch(`/ui/api/proxies/${path}`, {
-    method: "POST", credentials: "same-origin", redirect: "error", cache: "no-store", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal,
+    method: "POST", credentials: "same-origin", redirect: "error", cache: "no-store", headers: withStandaloneAuthHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(body), signal,
   });
 }
 
 function proxyAssignmentStatus(attempt: ProxyAssignmentAttempt) {
   const query = new URLSearchParams({ operationScope: attempt.operationScope, previewId: attempt.previewId });
   return fetch(`/ui/api/proxies/operations/${encodeURIComponent(attempt.attemptId)}?${query}`, {
-    credentials: "same-origin", cache: "no-store", redirect: "error", signal: AbortSignal.timeout(10_000),
+    credentials: "same-origin", cache: "no-store", redirect: "error", headers: withStandaloneAuthHeaders(), signal: AbortSignal.timeout(10_000),
   });
 }
 
@@ -172,7 +174,19 @@ function AssignmentTask({ snapshot, headingRef, onStop, onReconcile, onRefresh }
 
 async function previewResponse(response: Response, t: (key: string) => string): Promise<ProxyPreview> {
   if (!response.ok) {
-    if (response.status === 409) throw new ProxyToolsError(t("The preview may have expired, or another replacement is still running. Wait for it to finish, then preview again."));
+    if (response.status === 401) {
+      notifyUnauthorizedResponse(401, "/ui/api/proxies/preview");
+    } else if (response.status === 423) {
+      const lockedBody = await response.json().catch(() => null);
+      notifyAppLockedFromResponse(423, lockedBody);
+    }
+    if (response.status === 401) {
+    notifyUnauthorizedResponse(401, "/ui/api/proxies");
+  } else if (response.status === 423) {
+    const lockedBody = await response.json().catch(() => null);
+    notifyAppLockedFromResponse(423, lockedBody);
+  }
+  if (response.status === 409) throw new ProxyToolsError(t("The preview may have expired, or another replacement is still running. Wait for it to finish, then preview again."));
     if (response.status === 401 || response.status === 403) throw new ProxyToolsError(t("You do not have access to this proxy operation."));
     if (response.status === 404 || response.status === 501 || response.status === 503) throw new ProxyToolsError(t("Bulk proxy tools are not available on this server."));
     throw new ProxyToolsError(t("Could not preview replacements. Check the input format and selected folders."));
@@ -192,6 +206,12 @@ export async function requestProxyPreview(input: ProxyPreviewInput, t: (key: str
 export async function readProxyProgress(
   response: Response, onEvent: (event: ProxyProgressEvent) => void, t: (key: string) => string, signal?: AbortSignal,
 ): Promise<void> {
+  if (response.status === 401) {
+    notifyUnauthorizedResponse(401, "/ui/api/proxies");
+  } else if (response.status === 423) {
+    const lockedBody = await response.json().catch(() => null);
+    notifyAppLockedFromResponse(423, lockedBody);
+  }
   if (response.status === 409) throw new ProxyToolsError(t("The preview may have expired, or another replacement is still running. Wait for it to finish, then preview again."));
   if (!response.ok || !response.body || !response.headers.get("content-type")?.includes("application/x-ndjson")) {
     throw new ProxyToolsError(t("The proxy operation could not start. Check your connection and server version."));
@@ -336,6 +356,7 @@ export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = 
   const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
   const [task, setTask] = useState<ProxyPageTask>(initialTask);
   const [vaultPickerOpen, setVaultPickerOpen] = useState(false);
+  const [vaultActionsHost, setVaultActionsHost] = useState<HTMLDivElement | null>(null);
   const lastRequestedSeq = useRef(0);
   useEffect(() => {
     if (!requestedTask || requestedTask.seq === lastRequestedSeq.current) return;
@@ -376,6 +397,7 @@ export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = 
   const validationId = useId();
   const workflowId = useId();
   const summaryText = useRef<HTMLTextAreaElement>(null);
+  const replacementFile = useRef<HTMLInputElement>(null);
   const copyRevision = useRef(0);
   const reviewHeading = useRef<HTMLHeadingElement>(null);
   const scopeHeading = useRef<HTMLHeadingElement>(null), inputHeading = useRef<HTMLHeadingElement>(null);
@@ -487,7 +509,7 @@ export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = 
     if (toDraft !== (task === "replace")) return;
     const origin = Array.from(checkHeading.current?.closest("section")?.querySelectorAll<HTMLButtonElement>("[data-proxy-repair-source]") ?? [])
       .find(button => button.dataset.proxyRepairSource === repairSourceId.current);
-    const target = toDraft ? repairHeading.current : origin?.isConnected && !origin.disabled ? origin : checkHeading.current;
+    const target = toDraft ? repairHeading.current : origin?.isConnected && !origin.disabled ? origin : checkHeading.current ?? scopeHeading.current;
     focusRepair.current = null;
     if (!toDraft) {
       repairSourceId.current = null;
@@ -694,23 +716,26 @@ export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = 
   ];
   const scopeLabel = localReview ? t("Local proxy assignment · {endpoint}", { endpoint: review!.localEndpoint! }) : targetedReplacement ? t("Environments from the check result") : all ? t("All folders") : selectedGroups.map(name => name || t("Ungrouped")).join(", ") || t("Select at least one folder to continue.");
   const tools = <>
-    <div className="tools-tabs" aria-label={t("Proxy tools")}>
-      <button type="button" className={task === "check" ? "selected" : ""} aria-pressed={task === "check"} disabled={!!busy} onClick={() => changeTask("check")}>{t("Check proxies")} <small>{t("Find connection problems")}</small></button>
-      <button type="button" className={task === "replace" ? "selected" : ""} aria-pressed={task === "replace"} disabled={!!busy} onClick={() => changeTask("replace")}>{t("Replace proxies")} <small>{t("Assign new connections")}</small></button>
-      <button type="button" className={task === "vault" ? "selected" : ""} aria-pressed={task === "vault"} disabled={!!busy} onClick={() => changeTask("vault")}>{t("Proxy vault")} <small>{t("Reusable pool & risk alerts")}</small></button>
-    </div>
     {task === "vault" ? (
-      <ProxyVaultPanel active={active && task === "vault"} profiles={profiles} onChanged={onChanged} />
+      <ProxyVaultPanel
+        active={active && task === "vault"}
+        profiles={profiles}
+        onChanged={onChanged}
+        headerActionsHost={vaultActionsHost}
+      />
     ) : <>
     {checkReplacement && task === "check" && <div className="tools-notice proxy-repair-return"><span>{t(repairCompleted ? "A replacement receipt for {count} environments is open." : "A replacement draft for {count} environments is open.", { count: checkReplacement.ids.length })}</span><button type="button" className="btn xs" disabled={!!busy} onClick={() => { focusRepair.current = "draft"; changeTask("replace"); }}>{t(repairCompleted ? "Return to replacement receipt" : "Return to replacement draft")}</button></div>}
     {targetedReplacement ? <section className="tools-panel proxy-repair-scope">
-      <div className="tools-panel-head"><div><h3 id={`${workflowId}-scope`} className="proxy-workflow-target" ref={repairHeading} tabIndex={-1}>{!repairCompleted && <span className="tools-step" aria-hidden="true">1</span>}{t(repairCompleted ? "Environments from the check result" : "Replace proxies for this check result")}</h3><p>{t(repairCompleted ? "The receipt below shows the result for each environment." : "Only the listed environments are included. Running environments will be skipped.")}</p></div><button type="button" className="btn" disabled={!!busy} onClick={discardCheckReplacement}>{t(repairCompleted ? "Back to proxy checks" : "Discard replacement draft")}</button></div>
+      <div className="tools-panel-head"><div><h3 id={`${workflowId}-scope`} className="proxy-workflow-target" ref={repairHeading} tabIndex={-1}>{t(repairCompleted ? "Environments from the check result" : "Replace proxies for this check result")}</h3>{!repairCompleted && <p>{t("Only the listed environments are included. Running environments will be skipped.")}</p>}</div><button type="button" className="btn" disabled={!!busy} onClick={discardCheckReplacement}>{t(repairCompleted ? "Back to proxy checks" : "Discard replacement draft")}</button></div>
       <div className="tools-panel-body"><AffectedProfiles profiles={targetedReplacement.profiles} />
         {!repairCompleted && loadingProfiles && <p className="tools-hint" role="status">{t("Loading saved environments before selecting a scope…")}</p>}
         {!repairCompleted && !loadingProfiles && !scopeReady && <p className="tools-alert" role="alert">{t("Some environments from this check are unavailable. Run the check again to prepare a new draft.")}</p>}
       </div>
     </section> : <section className="tools-panel proxy-scope">
-      <div className="tools-panel-head"><div><h3 id={`${workflowId}-scope`} className="proxy-workflow-target" ref={scopeHeading} tabIndex={-1}>{task === "replace" && <span className="tools-step" aria-hidden="true">1</span>}{t("Choose folders")}</h3><p>{t("Includes every profile in these folders, across all pages.")}</p></div><span className="tools-folder-tag">{all ? t("All folders") : t("{count} selected", { count: selectedGroups.length })}</span></div>
+      <div className="tools-panel-head">
+        <div><h3 id={`${workflowId}-scope`} className="proxy-workflow-target" ref={scopeHeading} tabIndex={-1}>{t("Choose folders")}</h3><p>{t("Includes every profile in these folders, across all pages.")}</p></div>
+        {task === "check" && <button type="button" className="btn primary" disabled={!!busy || !scopeReady} onClick={() => void runChecks()}>{busy === "check" ? t("Checking…") : t("Check proxies")}</button>}
+      </div>
       {loadingProfiles && <p className="tools-hint proxy-scope-loading" role="status">{t("Loading saved environments before selecting a scope…")}</p>}
       {overview && <div className="proxy-scope-summary" aria-label={t("Selected environments overview")}>
         <div><strong>{overview.total.toLocaleString()}</strong><span>{t("Selected environments")}</span></div>
@@ -735,7 +760,7 @@ export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = 
         </label>; })}
       </div>
       {overview && overview.invalid > 0 && <p className="tools-hint proxy-scope-note">{t("{count} environments have invalid saved proxy settings. Edit their configuration before checking.", { count: overview.invalid })}</p>}
-      {overview && overview.running > 0 && <p className="tools-hint proxy-scope-note">{t(task === "check" ? "Running environments are included in connection checks. Browsers remain open." : "{count} running environments will be skipped during replacement. Close them and preview again to include them.", { count: overview.running })}</p>}
+      {task === "replace" && overview && overview.running > 0 && <p className="tools-hint proxy-scope-note">{t("{count} running environments will be skipped during replacement. Close them and preview again to include them.", { count: overview.running })}</p>}
       {!scopeReady && !loadingProfiles && <p className="tools-hint">{t(overview?.total === 0 && (all || selectedGroups.length > 0) ? "No saved environments match this selection." : "Select at least one folder to continue.")}</p>}
     </section>}
     {error && <div className="tools-alert" role="alert">{error}</div>}
@@ -747,9 +772,8 @@ export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = 
       <p className="proxy-operation-note">{t("You can leave this page and return to the results. Cancel requests a stop; work already started may finish. Completed changes remain saved.")}</p>
     </div>}
     {task === "check" ? <>
-      <section className="tools-panel">
-        <div className="tools-panel-head"><div><h3 ref={checkHeading} tabIndex={-1}>{t("Check your connections")}</h3><p>{t("Shared proxies are checked once. No browsers open and no settings change.")}</p></div>
-          <button type="button" className="btn primary" disabled={!!busy || !scopeReady} onClick={() => void runChecks()}>{busy === "check" ? t("Checking…") : t("Check proxies")}</button></div>
+      {(checkSummary || checks.length > 0 || checksNeedRefresh) && <section className="tools-panel">
+        <div className="tools-panel-head"><h3 ref={checkHeading} tabIndex={-1}>{t("Check results")}</h3></div>
         {checksNeedRefresh && <p className="tools-hint proxy-partial-note" role="status">{t("Changed or unconfirmed environments were removed from these results. Run a new check to include them again.")}</p>}
         {checkSummary && <div className="tools-stats">
           <div><strong>{checkSummary.selectedProfiles.toLocaleString()}</strong><span>{t("Profiles included")}</span></div>
@@ -758,8 +782,21 @@ export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = 
           <div><strong>{checks.filter((row) => row.status === "working").length.toLocaleString()}</strong><span>{t("Reachable")}</span></div>
         </div>}
         {checks.length > 0 ? <>
+          {(() => {
+            const totalChecks = checks.length;
+            const okCount = checks.filter((row) => row.status === "working").length;
+            const failCount = checks.filter((row) => row.status === "failed" || row.status === "invalid").length;
+            const warnCount = Math.max(0, totalChecks - okCount - failCount);
+            return (
+              <div className="proxy-dist-bar" aria-hidden="true">
+                {okCount > 0 && <span className="seg-ok" style={{ width: `${(okCount / totalChecks) * 100}%` }} />}
+                {warnCount > 0 && <span className="seg-warn" style={{ width: `${(warnCount / totalChecks) * 100}%` }} />}
+                {failCount > 0 && <span className="seg-fail" style={{ width: `${(failCount / totalChecks) * 100}%` }} />}
+              </div>
+            );
+          })()}
           <div className="proxy-outcome" aria-live="polite"><strong>{t("{completed} environments have results: {reachable} reachable, {review} needing review.", checkOverview)}</strong><span>{t("Reachability does not verify IP reputation, a separate exit, or browser leaks.")}</span></div>
-          <div className="tools-result-bar"><h3>{t("Check results")}</h3><div className="proxy-actions">
+          <div className="tools-result-bar"><div className="proxy-actions">
             <label className="proxy-choice"><input type="checkbox" checked={checkFailures} onChange={(event) => { setCheckFailures(event.target.checked); setCheckPage(0); }} />{t("Only problems")}</label>
             <button type="button" className="btn" disabled={!!busy || !scopeReady || !failedChecks.length} onClick={() => void runChecks(true)}>{t("Retry failed checks")}</button>
             <button type="button" className="btn" disabled={!checkOverview.review || summaryCopy === "copying"} onClick={() => void copyProblems()}>{t(summaryCopy === "copying" ? "Copying summary…" : "Copy all problem results")}</button>
@@ -767,31 +804,38 @@ export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = 
           <div className="proxy-summary-help"><span>{t("The summary includes all completed problem results across pages and searches. Review environment names before sharing.")}</span>{summaryCopy === "copied" && <strong role="status">{t("Problem summary copied without proxy authentication fields.")}</strong>}</div>
           {summaryCopy === "manual" && <div className="proxy-summary-fallback"><p role="status">{t("Clipboard access is unavailable. The summary is selected below; copy it with your system shortcut.")}</p><label><span>{t("Problem summary for manual copying")}</span><textarea ref={summaryText} rows={7} readOnly value={manualSummary} onFocus={event => event.currentTarget.select()} /></label><button type="button" className="btn xs" onClick={() => { setSummaryCopy("idle"); setManualSummary(""); }}>{t("Hide summary")}</button></div>}
           {!checkComplete && busy !== "check" && <p className="tools-hint proxy-partial-note" role="status">{t("This check was interrupted. Completed results remain available; run Check proxies again to include environments without results.")}</p>}
-          <div className="proxy-results-search"><label><span className="sr-only">{t("Search check results")}</span><input className="input" type="search" placeholder={t("Search proxy, exit IP, environment or folder")} value={checkSearch} onChange={event => { setCheckSearch(event.target.value); setCheckPage(0); }} /></label><span>{t("Search covers all completed results.")}</span></div>
-          <div className="proxy-table-wrap"><table className="profile-table proxy-table"><thead><tr><th>{t("Proxy address")}</th><th>{t("Connection")}</th><th>{t("Exit IP")}</th><th>{t("Used by")}</th><th>{t("Checked")}</th></tr></thead>
-            <tbody>{checkResults.items.map((row) => <tr key={`${row.key}-${row.profiles[0]?.id}`}>
+          <div className="proxy-results-search"><label><span className="sr-only">{t("Search check results")}</span><input className="input" type="search" placeholder={t("Search proxy, exit IP, environment or folder")} value={checkSearch} onChange={event => { setCheckSearch(event.target.value); setCheckPage(0); }} /></label></div>
+          <div className="proxy-table-wrap"><table className="profile-table proxy-table proxy-check-table"><thead><tr><th>{t("Proxy address")}</th><th>{t("Connection")}</th><th>{t("Exit IP")}</th><th>{t("Used by")}</th><th>{t("Checked")}</th></tr></thead>
+            <tbody>{checkResults.items.map((row) => <tr key={`${row.key}-${row.profiles[0]?.id}`} data-status={row.status}>
               <td className="tools-mono">{row.proxy || t("No proxy assigned")}</td><td><span className={`tools-status ${row.status}`}>{getCheckLabel(t, row.status)}</span><small>{proxyExitNote(row) ? t(proxyExitNote(row)!) : row.reason ? getReasonLabel(t, row.reason || "") : ""}</small></td>
               <td className="tools-mono">{row.ip || "—"}{row.country && <small>{row.country}</small>}</td><td><AffectedProfiles profiles={row.profiles} actions={row.status !== "working" && row.profiles.length > 0 && canPrepareReplacement && <button type="button" className="btn xs" data-proxy-repair-source={row.profiles[0]!.id} onClick={() => prepareCheckReplacement(row)}>{t("Prepare replacement for these environments")}</button>} /></td>
               <td>{new Date(row.checkedAt).toLocaleString(language, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</td>
             </tr>)}</tbody></table></div>
           {!checkResults.total && <p className="tools-hint tools-result-empty">{t(checkSearch.trim() ? "No results match your search. Try another address, environment or folder." : "No problems found in the completed checks.")}</p>}
           <Pager {...checkResults} onPage={setCheckPage} />
-        </> : <div className="tools-empty"><span className="tools-empty-symbol" aria-hidden="true">↗</span><h3>{busy === "check" ? t("Checking selected folders…") : t("Ready when you are")}</h3><p>{t("Choose a scope above to review connection results, missing settings and next steps.")}</p></div>}
-      </section>
-      <p className="tools-footnote">{t("Supports HTTP and SOCKS5. HTTPS checks are not supported. Not verified means a result could not be confirmed.")}</p>
-    </> : <>
+        </> : null}
+      </section>}
+      <div className="proxy-check-help">
+        <p className="tools-footnote">{t("Shared proxies are checked once. No browsers open and no settings change.")}</p>
+        <p className="tools-footnote">{t("Supports HTTP and SOCKS5. HTTPS checks are not supported. Not verified means a result could not be confirmed.")}</p>
+      </div>
+    </> : <div className={`proxy-replace-grid${repairCompleted ? " is-receipt-only" : ""}`}>
       {!repairCompleted && <section className="tools-panel proxy-input-panel">
-        <div className="tools-panel-head"><div><h3 id={`${workflowId}-input`} className="proxy-workflow-target" ref={inputHeading} tabIndex={-1}><span className="tools-step" aria-hidden="true">2</span>{t("Add replacement proxies")}</h3><p>{t("Nothing changes until you review and apply the assignments.")}</p></div></div>
+        <div className="tools-panel-head"><h3 id={`${workflowId}-input`} className="proxy-workflow-target" ref={inputHeading} tabIndex={-1}>{t("Add replacement proxies")}</h3></div>
         <div className="tools-panel-body">
-          {!targetedReplacement && <label className="fld"><span>{t("Assignment method")}</span><select value={mode} disabled={!!busy} onChange={(event) => { setMode(event.target.value as ProxyReplacementMode); invalidatePreview(); }}>
-            <option value="list">{t("Paste a proxy list")}</option><option value="profileId">{t("Match specific profile IDs — CSV")}</option><option value="oldProxy">{t("Replace matching old proxies — CSV")}</option>
-          </select></label>}
-          <p className="tools-hint">{mode === "profileId" ? <>{t("Include a header row:")} <code>profileId,type,host,port,user,pass</code>.</>
-            : mode === "oldProxy" ? <>{t("Include a header row:")} <code>oldProxy,newProxy</code>. {t("Each old proxy is replaced wherever it appears in the selected folders.")}</>
-            : t("Paste one proxy per line. We match them to profiles in profile-ID order. Each proxy is used for the number of profiles you set below. You will see every assignment next.")}</p>
-          <details className="proxy-format-help"><summary>{t("View a format example")}</summary><pre>{mode === "list" ? "proxy.example.com:8080:username:password\nsocks5://username:password@proxy.example.com:1080" : mode === "profileId" ? "profileId,type,host,port,user,pass\nprofile-id,http,proxy.example.com,8080,username,password" : "oldProxy,newProxy\nhttp://old.example.com:8080,socks5://new.example.com:1080"}</pre><p>{t("Examples show the format only. Replace them with your own connections before previewing.")}</p></details>
-          {mode === "list" && <label className="fld proxy-per-proxy"><span>{t("Profiles per proxy")}</span><input type="number" aria-label={t("Profiles per proxy")} aria-invalid={!perProxyValid || undefined} aria-describedby={!perProxyValid ? `${validationId}-capacity` : undefined} min={1} step={1} value={perProxyDraft} disabled={!!busy} onChange={(event) => { editReplacementCapacity(event.target.value); invalidatePreview(); }} />{!perProxyValid && <small className="proxy-input-error" id={`${validationId}-capacity`}>{t("Enter a whole number of at least 1.")}</small>}</label>}
-          <label className="fld"><span>{mode === "list" ? t("Your new proxy list") : t("Your replacement CSV")}</span><textarea aria-label={t("Replacement input")} aria-describedby={inputAnalysis?.total ? validationId : undefined} aria-invalid={!!inputAnalysis?.invalidRows.length || undefined} rows={5} value={input} disabled={!!busy} spellCheck={false} autoComplete="off" placeholder={mode === "list" ? "proxy.example.com:8080:username:password\nsocks5://username:password@proxy.example.com:1080" : mode === "profileId" ? "profileId,type,host,port,user,pass" : "oldProxy,newProxy"} onChange={(event) => { editReplacementInput(event.target.value); invalidatePreview(); }} /></label>
+          <div className="proxy-replacement-fields">
+            {!targetedReplacement && <label className="fld"><span>{t("Assignment method")}</span><select value={mode} disabled={!!busy} onChange={(event) => { setMode(event.target.value as ProxyReplacementMode); invalidatePreview(); }}>
+              <option value="list">{t("Paste a proxy list")}</option><option value="profileId">{t("Match specific profile IDs — CSV")}</option><option value="oldProxy">{t("Replace matching old proxies — CSV")}</option>
+            </select></label>}
+            {mode === "list" && <label className="fld proxy-per-proxy"><span>{t("Profiles per proxy")}</span><input type="number" aria-label={t("Profiles per proxy")} aria-invalid={!perProxyValid || undefined} aria-describedby={!perProxyValid ? `${validationId}-capacity` : undefined} min={1} step={1} value={perProxyDraft} disabled={!!busy} onChange={(event) => { editReplacementCapacity(event.target.value); invalidatePreview(); }} />{!perProxyValid && <small className="proxy-input-error" id={`${validationId}-capacity`}>{t("Enter a whole number of at least 1.")}</small>}</label>}
+          </div>
+          <label className="fld"><span>{mode === "list" ? t("Your new proxy list") : t("Your replacement CSV")}</span><textarea aria-label={t("Replacement input")} aria-describedby={inputAnalysis?.total ? validationId : undefined} aria-invalid={!!inputAnalysis?.invalidRows.length || undefined} rows={5} value={input} disabled={!!busy} spellCheck={false} autoComplete="off" placeholder={mode === "list" ? "proxy.example.com:8080" : mode === "profileId" ? "profileId,type,host,port,user,pass" : "oldProxy,newProxy"} onChange={(event) => { editReplacementInput(event.target.value); invalidatePreview(); }} /></label>
+          <details className="proxy-format-help"><summary>{t("View a format example")}</summary>
+            <pre>{mode === "list" ? "proxy.example.com:8080:username:password\nsocks5://username:password@proxy.example.com:1080" : mode === "profileId" ? "profileId,type,host,port,user,pass\nprofile-id,http,proxy.example.com,8080,username,password" : "oldProxy,newProxy\nhttp://old.example.com:8080,socks5://new.example.com:1080"}</pre>
+            <p>{mode === "profileId" ? <>{t("Include a header row:")} <code>profileId,type,host,port,user,pass</code>.</>
+              : mode === "oldProxy" ? <>{t("Include a header row:")} <code>oldProxy,newProxy</code>. {t("Each old proxy is replaced wherever it appears in the selected folders.")}</>
+              : t("Paste one proxy per line. We match them to profiles in profile-ID order. Each proxy is used for the number of profiles you set below. You will see every assignment next.")}</p>
+          </details>
           {inputAnalysis && inputAnalysis.total > 0 && <div className={`proxy-input-feedback${inputAnalysis.invalidRows.length ? " has-errors" : ""}`} id={validationId}>
             <strong>{t("{valid} of {total} lines have a readable proxy format.", { valid: inputAnalysis.readable, total: inputAnalysis.total })}</strong>
             {inputAnalysis.invalidRows.length > 0 && <p>{t("Check line numbers {rows}. Each line needs a host, port and a supported protocol.", { rows: inputAnalysis.invalidRows.slice(0, 8).join(", ") + (inputAnalysis.invalidRows.length > 8 ? "…" : "") })}</p>}
@@ -800,13 +844,15 @@ export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = 
             {overview && perProxyValid && !inputAnalysis.invalidRows.length && <p>{t("This list covers up to {capacity} of {selected} selected environments. Review the exact assignments next.", { capacity: Math.min(inputAnalysis.readable * perProxy, overview.total), selected: overview.total })}{inputAnalysis.readable * perProxy < overview.total && <> {t("Environments without a replacement keep their saved proxy.")}</>}</p>}
             <span>{t("This is a local format check. The preview validates assignments; connection checks run only when requested.")}</span>
           </div>}
-          <div className="tools-result-bar"><div className="proxy-actions"><label className="proxy-upload">{t("Or upload a file")}<input type="file" accept=".csv,.txt,text/csv,text/plain" disabled={!!busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void loadFile(file); }} /></label>
+          <div className="tools-result-bar proxy-replacement-actions"><div className="proxy-actions">
+            <button type="button" className="btn" disabled={!!busy} onClick={() => replacementFile.current?.click()}><AppIcon name="fileImport" className="sm" />{t("Or upload a file")}</button>
+            <input ref={replacementFile} type="file" accept=".csv,.txt,text/csv,text/plain" hidden disabled={!!busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void loadFile(file); }} />
             {mode === "list" && <button type="button" className="btn" disabled={!!busy} onClick={() => setVaultPickerOpen(true)}>{t("Pick from proxy vault")}</button>}</div>
             <button type="button" className="btn primary" disabled={!!busy || blocked || !scopeReady || !inputReady} onClick={() => void makePreview()}>{busy === "preview" ? t("Preparing preview…") : t(review?.localEndpoint && assignment.phase === "review" ? "Replace local review with manual preview" : "Preview changes")}</button></div>
         </div>
       </section>}
-      <section className="tools-panel">
-        <div className="tools-panel-head"><div><h3 id={`${workflowId}-review`} className="proxy-workflow-target" ref={reviewHeading} tabIndex={-1} data-proxy-review-title>{!repairCompleted && <span className="tools-step" aria-hidden="true">3</span>}{t(repairCompleted && assignment.phase !== "review" ? "Proxy replacement receipt" : "Review changes")}</h3><p>{t(repairCompleted && assignment.phase !== "review" ? "Review the confirmed results or preview failed rows again." : "Check the old and new proxy for each profile. Open profiles are skipped.")}</p></div>
+      <section className="tools-panel proxy-review-panel">
+        <div className="tools-panel-head"><div><h3 id={`${workflowId}-review`} className="proxy-workflow-target" ref={reviewHeading} tabIndex={-1} data-proxy-review-title>{t(repairCompleted && assignment.phase !== "review" ? "Proxy replacement receipt" : "Review changes")}</h3>{hasPreview && !repairCompleted && <p>{t("Check the old and new proxy for each profile. Open profiles are skipped.")}</p>}</div>
           {reviewBelongsHere && assignment.phase === "review" && <div className="proxy-actions">
             {!repairCompleted && <button type="button" className="btn" disabled={!!busy} onClick={() => { clearReview(); setFocusReview(true); }}>{t(review?.localEndpoint ? "Discard local review" : "Discard review")}</button>}
             <button type="button" className="btn primary" disabled={!!busy || blocked || !ready || previewStale || !reviewScopeReady} onClick={apply}>{t("Apply {count} changes", { count: ready.toLocaleString() })}</button>
@@ -825,9 +871,9 @@ export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = 
             <label className="proxy-choice"><input type="checkbox" checked={replacementFailures} onChange={(event) => { setReplacementFailures(event.target.checked); setReplacementPage(0); }} />{t("Only problems")}</label>
             <button type="button" className="btn" disabled={!canRetry} onClick={() => void prepareRetry()}>{t("Preview failed rows again")}</button>
           </div></div>
-          <div className="proxy-results-search"><label><span className="sr-only">{t("Search replacement results")}</span><input className="input" type="search" placeholder={t("Search current proxy, new proxy, environment or folder")} value={replacementSearch} onChange={event => { setReplacementSearch(event.target.value); setReplacementPage(0); }} /></label><span>{t("Search covers the complete assignment list.")}</span></div>
-          <div className="proxy-table-wrap"><table className="profile-table proxy-table"><thead><tr><th>{t("Profile")}</th><th>{t("Folder")}</th><th>{t("Current proxy")}</th><th>{t("New proxy")}</th><th>{t("Status")}</th></tr></thead>
-            <tbody>{replacements.items.map((row) => <tr key={row.index}>
+          <div className="proxy-results-search"><label><span className="sr-only">{t("Search replacement results")}</span><input className="input" type="search" placeholder={t("Search current proxy, new proxy, environment or folder")} value={replacementSearch} onChange={event => { setReplacementSearch(event.target.value); setReplacementPage(0); }} /></label></div>
+          <div className="proxy-table-wrap"><table className="profile-table proxy-table proxy-review-table"><thead><tr><th>{t("Profile")}</th><th>{t("Folder")}</th><th>{t("Current proxy")}</th><th>{t("New proxy")}</th><th>{t("Status")}</th></tr></thead>
+            <tbody>{replacements.items.map((row) => <tr key={row.index} data-status={row.outcome.status}>
               <td><strong>{row.name || row.profileId || t("Input row {index}", { index: row.index + 1 })}</strong><small className="tools-mono">{row.name ? row.profileId : ""}</small></td>
               <td>{row.group === undefined ? "—" : row.group || t("Ungrouped")}</td><td className="tools-mono">{row.previousProxy || "—"}</td><td className="tools-mono">{row.proxy || "—"}</td>
               <td><span className={`tools-status ${row.outcome.status}`}>{getReplacementLabel(t, row.outcome.status)}</span>
@@ -839,7 +885,7 @@ export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = 
           <Pager {...replacements} onPage={setReplacementPage} />
         </> : <div className="tools-empty compact"><p>{t("Your preview will appear here. Saved sessions and fingerprints stay unchanged.")}</p></div>}
       </section>
-    </>}
+    </div>}
     </>}
     <ProxyVaultPickerModal
       open={vaultPickerOpen}
@@ -853,13 +899,46 @@ export function ProxiesPage({ groups, folders = [], profiles, loadingProfiles = 
   </>;
 
   return <div className="workspace proxy-page proxy-manager" hidden={!active} aria-labelledby="proxy-page-title" aria-busy={!!localBusy}>
-    <header className="tools-intro page-heading"><div><h1 id="proxy-page-title" ref={pageHeading} tabIndex={-1}>{t("Proxies")}</h1><p className="page-subtitle">{t("Check saved connections or replace proxies across entire folders.")}</p></div></header>
+    <div className="proxy-header-bar">
+      <div className="proxy-header-left">
+        <header className="tools-intro page-heading"><h1 id="proxy-page-title" ref={pageHeading} tabIndex={-1}>{t("Proxies")}</h1></header>
+        <div className="tools-tabs" role="group" aria-label={t("Proxy tools")} data-sliding-group>
+          <button type="button" data-proxy-tab="vault" className={task === "vault" ? "selected" : ""} aria-pressed={task === "vault"} disabled={!!busy} onClick={() => changeTask("vault")}>{t("Proxy vault")}</button>
+          <button type="button" data-proxy-tab="check" className={task === "check" ? "selected" : ""} aria-pressed={task === "check"} disabled={!!busy} onClick={() => changeTask("check")}>{t("Check your connections")}</button>
+          <button type="button" data-proxy-tab="replace" className={task === "replace" ? "selected" : ""} aria-pressed={task === "replace"} disabled={!!busy} onClick={() => changeTask("replace")}>{t("Replace proxies")}</button>
+        </div>
+      </div>
+      {task === "vault" && <div className="proxy-header-actions" ref={setVaultActionsHost} />}
+    </div>
     {task === "replace" && <nav className="proxy-workflow-navigation" aria-label={t("Replacement workflow")}>
       <div className="proxy-workflow-scope" aria-label={t("Current replacement scope")}>
         <span className="proxy-workflow-scope-label">{t("Current replacement scope")}</span><strong>{scopeLabel}</strong>
         {loadingProfiles ? <span role="status">{t("Loading profiles")}</span> : workflowOverview && <span className="proxy-workflow-count">{t("{count} environments", { count: workflowOverview.total })}<span aria-hidden="true"> · </span>{t("{count} running", { count: workflowOverview.running })}</span>}
       </div>
-      <ol>{replacementSteps.map((step, index) => <li key={step.key}><button type="button" data-proxy-workflow-step={step.key} aria-controls={step.available ? step.controls : undefined} disabled={!step.available} onClick={() => navigateReplacement(step.target)}><span aria-hidden="true">{index + 1}</span>{t(step.label)}</button></li>)}</ol>
+      <ol>{replacementSteps.map((step, index) => {
+        const isCurrent = step.available && (
+          step.key === "scope"
+          || (step.key === "input" && !repairCompleted)
+          || (step.key === "review" && !!hasPreview)
+          || (step.key === "receipt" && !!(repairCompleted || assignment.latest))
+        );
+        return (
+          <li key={step.key}>
+            <button
+              type="button"
+              className={isCurrent ? "is-active" : undefined}
+              data-proxy-workflow-step={step.key}
+              data-step-state={step.available ? "ready" : "locked"}
+              aria-controls={step.available ? step.controls : undefined}
+              disabled={!step.available}
+              onClick={() => navigateReplacement(step.target)}
+            >
+              <span className="proxy-step-num" aria-hidden="true">{index + 1}</span>
+              <span className="proxy-step-label">{t(step.label)}</span>
+            </button>
+          </li>
+        );
+      })}</ol>
     </nav>}
     <AssignmentTask snapshot={assignment} headingRef={taskHeading} onStop={() => assignmentOwner.stopReceiving()} onReconcile={() => assignmentOwner.reconcileNow()} onRefresh={() => void assignmentOwner.refreshResult()} />
     {localIntent && checkReplacement && <p className="tools-notice" role="status">{t(repairCompleted ? "Return to proxy checks from the replacement receipt before preparing a local proxy review." : "Finish or discard the replacement draft from check results before preparing a local proxy review.")}</p>}

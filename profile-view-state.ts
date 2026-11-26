@@ -83,9 +83,13 @@ export function serializeSavedProfileViews(views: readonly SavedProfileView[]): 
   if (!parseSavedProfileViews(value)) throw new Error("This view could not be saved. Use a unique name, shorter filters, or remove an unused view.");
   return value;
 }
+function canonicalTagKey(tag: string): string {
+  return tag.trim().normalize("NFC").toLowerCase();
+}
+
 function canonicalTagKeys(tags?: readonly string[]): string[] {
   if (!tags || tags.length === 0) return [];
-  return [...new Set(tags.map(tag => tag.trim().normalize("NFC").toLowerCase()).filter(Boolean))];
+  return [...new Set(tags.map(canonicalTagKey).filter(Boolean))];
 }
 export function sameProfileView(a: ProfileViewFilters, b: ProfileViewFilters): boolean {
   const aTags = canonicalTagKeys(a.tags);
@@ -99,19 +103,35 @@ export function sameProfileView(a: ProfileViewFilters, b: ProfileViewFilters): b
     && a.sort.key === b.sort.key && a.sort.dir === b.sort.dir && a.pageSize === b.pageSize
     && a.hiddenColumns.length === b.hiddenColumns.length && a.hiddenColumns.every(column => b.hiddenColumns.includes(column));
 }
+/** Normalize the selected tags once for a complete roster scan. */
+export function createTagFilterMatcher(
+  selectedTags: readonly string[] | undefined,
+  mode: TagFilterMode = "any",
+): (profileTags: readonly string[] | undefined) => boolean {
+  const required = new Set(canonicalTagKeys(selectedTags));
+  if (required.size === 0) return () => true;
+  if (mode !== "all" || required.size === 1) {
+    return profileTags => profileTags?.some(tag => required.has(canonicalTagKey(tag))) ?? false;
+  }
+  return profileTags => {
+    if (!profileTags || profileTags.length < required.size) return false;
+    const matched = new Set<string>();
+    return profileTags.some(tag => {
+      const key = canonicalTagKey(tag);
+      if (!required.has(key)) return false;
+      matched.add(key);
+      return matched.size === required.size;
+    });
+  };
+}
+
 /** Case-insensitive NFC multi-tag matcher aligned with profile-tags.ts. */
 export function matchesTagFilter(
   profileTags: readonly string[] | undefined,
   selectedTags: readonly string[] | undefined,
   mode: TagFilterMode = "any",
 ): boolean {
-  const required = canonicalTagKeys(selectedTags);
-  if (required.length === 0) return true;
-  if (!profileTags || profileTags.length === 0) return false;
-  const available = new Set(canonicalTagKeys(profileTags));
-  return mode === "all"
-    ? required.every(tag => available.has(tag))
-    : required.some(tag => available.has(tag));
+  return createTagFilterMatcher(selectedTags, mode)(profileTags);
 }
 export interface AggregatedTagCount {
   tag: string;
@@ -124,9 +144,10 @@ export function aggregateProfileTagCounts(
 ): AggregatedTagCount[] {
   const counts = new Map<string, AggregatedTagCount>();
   for (const profile of profiles) {
-    if (!profile.tags || profile.tags.length === 0) continue;
+    const tags = profile.tags;
+    if (!tags?.length) continue;
     const seenInProfile = new Set<string>();
-    for (const raw of profile.tags) {
+    for (const raw of tags) {
       if (typeof raw !== "string") continue;
       const label = raw.trim().normalize("NFC");
       if (!label) continue;

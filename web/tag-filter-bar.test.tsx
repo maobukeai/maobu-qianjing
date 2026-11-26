@@ -201,6 +201,55 @@ describe("TagFilterBar and inline profile editors", () => {
     expect(selectedTags).toEqual([]);
   });
 
+  test("a large tag catalog opens lazily, bounds the mounted options, and keeps later results selectable", async () => {
+    const h = await createDomHarness();
+    let tagReads = 0;
+    const profiles = Array.from({ length: 651 }, (_, index) => ({
+      get tags() { tagReads++; return [`Tag ${String(index).padStart(4, "0")}`]; },
+    }));
+    let selectedTags: string[] = ["Absent"];
+    const rerender = () => h.render(
+      <I18nProvider>
+        <TagFilterBar profiles={profiles} selectedTags={selectedTags} tagMode="any"
+          onChangeTags={next => { selectedTags = next; }} onChangeTagMode={() => {}} />
+      </I18nProvider>,
+    );
+
+    await rerender();
+    const readsBeforeOpen = tagReads;
+    const trigger = h.container.querySelector<HappyButtonElement>(".tag-filter-trigger")!;
+    await act(async () => { trigger.click(); });
+    const options = () => h.container.querySelectorAll(".tag-filter-option");
+    console.log(`tag picker benchmark: distinct=${profiles.length}, readsWhileClosed=${readsBeforeOpen}, mounted=${options().length}`);
+    expect(readsBeforeOpen).toBe(0);
+    expect(options().length).toBe(50);
+    expect(options()[0]?.textContent).toContain("Tag 0000");
+    expect(h.container.querySelector(".tag-filter-pagination [role='status']")?.textContent).toBe("1–50 of 652");
+    const next = h.container.querySelector<HappyButtonElement>('.tag-filter-pagination [aria-label="Next page"]')!;
+    await act(async () => { next.click(); });
+    expect(options()[0]?.textContent).toContain("Tag 0050");
+    expect(h.container.querySelector(".tag-filter-pagination [role='status']")?.textContent).toBe("51–100 of 652");
+
+    const input = h.container.querySelector<HappyInputElement>(".tag-filter-search")!;
+    await act(async () => {
+      input.focus();
+      Object.getOwnPropertyDescriptor(h.dom.HTMLInputElement.prototype, "value")!.set!.call(input, "tag 0650");
+      input.dispatchEvent(new h.dom.Event("input", { bubbles: true }));
+      input.dispatchEvent(new h.dom.Event("change", { bubbles: true }));
+      input.dispatchEvent(new h.dom.KeyboardEvent("keyup", { bubbles: true }));
+    });
+    expect(options().length).toBe(1);
+    expect(options()[0]?.textContent).toContain("Tag 0650");
+    const option = options()[0]!.querySelector<HappyInputElement>('input[type="checkbox"]')!;
+    await act(async () => { option.focus(); option.click(); });
+    expect(selectedTags).toEqual(["Absent", "Tag 0650"]);
+    await rerender();
+    expect(h.container.querySelectorAll(".tag-filter-chip").length).toBe(2);
+    await act(async () => { option.dispatchEvent(new h.dom.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+    expect(h.container.querySelector(".tag-filter-popover")).toBeNull();
+    expect(h.dom.document.activeElement).toBe(trigger);
+  });
+
   test("InlineProfileNameEditor activates on double-click / F2 and skips IME composition Enter", async () => {
     const h = await createDomHarness();
     const saved: Array<{ id: string; name: string }> = [];
@@ -256,9 +305,10 @@ describe("TagFilterBar and inline profile editors", () => {
     expect(h.container.querySelector(".profile-inline-rename-input")).toBeTruthy();
   });
 
-  test("QuickProfileNotesEditor opens popover and saves on Ctrl+Enter", async () => {
+  test("QuickProfileNotesEditor opens a viewport dialog, restores focus and saves on Ctrl+Enter", async () => {
     const h = await createDomHarness();
     const saved: Array<{ id: string; notes: string }> = [];
+    const openChanges: boolean[] = [];
 
     await h.render(
       <I18nProvider>
@@ -266,6 +316,7 @@ describe("TagFilterBar and inline profile editors", () => {
           profileId="env_note"
           notes=""
           variant="inline"
+          onOpenChange={open => openChanges.push(open)}
           onSaveNotes={async (id, nextNotes) => {
             saved.push({ id, notes: nextNotes });
           }}
@@ -274,13 +325,30 @@ describe("TagFilterBar and inline profile editors", () => {
     );
 
     const trigger = h.container.querySelector<HappyButtonElement>(".quick-notes-trigger")!;
-    expect(trigger.textContent).toContain("+ Notes");
+    expect(trigger.getAttribute("aria-label")).toBe("Add notes");
+    expect(trigger.getAttribute("aria-haspopup")).toBe("dialog");
 
     await act(async () => {
+      trigger.focus();
       trigger.click();
     });
-    const textarea = h.container.querySelector<HappyTextAreaElement>(".quick-notes-textarea")!;
-    expect(textarea).toBeTruthy();
+    const findTextarea = () => h.dom.document.querySelector<HappyTextAreaElement>('.quick-notes-dialog[role="dialog"] textarea')!;
+    const firstTextarea = findTextarea();
+    expect(h.container.contains(firstTextarea)).toBe(false);
+    expect(h.dom.document.activeElement).toBe(firstTextarea);
+    expect(openChanges).toEqual([true]);
+
+    await act(async () => {
+      firstTextarea.dispatchEvent(new h.dom.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    expect(findTextarea()).toBeNull();
+    expect(h.dom.document.activeElement).toBe(trigger);
+    expect(openChanges).toEqual([true, false]);
+    expect(saved).toEqual([]);
+
+    await act(async () => trigger.click());
+    const textarea = findTextarea();
+    expect(h.dom.document.activeElement).toBe(textarea);
 
     await act(async () => {
       textarea.focus();
@@ -299,5 +367,8 @@ describe("TagFilterBar and inline profile editors", () => {
     });
 
     expect(saved).toEqual([{ id: "env_note", notes: "Account warmup\nDay 3" }]);
+    expect(findTextarea()).toBeNull();
+    expect(h.dom.document.activeElement).toBe(trigger);
+    expect(openChanges).toEqual([true, false, true, false]);
   });
 });

@@ -360,12 +360,12 @@ describe("SSE parser, transport, and useRosterEvents hook", () => {
     const mounted = mountHarness(React.createElement(Harness));
     cleanup = mounted.restore;
 
-    // Wait for first SSE connection to open
+    // Headers alone do not mark the stream healthy.
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 25));
     });
     expect(sseConnections).toBe(1);
-    expect(latest!.transport).toBe("sse");
+    expect(latest!.transport).toBe("reconnecting");
 
     // Server sends connected -> triggers initial roster load
     await act(async () => {
@@ -374,6 +374,7 @@ describe("SSE parser, transport, and useRosterEvents hook", () => {
     });
     expect(profileFetches).toBe(1);
     expect(rosters).toHaveLength(1);
+    expect(latest!.transport).toBe("sse");
 
     // Steady SSE connected: 3s/40ms polling MUST stay silent
     await act(async () => {
@@ -441,7 +442,7 @@ describe("SSE parser, transport, and useRosterEvents hook", () => {
     });
     expect(sseConnections).toBeGreaterThanOrEqual(2);
     expect(lastEventIdsSent[1]).toBe("15");
-    expect(latest!.transport).toBe("sse");
+    expect(latest!.transport).toBe("reconnecting");
 
     // Reconnected stream sends connected -> single calibration fetch
     const fetchesAtReconnect = profileFetches;
@@ -449,7 +450,8 @@ describe("SSE parser, transport, and useRosterEvents hook", () => {
       activeStreams[1]!.pushFrame('id: 15\nevent: connected\ndata: {"workspaceId":"w","protocol":1}\n\n');
       await new Promise((resolve) => setTimeout(resolve, 30));
     });
-    expect(profileFetches).toBe(fetchesAtReconnect + 1);
+    expect(profileFetches).toBeGreaterThanOrEqual(fetchesAtReconnect + 1);
+    expect(latest!.transport).toBe("sse");
   });
 
   test("useRosterEvents stops reconnecting immediately on HTTP 401", async () => {
@@ -485,5 +487,102 @@ describe("SSE parser, transport, and useRosterEvents hook", () => {
     });
     expect(sseAttempts).toBe(1);
     expect(latest!.transport).toBe("polling");
+  });
+
+  test("SSE headers without a handshake time out even if comments arrive", async () => {
+    const stream = makeControllableSseResponse();
+    let rosterReads = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      if (String(input) === "/ui/api/events") return stream.response;
+      rosterReads++;
+      return Response.json({ profiles: [makeProfile("fallback")], groups: [] });
+    }) as typeof fetch;
+    let latest!: UseRosterEventsResult;
+    function Harness() {
+      const bulkOwnerActiveRef = React.useRef(true);
+      latest = useRosterEvents({ enabled: true, sseEnabled: true, intervalMs: 60_000, fallbackPollIntervalMs: 60_000,
+        reconnectBaseDelayMs: 1000, streamConnectTimeoutMs: 55, streamIdleTimeoutMs: 500,
+        bulkOwnerActiveRef, onRoster: () => {} });
+      return null;
+    }
+    cleanup = mountHarness(React.createElement(Harness)).restore;
+    await act(async () => {
+      stream.pushFrame(": keepalive\n\n");
+      await Bun.sleep(125);
+    });
+    expect(stream.isClosed()).toBe(true);
+    expect(latest.transport).toBe("reconnecting");
+    expect(rosterReads).toBe(1);
+    expect(latest.lastRosterResult.current?.profiles[0]?.id).toBe("fallback");
+  });
+
+  test("SSE keepalives reset the watchdog and a silent stream falls back to a roster read", async () => {
+    const stream = makeControllableSseResponse();
+    let rosterReads = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      if (String(input) === "/ui/api/events") return stream.response;
+      return Response.json({ profiles: [makeProfile(`read-${++rosterReads}`)], groups: [] });
+    }) as typeof fetch;
+    let latest!: UseRosterEventsResult;
+    function Harness() {
+      const bulkOwnerActiveRef = React.useRef(true);
+      latest = useRosterEvents({ enabled: true, sseEnabled: true, intervalMs: 60_000, fallbackPollIntervalMs: 60_000,
+        reconnectBaseDelayMs: 1500, streamConnectTimeoutMs: 500, streamIdleTimeoutMs: 160,
+        bulkOwnerActiveRef, onRoster: () => {} });
+      return null;
+    }
+    cleanup = mountHarness(React.createElement(Harness)).restore;
+    await act(async () => {
+      stream.pushFrame('id: 1\nevent: connected\ndata: {"protocol":1}\n\n');
+      for (let i = 0; i < 4; i++) {
+        await Bun.sleep(60);
+        stream.pushFrame(": keepalive\n\n");
+      }
+    });
+    expect(stream.isClosed()).toBe(false);
+    expect(latest.transport).toBe("sse");
+    expect(rosterReads).toBe(1);
+    await act(async () => { await Bun.sleep(225); });
+    expect(stream.isClosed()).toBe(true);
+    expect(latest.transport).toBe("reconnecting");
+    expect(rosterReads).toBe(2);
+  });
+
+  test("roster and lifecycle changes each coalesce a follow-up behind an older in-flight read", async () => {
+    const stream = makeControllableSseResponse();
+    const reads: Array<(reply: Response) => void> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      if (String(input) === "/ui/api/events") return stream.response;
+      return new Promise<Response>(resolve => reads.push(resolve));
+    }) as typeof fetch;
+    let latest!: UseRosterEventsResult;
+    function Harness() {
+      const bulkOwnerActiveRef = React.useRef(true);
+      latest = useRosterEvents({ enabled: true, sseEnabled: true, intervalMs: 60_000,
+        bulkOwnerActiveRef, onRoster: () => {}, onLifecyclePatch: () => {} });
+      return null;
+    }
+    cleanup = mountHarness(React.createElement(Harness)).restore;
+    await act(async () => { stream.pushFrame('id: 1\nevent: connected\ndata: {"protocol":1}\n\n'); });
+    expect(reads).toHaveLength(1);
+    await act(async () => { stream.pushFrame('id: 2\nevent: roster.changed\ndata: {}\n\nid: 3\nevent: roster.changed\ndata: {}\n\n'); });
+    expect(reads).toHaveLength(1);
+    await act(async () => { reads[0]!(Response.json({ profiles: [makeProfile("older")], groups: [] })); });
+    expect(reads).toHaveLength(2);
+    await act(async () => { reads[1]!(Response.json({ profiles: [makeProfile("current")], groups: [] })); });
+    expect(reads).toHaveLength(2);
+    expect(latest.lastRosterResult.current?.profiles[0]?.id).toBe("current");
+
+    await act(async () => { void latest.load(); });
+    expect(reads).toHaveLength(3);
+    await act(async () => {
+      stream.pushFrame('id: 4\nevent: profile.lifecycle\ndata: {"profileId":"current","running":true}\n\n');
+    });
+    expect(latest.lastRosterResult.current?.profiles[0]?.running).toBe(true);
+    expect(reads).toHaveLength(3);
+    await act(async () => { reads[2]!(Response.json({ profiles: [makeProfile("current")], groups: [] })); });
+    expect(reads).toHaveLength(4);
+    await act(async () => { reads[3]!(Response.json({ profiles: [makeProfile("current", { running: true })], groups: [] })); });
+    expect(latest.lastRosterResult.current?.profiles[0]?.running).toBe(true);
   });
 });

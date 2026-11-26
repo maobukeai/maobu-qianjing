@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import { openProfile, type UiProfile } from "./api.ts";
 import { MotionPresence } from "./desktop-motion.tsx";
 import { useTranslation } from "./i18n.tsx";
@@ -14,7 +14,7 @@ import {
   type ResourceMonitorState,
   type WatermarkLevel,
 } from "./resource-monitor-api.ts";
-import { AppIcon as Icon } from "./ui-primitives.tsx";
+import { AppIcon as Icon, useDialogKeyboard } from "./ui-primitives.tsx";
 import "./resource-dashboard.css";
 
 const WATERMARK_LABELS: Record<WatermarkLevel, string> = {
@@ -71,6 +71,12 @@ export function ResourceTopCapsule({
           </span>
         </>
       )}
+      <span className={`resource-capsule-sparks${runningCount > 0 ? " is-active" : ""}`} aria-hidden="true">
+        <span />
+        <span />
+        <span />
+        <span />
+      </span>
     </button>
   );
 }
@@ -145,10 +151,13 @@ export function ResourceDashboardDrawer({
 }: ResourceDashboardDrawerProps) {
   const { t } = useTranslation();
   const titleId = useId();
+  const drawerRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
   const [sortBy, setSortBy] = useState<"rss" | "cpu">("rss");
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  useDialogKeyboard(drawerRef, open, onClose, () => closeRef.current);
 
   const snapshot = monitor.snapshot;
   const profileNames = useMemo(
@@ -286,25 +295,29 @@ export function ResourceDashboardDrawer({
         }}
       >
         <div
+          ref={drawerRef}
           className="resdash-drawer"
           role="dialog"
           aria-modal="true"
           aria-labelledby={titleId}
+          tabIndex={-1}
           data-resource-dashboard
           onClick={(event) => event.stopPropagation()}
         >
           <header className="resdash-head">
             <div>
               <h2 id={titleId}>{t("Real-time resource monitor")}</h2>
-              <p>
+              <p role="status" className="resdash-connection" data-live={monitor.streaming || undefined}>
                 {monitor.streaming
                   ? t("Live telemetry active (pauses when window is hidden)")
-                  : monitor.unsupported
-                    ? t("Live metrics endpoint unavailable on this server")
-                    : t("Snapshot telemetry")}
+                  : monitor.reconnecting
+                    ? t("Resource monitoring interrupted. Reconnecting…")
+                    : monitor.unsupported
+                      ? t("Live metrics endpoint unavailable on this server")
+                      : t("Snapshot telemetry")}
               </p>
             </div>
-            <div className="wsync-actions-row">
+            <div className="resdash-actions">
               <button
                 type="button"
                 className="btn xs ghost"
@@ -314,7 +327,7 @@ export function ResourceDashboardDrawer({
               >
                 <Icon name="refresh" className="sm" />
               </button>
-              <button type="button" className="iconbtn" aria-label={t("Close")} onClick={onClose}>
+              <button ref={closeRef} type="button" className="iconbtn" aria-label={t("Close")} onClick={onClose}>
                 <Icon name="close" className="sm" />
               </button>
             </div>
@@ -324,11 +337,11 @@ export function ResourceDashboardDrawer({
             {error && <div className="tools-alert" role="alert">{error}</div>}
             {notice && <div className="tools-notice" role="status">{notice}</div>}
 
-            {monitor.unsupported ? (
+            {monitor.unsupported && !snapshot ? (
               <div className="tools-empty compact">
                 <p>{t("Process resource telemetry is not enabled on this local service version.")}</p>
               </div>
-            ) : !snapshot ? (
+            ) : !snapshot ? !monitor.reconnecting && (
               <div className="tools-empty compact">
                 <p role="status">{t("Collecting host and browser process metrics…")}</p>
               </div>
@@ -394,7 +407,7 @@ export function ResourceDashboardDrawer({
                       {t("Sort by CPU")}
                     </button>
                   </div>
-                  <div className="wsync-actions-row">
+                  <div className="resdash-actions">
                     <button
                       type="button"
                       className="btn xs"
@@ -459,8 +472,8 @@ export function ResourceDashboardDrawer({
                 )}
 
                 {hibernatedList.length > 0 && (
-                  <section className="wsync-section" aria-label={t("Hibernated environments")}>
-                    <div className="wsync-section-head">
+                  <section className="resdash-sleeping" aria-label={t("Hibernated environments")}>
+                    <div className="resdash-section-head">
                       <h3>{t("Hibernated environments")}</h3>
                       <span>{t("{count} ready to wake", { count: hibernatedList.length })}</span>
                     </div>

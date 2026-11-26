@@ -131,7 +131,7 @@ async function run(scenario: string) {
       assert.equal(metadataDraft(), false);
       assert.deepEqual(patches, [{ name: "Draft name" }, { name: "Draft name" }]);
     } else if (scenario === "archive") {
-      await click("ResearchLocal workspace");
+      await click("Research");
       await click("Archive workspace");
       assert.equal(name().value, "Research", "An inconsistent archive response cannot replace the selected workspace details");
       assert.match(dom.container.querySelector('[role="alert"]')?.textContent ?? "", /Workspace response was incomplete/);

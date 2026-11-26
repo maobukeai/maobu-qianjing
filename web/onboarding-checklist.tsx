@@ -1,5 +1,6 @@
 import * as React from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
+import { notifyAppLockedFromResponse, notifyUnauthorizedResponse, withStandaloneAuthHeaders } from "./api.ts";
 import { useTranslation } from "./i18n.tsx";
 import { AppIcon } from "./ui-primitives.tsx";
 import "./onboarding-checklist.css";
@@ -29,7 +30,7 @@ export interface OnboardingProfileSnapshot {
 export interface OnboardingStepItem {
   id: "create_profile" | "configure_proxy" | "launch_profile" | "explore_tools";
   title: string;
-  description: string;
+  description?: string;
   optional: boolean;
   completed: boolean;
 }
@@ -61,14 +62,12 @@ export function deriveOnboardingSteps(input: OnboardingProgressInput): Onboardin
     {
       id: "create_profile",
       title: "Create or import your first profile",
-      description: "Set up an isolated browser environment or import an existing batch.",
       optional: false,
       completed: hasProfile,
     },
     {
       id: "configure_proxy",
       title: "Configure or test a proxy",
-      description: "Bind a proxy to a profile or add healthy proxies in Proxy Vault.",
       optional: true,
       completed: hasProxy,
     },
@@ -82,7 +81,6 @@ export function deriveOnboardingSteps(input: OnboardingProgressInput): Onboardin
     {
       id: "explore_tools",
       title: "Explore security & productivity tools",
-      description: "Try the system diagnostics box, local app lock, or RPA script templates.",
       optional: true,
       completed: explored,
     },
@@ -97,9 +95,14 @@ export async function persistOnboardingState(state: OnboardingChecklistState): P
   const capRes = await fetch("/ui/api/workspace/capability", {
     credentials: "same-origin",
     cache: "no-store",
-    headers: { Accept: "application/json" },
+    headers: withStandaloneAuthHeaders({ Accept: "application/json" }),
   });
-  const capBody = (await capRes.json().catch(() => null)) as { ok?: boolean; token?: string } | null;
+  const capBody = (await capRes.json().catch(() => null)) as { ok?: boolean; token?: string; error?: string; code?: string } | null;
+  if (capRes.status === 401) {
+    notifyUnauthorizedResponse(401, "/ui/api/workspace/capability", capBody?.error ?? "");
+  } else if (capRes.status === 423) {
+    notifyAppLockedFromResponse(423, capBody);
+  }
   if (!capRes.ok || !capBody?.ok || typeof capBody.token !== "string") {
     throw new Error("Could not acquire workspace capability.");
   }
@@ -107,14 +110,19 @@ export async function persistOnboardingState(state: OnboardingChecklistState): P
     method: "POST",
     credentials: "same-origin",
     cache: "no-store",
-    headers: {
+    headers: withStandaloneAuthHeaders({
       Accept: "application/json",
       "Content-Type": "application/json",
       "X-Maobu-Workspace-Capability": capBody.token,
-    },
+    }),
     body: JSON.stringify({ key: ONBOARDING_STATE_KEY, value: state }),
   });
-  const saveBody = (await saveRes.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+  const saveBody = (await saveRes.json().catch(() => null)) as { ok?: boolean; error?: string; code?: string } | null;
+  if (saveRes.status === 401) {
+    notifyUnauthorizedResponse(401, "/ui/api/workspace/preferences", saveBody?.error ?? "");
+  } else if (saveRes.status === 423) {
+    notifyAppLockedFromResponse(423, saveBody);
+  }
   if (!saveRes.ok || !saveBody?.ok) {
     throw new Error(saveBody?.error ?? "Could not save onboarding state.");
   }
@@ -134,6 +142,7 @@ export interface OnboardingChecklistProps extends OnboardingProgressInput {
   onOpenDiagnostics?: () => void;
   onOpenAppLock?: () => void;
   onOpenScripts?: () => void;
+  onVisitTool?: () => void;
 }
 
 export function OnboardingChecklist({
@@ -153,8 +162,11 @@ export function OnboardingChecklist({
   onOpenDiagnostics,
   onOpenAppLock,
   onOpenScripts,
+  onVisitTool,
 }: OnboardingChecklistProps) {
   const { t } = useTranslation();
+  const titleId = useId();
+  const stepsId = useId();
   const [internalState, setInternalState] = useState<OnboardingChecklistState>(controlledState ?? "open");
   const [localExplored, setLocalExplored] = useState(false);
 
@@ -177,9 +189,15 @@ export function OnboardingChecklist({
   });
   const completedCount = steps.filter((step) => step.completed).length;
   const totalCount = steps.length;
-  const percent = Math.round((completedCount / totalCount) * 100);
   const allCompleted = completedCount === totalCount;
+  const collapsed = currentState === "collapsed";
   const firstProfileId = profiles[0]?.id;
+  const toggleLabel = t(collapsed ? "Expand" : "Collapse");
+  const tools = [
+    { label: "Diagnostics", open: onOpenDiagnostics },
+    { label: "App lock", open: onOpenAppLock },
+    { label: "Scripts", open: onOpenScripts },
+  ];
 
   const updateState = (next: OnboardingChecklistState) => {
     if (controlledState === undefined) {
@@ -194,190 +212,115 @@ export function OnboardingChecklist({
     }
   };
 
-  if (currentState === "collapsed") {
-    return (
-      <section
-        className="onboarding-banner onboarding-collapsed"
-        data-onboarding-checklist="collapsed"
-        aria-label={t("Quick-start checklist")}
-      >
-        <div className="onboarding-head">
-          <span className="onboarding-badge">
-            <AppIcon name="star" className="sm" />
-          </span>
-          <strong className="onboarding-title">{t("Quick-start checklist")}</strong>
-          <span className="onboarding-progress-pill">
-            {t("{completed} / {total} completed", { completed: completedCount, total: totalCount })}
-          </span>
-          <div className="onboarding-head-actions">
-            <button
-              type="button"
-              className="btn xs ghost"
-              onClick={() => updateState("open")}
-            >
-              <AppIcon name="chevronDown" className="sm" />
-              {t("Expand")}
-            </button>
-            <button
-              type="button"
-              className="btn xs ghost"
-              onClick={() => updateState("dismissed")}
-            >
-              <AppIcon name="close" className="sm" />
-              {t("Dismiss")}
-            </button>
-          </div>
-        </div>
-      </section>
-    );
-  }
-
   return (
     <section
-      className="onboarding-banner"
-      data-onboarding-checklist="open"
-      aria-label={t("Quick-start checklist")}
+      className={`onboarding-banner${collapsed ? " onboarding-collapsed" : ""}`}
+      data-onboarding-checklist={currentState}
+      aria-labelledby={titleId}
     >
       <div className="onboarding-head">
-        <span className="onboarding-badge">
-          <AppIcon name={allCompleted ? "check" : "star"} className="sm" />
-        </span>
-        <div className="onboarding-title-group">
-          <strong className="onboarding-title">
-            {allCompleted
-              ? t("Workspace ready — all quick-start steps completed")
-              : t("Get started in 30 seconds")}
-          </strong>
-          <span className="onboarding-subtitle">
-            {t("No popups, no blockers. Steps check off automatically as you work.")}
+        <div className="onboarding-summary">
+          <span className="onboarding-badge" aria-hidden="true">
+            <AppIcon name={allCompleted ? "check" : "star"} className="sm" />
           </span>
+          <div className="onboarding-summary-labels">
+            <h2 id={titleId} className="onboarding-title" tabIndex={-1}>{t("Quick-start checklist")}</h2>
+            <span className="onboarding-progress-pill" role="status" data-onboarding-progress={`${completedCount}/${totalCount}`}>
+              {t("{completed} / {total} completed", { completed: completedCount, total: totalCount })}
+            </span>
+          </div>
         </div>
-        <span className="onboarding-progress-pill" data-onboarding-progress={`${completedCount}/${totalCount}`}>
-          {t("{completed} / {total} completed", { completed: completedCount, total: totalCount })}
-        </span>
         <div className="onboarding-head-actions">
           <button
             type="button"
             className="btn xs ghost"
-            onClick={() => updateState("collapsed")}
+            aria-expanded={!collapsed}
+            aria-controls={stepsId}
+            aria-label={toggleLabel}
+            title={toggleLabel}
+            onClick={() => updateState(collapsed ? "open" : "collapsed")}
           >
-            <AppIcon name="chevronUp" className="sm" />
-            {t("Collapse")}
+            <AppIcon name={collapsed ? "chevronDown" : "chevronUp"} className="sm" />
           </button>
           <button
             type="button"
             className="btn xs ghost"
+            aria-label={t("Dismiss")}
+            title={t("You can reopen this checklist anytime in Settings → General.")}
             onClick={() => updateState("dismissed")}
           >
             <AppIcon name="close" className="sm" />
-            {t("Dismiss")}
           </button>
         </div>
       </div>
 
-      <div className="onboarding-bar" aria-hidden="true">
-        <div className="onboarding-bar-fill" style={{ width: `${percent}%` }} />
-      </div>
-
-      <ol className="onboarding-steps">
-        {steps.map((step, index) => (
-          <li
-            key={step.id}
-            className={`onboarding-step${step.completed ? " done" : ""}`}
-            data-onboarding-step={step.id}
-            data-completed={step.completed ? "true" : "false"}
-          >
-            <span className="onboarding-step-marker" aria-hidden="true">
-              {step.completed ? <AppIcon name="check" className="sm" /> : index + 1}
-            </span>
-            <div className="onboarding-step-body">
-              <div className="onboarding-step-title-row">
-                <strong>{t(step.title)}</strong>
-                {step.optional && <span className="onboarding-optional">{t("Optional")}</span>}
+      <ol id={stepsId} className="onboarding-steps" hidden={collapsed}>
+          {!collapsed && steps.map((step) => (
+            <li
+              key={step.id}
+              className={`onboarding-step${step.completed ? " done" : ""}`}
+              data-onboarding-step={step.id}
+              data-completed={step.completed ? "true" : "false"}
+            >
+              <span className="onboarding-step-marker" aria-hidden="true">
+                {step.completed && <AppIcon name="check" className="sm" />}
+              </span>
+              <div className="onboarding-step-body">
+                <div className="onboarding-step-title-row">
+                  <strong>{t(step.title)}</strong>
+                  {step.completed && <span className="sr-only">{t("Completed")}</span>}
+                  {step.optional && !step.completed && <span className="onboarding-optional">{t("Optional")}</span>}
+                </div>
+                {!step.completed && step.description && <p>{t(step.id === "launch_profile" && !firstProfileId ? "Create or import an environment first." : step.description)}</p>}
               </div>
-              <p>{t(step.description)}</p>
-            </div>
-            <div className="onboarding-step-actions">
-              {step.id === "create_profile" && !step.completed && (
-                <>
-                  {onCreateProfile && (
-                    <button type="button" className="btn xs primary" onClick={onCreateProfile}>
-                      {t("New profile")}
-                    </button>
-                  )}
-                  {onImportProfiles && (
-                    <button type="button" className="btn xs ghost" onClick={onImportProfiles}>
-                      {t("Import")}
-                    </button>
-                  )}
-                </>
-              )}
-              {step.id === "configure_proxy" && !step.completed && onOpenProxies && (
-                <button type="button" className="btn xs" onClick={onOpenProxies}>
-                  {t("Open proxies")}
-                </button>
-              )}
-              {step.id === "launch_profile" && !step.completed && onLaunchFirstProfile && (
-                <button
-                  type="button"
-                  className="btn xs"
-                  disabled={!firstProfileId}
-                  onClick={() => {
-                    if (firstProfileId) onLaunchFirstProfile(firstProfileId);
-                  }}
-                >
-                  <AppIcon name="play" className="sm" />
-                  {t("Launch first profile")}
-                </button>
-              )}
-              {step.id === "explore_tools" && !step.completed && (
-                <>
-                  {onOpenDiagnostics && (
-                    <button
-                      type="button"
-                      className="btn xs ghost"
-                      onClick={() => {
-                        setLocalExplored(true);
-                        onOpenDiagnostics();
-                      }}
-                    >
-                      {t("Diagnostics")}
-                    </button>
-                  )}
-                  {onOpenAppLock && (
-                    <button
-                      type="button"
-                      className="btn xs ghost"
-                      onClick={() => {
-                        setLocalExplored(true);
-                        onOpenAppLock();
-                      }}
-                    >
-                      {t("App lock")}
-                    </button>
-                  )}
-                  {onOpenScripts && (
-                    <button
-                      type="button"
-                      className="btn xs ghost"
-                      onClick={() => {
-                        setLocalExplored(true);
-                        onOpenScripts();
-                      }}
-                    >
-                      {t("Scripts")}
-                    </button>
-                  )}
-                </>
-              )}
-            </div>
-          </li>
-        ))}
+              <div className="onboarding-step-actions">
+                {step.id === "create_profile" && !step.completed && (
+                  <>
+                    {onCreateProfile && (
+                      <button type="button" className="btn xs primary" onClick={onCreateProfile}>
+                        {t("New profile")}
+                      </button>
+                    )}
+                    {onImportProfiles && (
+                      <button type="button" className="btn xs ghost" onClick={onImportProfiles}>
+                        {t("Import")}
+                      </button>
+                    )}
+                  </>
+                )}
+                {step.id === "configure_proxy" && !step.completed && onOpenProxies && (
+                  <button type="button" className="btn xs" onClick={onOpenProxies}>
+                    {t("Open proxies")}
+                  </button>
+                )}
+                {step.id === "launch_profile" && !step.completed && onLaunchFirstProfile && firstProfileId && (
+                  <button
+                    type="button"
+                    className="btn xs"
+                    onClick={() => onLaunchFirstProfile(firstProfileId)}
+                  >
+                    <AppIcon name="play" className="sm" />
+                    {t("Launch first profile")}
+                  </button>
+                )}
+                {step.id === "explore_tools" && !step.completed && tools.map(({ label, open }) => open && (
+                  <button
+                    key={label}
+                    type="button"
+                    className="btn xs"
+                    onClick={() => {
+                      if (onVisitTool) onVisitTool();
+                      else setLocalExplored(true);
+                      open();
+                    }}
+                  >
+                    {t(label)}
+                  </button>
+                ))}
+              </div>
+            </li>
+          ))}
       </ol>
-
-      <div className="onboarding-footer">
-        <span>{t("You can reopen this checklist anytime in Settings → General.")}</span>
-      </div>
     </section>
   );
 }

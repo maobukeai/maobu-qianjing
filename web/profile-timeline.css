@@ -30,18 +30,14 @@
   gap: 4px;
 }
 
-.timeline-clear-confirm {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
+.profile-timeline button[aria-disabled="true"] { opacity: .6; cursor: wait; }
 
 .timeline-proxy-banner {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 8px 10px;
-  border-radius: var(--r-sm);
+  padding: 9px 11px;
+  border-radius: 10px;
   border: 1px solid var(--line);
   background: var(--surface-sunken);
   font-size: var(--t-xs);
@@ -68,13 +64,16 @@
 
 .timeline-error {
   margin: 0;
-  padding: 8px 10px;
-  border-radius: var(--r-sm);
+  padding: 9px 11px;
+  border-radius: 10px;
   border: 1px solid var(--danger-line);
   background: var(--danger-soft);
   color: var(--danger-ink);
   font-size: var(--t-xs);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
 }
+.timeline-error-action { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 7px; }
 
 .timeline-state {
   margin: 12px 0;
@@ -116,34 +115,37 @@
 }
 
 .timeline-dot {
-  width: 8px;
-  height: 8px;
-  margin: 5px 0 0 3px;
+  width: 9px;
+  height: 9px;
+  margin: 5px 0 0 2px;
   border-radius: 50%;
   background: var(--faint);
-  border: 2px solid var(--surface);
+  box-shadow: 0 0 0 3px var(--surface-sunken);
   z-index: 1;
 }
 
 .timeline-item.is-ok .timeline-dot {
   background: var(--success);
+  box-shadow: 0 0 0 3px var(--success-soft);
 }
 
 .timeline-item.is-warn .timeline-dot {
   background: var(--warn);
+  box-shadow: 0 0 0 3px var(--warn-soft);
 }
 
 .timeline-item.is-failed .timeline-dot {
   background: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-soft);
 }
 
 .timeline-item-body {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--line-soft);
+  gap: 5px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed var(--line);
 }
 
 .timeline-item:last-child .timeline-item-body {
@@ -176,6 +178,7 @@
   margin-left: auto;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
 
 .timeline-summary {
@@ -200,6 +203,7 @@
   color: var(--muted);
   font-family: var(--mono);
   font-size: 11px;
+  overflow-wrap: anywhere;
 }
 
 .timeline-recovery-actions {

@@ -261,7 +261,7 @@ describe("ProfileTimeline component", () => {
     await act(async () => {
       clearTrigger.click();
     });
-    const confirmClear = Array.from(h.container.querySelectorAll<HappyButtonElement>("button")).find(
+    const confirmClear = Array.from(h.dom.document.querySelectorAll<HappyButtonElement>('[role="alertdialog"] button')).find(
       (b) => b.textContent?.trim() === "Confirm clear",
     )!;
     await act(async () => {
@@ -269,6 +269,27 @@ describe("ProfileTimeline component", () => {
     });
     await h.flush();
     expect(requests.some((r) => r.path === "/ui/api/profiles/env_tl/timeline" && r.method === "DELETE")).toBe(true);
+    expect(h.container.textContent).toContain("No activity recorded for this environment yet.");
+  });
+
+  test("a malformed timeline leaves a retryable error instead of reporting no activity", async () => {
+    let requests = 0;
+    const h = await createDomHarness(Object.assign(async (input: RequestInfo | URL) => {
+      if (String(input) === "/ui/api/shell-language") return Response.json({ ok: true, language: "en-US" });
+      requests++;
+      return Response.json({ ok: true, profileId: "env_bad", events: requests === 1 ? [{
+        id: 4, profileId: "env_bad", eventType: "profile.created", status: "ok", actor: "user",
+        summary: "Example record", detail: null, recoveryKind: "", createdAt: 1_795_000_200_000,
+      }] : [], hasMore: false, nextBeforeId: null });
+    }, { preconnect: globalThis.fetch.preconnect }));
+    await h.render(<I18nProvider><ProfileTimeline profileId="env_bad" /></I18nProvider>);
+    await h.flush();
+    expect(h.container.querySelector('[role="alert"]')?.textContent).toBe("Unable to load activity timeline.");
+    expect(h.container.textContent).not.toContain("No activity recorded");
+    const retry = h.container.querySelector<HappyButtonElement>(".timeline-error-action button")!;
+    await act(async () => { retry.click(); });
+    await h.flush();
+    expect(requests).toBe(2);
     expect(h.container.textContent).toContain("No activity recorded for this environment yet.");
   });
 });

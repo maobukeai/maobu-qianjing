@@ -1,9 +1,17 @@
-.profile-file-update-panel { margin: 12px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden; }
-.profile-file-update-panel > header { padding: 14px 16px 9px; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.profile-file-update-panel { margin: 12px 0; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); overflow: hidden; }
+.profile-file-update-panel > header { padding: 12px 14px; display: flex; align-items: center; gap: 9px; }
+.profile-file-update-result-heading { flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; }
+.profile-file-update-result-icon { display: grid; flex: 0 0 32px; height: 32px; place-items: center; border-radius: var(--r-md); background: var(--accent-soft); color: var(--accent-ink); }
+.profile-file-update-panel.is-saved .profile-file-update-result-icon { background: var(--success-soft); color: var(--success-ink); }
+.profile-file-update-panel:is(.is-partial, .is-unconfirmed) .profile-file-update-result-icon { background: var(--warn-soft); color: var(--warn-ink); }
+.profile-file-update-panel.is-rejected .profile-file-update-result-icon { background: var(--danger-soft); color: var(--danger-ink); }
 .profile-file-update-panel h2, .profile-file-update-dialog h2 { margin: 0; font-size: 13px; line-height: 1.7; font-weight: 600; color: var(--ink-soft); }
-.profile-file-update-panel header p { margin: 4px 0 0; color: var(--muted); font-size: 10.5px; line-height: 1.7; }
+.profile-file-update-panel header p { margin: 2px 0 0; color: var(--muted); font-size: 10.5px; line-height: 1.5; }
 .profile-file-update-controls, .profile-file-update-pager { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.profile-file-update-controls { flex-shrink: 0; margin-inline-start: auto; }
+.profile-file-update-toggle { color: var(--accent-ink); }
 .profile-file-update-note, .profile-file-update-warning, .profile-file-update-progress, .profile-file-update-privacy, .profile-file-update-compact { margin: 8px 16px; font-size: 11px; line-height: 1.8; color: var(--muted); overflow-wrap: anywhere; }
+.profile-file-update-compact { margin-block: 0 12px; padding: 7px 10px; border-radius: var(--r-md); background: var(--surface-sunken); color: var(--ink-soft); }
 .profile-file-update-warning { color: var(--danger-ink); }
 .profile-file-update-privacy { color: var(--faint); font-size: 10.5px; }
 .profile-file-update-progress { display: flex; align-items: center; gap: 8px; }
@@ -11,9 +19,9 @@
 :root[data-desktop-motion="full"] .profile-file-update-progress i { animation: profile-file-update-pulse 1.2s ease-in-out infinite; }
 @keyframes profile-file-update-pulse { 50% { opacity: .4; transform: scale(.8); } }
 .profile-file-update-counts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 0 16px; margin: 12px 0; font-size: 11px; }
-.profile-file-update-counts > div { padding: 9px 11px; background: var(--surface-sunken); border-radius: 6px; }
-.profile-file-update-counts dt { color: var(--muted); font-size: 10.5px; line-height: 1.7; }
-.profile-file-update-counts dd { margin: 3px 0 0; color: var(--ink-soft); font-variant-numeric: tabular-nums; font-size: 15px; }
+.profile-file-update-counts > div { min-width: 0; padding: 9px 11px; background: var(--surface-sunken); border-radius: var(--r-md); }
+.profile-file-update-counts dt { color: var(--muted); font-size: 10.5px; line-height: 1.6; overflow-wrap: anywhere; }
+.profile-file-update-counts dd { margin: 3px 0 0; color: var(--ink); font-variant-numeric: tabular-nums; font-size: 16px; font-weight: 650; }
 .profile-file-update-items { margin: 12px 16px; padding: 0 10px; border: 1px solid var(--line-soft); border-radius: 6px; }
 .profile-file-update-items > summary, .profile-file-update-history summary, .profile-file-update-guide > summary { color: var(--accent-ink); cursor: pointer; font-size: 11px; line-height: 1.8; padding: 8px 0; }
 .profile-file-update-items > p { font-size: 10.5px; color: var(--muted); line-height: 1.8; margin: 0 0 8px; }
@@ -30,26 +38,65 @@
 .profile-file-update-history > ol > li { border-top: 1px solid var(--line-soft); }
 .profile-file-update-panel > footer { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 16px; border-top: 1px solid var(--line-soft); }
 .profile-file-update-panel > footer p { flex: 1 1 240px; color: var(--muted); font-size: 10.5px; line-height: 1.8; margin: 0; }
-.profile-file-update-dialog { width: min(700px, calc(100vw - 32px)); }
-.profile-file-update-dialog .modal-head { display: flex; gap: 10px; align-items: center; }
-.profile-file-update-dialog .modal-head h2 { flex: 1; }
-.profile-file-update-dialog .modal-body > .profile-file-update-note, .profile-file-update-dialog .modal-body > .profile-file-update-warning { margin-inline: 0; }
-.profile-file-update-match { padding: 12px 14px; border: 1px solid var(--accent-line); border-radius: 7px; background: var(--accent-soft); }
-.profile-file-update-match strong { color: var(--accent-ink); font-size: 12px; font-weight: 550; }
-.profile-file-update-match p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.8; }
-.profile-file-update-guide { margin: 10px 0; }
-.profile-file-update-guide ol { margin: 2px 0 12px; padding-left: 20px; font-size: 11px; color: var(--muted); line-height: 1.9; }
-.profile-file-update-export { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; font-size: 10.5px; color: var(--muted); margin: 8px 0 12px; }
-.profile-file-update-export > button:last-child { margin-left: auto; }
-.profile-file-update-drop { width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; min-height: 104px; border: 1px dashed var(--line); background: var(--surface-sunken); color: var(--ink-soft); border-radius: 8px; cursor: pointer; padding: 18px 12px; font: inherit; }
-.profile-file-update-drop strong { font-size: 12px; font-weight: 500; }
-.profile-file-update-drop span { font-size: 10.5px; color: var(--muted); }
-.profile-file-update-drop.over { border-color: var(--accent); background: var(--accent-soft); }
+.modal.profile-file-update-dialog { max-width: 556px; border-radius: 18px; }
+.profile-file-update-dialog:focus { outline: none; }
+.profile-file-update-dialog .modal-head { gap: 11px; padding: 15px 22px; }
+.profile-file-update-dialog .modal-head h2 { flex: 1; min-width: 0; color: var(--ink); font-size: 17px; overflow-wrap: anywhere; }
+.profile-file-update-dialog .modal-close { width: 34px; height: 34px; }
+.profile-file-update-dialog .modal-body { gap: 12px; padding: 16px 22px 18px; }
+.profile-file-update-dialog .modal-foot { flex-wrap: wrap; justify-content: flex-end; padding: 10px 22px 12px; background: var(--surface); }
+.profile-file-update-dialog .modal-foot .btn { min-height: 36px; white-space: normal; }
+.profile-file-update-dialog .modal-body > .profile-file-update-note, .profile-file-update-dialog .modal-body > .profile-file-update-warning { margin: 0; }
+.profile-file-update-dialog .modal-body > .profile-file-update-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--danger-line);
+  border-radius: var(--r-md);
+  background: var(--danger-soft);
+}
+.profile-file-update-warning > .icon { flex: 0 0 auto; margin-top: 3px; }
+.profile-file-update-dialog .profile-file-update-panel { margin: 0; }
+.profile-file-update-rules { display: grid; gap: 5px; padding: 9px 10px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-sunken); }
+.profile-file-update-rules > p { display: flex; align-items: flex-start; gap: 7px; margin: 0; font-size: var(--t-xs); line-height: 1.55; }
+.profile-file-update-rules .icon { flex: 0 0 auto; margin-top: 2px; }
+.profile-file-update-match { color: var(--ink-soft); }
+.profile-file-update-impact { color: var(--warn-ink); }
+.profile-file-update-guide > summary { width: fit-content; padding: 5px 0; color: var(--accent-ink); }
+.profile-file-update-guide ul { margin: 2px 0 5px; padding-inline-start: 17px; font-size: var(--t-xs); color: var(--muted); line-height: 1.6; }
+.profile-file-update-guide li + li { margin-top: 3px; }
+.profile-file-update-export, .profile-file-update-formats-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; font-size: var(--t-xs); color: var(--muted); }
+.profile-file-update-export { justify-content: space-between; gap: 4px 8px; padding-top: 7px; border-top: 1px solid var(--line); }
+.profile-file-update-export .btn { color: var(--accent-ink); white-space: normal; }
+.profile-file-update-formats-row > span { margin-inline-end: 4px; }
+.profile-file-update-drop { width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 134px; border: 1px dashed var(--accent-line); background: color-mix(in srgb, var(--surface) 97%, var(--accent)); color: var(--ink); border-radius: var(--r-xl); padding: 14px; font: inherit; }
+.profile-file-update-input[data-selected] { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 7px; padding: 8px; border: 1px solid var(--accent-line); border-radius: var(--r-lg); background: var(--surface-sunken); }
+.profile-file-update-input[data-selected] .profile-file-update-drop { width: auto; max-width: 120px; min-height: 32px; padding: 4px 8px; border-style: solid; border-radius: var(--r-md); background: var(--surface); color: var(--accent-ink); }
+.profile-file-update-input[data-selected] .profile-file-update-drop strong { font-size: var(--t-xs); font-weight: 550; text-wrap: balance; }
+.profile-file-update-drop > * { pointer-events: none; }
+.profile-file-update-drop strong { font-size: var(--t-sm); font-weight: 650; }
+.profile-file-update-formats { font-size: var(--t-xs); color: var(--muted); }
+.profile-file-update-input .profile-file-update-drop:hover:not(:disabled), .profile-file-update-input.over { border-color: var(--accent); background: var(--accent-soft); }
+.profile-file-update-input.over:not([data-selected]) .profile-file-update-drop { border-color: var(--accent); background: var(--accent-soft); }
 .profile-file-update-drop:disabled { cursor: wait; opacity: .6; }
-.profile-file-update-selection { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--line-soft); border-radius: 7px; padding: 9px 12px; margin-top: 10px; }
-.profile-file-update-selection > div { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.profile-file-update-selection strong { font-size: 11px; color: var(--ink-soft); font-weight: 500; }
-.profile-file-update-selection span { font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
-@media (max-width: 600px) { .profile-file-update-panel > header { flex-direction: column; } .profile-file-update-controls { width: 100%; justify-content: space-between; } .profile-file-update-counts { grid-template-columns: minmax(0, 1fr); } .profile-file-update-selection { align-items: flex-start; } }
+.profile-file-update-selection { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; min-width: 0; gap: 8px; }
+.profile-file-update-selection strong, .profile-file-update-selection div > span { display: block; overflow-wrap: anywhere; }
+.profile-file-update-selection strong { font-size: var(--t-xs); color: var(--ink); font-weight: 550; }
+.profile-file-update-selection div > span { font-size: var(--t-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
+.profile-file-update-remove { width: 32px; height: 32px; }
+@media (max-width: 440px) {
+  .modal-backdrop.profile-file-update-backdrop { padding: 12px; }
+  .modal.profile-file-update-dialog { max-height: calc(100vh - 24px); }
+  .profile-file-update-dialog :is(.modal-head, .modal-body, .modal-foot) { padding-inline: 14px; }
+  .profile-file-update-panel > header, .profile-file-update-panel > footer { padding-inline: 11px; }
+  .profile-file-update-panel > header { flex-wrap: wrap; gap: 6px; }
+  .profile-file-update-result-heading { flex-basis: 114px; }
+  .profile-file-update-input[data-selected] { grid-template-columns: minmax(0, 1fr) auto; }
+  .profile-file-update-input[data-selected] .profile-file-update-selection { grid-column: 1 / -1; }
+  .profile-file-update-input[data-selected] .profile-file-update-drop { justify-self: start; }
+  .profile-file-update-counts { gap: 6px; padding-inline: 10px; }
+  .profile-file-update-counts > div { padding: 7px; }
+}
 @media (pointer: coarse) { .profile-file-update-dialog .btn, .profile-file-update-panel .btn, .profile-file-update-items summary, .profile-file-update-history summary { min-height: 40px; } }
 @media (prefers-reduced-motion: reduce) { .profile-file-update-progress i { animation: none !important; } }

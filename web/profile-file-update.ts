@@ -98,6 +98,12 @@ export function createProfileFileUpdate(options: ProfileFileUpdateOptions = {}) 
   let published = snapshot();
   function publish() { published = snapshot(); for (const listener of [...listeners]) { try { listener(); } catch { /* View errors cannot interrupt an issued write. */ } } return published; }
   function block(message: string) { blockedReason = message; publish(); return null; }
+  function clearInput() { file = null; input = null; inputWorkspace = null; }
+  function rejectInput() {
+    clearInput();
+    block(INVALID_FILE);
+    return false;
+  }
   return {
     getSnapshot: () => published,
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
@@ -106,16 +112,16 @@ export function createProfileFileUpdate(options: ProfileFileUpdateOptions = {}) 
       if (busy) return false;
       try {
         const format = /\.([a-z0-9]+)$/i.exec(value.name)?.[1]?.toLowerCase();
-        if (!(value instanceof File) || !count(value.size) || value.size === 0 || !format || !Object.hasOwn(MIME, format)) { block(INVALID_FILE); return false; }
+        if (!(value instanceof File) || !count(value.size) || value.size === 0 || !format || !Object.hasOwn(MIME, format)) return rejectInput();
         const workspace = options.workspaceId?.() ?? null;
         // Blob/File bytes are immutable. Capture a new File with fixed public metadata and never expose it in state.
         const captured = new File([value.slice(0, value.size)], `profile-update.${format}`, { type: MIME[format as ProfileFileUpdateFormat], lastModified: 0 });
         input = Object.freeze({ revision: ++revision, format: format as ProfileFileUpdateFormat, bytes: captured.size, matchBy: "file-id" });
         file = captured; inputWorkspace = workspace; blockedReason = null; publish(); return true;
-      } catch { block(INVALID_FILE); return false; }
+      } catch { return rejectInput(); }
     },
-    clearFile() { if (busy) return false; file = null; input = null; inputWorkspace = null; blockedReason = null; publish(); return true; },
-    rejectSelection() { if (!busy) block(INVALID_FILE); },
+    clearFile() { if (busy) return false; clearInput(); blockedReason = null; publish(); return true; },
+    rejectSelection() { if (!busy) rejectInput(); },
     submit(): Promise<ProfileFileUpdateSnapshot | null> {
       if (busy) return Promise.resolve(null);
       if (!file || !input) return Promise.resolve(block(INVALID_FILE));

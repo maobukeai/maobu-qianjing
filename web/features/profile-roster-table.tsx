@@ -1,4 +1,4 @@
-import { type CSSProperties, type FocusEvent, type KeyboardEvent, type MutableRefObject, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type FocusEvent, type KeyboardEvent, type MouseEvent, type MutableRefObject, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RosterScope } from "../../profile-view-state.ts";
 import { ROSTER_DENSITY_ROW_HEIGHT, type RosterDensity } from "../../roster-density-state.ts";
 import type { DiagnoseReport, UiProfile } from "../api.ts";
@@ -20,6 +20,7 @@ import { ProfileActionMenu } from "../profile-action-menu.tsx";
 import { AppIcon } from "../ui-primitives.tsx";
 import { StatusDot } from "./profile-form-helpers.tsx";
 import { ProfileLaunchFailureRow, ProfileRosterRow, type ProfileRosterRowHandlers } from "./profile-roster-row.tsx";
+import "./roster-empty-state.css";
 
 const Icon = AppIcon;
 
@@ -190,6 +191,7 @@ export function ProfileRosterTable({
   tbodyRef,
 }: ProfileRosterTableProps) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const tableHeaderRef = useRef<HTMLTableSectionElement | null>(null);
   const focusFrameRef = useRef<number | null>(null);
   const effectiveDesktopMotion = useEffectiveDesktopMotion();
   const flipMotionAllowed = motionAllowed ?? (effectiveDesktopMotion === "full");
@@ -249,6 +251,7 @@ export function ProfileRosterTable({
   const virtual = useVirtualList({
     items: flatItems,
     scrollContainerRef,
+    stickyHeaderRef: tableHeaderRef,
     getKey: getFlatItemKey,
     estimateHeight: estimateItemHeight,
     threshold: virtualThreshold,
@@ -352,7 +355,21 @@ export function ProfileRosterTable({
             'td.chk input[type="checkbox"]:not(:disabled), .profile-name-button:not(:disabled), .profile-group-toggle:not(:disabled), button:not(:disabled)',
           );
         }
-        control?.focus({ preventScroll: true });
+        if (!control) return;
+        if (container.clientHeight > 0) {
+          const scrollportTop = container.getBoundingClientRect().top + container.clientTop;
+          const visibleTop = scrollportTop + (tableHeaderRef.current?.offsetHeight ?? 0);
+          const visibleBottom = scrollportTop + container.clientHeight;
+          const rowBounds = targetRow.getBoundingClientRect();
+          // A newly mounted row can have a different height than the virtual estimate.
+          const bounds = rowBounds.height > visibleBottom - visibleTop ? control.getBoundingClientRect() : rowBounds;
+          const delta = bounds.top < visibleTop ? bounds.top - visibleTop : Math.max(0, bounds.bottom - visibleBottom);
+          if (delta !== 0) {
+            container.scrollTop += delta;
+            virtual.onScroll();
+          }
+        }
+        control.focus({ preventScroll: true });
       };
       if (typeof requestAnimationFrame === "function") {
         focusFrameRef.current = requestAnimationFrame(focusTargetRow);
@@ -380,9 +397,59 @@ export function ProfileRosterTable({
     );
   };
 
+  const showWorkspaceEmpty = loaded && profilesCount === 0 && flatItems.length === 0;
+  const showEmptyState = loaded && filteredCount === 0 && !showWorkspaceEmpty;
+  const showStandaloneEmpty = showEmptyState && flatItems.length === 0;
+  const showEmptyRow = showEmptyState && !showStandaloneEmpty;
+  const usesVirtualRowIndices = loaded && virtual.virtualized;
+  const virtualRowCount = flatItems.length + 1 + Number(showEmptyRow);
+  const firstProfilePrompt = (
+    <>
+      <b role="status">{t("No profiles yet")}</b>
+      <div className="empty-actions">
+        <button type="button" className="btn primary" onClick={onOpenCreate}><Icon name="plus" className="sm" />{t("New Profile")}</button>
+        <button type="button" className="btn" onClick={onOpenBulk}><Icon name="fileImport" className="sm" />{t("Import profiles")}</button>
+      </div>
+    </>
+  );
+  const applyEmptyAction = (event: MouseEvent<HTMLButtonElement>, action: () => void) => {
+    if (event.detail === 0) {
+      scrollContainerRef.current?.closest(".profiles-workspace")
+        ?.querySelector<HTMLInputElement>(".heading-search input")?.focus();
+    }
+    action();
+  };
+  const browseAll = (event: MouseEvent<HTMLButtonElement>) => applyEmptyAction(event, () => onChooseRosterScope("all"));
+  const emptyContent = showEmptyState && (
+    <>
+      <span className="glyph"><Icon name={rosterScope === "attention" && !hasRosterRefinements ? "check" : "search"} /></span>
+      {profilesCount === 0 ? firstProfilePrompt : missingRosterGroup ? (
+        <>
+          <b role="status">{t("This group is unavailable")}</b>
+          <p>{t("The group “{group}” may have been renamed or removed. Your saved view is kept.", { group: missingRosterGroup })}</p>
+          <button type="button" className="btn" onClick={(event) => applyEmptyAction(event, onSelectAllGroups)}>{t("Search all groups")}</button>
+        </>
+      ) : !hasRosterRefinements && rosterScope !== "all" ? (
+        <>
+          <b role="status">{t(rosterScope === "favorites" ? "Your favorites start here" : rosterScope === "recent" ? "No recent launches yet" : "Nothing needs attention")}</b>
+          <p>{t(rosterScope === "favorites" ? "Use the star beside an environment name to keep it close at hand." : rosterScope === "recent" ? "Environments launched on this computer in the last seven days appear here." : "No environments currently have invalid proxy settings, changes awaiting restart or imported mobile configurations.")}</p>
+          <button type="button" className="btn" onClick={browseAll}>{t("Browse all environments")}</button>
+        </>
+      ) : (
+        <>
+          <b role="status">{t("No matches")}</b>
+          <div className="empty-actions">
+            <button type="button" className="btn" onClick={(event) => applyEmptyAction(event, onClearRosterRefinements)}>{t("Clear filters")}</button>
+            {rosterScope !== "all" && <button type="button" className="btn ghost" onClick={browseAll}>{t("Browse all environments")}</button>}
+          </div>
+        </>
+      )}
+    </>
+  );
+
   return (
     <>
-      <div className={`profile-browser${hasDetails ? " has-details" : ""}`}>
+      <div className={`profile-browser${hasDetails ? " has-details" : ""}`} data-roster-empty={showWorkspaceEmpty ? "workspace" : showStandaloneEmpty ? "results" : undefined}>
         <div
           ref={scrollContainerRef}
           className={`tablewrap${tableScrolled ? " scrolled" : ""}`}
@@ -398,9 +465,16 @@ export function ProfileRosterTable({
           <span id="profile-range-selection-hint" className="sr-only">
             {t("Hold Shift while changing a checkbox to select or clear a visible range on this page. Shift+Space also works.")}
           </span>
-          <table className="profile-table" aria-busy={!loaded} aria-rowcount={flatItems.length} style={{ minWidth: tableMinWidth }}>
-            <thead>
-              <tr>
+          {showWorkspaceEmpty && (
+            <div className="emptystate workspace-empty">
+              <span className="glyph"><Icon name="profiles" /></span>
+              {firstProfilePrompt}
+            </div>
+          )}
+          {showStandaloneEmpty && <div className="emptystate roster-empty-results">{emptyContent}</div>}
+          <table className="profile-table" hidden={showWorkspaceEmpty || showStandaloneEmpty} aria-busy={!loaded} aria-rowcount={usesVirtualRowIndices ? virtualRowCount : undefined} style={{ minWidth: tableMinWidth }}>
+            <thead ref={tableHeaderRef}>
+              <tr aria-rowindex={usesVirtualRowIndices ? 1 : undefined}>
                 <th className="chk" style={{ width: CHECKBOX_COLUMN_WIDTH }} title={t("Shift-click to select a range")}>
                   <input
                     type="checkbox"
@@ -428,7 +502,7 @@ export function ProfileRosterTable({
                   );
                 }
                 const item = flatItems[block.index]!;
-                const ariaRowIndex = block.index + 1;
+                const ariaRowIndex = usesVirtualRowIndices ? block.index + 2 : undefined;
                 if (item.kind === "group-header") {
                   const { section, collapsed } = item;
                   const groupName = section.name ? folderLabel(section.name) : t("Ungrouped");
@@ -553,44 +627,10 @@ export function ProfileRosterTable({
                   />
                 );
               })}
-              {loaded && filteredCount === 0 && (
-                <tr>
+              {showEmptyRow && (
+                <tr aria-rowindex={usesVirtualRowIndices ? virtualRowCount : undefined}>
                   <td colSpan={visibleColumnCount} className="empty">
-                    <div className="emptystate">
-                      <span className="glyph"><Icon name={rosterScope === "attention" && !hasRosterRefinements ? "check" : "profiles"} /></span>
-                      {profilesCount === 0 ? (
-                        <>
-                          <b>{t("No profiles yet")}</b>
-                          <p>{t("Create a profile or import a readable export from another browser.")}</p>
-                          <p>{t("When you start an environment for the first time, the app downloads its browser engine if needed.")}</p>
-                          <div className="empty-actions">
-                            <button className="btn primary" onClick={onOpenCreate}><Icon name="plus" className="sm" />{t("New Profile")}</button>
-                            <button className="btn" onClick={onOpenBulk}><Icon name="fileImport" className="sm" />{t("Import profiles")}</button>
-                          </div>
-                        </>
-                      ) : missingRosterGroup ? (
-                        <>
-                          <b>{t("This group is unavailable")}</b>
-                          <p>{t("The group “{group}” may have been renamed or removed. Your saved view is kept.", { group: missingRosterGroup })}</p>
-                          <button className="btn" onClick={onSelectAllGroups}>{t("Search all groups")}</button>
-                        </>
-                      ) : !hasRosterRefinements && rosterScope !== "all" ? (
-                        <>
-                          <b>{t(rosterScope === "favorites" ? "Your favorites start here" : rosterScope === "recent" ? "No recent launches yet" : "Nothing needs attention")}</b>
-                          <p>{t(rosterScope === "favorites" ? "Use the star beside an environment name to keep it close at hand." : rosterScope === "recent" ? "Environments launched on this computer in the last seven days appear here." : "No environments currently have invalid proxy settings, changes awaiting restart or imported mobile configurations.")}</p>
-                          <button className="btn" onClick={() => onChooseRosterScope("all")}>{t("Browse all environments")}</button>
-                        </>
-                      ) : (
-                        <>
-                          <b>{t("No matches")}</b>
-                          <p>{t("No profiles match the current filters.")}</p>
-                          <div className="empty-actions">
-                            <button className="btn" onClick={onClearRosterRefinements}>{t("Clear filters")}</button>
-                            {rosterScope !== "all" && <button className="btn ghost" onClick={() => onChooseRosterScope("all")}>{t("Browse all environments")}</button>}
-                          </div>
-                        </>
-                      )}
-                    </div>
+                    <div className="emptystate">{emptyContent}</div>
                   </td>
                 </tr>
               )}
@@ -614,7 +654,7 @@ export function ProfileRosterTable({
             <Icon name={showDiag ? "chevronDown" : "chevronRight"} className="sm" />
           </span>
         )}
-        <span className="pager">
+        <span className="pager" hidden={loaded && filteredCount === 0}>
           <button
             type="button"
             className="iconbtn"

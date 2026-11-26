@@ -1,8 +1,11 @@
 .profile-move-feedback { margin-bottom: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-sunken); color: var(--ink-soft); }
 .profile-move-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.profile-move-heading h2 { margin: 0; font-size: 13px; font-weight: 550; }
+.profile-move-heading > div { min-width: 0; }
+.profile-move-heading h2 { margin: 0; font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
 .profile-move-heading p { margin: 5px 0 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
-.profile-move-heading > .iconbtn { flex: 0 0 auto; width: 28px; height: 28px; font-size: 18px; }
+.profile-move-heading > .iconbtn { flex: 0 0 auto; width: 32px; height: 32px; }
+.profile-move-result-anchor { scroll-margin-top: 8px; }
+.profile-move-result-anchor:focus-visible { outline-offset: -2px; border-radius: var(--r-lg); }
 .profile-move-progress, .profile-move-note, .profile-move-error { margin: 10px 0 0; font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
 .profile-move-error, .profile-move-note.is-error { color: var(--danger-ink); }
 .profile-move-counts { display: flex; flex-wrap: wrap; gap: 5px 18px; margin-top: 10px; font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -21,5 +24,11 @@
 .profile-move-details code { overflow-wrap: anywhere; }
 .profile-move-details span { color: var(--muted); }
 .profile-move-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.profile-move-actions > .btn { max-width: 100%; min-width: 0; height: auto; min-height: 32px; white-space: normal; overflow-wrap: anywhere; text-align: start; }
+@media (max-width: 520px) {
+  .profile-move-feedback { padding: 10px 11px; }
+  .profile-move-heading { gap: 6px; }
+  .profile-move-note, .profile-move-counts { margin-top: 6px; }
+}
 @media (pointer: coarse) { .profile-move-heading > .iconbtn, .profile-move-actions > button { min-width: 44px; min-height: 44px; } }
 @media (pointer: coarse) { .profile-move-confirmation > summary { min-height: 44px; padding-block: 12px; } }

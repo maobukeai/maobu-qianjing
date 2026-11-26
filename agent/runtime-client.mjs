@@ -10,7 +10,7 @@ import NodeWebSocket from "ws";
 export const RUNTIME_PROTOCOL = "aliasmode-runtime-v1";
 export const AGENT_PROTOCOL = "aliasmode-agent-v1";
 export const AGENT_PATH = "/api/agent/v1/connect";
-export const RUNTIME_VERSION = process.env.ALIASMODE_APP_VERSION || "0.20.0";
+export const RUNTIME_VERSION = process.env.ALIASMODE_APP_VERSION || "3.0.0";
 const STARTUP_WAIT_MS = 180_000;
 const MAX_HEALTH_BYTES = 16 * 1024;
 const MAX_HEALTH_HEADERS = 4 * 1024;

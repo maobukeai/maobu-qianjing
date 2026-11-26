@@ -1,4 +1,5 @@
 import { isSafeProfileId } from "../profile-id.ts";
+import { notifyAppLockedFromResponse, notifyUnauthorizedResponse, withStandaloneAuthHeaders } from "./api.ts";
 
 /** Local display metadata and safe creation settings; never a copied identity. */
 export interface ReusableProfileSettings {
@@ -43,17 +44,30 @@ function profile(value: unknown, requestedId: string): value is ReusableProfileS
 export async function fetchReusableProfile(id: string, signal?: AbortSignal): Promise<ReusableProfileSettings> {
   if (!isSafeProfileId(id)) throw new ProfileReuseRequestError(MESSAGES["invalid-id"]!, "invalid-id", 400);
   if (signal?.aborted) throw new DOMException("Request cancelled.", "AbortError");
+  const path = `/ui/api/profiles/${encodeURIComponent(id)}/reuse`;
   let response: Response;
   try {
-    response = await fetch(`/ui/api/profiles/${encodeURIComponent(id)}/reuse`, { method: "GET", credentials: "same-origin", cache: "no-store", headers: { Accept: "application/json" }, signal });
+    response = await fetch(path, { method: "GET", credentials: "same-origin", cache: "no-store", headers: withStandaloneAuthHeaders({ Accept: "application/json" }), signal });
   } catch (error) {
     if (signal?.aborted) throw error;
     throw new Error("Could not reach the profile configuration service. Try again.");
   }
   let result: unknown;
   try { result = await response.json(); }
-  catch (error) { if (signal?.aborted) throw error; throw new Error(INVALID_RESPONSE); }
-  if (!object(result)) throw new Error(INVALID_RESPONSE);
+  catch (error) {
+    if (signal?.aborted) throw error;
+    notifyUnauthorizedResponse(response.status, path);
+    throw new Error(INVALID_RESPONSE);
+  }
+  if (!object(result)) {
+    notifyUnauthorizedResponse(response.status, path);
+    throw new Error(INVALID_RESPONSE);
+  }
+  if (response.status === 401) {
+    notifyUnauthorizedResponse(401, path, typeof result.error === "string" ? result.error : "");
+  } else if (response.status === 423) {
+    notifyAppLockedFromResponse(423, result);
+  }
   if (!response.ok || result.ok !== true) {
     const code = typeof result.code === "string" && Object.hasOwn(MESSAGES, result.code) ? result.code : response.status === 404 ? "not-found" : "request-failed";
     throw new ProfileReuseRequestError(MESSAGES[code] ?? "The source configuration could not be loaded.", code, response.status);

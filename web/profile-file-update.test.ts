@@ -96,9 +96,17 @@ test("workspace changes and rejected acquisition send nothing and retain the sel
   allow = true; expect((await task.submit())?.latest?.status).toBe("saved"); expect(sends).toBe(1);
 });
 
-test("empty and unsupported files are refused locally, and reentrant subscribers cannot start a duplicate request", async () => {
+test("an invalid replacement clears the earlier selection, and reentrant subscribers cannot start a duplicate request", async () => {
   let sends = 0; const response = deferred<Response>(), task = createProfileFileUpdate({ post: async () => { sends++; return response.promise; } });
-  expect(task.selectFile(new File([], "empty.csv"))).toBe(false); expect(task.selectFile(file("content", "PRIVATE_ACCOUNT.exe"))).toBe(false); expect(sends).toBe(0);
+  expect(task.selectFile(file())).toBe(true);
+  expect(task.selectFile(new File([], "empty.csv"))).toBe(false);
+  expect(task.getSnapshot()).toMatchObject({ input: null, canSubmit: false });
+  expect(await task.submit()).toBeNull();
+  expect(task.selectFile(file())).toBe(true);
+  task.rejectSelection();
+  expect(task.getSnapshot()).toMatchObject({ input: null, canSubmit: false });
+  expect(task.selectFile(file("content", "PRIVATE_ACCOUNT.exe"))).toBe(false);
+  expect(sends).toBe(0);
   expect(task.selectFile(file())).toBe(true); const remove = task.subscribe(() => { if (task.getSnapshot().phase === "sending") void task.submit(); });
   const pending = task.submit(); await new Promise(resolve => setTimeout(resolve, 0)); expect(sends).toBe(1); response.resolve(success()); await pending; remove();
   expect(task.clearFile()).toBe(true); expect(task.getSnapshot().latest?.status).toBe("saved"); expect(task.dismissResults()).toBe(true); expect(task.getSnapshot().receipts).toEqual([]);

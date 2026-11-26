@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { aggregateProfileTagCounts, inProfileScope, matchesTagFilter, parseFavoriteProfiles, parseSavedProfileViews, serializeFavoriteProfiles, serializeSavedProfileViews, sameProfileView, type SavedProfileView } from "./profile-view-state.ts";
+import { aggregateProfileTagCounts, createTagFilterMatcher, inProfileScope, matchesTagFilter, parseFavoriteProfiles, parseSavedProfileViews, serializeFavoriteProfiles, serializeSavedProfileViews, sameProfileView, type SavedProfileView } from "./profile-view-state.ts";
 
 const saved: SavedProfileView = { id: `view_${"a".repeat(32)}`, name: "Overseas · running", filters: { scope: "favorites", query: "Research", group: "海外业务", status: "running", sort: { key: "name", dir: -1 }, hiddenColumns: ["no", "tags"], pageSize: 50 } };
 test("a saved view round-trips its actual filter and table layout without copying profile data", () => {
@@ -62,4 +62,13 @@ test("saved views accept optional multi-tag OR/AND filters while remaining backw
     ["vip", 2],
     ["us", 1],
   ]);
+});
+
+test("a compiled tag filter counts matching identities per profile and ignores duplicate spellings", () => {
+  const matches = createTagFilterMatcher([" Café ", "CAFE\u0301", " VIP ", " "], "all");
+  expect(matches(["cafe\u0301", "CAFÉ"])).toBe(false);
+  expect(matches(["vip", "Cafe\u0301", "VIP"])).toBe(true);
+  expect(matches(["café", "café", "other"])).toBe(false);
+  expect(matches(undefined)).toBe(false);
+  expect(createTagFilterMatcher([" "], "all")(undefined)).toBe(true);
 });

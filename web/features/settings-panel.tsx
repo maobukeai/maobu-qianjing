@@ -1,12 +1,11 @@
 import type { RefObject } from "react";
-import { useState } from "react";
-import { fetchLogs, type RuntimeDownload } from "../api";
+import { useId, useRef, useState } from "react";
+import type { RuntimeDownload } from "../api";
 import type { AppLockStatus } from "../app-lock-api.ts";
-import { AppLockSettings } from "../app-lock-settings.tsx";
+import { AppLockSettings, type AppLockSettingsProps } from "../app-lock-settings.tsx";
 import { DiagnosticsBox } from "../diagnostics-box.tsx";
 import {
   persistOnboardingState,
-  type OnboardingChecklistState,
 } from "../onboarding-checklist.tsx";
 import type { FingerprintReport } from "../settings-api";
 import type { DesktopMotionPreference } from "../desktop-motion";
@@ -28,6 +27,39 @@ export interface SettingsTabItem {
   label: string;
 }
 
+const SETTINGS_TAB_ICONS: Record<SettingsTabItem["key"], IconName> = {
+  account: "sliders",
+  network: "globe",
+  fingerprints: "shieldCheck",
+  models: "cpu",
+  integrations: "plug",
+  sync: "sync",
+  updates: "import",
+  advanced: "terminal",
+};
+
+const SETTINGS_TAB_GROUPS: Record<SettingsTabItem["key"], string> = {
+  account: "Preferences & security",
+  network: "Preferences & security",
+  fingerprints: "Preferences & security",
+  models: "AI & integrations",
+  integrations: "AI & integrations",
+  sync: "Data & system",
+  updates: "Data & system",
+  advanced: "Data & system",
+};
+
+export function focusSettingsSection(panel: HTMLElement | null, key: SettingsTabItem["key"]) {
+  const shell = panel?.closest(".settings-workspace") ?? panel?.parentElement;
+  if (!shell || shell.closest("[hidden], [inert]")) return;
+  const picker = shell.querySelector<HTMLSelectElement>("[data-settings-section-picker]");
+  if (picker?.value === key && picker.getBoundingClientRect().width > 0) {
+    picker.focus({ preventScroll: true });
+    return;
+  }
+  shell.querySelector<HTMLButtonElement>(`[data-settings-tab="${key}"][aria-selected="true"]`)?.focus({ preventScroll: true });
+}
+
 export interface ThemeOptionItem {
   key: ThemeChoice;
   label: string;
@@ -40,7 +72,6 @@ export interface SettingsPanelProps {
   tabs: readonly SettingsTabItem[];
   activeTab: SettingsTabItem["key"];
   onTabChange: (tab: SettingsTabItem["key"]) => void;
-  updateTabRef: RefObject<HTMLButtonElement | null>;
   settingsPanelRef: RefObject<HTMLDivElement | null>;
   signedUpdateStartup: ReturnType<typeof useSignedUpdateStartup>;
   onProfilesImported: () => Promise<void>;
@@ -73,9 +104,7 @@ export interface SettingsPanelProps {
   onRetryViewPreferences: () => void;
   motionPreference: DesktopMotionPreference;
   onMotionPreferenceChange: (pref: DesktopMotionPreference) => void;
-  logErr: string | null;
-  onLogErr: (err: string | null) => void;
-  onLogView: (view: { file: string; content: string } | null) => void;
+  onOpenLogs: () => void;
   logDir?: string;
   modeErr: string | null;
   onDone: () => void;
@@ -83,9 +112,8 @@ export interface SettingsPanelProps {
   appLockAvailable?: boolean;
   /** Optional Wave 4 app lock state & change hook (self-managed if omitted). */
   appLockStatus?: AppLockStatus | null;
-  onAppLockStatusChange?: (status: AppLockStatus) => void;
-  /** Optional Wave 4 onboarding checklist state & reopen handler. */
-  onboardingState?: OnboardingChecklistState;
+  beginAppLockSettingsChange?: AppLockSettingsProps["beginStatusChange"];
+  /** Opens the checklist on the profile page when supplied by the app. */
   onReopenOnboarding?: () => void;
   /** Optional callback when diagnostics finishes running. */
   onDiagnosticsRun?: () => void;
@@ -97,7 +125,6 @@ export function SettingsPanel({
   tabs,
   activeTab,
   onTabChange,
-  updateTabRef,
   settingsPanelRef,
   signedUpdateStartup,
   onProfilesImported,
@@ -130,28 +157,29 @@ export function SettingsPanel({
   onRetryViewPreferences,
   motionPreference,
   onMotionPreferenceChange,
-  logErr,
-  onLogErr,
-  onLogView,
+  onOpenLogs,
   logDir,
   modeErr,
   onDone,
   appLockAvailable = true,
   appLockStatus,
-  onAppLockStatusChange,
-  onboardingState,
+  beginAppLockSettingsChange,
   onReopenOnboarding,
   onDiagnosticsRun,
 }: SettingsPanelProps) {
   const { t } = useTranslation();
+  const themeLabel = useId();
   const [onboardingReopenBusy, setOnboardingReopenBusy] = useState(false);
   const [onboardingReopenNotice, setOnboardingReopenNotice] = useState<string | null>(null);
+  const appLockVisible = visible && activeTab === "account" && appLockAvailable;
+  const lockWorkspaceId = workspaceId ?? null;
+  const appLockVisited = useRef<string | null | undefined>(undefined);
+  if (appLockVisible) appLockVisited.current = lockWorkspaceId;
 
   const handleReopenOnboarding = async () => {
     setOnboardingReopenNotice(null);
     if (onReopenOnboarding) {
       onReopenOnboarding();
-      setOnboardingReopenNotice(t("Quick-start checklist reopened on the profiles page."));
       return;
     }
     setOnboardingReopenBusy(true);
@@ -167,6 +195,8 @@ export function SettingsPanel({
     }
   };
 
+  const activeTabLabel = tabs.find((tab) => tab.key === activeTab)?.label ?? "Settings";
+
   return (
     <div
       key={`settings-${workspaceId ?? "loading"}`}
@@ -176,58 +206,105 @@ export function SettingsPanel({
       style={!visible ? { display: "none" } : undefined}
     >
       <div className="page-heading">
-        <div>
+        <div className="settings-heading-title">
           <h1>{t("Settings")}</h1>
-          <p className="page-subtitle">
-            {t("Make this workspace feel like yours.")}
-          </p>
+          <span className="settings-heading-pill is-accent">
+            {currentWorkspaceName} · {t("{count} environments", { count: profileCount })}
+          </span>
+          <span className="settings-heading-pill">{t(activeTabLabel)}</span>
         </div>
+        <button className="btn" type="button" onClick={onDone}>
+          <AppIcon name="chevronLeft" className="sm" />
+          <span>{t("Back to environments")}</span>
+        </button>
       </div>
-      <div className="tabs" role="tablist" aria-label={t("Settings sections")}>
-        {tabs.map((tab, index) => (
-          <button
-            key={tab.key}
-            ref={tab.key === "updates" ? updateTabRef : undefined}
-            id={`settings-tab-${tab.key}`}
-            data-settings-tab={tab.key}
-            type="button"
-            role="tab"
-            aria-controls="settings-panel"
-            aria-selected={activeTab === tab.key}
-            tabIndex={activeTab === tab.key ? 0 : -1}
-            className={`tab${activeTab === tab.key ? " active" : ""}`}
-            onClick={() => onTabChange(tab.key)}
-            onKeyDown={(event) => {
-              const next =
-                event.key === "ArrowRight"
-                  ? (index + 1) % tabs.length
-                  : event.key === "ArrowLeft"
-                    ? (index + tabs.length - 1) % tabs.length
-                    : event.key === "Home"
-                      ? 0
-                      : event.key === "End"
-                        ? tabs.length - 1
-                        : -1;
-              if (next < 0) return;
-              event.preventDefault();
-              const key = tabs[next]!.key;
-              onTabChange(key);
-              event.currentTarget.parentElement
-                ?.querySelector<HTMLButtonElement>(`[data-settings-tab="${key}"]`)
-                ?.focus();
-            }}
+      <div className="settings-section-control">
+        <select
+          className="select"
+          data-settings-section-picker
+          aria-label={t("Settings sections")}
+          aria-controls="settings-panel"
+          value={activeTab}
+          onChange={(event) => {
+            const next = tabs.find((tab) => tab.key === event.target.value);
+            if (next) onTabChange(next.key);
+          }}
+        >
+          {tabs.map((tab) => <option key={tab.key} value={tab.key}>{t(tab.label)}</option>)}
+        </select>
+      </div>
+      <div className="settings-shell-body">
+        <aside className="settings-nav-rail">
+          <div
+            className="tabs settings-nav-tabs"
+            role="tablist"
+            aria-orientation="vertical"
+            aria-label={t("Settings sections")}
+            data-sliding-axis="vertical"
           >
-            {t(tab.label)}
-          </button>
-        ))}
-      </div>
-      <div
-        ref={settingsPanelRef}
-        className="settingspage"
-        id="settings-panel"
-        role="tabpanel"
-        aria-labelledby={`settings-tab-${activeTab}`}
-      >
+            {tabs.flatMap((tab, index) => {
+              const group = SETTINGS_TAB_GROUPS[tab.key];
+              const prevGroup = index > 0 ? SETTINGS_TAB_GROUPS[tabs[index - 1]!.key] : null;
+              const nodes = [];
+              if (group && group !== prevGroup) {
+                nodes.push(
+                  <span
+                    key={`group-${group}`}
+                    className="settings-nav-group"
+                    aria-hidden="true"
+                    role="presentation"
+                  >
+                    {t(group)}
+                  </span>,
+                );
+              }
+              nodes.push(
+                <button
+                  key={tab.key}
+                  id={`settings-tab-${tab.key}`}
+                  data-settings-tab={tab.key}
+                  type="button"
+                  role="tab"
+                  aria-controls="settings-panel"
+                  aria-selected={activeTab === tab.key}
+                  tabIndex={activeTab === tab.key ? 0 : -1}
+                  className={`tab${activeTab === tab.key ? " active" : ""}`}
+                  onClick={() => onTabChange(tab.key)}
+                  onKeyDown={(event) => {
+                    const next =
+                      event.key === "ArrowRight" || event.key === "ArrowDown"
+                        ? (index + 1) % tabs.length
+                        : event.key === "ArrowLeft" || event.key === "ArrowUp"
+                          ? (index + tabs.length - 1) % tabs.length
+                          : event.key === "Home"
+                            ? 0
+                            : event.key === "End"
+                              ? tabs.length - 1
+                              : -1;
+                    if (next < 0) return;
+                    event.preventDefault();
+                    const key = tabs[next]!.key;
+                    onTabChange(key);
+                    event.currentTarget.parentElement
+                      ?.querySelector<HTMLButtonElement>(`[data-settings-tab="${key}"]`)
+                      ?.focus();
+                  }}
+                >
+                  <AppIcon name={SETTINGS_TAB_ICONS[tab.key]} className="sm" />
+                  <span>{t(tab.label)}</span>
+                </button>,
+              );
+              return nodes;
+            })}
+          </div>
+        </aside>
+        <div
+          ref={settingsPanelRef}
+          className="settingspage"
+          id="settings-panel"
+          role="tabpanel"
+          aria-labelledby={`settings-tab-${activeTab}`}
+        >
         <FeatureSettingsPanel
           sessionKey={workspaceId ?? null}
           tab={
@@ -252,34 +329,16 @@ export function SettingsPanel({
         />
         {activeTab === "account" && (
           <>
-            <h2 className="sect-title">{t("Local workspace")}</h2>
-            <div className="identity-card">
-              <span className="identity-avatar">
-                <AppIcon name="user" className="lg" />
-              </span>
-              <span className="identity-lines">
-                <b>{currentWorkspaceName}</b>
-                <span>
-                  {t("No account · profile data stays on this computer")}
-                </span>
-              </span>
-              <span className="chip">{t("Local")}</span>
-            </div>
-            <section className="settings-card">
-              <header>
-                <AppIcon name="user" className="sm" />
-                <h2>{t("Local data")}</h2>
-              </header>
-              <div className="card-body">
-                <div className="settings-row">
-                  <span>{t("Mode")}</span>
-                  <strong>{t("Local · no account")}</strong>
-                </div>
-                <div className="settings-row">
-                  <span>{t("Profiles stored")}</span>
-                  <strong>{profileCount}</strong>
-                </div>
+            <section className="settings-context" aria-labelledby="settings-workspace-name">
+              <div className="settings-context-icon"><AppIcon name="laptop" className="lg" /></div>
+              <div className="settings-context-name">
+                <p>{t("Local workspace")}</p>
+                <h2 id="settings-workspace-name">{currentWorkspaceName}</h2>
               </div>
+              <dl className="settings-context-count">
+                <dt>{t("Profiles stored")}</dt>
+                <dd>{profileCount}</dd>
+              </dl>
             </section>
 
             <section className="settings-card">
@@ -288,171 +347,130 @@ export function SettingsPanel({
                 <h2>{t("Appearance")}</h2>
               </header>
               <div className="card-body">
-                <p>{t("System follows your operating system setting.")}</p>
-                <label className="fld">
-                  <span>{t("language.label")}</span>
-                  <select
-                    className="select"
-                    value={language}
-                    onChange={(event) => {
-                      void onLanguageChange(event.target.value).catch((error) =>
-                        onLanguageError(
-                          error instanceof Error ? error.message : String(error),
-                        ),
-                      );
-                    }}
-                  >
-                    {availableLanguages().map((lang) => (
-                      <option key={lang} value={lang}>
-                        {languageNativeName(lang)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <div
-                  className="segmented"
-                  role="radiogroup"
-                  aria-label={t("Theme")}
-                >
-                  {themes.map((option) => (
-                    <button
-                      key={option.key}
-                      type="button"
-                      role="radio"
-                      aria-checked={theme === option.key}
-                      className={theme === option.key ? "active" : ""}
-                      onClick={() => onThemeChange(option.key)}
+                <div className="settings-appearance">
+                  <label className="fld settings-appearance-row">
+                    <span>{t("language.label")}</span>
+                    <select
+                      className="select"
+                      value={language}
+                      onChange={(event) => {
+                        void onLanguageChange(event.target.value).catch((error) =>
+                          onLanguageError(
+                            error instanceof Error ? error.message : String(error),
+                          ),
+                        );
+                      }}
                     >
-                      <AppIcon name={option.icon} className="sm" />
-                      {t(option.label)}
-                    </button>
-                  ))}
+                      {availableLanguages().map((lang) => (
+                        <option key={lang} value={lang}>
+                          {languageNativeName(lang)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="settings-appearance-row settings-theme">
+                    <span id={themeLabel}>{t("Theme")}</span>
+                    <div className="settings-theme-options" role="radiogroup" aria-labelledby={themeLabel}>
+                      {themes.map((option) => (
+                        <label key={option.key}>
+                          <input
+                            className="sr-only"
+                            type="radio"
+                            name={`${themeLabel}-theme`}
+                            value={option.key}
+                            checked={theme === option.key}
+                            onChange={() => onThemeChange(option.key)}
+                          />
+                          <AppIcon name={option.icon} className="sm" />
+                          <span>{t(option.label)}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <select className="select settings-compact-choice" aria-labelledby={themeLabel} value={theme} onChange={(event) => {
+                      const next = themes.find((option) => option.key === event.target.value);
+                      if (next) onThemeChange(next.key);
+                    }}>
+                      {themes.map((option) => <option key={option.key} value={option.key}>{t(option.label)}</option>)}
+                    </select>
+                  </div>
+                  <div className="settings-display-density">
+                    <RosterDensityControl
+                      variant="settings"
+                      value={rosterDensity}
+                      onChange={(value) => void onRosterDensityChange(value)}
+                      disabled={!viewPreferencesReady}
+                      busy={viewPreferenceBusy}
+                    />
+                    {!viewPreferencesReady && (
+                      <p
+                        className={viewPreferenceReadError ? "roster-view-error" : "roster-view-note"}
+                        role={viewPreferenceReadError ? "alert" : "status"}
+                      >
+                        {viewPreferenceReadError ? t(viewPreferenceReadError) : t("Loading workspace display preferences…")}
+                        {viewPreferenceReadError && (
+                          <button
+                            type="button"
+                            className="btn xs ghost"
+                            disabled={viewPreferencesLoading}
+                            onClick={onRetryViewPreferences}
+                          >
+                            {t("Retry display settings")}
+                          </button>
+                        )}
+                      </p>
+                    )}
+                  </div>
+                  <DesktopMotionSettings value={motionPreference} onChange={onMotionPreferenceChange} />
                 </div>
               </div>
             </section>
           </>
         )}
-
-        {activeTab === "account" && (
-          <section className="settings-card">
-            <div className="card-body">
-              <RosterDensityControl
-                variant="settings"
-                value={rosterDensity}
-                onChange={(value) => void onRosterDensityChange(value)}
-                disabled={!viewPreferencesReady}
-                busy={viewPreferenceBusy}
-              />
-              {!viewPreferencesReady && (
-                <p
-                  className={
-                    viewPreferenceReadError
-                      ? "roster-view-error"
-                      : "roster-view-note"
-                  }
-                  role={viewPreferenceReadError ? "alert" : "status"}
-                >
-                  {viewPreferenceReadError
-                    ? t(viewPreferenceReadError)
-                    : t("Loading workspace display preferences…")}
-                  {viewPreferenceReadError && (
-                    <button
-                      type="button"
-                      className="btn xs ghost"
-                      disabled={viewPreferencesLoading}
-                      onClick={onRetryViewPreferences}
-                    >
-                      {t("Retry display settings")}
-                    </button>
-                  )}
-                </p>
-              )}
-            </div>
-          </section>
+        {appLockAvailable && appLockVisited.current === lockWorkspaceId && (
+          <div className="feature-settings-section" hidden={!appLockVisible} inert={!appLockVisible || undefined}>
+            <AppLockSettings
+              active={appLockVisible}
+              status={appLockStatus}
+              beginStatusChange={beginAppLockSettingsChange}
+            />
+          </div>
         )}
         {activeTab === "account" && (
-          <>
-            <DesktopMotionSettings
-              value={motionPreference}
-              onChange={onMotionPreferenceChange}
-            />
-            {appLockAvailable && (
-              <AppLockSettings
-                status={appLockStatus}
-                onStatusChange={onAppLockStatusChange}
-              />
-            )}
-            <section className="settings-card" data-onboarding-settings-card="true">
-              <header>
-                <AppIcon name="star" className="sm" />
-                <h2>{t("Quick-start checklist")}</h2>
-              </header>
-              <div className="card-body">
-                <p>
-                  {t(
-                    "Show the non-blocking 4-step getting started banner above your profile roster.",
-                  )}
-                </p>
-                <button
-                  type="button"
-                  className="btn"
-                  disabled={onboardingReopenBusy || onboardingState === "open"}
-                  onClick={() => void handleReopenOnboarding()}
-                >
-                  <AppIcon name="star" className="sm" />
-                  {onboardingState === "open"
-                    ? t("Checklist is currently visible")
-                    : t("Reopen quick-start checklist")}
-                </button>
-                {onboardingReopenNotice && (
-                  <p className="cardnote" role="status">
-                    {onboardingReopenNotice}
-                  </p>
-                )}
-              </div>
-            </section>
-          </>
+          <div className="settings-checklist" data-onboarding-settings-card="true">
+            <button
+              type="button"
+              className="settings-checklist-action"
+              disabled={onboardingReopenBusy}
+              onClick={() => void handleReopenOnboarding()}
+            >
+              <AppIcon name="star" className="sm" />
+              <span>{t("Reopen quick-start checklist")}</span>
+              <AppIcon name="chevronRight" className="sm" />
+            </button>
+            {onboardingReopenNotice && <p role="status">{onboardingReopenNotice}</p>}
+          </div>
         )}
         {activeTab === "advanced" && (
           <>
-            <h2 className="sect-title">{t("Diagnostics")}</h2>
-            <DiagnosticsBox onDiagnosticsRun={onDiagnosticsRun ? () => onDiagnosticsRun() : undefined} />
+            <DiagnosticsBox onDiagnosticsRun={onDiagnosticsRun} />
             <section className="settings-card">
               <header>
                 <AppIcon name="logs" className="sm" />
                 <h2>{t("Logs")}</h2>
               </header>
               <div className="card-body">
-                <p>
-                  {t(
-                    "The detailed log records launches, proxy setup and browser lifecycle for this installation.",
-                  )}
-                </p>
                 <button
                   type="button"
                   className="btn"
-                  onClick={() => {
-                    onLogErr(null);
-                    fetchLogs()
-                      .then(onLogView)
-                      .catch((e) =>
-                        onLogErr(e instanceof Error ? e.message : String(e)),
-                      );
-                  }}
+                  onClick={onOpenLogs}
                 >
                   <AppIcon name="logs" className="sm" />
                   {t("View detailed logs")}
                 </button>
-                {logErr && (
-                  <p className="cardnote">
-                    {t("Logs")}: {t(logErr)}
-                  </p>
-                )}
-                {logDir && (
-                  <p className="cardnote">
-                    {t("File")}: {logDir}
-                  </p>
-                )}
+                {logDir && <details className="settings-log-location">
+                  <summary>{t("Log folder")}</summary>
+                  <p className="settings-log-path"><code>{logDir}</code></p>
+                </details>}
               </div>
             </section>
           </>
@@ -463,13 +481,8 @@ export function SettingsPanel({
             {t(modeErr)}
           </div>
         )}
+        </div>
       </div>
-      <footer className="pagefoot">
-        <span className="spacer" />
-        <button className="btn primary" type="button" onClick={onDone}>
-          {t("Done")}
-        </button>
-      </footer>
     </div>
   );
 }
