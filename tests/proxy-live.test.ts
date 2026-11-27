@@ -2,11 +2,11 @@ import { expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { buildNewProfile } from "../create.ts";
-import { Launcher } from "../launcher.ts";
-import { diagnoseOverCDP } from "../diagnose.ts";
-import { ProfileStore } from "../store.ts";
-import type { ProxyType } from "../types.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { Launcher } from "../src/launcher.ts";
+import { diagnoseOverCDP } from "../src/diagnose.ts";
+import { ProfileStore } from "../src/store.ts";
+import type { ProxyType } from "../src/types.ts";
 
 const binary = process.env.ALIASMODE_LIVE_BROWSER?.trim() ?? "";
 const binarySha256 = process.env.ALIASMODE_LIVE_BROWSER_SHA256?.trim() ?? "";

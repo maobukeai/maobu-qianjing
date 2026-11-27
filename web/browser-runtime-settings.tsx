@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
-import type { RuntimeCacheState, RuntimeInventoryId, RuntimeInventorySource } from "../runtime-inventory.ts";
-import type { RuntimeDownload } from "../runtime-download.ts";
+import type { RuntimeCacheState, RuntimeInventoryId, RuntimeInventorySource } from "../src/runtime-inventory.ts";
+import type { RuntimeDownload } from "../src/runtime-download.ts";
 import { useTranslation } from "./i18n.tsx";
 import { runtimeDownloadPercent } from "./runtime-download-progress.tsx";
 import { fetchBrowserRuntimeInventory, inspectBrowserRuntimeCache, removeBrowserRuntimeCache, type BrowserRuntimeInventory } from "./settings-api.ts";

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
-import { buildNewProfile } from "../create.ts";
-import { ProfileStore } from "../store.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { ProfileStore } from "../src/store.ts";
 import { ProxyRefreshCooldown, ProxyRefreshError } from "../src/proxy-vault/proxy-refresh-url.ts";
 import {
   handleProxyVaultRoutes,

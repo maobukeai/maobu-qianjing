@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
-import { claimedScreenArea, fitWindow, watchWindowFit } from "../window-fit.ts";
-import { buildNewProfile } from "../create.ts";
+import { claimedScreenArea, fitWindow, watchWindowFit } from "../src/window-fit.ts";
+import { buildNewProfile } from "../src/create.ts";
 
 const AREA = { left: 0, top: 0, width: 1440, height: 852 };
 

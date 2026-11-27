@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { analyzeProxyList, matchingProxyChecks, matchingProxyReplacements, proxyCheckOverview, proxyRosterSignature, proxyScopeOverview } from "./proxy-workflow.ts";
-import type { ProxyCheckView } from "../proxy-tools-types.ts";
+import type { ProxyCheckView } from "../src/proxy-tools-types.ts";
 
 const profiles = [
   { id: "a", group: "Sales", running: true, proxy: "proxy.example:8080" },

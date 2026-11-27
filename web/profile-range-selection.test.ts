@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { profileGroupCollapsed, profileGroupSections } from "../profile-group-state.ts";
+import { profileGroupCollapsed, profileGroupSections } from "../src/profile-group-state.ts";
 import { changeProfileRangeSelection, reconcileProfileSelectionAnchor, type ProfileRangeSelectionInput } from "./profile-range-selection.ts";
 
 function change(overrides: Partial<ProfileRangeSelectionInput> = {}) {

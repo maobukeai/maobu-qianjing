@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { fetchExtensions, fetchGroupExtensionDefaults, previewGroupExtensionDefaults, setGroupExtensionDefaults } from "./api.ts";
-import type { ExtensionGroupReview } from "../extension-group-revision.ts";
+import type { ExtensionGroupReview } from "../src/extension-group-revision.ts";
 
 const original = globalThis.fetch;
 afterEach(() => { globalThis.fetch = original; });

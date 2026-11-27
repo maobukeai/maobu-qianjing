@@ -4,7 +4,7 @@ import {
   LifecycleAdmissionError,
   classifyLifecycleRequest,
   dispatchWithLifecycleAdmission,
-} from "../lifecycle-admission.ts";
+} from "../src/lifecycle-admission.ts";
 
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;

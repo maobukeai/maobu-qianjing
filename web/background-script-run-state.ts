@@ -1,5 +1,5 @@
 import type { ScriptArtifactRecord, ScriptStepRecord } from "../contracts/local.ts";
-import type { ScriptRun, ScriptRunProfile } from "../scripts.ts";
+import type { ScriptRun, ScriptRunProfile } from "../src/scripts.ts";
 import { redactBulkTaskMessage } from "./bulk-profile-task.ts";
 
 export interface BackgroundScriptRunSummary {

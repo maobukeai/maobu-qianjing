@@ -3,15 +3,15 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseUpdateFile, serializeCsv, serializeAdsTxt, serializeXlsxRows, rowsToUpdates, XLSX_COLUMNS, parseExport, recordToProfile } from "../parse.ts";
-import { FP_BLOCK_KEYS } from "../fingerprint-attestation.ts";
-import { deriveFingerprintFlags, deterministicSeed } from "../fingerprint.ts";
-import { writeXlsx, readXlsx } from "../xlsx.ts";
-import { handleUiRequest } from "../ui.ts";
-import type { Launcher } from "../launcher.ts";
+import { parseUpdateFile, serializeCsv, serializeAdsTxt, serializeXlsxRows, rowsToUpdates, XLSX_COLUMNS, parseExport, recordToProfile } from "../src/parse.ts";
+import { FP_BLOCK_KEYS } from "../src/fingerprint-attestation.ts";
+import { deriveFingerprintFlags, deterministicSeed } from "../src/fingerprint.ts";
+import { writeXlsx, readXlsx } from "../src/xlsx.ts";
+import { handleUiRequest } from "../src/ui.ts";
+import type { Launcher } from "../src/launcher.ts";
 const NEWLINE = String.fromCharCode(10);
-import { ProfileStore } from "../store.ts";
-import type { Profile } from "../types.ts";
+import { ProfileStore } from "../src/store.ts";
+import type { Profile } from "../src/types.ts";
 function profile(over: Partial<Profile> = {}): Profile {
     return {
         id: "p1", accId: "", name: "n", group: "", platform: "", username: "", password: "",

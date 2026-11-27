@@ -1,7 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { checkProxy, fetchProfileEdit, ProxyCheckError, type ProxyCheckResult, type UiProfile } from "./api.ts";
 import { fetchFingerprintReports, measureFingerprint, type FingerprintReport } from "./settings-api.ts";
-import { presentFingerprintCheck, type FingerprintCheckStatus, type FingerprintTranslator } from "../fingerprint-check-presentation.ts";
+import { presentFingerprintCheck, type FingerprintCheckStatus, type FingerprintTranslator } from "../src/fingerprint-check-presentation.ts";
 import { parsePastedProxy } from "./proxy-input.ts";
 import { proxyCheckNote } from "./proxy-check-presentation.ts";
 import { ProfileTimeline } from "./profile-timeline.tsx";

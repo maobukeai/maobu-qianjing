@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { act } from "react";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import type { HTMLButtonElement as DomButton, HTMLInputElement as DomInput, HTMLSelectElement as DomSelect } from "happy-dom";
-import { getBrowserRuntimeInventory } from "../runtime-inventory.ts";
+import { getBrowserRuntimeInventory } from "../src/runtime-inventory.ts";
 import { I18nProvider } from "../web/i18n.tsx";
 import { FeatureSettingsPanel } from "../web/settings-center.tsx";
 import { createWebDomHarness } from "./web-dom.ts";

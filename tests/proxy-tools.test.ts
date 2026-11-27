@@ -1,9 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
-import { ProfileStore } from "../store.ts";
-import { buildNewProfile } from "../create.ts";
-import { handleUiRequest, type UiRuntimeOptions } from "../ui.ts";
-import type { Launcher } from "../launcher.ts";
-import type { ProxyPreview, ProxyProgressEvent } from "../proxy-tools-types.ts";
+import { ProfileStore } from "../src/store.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { handleUiRequest, type UiRuntimeOptions } from "../src/ui.ts";
+import type { Launcher } from "../src/launcher.ts";
+import type { ProxyPreview, ProxyProgressEvent } from "../src/proxy-tools-types.ts";
 
 const stores: ProfileStore[] = [];
 afterEach(() => { for (const store of stores.splice(0)) store.close(); });

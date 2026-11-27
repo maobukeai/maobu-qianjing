@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, linkSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { ASSISTANT_MODEL_CREDENTIALS_FILE, AssistantModelServices, AssistantServicesError } from "../assistant-model-services.ts";
-import { createLocalSecretProtector } from "../dpapi.ts";
+import { ASSISTANT_MODEL_CREDENTIALS_FILE, AssistantModelServices, AssistantServicesError } from "../src/assistant-model-services.ts";
+import { createLocalSecretProtector } from "../src/dpapi.ts";
 
 const parent = realpathSync(tmpdir()), roots: string[] = [];
 const remote = { name: "Work API", provider: "openai-compatible" as const, endpoint: "https://api.example.com/v1", model: "example-chat" };

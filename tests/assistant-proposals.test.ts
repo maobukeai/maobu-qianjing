@@ -18,11 +18,11 @@ import {
   type AssistantProposalAction,
   type AssistantProxyVaultLookup,
   type ProposalStreamEvent,
-} from "../assistant-proposals.ts";
-import { buildNewProfile } from "../create.ts";
+} from "../src/assistant-proposals.ts";
+import { buildNewProfile } from "../src/create.ts";
 import { ProxyVaultStore } from "../src/proxy-vault/proxy-vault-store.ts";
-import { ProfileStore } from "../store.ts";
-import type { Profile } from "../types.ts";
+import { ProfileStore } from "../src/store.ts";
+import type { Profile } from "../src/types.ts";
 
 const stores: ProfileStore[] = [];
 afterEach(() => {

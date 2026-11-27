@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { buildNewProfile } from "../create.ts";
-import { createProfilePackage, openProfilePackage, ProfilePackagePreviewStore, sealProfilePackage, type ProfilePackagePreview } from "../profile-package.ts";
-import { listProfileEvents } from "../profile-timeline.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { createProfilePackage, openProfilePackage, ProfilePackagePreviewStore, sealProfilePackage, type ProfilePackagePreview } from "../src/profile-package.ts";
+import { listProfileEvents } from "../src/profile-timeline.ts";
 import { handleProfilePackageRoutes } from "../src/ui/profile-package-routes.ts";
 import { handleProfileTimelineRoutes } from "../src/ui/profile-timeline-routes.ts";
 import { handleProfilesUiRoutes } from "../src/ui/profiles-routes.ts";
-import { ProfileStore } from "../store.ts";
+import { ProfileStore } from "../src/store.ts";
 
 const stores: ProfileStore[] = [];
 afterEach(() => {

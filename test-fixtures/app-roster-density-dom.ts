@@ -3,7 +3,7 @@ import { mock } from "bun:test";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import type { HTMLElement, HTMLButtonElement, HTMLSelectElement } from "happy-dom";
-import { ROSTER_DENSITY_KEY } from "../roster-density-state.ts";
+import { ROSTER_DENSITY_KEY } from "../src/roster-density-state.ts";
 import { createWebDomHarness } from "./web-dom.ts";
 
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes; }); return { promise, resolve }; }

@@ -1,4 +1,4 @@
-import type { ProfileTemplate, ProfileTemplateCatalog, ProfileTemplateInput, ProfileTemplateSettings } from "../profile-templates.ts";
+import type { ProfileTemplate, ProfileTemplateCatalog, ProfileTemplateInput, ProfileTemplateSettings } from "../src/profile-templates.ts";
 import { notifyAppLockedFromResponse, notifyUnauthorizedResponse, withStandaloneAuthHeaders } from "./api.ts";
 export type { ProfileTemplate, ProfileTemplateCatalog, ProfileTemplateInput, ProfileTemplateSettings };
 

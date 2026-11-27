@@ -4,9 +4,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
-import { ProfileStore } from "../store.ts";
-import { generateTotp } from "../totp.ts";
-import type { Profile } from "../types.ts";
+import { ProfileStore } from "../src/store.ts";
+import { generateTotp } from "../src/totp.ts";
+import type { Profile } from "../src/types.ts";
 
 // Opt-in like proxy-live.test.ts. Uses only synthetic accounts and intercepted pages.
 const browserPath = process.env.ALIASMODE_AUTOFILL_BROWSER;
@@ -70,7 +70,7 @@ browserTest("profile extension fills multi-step React forms, new tabs and surviv
   let base = "";
   const startApp = async () => {
     const app = Bun.spawn([
-      process.execPath, "cli.ts", "serve", "--state-root", root, "--db", db,
+      process.execPath, "src/cli.ts", "serve", "--state-root", root, "--db", db,
       "--data-root", join(root, "profiles"), "--port", "0", "--no-sandbox", "--unsafe-disable-identity-gates",
     ], {
       cwd: __repoDirname(import.meta.dir),

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { canonicalIp, sameIp } from "../ip.ts";
+import { canonicalIp, sameIp } from "../src/ip.ts";
 
 test("canonicalIp normalizes equivalent IPv6 spellings", () => {
   expect(canonicalIp("2001:0DB8:0:0:0:0:0:1")).toBe("2001:db8::1");

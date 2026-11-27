@@ -3,11 +3,11 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ProfileStore } from "../store.ts";
-import { buildNewProfile } from "../create.ts";
-import { handleUiRequest, type UiRuntimeOptions } from "../ui.ts";
-import { importBuffers, ProfileImportError } from "../inbox.ts";
-import type { Launcher } from "../launcher.ts";
+import { ProfileStore } from "../src/store.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { handleUiRequest, type UiRuntimeOptions } from "../src/ui.ts";
+import { importBuffers, ProfileImportError } from "../src/inbox.ts";
+import type { Launcher } from "../src/launcher.ts";
 
 const stores: ProfileStore[] = [];
 const roots: string[] = [];

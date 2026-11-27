@@ -3,17 +3,17 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildNewProfile } from "../create.ts";
-import { downloadBoundedCurl } from "../bounded-curl.ts";
-import { DESKTOP_SESSION_HEADER } from "../desktop-runtime.ts";
-import { LifecycleAdmissionController } from "../lifecycle-admission.ts";
-import { downloadResumable, notifyRuntimeDownloadProgress, runtimeDownloads, subscribeRuntimeDownloads, trackRuntimeDownload, type RuntimeDownload } from "../runtime-download.ts";
-import { ScriptLibrary, ScriptSupervisor, type ScriptRun } from "../scripts.ts";
-import { rejectUntrustedLocalRequest } from "../server.ts";
-import { ProfileStore, type StoreMutationEvent } from "../store.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { downloadBoundedCurl } from "../src/bounded-curl.ts";
+import { DESKTOP_SESSION_HEADER } from "../src/desktop-runtime.ts";
+import { LifecycleAdmissionController } from "../src/lifecycle-admission.ts";
+import { downloadResumable, notifyRuntimeDownloadProgress, runtimeDownloads, subscribeRuntimeDownloads, trackRuntimeDownload, type RuntimeDownload } from "../src/runtime-download.ts";
+import { ScriptLibrary, ScriptSupervisor, type ScriptRun } from "../src/scripts.ts";
+import { rejectUntrustedLocalRequest } from "../src/server.ts";
+import { ProfileStore, type StoreMutationEvent } from "../src/store.ts";
 import { UiEventBus } from "../src/ui/events-bus.ts";
-import { handleUiRequest } from "../ui.ts";
-import { serveDashboard, STANDALONE_SESSION_HEADER } from "../web.ts";
+import { handleUiRequest } from "../src/ui.ts";
+import { serveDashboard, STANDALONE_SESSION_HEADER } from "../src/web.ts";
 import { createSseParser, type UiStreamEvent } from "../web/api.ts";
 
 function rawHttpRequest(

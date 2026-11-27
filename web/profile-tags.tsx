@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { MAX_PROFILE_TAGS, MAX_PROFILE_TAG_CHARACTERS, normalizeProfileTags, ProfileTagsValidationError, splitProfileTagInput } from "../profile-tags.ts";
+import { MAX_PROFILE_TAGS, MAX_PROFILE_TAG_CHARACTERS, normalizeProfileTags, ProfileTagsValidationError, splitProfileTagInput } from "../src/profile-tags.ts";
 import { useTranslation } from "./i18n.tsx";
 import { hasActiveWorkbenchModal } from "./workbench-shortcuts.ts";
 import { MotionPresence } from "./desktop-motion.tsx";

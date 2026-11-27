@@ -21,7 +21,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import type { DataSaverSettings } from "../../app-settings.ts";
+import type { DataSaverSettings } from "../app-settings.ts";
 
 export const CHROMIUM_RESOURCE_POLICY_RECORD = ".maobu-resource-policy-override.json";
 export const CHROMIUM_MEMORY_SAVER_RENDERER_LIMIT = 4;

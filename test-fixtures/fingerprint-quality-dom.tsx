@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { I18nProvider } from "../web/i18n.tsx";
 import { FeatureSettingsPanel } from "../web/settings-center.tsx";
-import { assessFingerprintQuality } from "../fingerprint-quality.ts";
-import { createFingerprintSource } from "../fingerprint-source.ts";
-import type { Profile } from "../types.ts";
+import { assessFingerprintQuality } from "../src/fingerprint-quality.ts";
+import { createFingerprintSource } from "../src/fingerprint-source.ts";
+import type { Profile } from "../src/types.ts";
 import type { HTMLInputElement } from "happy-dom";
 import { act } from "react";
 import { createWebDomHarness } from "./web-dom.ts";

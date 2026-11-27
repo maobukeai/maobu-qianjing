@@ -1,4 +1,4 @@
-import type { ProxySpec } from "../types.ts";
+import type { ProxySpec } from "../src/types.ts";
 
 export type ScriptLanguage = "javascript" | "python";
 

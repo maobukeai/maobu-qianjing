@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import type { RosterScope } from "../../profile-view-state.ts";
+import type { RosterScope } from "../../src/profile-view-state.ts";
 import { useTranslation } from "../i18n.tsx";
 import { useSlidingIndicator } from "../navigation-motion.ts";
 import { AppIcon, type IconName } from "../ui-primitives.tsx";

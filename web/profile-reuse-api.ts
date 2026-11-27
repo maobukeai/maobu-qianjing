@@ -1,4 +1,4 @@
-import { isSafeProfileId } from "../profile-id.ts";
+import { isSafeProfileId } from "../src/profile-id.ts";
 import { notifyAppLockedFromResponse, notifyUnauthorizedResponse, withStandaloneAuthHeaders } from "./api.ts";
 
 /** Local display metadata and safe creation settings; never a copied identity. */

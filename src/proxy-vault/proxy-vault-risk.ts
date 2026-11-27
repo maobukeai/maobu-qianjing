@@ -5,7 +5,7 @@
  * correlation detection and NEVER emits `endpointHash` or credentials in output.
  */
 
-import { canonicalIp } from "../../ip.ts";
+import { canonicalIp } from "../ip.ts";
 
 export type ProxyRiskLevel = "none" | "medium" | "high";
 export type ProxyRiskSeverity = "medium" | "high";

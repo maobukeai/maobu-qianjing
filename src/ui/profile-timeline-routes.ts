@@ -1,11 +1,11 @@
-import { checkProxy as runProxyCheck } from "../../proxy-check.ts";
+import { checkProxy as runProxyCheck } from "../proxy-check.ts";
 import {
   clearProfileEvents,
   isKnownProfileEventType,
   listProfileEvents,
   recordProfileEvent,
-} from "../../profile-timeline.ts";
-import type { ProfileStore } from "../../store.ts";
+} from "../profile-timeline.ts";
+import type { ProfileStore } from "../store.ts";
 import {
   msg,
   noStoreJson,

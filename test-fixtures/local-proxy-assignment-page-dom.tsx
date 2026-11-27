@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { act } from "react";
 import type { HTMLButtonElement, HTMLInputElement, HTMLTextAreaElement } from "happy-dom";
-import type { ProxyReplacementView } from "../proxy-tools-types.ts";
+import type { ProxyReplacementView } from "../src/proxy-tools-types.ts";
 import { I18nProvider } from "../web/i18n.tsx";
 import type { LocalProxyAssignmentIntent } from "../web/local-proxy-assignment-draft.tsx";
 import { ProxiesPage } from "../web/proxies.tsx";

@@ -4,20 +4,20 @@ import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { mkdirSync, writeFileSync, existsSync, rmSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ProfileStore } from "../store.ts";
-import { BrowserLaunchError, Launcher, launchPersona } from "../launcher.ts";
-import { parseExport } from "../parse.ts";
-import { deriveFingerprintFlags, editedProfileHardware } from "../fingerprint.ts";
-import { listUiProfiles, handleUiRequest, LOW_DISK_SPACE_BYTES } from "../ui.ts";
-import { defaultChromiumRuntime as defaultRuntimePolicy } from "../aliasmode-chromium.ts";
-import { buildNewProfile } from "../create.ts";
-import { trackRuntimeDownload } from "../runtime-download.ts";
-import { readXlsx, writeXlsx } from "../xlsx.ts";
-import { AppConfigStore } from "../app-config.ts";
-import { statePaths } from "../paths.ts";
+import { ProfileStore } from "../src/store.ts";
+import { BrowserLaunchError, Launcher, launchPersona } from "../src/launcher.ts";
+import { parseExport } from "../src/parse.ts";
+import { deriveFingerprintFlags, editedProfileHardware } from "../src/fingerprint.ts";
+import { listUiProfiles, handleUiRequest, LOW_DISK_SPACE_BYTES } from "../src/ui.ts";
+import { defaultChromiumRuntime as defaultRuntimePolicy } from "../src/aliasmode-chromium.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { trackRuntimeDownload } from "../src/runtime-download.ts";
+import { readXlsx, writeXlsx } from "../src/xlsx.ts";
+import { AppConfigStore } from "../src/app-config.ts";
+import { statePaths } from "../src/paths.ts";
 
-import type { ProxyCheckResult } from "../proxy-check.ts";
-import type { Profile, ProxySpec } from "../types.ts";
+import type { ProxyCheckResult } from "../src/proxy-check.ts";
+import type { Profile, ProxySpec } from "../src/types.ts";
 const SAMPLE = `id=k1d0cd11
 name=sophia
 group=va1
@@ -2005,7 +2005,7 @@ test("mutating JSON POST routes reject non-JSON Content-Type (415) and cross-ori
 test("handleUiRequest routes Wave 3 proxy-vault, metrics, registered-launches, and resource-policy endpoints with security headers and event-bus integration", async () => {
     const s = store();
     const { UiEventBus } = await import("../src/ui/events-bus.ts");
-    const { WorkspaceMaintenance } = await import("../workspace-maintenance.ts");
+    const { WorkspaceMaintenance } = await import("../src/workspace-maintenance.ts");
     const bus = new UiEventBus({ coalesceWindowMs: 0, store: s });
     const emitted: Array<{ type: string; payload: unknown }> = [];
     const origEmit = bus.emit.bind(bus);
@@ -2167,7 +2167,7 @@ test("handleUiRequest routes Wave 3 proxy-vault, metrics, registered-launches, a
 });
 
 test("handleUiRequest routes Wave 4 app-lock, diagnostics, assistant proposals, .mqprofile package, timeline, and appLockAvailable capability", async () => {
-    const { AppLockService } = await import("../app-lock.ts");
+    const { AppLockService } = await import("../src/app-lock.ts");
     const s = store();
     const home = mkdtempSync(join(tmpdir(), "maobu-w4-ui-wiring-"));
     const appLock = new AppLockService({ home });

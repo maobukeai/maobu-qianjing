@@ -1,4 +1,4 @@
-import { normalizeProfileTags, ProfileTagsValidationError } from "../profile-tags.ts";
+import { normalizeProfileTags, ProfileTagsValidationError } from "../src/profile-tags.ts";
 
 export const PROFILE_EDIT_FORM_FIELDS = ["name", "group", "platform", "proxy", "proxyType", "username", "password", "email", "emailPassword", "twofa", "resolution", "tags", "customNo", "platformOs", "timezone", "locale", "cores", "fingerprintSeed"] as const;
 export type ProfileEditFormField = typeof PROFILE_EDIT_FORM_FIELDS[number];

@@ -4,10 +4,10 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { migrateLegacyState, type MigrationOptions } from "../migration.ts";
-import { legacyStatePaths, statePaths } from "../paths.ts";
-import { ProfileStore } from "../store.ts";
-import { AppConfigStore } from "../app-config.ts";
+import { migrateLegacyState, type MigrationOptions } from "../src/migration.ts";
+import { legacyStatePaths, statePaths } from "../src/paths.ts";
+import { ProfileStore } from "../src/store.ts";
+import { AppConfigStore } from "../src/app-config.ts";
 
 function roots() {
   const parent = mkdtempSync(join(tmpdir(), "aliasmode-migration-"));

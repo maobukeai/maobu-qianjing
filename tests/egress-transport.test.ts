@@ -3,8 +3,8 @@ import { createServer as createHttpsServer } from "node:https";
 import { createServer as createRawServer, type Socket } from "node:net";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { EgressResponseError, fetchEgressEndpoint } from "../egress-transport.ts";
-import { startProxyRelay } from "../proxy-relay.ts";
+import { EgressResponseError, fetchEgressEndpoint } from "../src/egress-transport.ts";
+import { startProxyRelay } from "../src/proxy-relay.ts";
 import { createConnectProxy } from "../test-fixtures/connect-proxy.ts";
 
 async function rawEndpoint(parts: string[]) {

@@ -1,11 +1,11 @@
-import type { ProfileStore } from "../../store.ts";
-import { ExtensionGroupRevisionError, parseExtensionGroupSelection } from "../../extension-group-revision.ts";
+import type { ProfileStore } from "../store.ts";
+import { ExtensionGroupRevisionError, parseExtensionGroupSelection } from "../extension-group-revision.ts";
 import {
   installExtension,
   installWebStoreExtension,
   parseWebStoreExtensionId,
   removeExtensionFiles,
-} from "../../extensions.ts";
+} from "../extensions.ts";
 import { msg, rejectCrossOriginMutation, rejectUntrustedJsonMutation, type UiRuntimeOptions } from "./shared.ts";
 
 /** Group CRUD, group extension defaults, and Chrome extension registry UI routes. */

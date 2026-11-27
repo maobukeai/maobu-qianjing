@@ -12,7 +12,7 @@
 import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { createLocalSecretProtector, type LocalProtectionOptions, type LocalSecretProtector } from "./dpapi.ts";
-import { runStoreMigrations } from "./src/store-migrations.ts";
+import { runStoreMigrations } from "./store-migrations.ts";
 import { folderTree } from "./folders.ts";
 import type {
   CookieRecord,

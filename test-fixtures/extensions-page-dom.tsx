@@ -3,7 +3,7 @@ import { act } from "react";
 import { I18nProvider } from "../web/i18n.tsx";
 import { ExtensionsPage, extensionGroupPreview, type ExtensionsPageProps, type GroupDefaultsSnapshot } from "../web/extensions-page.tsx";
 import { createWebDomHarness } from "./web-dom.ts";
-import type { ExtensionGroupReview } from "../extension-group-revision.ts";
+import type { ExtensionGroupReview } from "../src/extension-group-revision.ts";
 import type { Document, HTMLElement, HTMLInputElement, HTMLSelectElement } from "happy-dom";
 
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes; }); return { promise, resolve }; }

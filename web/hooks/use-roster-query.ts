@@ -1,8 +1,8 @@
 import { useDeferredValue, useMemo } from "react";
-import { folderScope, folderTree, type FolderInfo } from "../../folders.ts";
-import { indexProfileGroups, pageProfileGroupSections, profileGroupCollapsed, type GroupDisclosure, type ProfileGroupSection } from "../../profile-group-state.ts";
-import { createTagFilterMatcher, inProfileScope, type RosterScope, type TagFilterMode } from "../../profile-view-state.ts";
-import { ROSTER_DENSITY_ROW_HEIGHT, type RosterDensity } from "../../roster-density-state.ts";
+import { folderScope, folderTree, type FolderInfo } from "../../src/folders.ts";
+import { indexProfileGroups, pageProfileGroupSections, profileGroupCollapsed, type GroupDisclosure, type ProfileGroupSection } from "../../src/profile-group-state.ts";
+import { createTagFilterMatcher, inProfileScope, type RosterScope, type TagFilterMode } from "../../src/profile-view-state.ts";
+import { ROSTER_DENSITY_ROW_HEIGHT, type RosterDensity } from "../../src/roster-density-state.ts";
 import type { UiProfile } from "../api.ts";
 
 export const PROFILE_PAGE_SIZE = 20;

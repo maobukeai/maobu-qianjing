@@ -1,13 +1,13 @@
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
-import { defaultChromiumRuntime, managedChromiumLocation } from "../aliasmode-chromium.ts";
-import { firefoxBuildForHost, firefoxInstallDirectoryPrefix } from "../firefox-install.ts";
-import { FIREFOX_MANAGED_RECORD, firefoxManagedDirectory } from "../firefox-managed.ts";
-import { Launcher } from "../launcher.ts";
-import { getBrowserRuntimeInventory, inspectBrowserRuntimeInventory, removeBrowserRuntimeCache, type BrowserRuntimeInventory, type RuntimeInventoryDeployment } from "../runtime-inventory.ts";
-import type { ProfileStore } from "../store.ts";
-import { serveDashboard } from "../web.ts";
+import { defaultChromiumRuntime, managedChromiumLocation } from "../src/aliasmode-chromium.ts";
+import { firefoxBuildForHost, firefoxInstallDirectoryPrefix } from "../src/firefox-install.ts";
+import { FIREFOX_MANAGED_RECORD, firefoxManagedDirectory } from "../src/firefox-managed.ts";
+import { Launcher } from "../src/launcher.ts";
+import { getBrowserRuntimeInventory, inspectBrowserRuntimeInventory, removeBrowserRuntimeCache, type BrowserRuntimeInventory, type RuntimeInventoryDeployment } from "../src/runtime-inventory.ts";
+import type { ProfileStore } from "../src/store.ts";
+import { serveDashboard } from "../src/web.ts";
 
 const fixtureParent = resolve(import.meta.dir, "..", "node_modules/.cache/runtime-inventory-tests");
 const fixtures: string[] = [];

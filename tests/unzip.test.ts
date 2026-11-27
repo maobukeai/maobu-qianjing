@@ -4,7 +4,7 @@ import { createHash, generateKeyPairSync, sign, type KeyObject } from "node:cryp
 import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_MAX_ZIP_ENTRY_BYTES, TRUSTED_RUNTIME_ZIP_LIMITS, extractZipTo, parseArchive } from "../unzip.ts";
+import { DEFAULT_MAX_ZIP_ENTRY_BYTES, TRUSTED_RUNTIME_ZIP_LIMITS, extractZipTo, parseArchive } from "../src/unzip.ts";
 
 /** Build a minimal STORED (uncompressed) ZIP — enough to exercise the central-
  *  directory parser and path-safety without needing a deflate fixture. */

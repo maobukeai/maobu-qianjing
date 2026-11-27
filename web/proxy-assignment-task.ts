@@ -1,4 +1,4 @@
-import { isSafeProfileId } from "../profile-id.ts";
+import { isSafeProfileId } from "../src/profile-id.ts";
 
 type ViewStatus = "ready" | "updated" | "unchanged" | "missing" | "skipped" | "failed";
 type Outcome = Exclude<ViewStatus, "ready"> | "not-started";

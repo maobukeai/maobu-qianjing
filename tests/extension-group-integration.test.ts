@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { ProfileStore } from "../store.ts";
-import { handleUiRequest } from "../ui.ts";
-import type { Profile } from "../types.ts";
-import { ExtensionGroupRevisionError } from "../extension-group-revision.ts";
+import { ProfileStore } from "../src/store.ts";
+import { handleUiRequest } from "../src/ui.ts";
+import type { Profile } from "../src/types.ts";
+import { ExtensionGroupRevisionError } from "../src/extension-group-revision.ts";
 
 const stores: ProfileStore[] = [];
 afterEach(() => { for (const store of stores.splice(0)) store.close(); });

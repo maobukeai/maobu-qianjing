@@ -2,7 +2,7 @@ import { dirname as __repoDirname } from "node:path";
 import { expect, test } from 'bun:test';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { ALIASMODE_VERSION } from '../version.ts';
+import { ALIASMODE_VERSION } from '../src/version.ts';
 import { RUNTIME_VERSION } from '../agent/runtime-client.mjs';
 const root=__repoDirname(import.meta.dir);
 const read=(file:string)=>readFileSync(join(root,file),'utf8');

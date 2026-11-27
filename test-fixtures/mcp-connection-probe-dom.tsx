@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { act } from "react";
-import { ALIASMODE_VERSION } from "../version.ts";
+import { ALIASMODE_VERSION } from "../src/version.ts";
 import { I18nProvider } from "../web/i18n.tsx";
 import { McpConnectionProbe } from "../web/mcp-connection-probe.tsx";
 import { FeatureSettingsPanel, type FeatureSettingsTab } from "../web/settings-center.tsx";

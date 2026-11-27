@@ -24,7 +24,7 @@ import {
   ProxyVaultError,
   ProxyVaultStore,
   type ProxyVaultListResult,
-} from "./src/proxy-vault/proxy-vault-store.ts";
+} from "./proxy-vault/proxy-vault-store.ts";
 import type { ProfileStore } from "./store.ts";
 import type { Profile, ProxySpec, ProxyType } from "./types.ts";
 

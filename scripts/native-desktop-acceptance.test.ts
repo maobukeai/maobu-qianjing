@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { lstat, mkdir, mkdtemp, readFile, realpath, rm, rmdir, symlink, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { WorkspaceCatalog } from "../workspaces.ts";
+import { WorkspaceCatalog } from "../src/workspaces.ts";
 import { acceptanceEnvironment, debugBinaryProtocol, parseAcceptanceCli, prepareNativeAcceptance, validateNativeAcceptance } from "./native-desktop-acceptance.mjs";
 
 // Every test root is created by this process under Temp and recorded before use.

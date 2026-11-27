@@ -4,11 +4,11 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ScriptLibrary, ScriptSupervisor, resolveScriptRunner, verifyScriptRuntime, type ScriptExecution } from "../scripts.ts";
-import { handleUiRequest } from "../ui.ts";
+import { ScriptLibrary, ScriptSupervisor, resolveScriptRunner, verifyScriptRuntime, type ScriptExecution } from "../src/scripts.ts";
+import { handleUiRequest } from "../src/ui.ts";
 
-import { LifecycleAdmissionController } from "../lifecycle-admission.ts";
-import { PYTHON_RUNTIME_FAILED, PythonRuntime } from "../python-runtime.ts";
+import { LifecycleAdmissionController } from "../src/lifecycle-admission.ts";
+import { PYTHON_RUNTIME_FAILED, PythonRuntime } from "../src/python-runtime.ts";
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true }); });

@@ -1,12 +1,12 @@
-import type { AppSettings, NetworkSettings, SignedUpdateSettings } from "../app-settings.ts";
+import type { AppSettings, NetworkSettings, SignedUpdateSettings } from "../src/app-settings.ts";
 import { notifyAppLockedFromResponse, notifyUnauthorizedResponse, withStandaloneAuthHeaders } from "./api.ts";
 import type { IntegrationInfo } from "../agent/integration-info.ts";
 import type { IntegrationProbeResult } from "../agent/integration-probe.ts";
-import type { SyncFileRecord, SyncPreview } from "../encrypted-sync.ts";
-import type { UpdateCheckResult } from "../app-updates.ts";
-import type { BrowserRuntimeInventory, RuntimeInventoryId } from "../runtime-inventory.ts";
-import type { LocalProxyDiscoveryReport, LocalProxyDiscoveryRequest } from "../network-diagnostics.ts";
-import { isFingerprintCheckEvidence, isFingerprintCheckMessage, type PresentableFingerprintCheck } from "../fingerprint-check-presentation.ts";
+import type { SyncFileRecord, SyncPreview } from "../src/encrypted-sync.ts";
+import type { UpdateCheckResult } from "../src/app-updates.ts";
+import type { BrowserRuntimeInventory, RuntimeInventoryId } from "../src/runtime-inventory.ts";
+import type { LocalProxyDiscoveryReport, LocalProxyDiscoveryRequest } from "../src/network-diagnostics.ts";
+import { isFingerprintCheckEvidence, isFingerprintCheckMessage, type PresentableFingerprintCheck } from "../src/fingerprint-check-presentation.ts";
 
 export type { AppSettings, BrowserRuntimeInventory, IntegrationInfo, IntegrationProbeResult, SyncFileRecord, SyncPreview };
 export interface DataSaverSettingsConfig {

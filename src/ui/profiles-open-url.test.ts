@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Launcher } from "../../launcher.ts";
-import { ProfileStore } from "../../store.ts";
-import { buildNewProfile } from "../../create.ts";
+import type { Launcher } from "../launcher.ts";
+import { ProfileStore } from "../store.ts";
+import { buildNewProfile } from "../create.ts";
 import { handleProfilesUiRoutes } from "./profiles-routes.ts";
 
 function makeReq(path: string, body: unknown): Request {

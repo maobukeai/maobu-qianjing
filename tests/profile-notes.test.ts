@@ -6,7 +6,7 @@ import {
   normalizeProfileNotes,
   ProfileNotesValidationError,
   profileNotesUpdate,
-} from "../profile-notes.ts";
+} from "../src/profile-notes.ts";
 
 describe("profile notes validation and normalization", () => {
   test("normalizes CRLF to LF, NFC unicode, and collapses whitespace-only notes to empty string", () => {

@@ -5,17 +5,17 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { AgentControlSession, AGENT_CONTROL_PROTOCOL } from "../agent-control.ts";
+import { AgentControlSession, AGENT_CONTROL_PROTOCOL } from "../src/agent-control.ts";
 import { createAliasModeMcp } from "../agent/mcp-host.mjs";
-import { defaultAppSettings } from "../app-settings.ts";
-import { buildNewProfile } from "../create.ts";
-import { LifecycleAdmissionController } from "../lifecycle-admission.ts";
-import { createLocalProxyPreflight } from "../local-proxy-preflight.ts";
-import { Launcher } from "../launcher.ts";
-import { statePaths } from "../paths.ts";
-import { handleRequest } from "../server.ts";
-import { ProfileStore } from "../store.ts";
-import { handleUiRequest } from "../ui.ts";
+import { defaultAppSettings } from "../src/app-settings.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { LifecycleAdmissionController } from "../src/lifecycle-admission.ts";
+import { createLocalProxyPreflight } from "../src/local-proxy-preflight.ts";
+import { Launcher } from "../src/launcher.ts";
+import { statePaths } from "../src/paths.ts";
+import { handleRequest } from "../src/server.ts";
+import { ProfileStore } from "../src/store.ts";
+import { handleUiRequest } from "../src/ui.ts";
 
 const guidance = "The configured local proxy is not listening or did not respond in time. Open your desktop proxy client, enable its local port, then retry.";
 

@@ -1,21 +1,21 @@
 import { open, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { Launcher } from "../../launcher.ts";
-import type { ProfileStore } from "../../store.ts";
-import type { ProxySpec } from "../../types.ts";
-import { defaultChromiumRuntime, hostChromiumRuntime } from "../../aliasmode-chromium.ts";
-import { defaultProfileEngine } from "../../create.ts";
-import { checkProxy as runProxyCheck } from "../../proxy-check.ts";
-import { handleProxyToolsRequest } from "../../proxy-tools.ts";
-import { handleTrashRequest } from "../../trash.ts";
-import { normalizeProxySpec, type ProxyInput } from "../../proxy.ts";
+import type { Launcher } from "../launcher.ts";
+import type { ProfileStore } from "../store.ts";
+import type { ProxySpec } from "../types.ts";
+import { defaultChromiumRuntime, hostChromiumRuntime } from "../aliasmode-chromium.ts";
+import { defaultProfileEngine } from "../create.ts";
+import { checkProxy as runProxyCheck } from "../proxy-check.ts";
+import { handleProxyToolsRequest } from "../proxy-tools.ts";
+import { handleTrashRequest } from "../trash.ts";
+import { normalizeProxySpec, type ProxyInput } from "../proxy.ts";
 import {
   cancelRuntimeDownload,
   pauseRuntimeDownload,
   resumeRuntimeDownload,
   runtimeDownloads,
   type RuntimeDownload,
-} from "../../runtime-download.ts";
+} from "../runtime-download.ts";
 import {
   APPLICATION_ROOT,
   appVersion,

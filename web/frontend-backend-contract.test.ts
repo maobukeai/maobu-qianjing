@@ -21,11 +21,11 @@ import { fetchSettings, resetSharedSettingsCache } from "./settings-api.ts";
 import { clearWorkspaceCapability, fetchWorkspaces } from "./workspaces-api.ts";
 import { postTrashTask } from "./trash-task.ts";
 import { appVersion } from "../src/ui/shared.ts";
-import { ALIASMODE_VERSION } from "../version.ts";
-import { handleUiRequest } from "../ui.ts";
-import { ProfileStore } from "../store.ts";
-import { buildNewProfile } from "../create.ts";
-import type { Launcher } from "../launcher.ts";
+import { ALIASMODE_VERSION } from "../src/version.ts";
+import { handleUiRequest } from "../src/ui.ts";
+import { ProfileStore } from "../src/store.ts";
+import { buildNewProfile } from "../src/create.ts";
+import type { Launcher } from "../src/launcher.ts";
 
 const originalFetch = globalThis.fetch;
 const tempDirs: string[] = [];

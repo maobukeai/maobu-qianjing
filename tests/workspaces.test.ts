@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
-import { WorkspaceCatalog, WORKSPACE_REGISTRY_FILE, writeWorkspaceJson } from "../workspaces.ts";
+import { WorkspaceCatalog, WORKSPACE_REGISTRY_FILE, writeWorkspaceJson } from "../src/workspaces.ts";
 const roots: string[] = [];
 function home() { const root = mkdtempSync(join(tmpdir(), "maobu-catalog-test-")); roots.push(root); return root; }
 afterEach(() => { for (const root of roots.splice(0)) { if (!resolve(root).startsWith(resolve(tmpdir()) + sep) || !basename(root).startsWith("maobu-catalog-test-")) throw new Error("Unsafe test cleanup"); rmSync(root, { recursive: true, force: true }); } });

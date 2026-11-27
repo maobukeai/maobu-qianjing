@@ -14,8 +14,8 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { fingerprintLaunchDigest } from "./fingerprint-source.ts";
 import { LocalProxyPreflightError, loopbackProxyTarget, type LocalProxyEndpoint } from "./local-proxy-preflight.ts";
 import { applyChromiumPreloadingPreference, type ChromiumPreloadingMode } from "./chromium-preloading-preferences.ts";
-import { mergeChromiumLaunchArgs, type LaunchPolicyResolver } from "./src/launcher/resource-policy.ts";
-export type { LaunchPolicyResolver } from "./src/launcher/resource-policy.ts";
+import { mergeChromiumLaunchArgs, type LaunchPolicyResolver } from "./launcher/resource-policy.ts";
+export type { LaunchPolicyResolver } from "./launcher/resource-policy.ts";
 import {
   mkdirSync,
   rmSync,
@@ -101,13 +101,13 @@ import {
   validateForwardedLaunchArgs,
   webRtcPolicy,
   type WindowLabelCapability,
-} from "./src/launcher/launch-args.ts";
+} from "./launcher/launch-args.ts";
 import {
   decodeMozLz4,
   firefoxSessionCookies,
   firefoxSessionRestoresPage,
   writeFirefoxStartupPage,
-} from "./src/launcher/mozlz4.ts";
+} from "./launcher/mozlz4.ts";
 import {
   createFailureBackoffReader,
   createInFlightSnapshotReader,
@@ -117,7 +117,7 @@ import {
   sleep,
   type HostProcessRecord,
   type HostProcessSnapshot,
-} from "./src/launcher/snapshot-utils.ts";
+} from "./launcher/snapshot-utils.ts";
 import {
   parseDarwinFirefoxPsSnapshot,
   parseDarwinKernelArgv,
@@ -125,7 +125,7 @@ import {
   parseDarwinPsSnapshot,
   readDarwinFirefoxProcessSnapshot,
   readMacGraphicsVendor,
-} from "./src/launcher/macos-ffi.ts";
+} from "./launcher/macos-ffi.ts";
 import {
   decodeWindowsCommandLine,
   parseTasklistImageNames,
@@ -138,7 +138,7 @@ import {
   shouldLaunchViaWindowsSession,
   type SpawnedProcess,
   type SpawnFn,
-} from "./src/launcher/windows-tasks.ts";
+} from "./launcher/windows-tasks.ts";
 import {
   collectLinuxProcessTree,
   defaultBrowserClose,
@@ -155,7 +155,7 @@ import {
   readHostProcessSnapshot,
   type BrowserProcessIdentity,
   type OwnedBrowserProcessFinder,
-} from "./src/launcher/os-process.ts";
+} from "./launcher/os-process.ts";
 import {
   backupUnreadableCookies,
   CACHE_DIRS,
@@ -183,8 +183,8 @@ import {
   type CookieSetter,
   type LaunchNavigator,
   type WindowLabeler,
-} from "./src/launcher/profile-bootstrap.ts";
-import { writeProfileStartPage } from "./src/launcher/start-page.ts";
+} from "./launcher/profile-bootstrap.ts";
+import { writeProfileStartPage } from "./launcher/start-page.ts";
 
 export {
   buildWindowLabel,

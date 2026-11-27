@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { act, useRef, useState } from "react";
 import type { HTMLButtonElement as DomButton, HTMLInputElement as DomInput } from "happy-dom";
-import { ProfileStore } from "../store.ts";
-import { buildNewProfile } from "../create.ts";
-import { handleUiRequest, listUiProfiles } from "../ui.ts";
-import type { Launcher } from "../launcher.ts";
+import { ProfileStore } from "../src/store.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { handleUiRequest, listUiProfiles } from "../src/ui.ts";
+import type { Launcher } from "../src/launcher.ts";
 import { fetchProfiles } from "../web/api.ts";
 import { I18nProvider } from "../web/i18n.tsx";
 import { ProfileMoveFeedback, useProfileMove, type ProfileMoveResult } from "../web/profile-move.tsx";

@@ -13,7 +13,7 @@ import {
   downloadPinnedWindowsArchive,
   installCloakBrowser,
   windowsSystemTool,
-} from "../browser-install.ts";
+} from "../src/browser-install.ts";
 
 const dirs: string[] = [];
 afterEach(() => {

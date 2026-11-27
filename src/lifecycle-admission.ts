@@ -1,7 +1,7 @@
 import type {
   MemoryWatermarkAdmissionPolicy,
   MemoryWatermarkStatus,
-} from "./src/metrics/memory-watermark-guard.ts";
+} from "./metrics/memory-watermark-guard.ts";
 
 export type LifecycleTransitionKind = "stop" | "cleanup" | "start";
 export type LifecycleState = "starting" | "stopping" | "uncertain";

@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AppConfigStore, parseAppConfig } from "../app-config.ts";
-import * as configModule from "../app-config.ts";
+import { AppConfigStore, parseAppConfig } from "../src/app-config.ts";
+import * as configModule from "../src/app-config.ts";
 
 const local = { version: 1, mode: "local", localAnalytics: false } as const;
 

@@ -3,12 +3,12 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { buildNewProfile } from "../create.ts";
-import { ProfileStore } from "../store.ts";
-import { assessFingerprintQuality } from "../fingerprint-quality.ts";
-import { createFingerprintSource, fingerprintConfigurationDigest, FINGERPRINT_SOURCE_FIELDS } from "../fingerprint-source.ts";
-import { launchPersona, LAUNCH_PERSONA_KEYS } from "../launcher.ts";
-import type { ObservedFingerprint } from "../types.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { ProfileStore } from "../src/store.ts";
+import { assessFingerprintQuality } from "../src/fingerprint-quality.ts";
+import { createFingerprintSource, fingerprintConfigurationDigest, FINGERPRINT_SOURCE_FIELDS } from "../src/fingerprint-source.ts";
+import { launchPersona, LAUNCH_PERSONA_KEYS } from "../src/launcher.ts";
+import type { ObservedFingerprint } from "../src/types.ts";
 
 function fixture() {
   const profile = { ...buildNewProfile({ engine: "chromium", chromiumRuntime: "cloakbrowser", platformOs: "windows", screen: "1920x1080", name: "Source fixture" }, () => false), hardware: { cores: 8 }, timezone: "UTC", locale: "en-US", proxy: { type: "http" as const, host: "127.0.0.1", port: "7890", user: "private-proxy-user", pass: "private-proxy-password" } };

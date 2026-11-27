@@ -2,10 +2,10 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AppConfigStore } from "../app-config.ts";
-import { handleUiRequest } from "../ui.ts";
-import { ProfileStore } from "../store.ts";
-import { buildNewProfile } from "../create.ts";
+import { AppConfigStore } from "../src/app-config.ts";
+import { handleUiRequest } from "../src/ui.ts";
+import { ProfileStore } from "../src/store.ts";
+import { buildNewProfile } from "../src/create.ts";
 test("retired hosted API paths are rejected without a runtime implementation", async () => {
   for (const path of ["cloud-auth", "cloud-auth/restore", "cloud-auth/signin", "cloud-connector", "cloud-workspace", "cloud-store", "cloud-events", "services", "scripts/library", "scripts/old/publication"]) {
     const response = await handleUiRequest(new Request(`http://127.0.0.1/ui/api/${path}`), {} as any, {} as any);

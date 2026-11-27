@@ -1,4 +1,4 @@
-import { isSafeProfileId } from "../profile-id.ts";
+import { isSafeProfileId } from "../src/profile-id.ts";
 
 export type ImportReceiptReason = "proxy-repair" | "identifier" | "screen" | "timezone" | "operating-system" | "hardware" | "session" | "source-record";
 export interface ImportReceiptIssue { readonly file: string | null; readonly id: string | null; readonly reason: ImportReceiptReason; readonly proxyRepairReported: boolean }

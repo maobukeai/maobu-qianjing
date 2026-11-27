@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
-import { handleProfileTemplateRequest } from "../profile-template-routes.ts";
-import { ProfileTemplateStore, type ProfileTemplateSettings } from "../profile-templates.ts";
+import { handleProfileTemplateRequest } from "../src/profile-template-routes.ts";
+import { ProfileTemplateStore, type ProfileTemplateSettings } from "../src/profile-templates.ts";
 
 const parent = resolve(import.meta.dir, "..", "node_modules/.cache/profile-template-route-tests"), roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) { if (!resolve(root).startsWith(parent + sep) || !basename(root).startsWith("routes-")) throw new Error("Unsafe route test cleanup"); rmSync(root, { recursive: true, force: true }); } });

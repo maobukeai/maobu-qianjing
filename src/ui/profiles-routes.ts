@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
-import { BrowserLaunchError, CLOSE_SESSION_CAPTURE_OPTIONS, defaultSetCookies, type Launcher } from "../../launcher.ts";
-import type { ProfileStore } from "../../store.ts";
-import type { CookieRecord, Profile } from "../../types.ts";
-import { importInbox, importBuffers, ProfileImportError } from "../../inbox.ts";
-import { buildNewProfile, type NewProfileInput } from "../../create.ts";
-import { attachTimezones, lookupExitLocation } from "../../geoip.ts";
-import { localeForCountry, localeForTimezone } from "../../profile-locale.ts";
+import { BrowserLaunchError, CLOSE_SESSION_CAPTURE_OPTIONS, defaultSetCookies, type Launcher } from "../launcher.ts";
+import type { ProfileStore } from "../store.ts";
+import type { CookieRecord, Profile } from "../types.ts";
+import { importInbox, importBuffers, ProfileImportError } from "../inbox.ts";
+import { buildNewProfile, type NewProfileInput } from "../create.ts";
+import { attachTimezones, lookupExitLocation } from "../geoip.ts";
+import { localeForCountry, localeForTimezone } from "../profile-locale.ts";
 import {
   parseUpdateFile,
   rowsToUpdates,
@@ -16,15 +16,15 @@ import {
   parseCookieText,
   cookiesForEngine,
   type ProfileExport,
-} from "../../parse.ts";
-import { writeXlsx, readXlsx } from "../../xlsx.ts";
-import { generateTotp } from "../../totp.ts";
-import { isSafeProfileId, PROFILE_ID_ERROR } from "../../profile-id.ts";
-import { ProfileNotesValidationError } from "../../profile-notes.ts";
-import { ProfileTagsValidationError } from "../../profile-tags.ts";
-import { inferLaunchFailureRecoveryKind, recordProfileEvent } from "../../profile-timeline.ts";
-import { convertMobilePersonaToDesktop, isMobileUserAgent } from "../../fingerprint.ts";
-import { syncFirefoxTimezone } from "../../firefox-config.ts";
+} from "../parse.ts";
+import { writeXlsx, readXlsx } from "../xlsx.ts";
+import { generateTotp } from "../totp.ts";
+import { isSafeProfileId, PROFILE_ID_ERROR } from "../profile-id.ts";
+import { ProfileNotesValidationError } from "../profile-notes.ts";
+import { ProfileTagsValidationError } from "../profile-tags.ts";
+import { inferLaunchFailureRecoveryKind, recordProfileEvent } from "../profile-timeline.ts";
+import { convertMobilePersonaToDesktop, isMobileUserAgent } from "../fingerprint.ts";
+import { syncFirefoxTimezone } from "../firefox-config.ts";
 import {
   applyEdits,
   importOverridesFromForm,

@@ -1,8 +1,8 @@
 import { test, expect } from "bun:test";
-import { buildNewProfile, defaultProfileEngine, defaultScreen, generateId, hostScreenFloor } from "../create.ts";
-import { graphicsIdentity } from "../firefox-config.ts";
-import { deterministicSeed, deriveFingerprintFlags, hostPlatformOs, platformFromUA } from "../fingerprint.ts";
-import { ProfileStore } from "../store.ts";
+import { buildNewProfile, defaultProfileEngine, defaultScreen, generateId, hostScreenFloor } from "../src/create.ts";
+import { graphicsIdentity } from "../src/firefox-config.ts";
+import { deterministicSeed, deriveFingerprintFlags, hostPlatformOs, platformFromUA } from "../src/fingerprint.ts";
+import { ProfileStore } from "../src/store.ts";
 
 test("buildNewProfile makes a unique id with a seed-derived fingerprint and no forced UA", () => {
   const p = buildNewProfile({ engine: "chromium", name: "sophia", group: "va1" }, () => false);

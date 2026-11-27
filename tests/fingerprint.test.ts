@@ -10,8 +10,8 @@ import {
   isMobileUserAgent,
   convertMobilePersonaToDesktop,
   hostPlatformOs,
-} from "../fingerprint.ts";
-import type { Profile } from "../types.ts";
+} from "../src/fingerprint.ts";
+import type { Profile } from "../src/types.ts";
 
 const UA_WIN = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
 const UA_MAC = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";

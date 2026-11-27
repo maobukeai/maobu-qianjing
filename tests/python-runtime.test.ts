@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PYTHON_RUNTIME_PINS, PYTHON_RUNTIME_PINS_MACOS_X64, PYTHON_RUNTIME_VERSION, PythonRuntime, type PinnedFile, type PythonRuntimeOptions } from "../python-runtime.ts";
+import { PYTHON_RUNTIME_PINS, PYTHON_RUNTIME_PINS_MACOS_X64, PYTHON_RUNTIME_VERSION, PythonRuntime, type PinnedFile, type PythonRuntimeOptions } from "../src/python-runtime.ts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });

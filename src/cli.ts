@@ -16,9 +16,9 @@ import { migrateLegacyState, type LegacyMigrationResult, type MigrationOptions }
 import { AppConfigStore } from "./app-config.ts";
 import { AppSettingsStore, resolveBatchLaunchMemoryGuardSettings, resolveOpenStartPageOnLaunch } from "./app-settings.ts";
 import { createLocalProxyPreflight } from "./local-proxy-preflight.ts";
-import { createLaunchPolicyResolver } from "./src/launcher/resource-policy.ts";
-import { MemoryWatermarkGuard } from "./src/metrics/memory-watermark-guard.ts";
-import { ResourcePolicyStore } from "./src/metrics/resource-policy-store.ts";
+import { createLaunchPolicyResolver } from "./launcher/resource-policy.ts";
+import { MemoryWatermarkGuard } from "./metrics/memory-watermark-guard.ts";
+import { ResourcePolicyStore } from "./metrics/resource-policy-store.ts";
 import { runDiagnostics } from "./diagnose.ts";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, renameSync, statSync, writeFileSync } from "node:fs";

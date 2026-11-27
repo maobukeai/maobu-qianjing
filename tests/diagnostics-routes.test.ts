@@ -3,11 +3,11 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import type { Launcher } from "../launcher.ts";
-import { ensureStateDirectories, statePaths } from "../paths.ts";
-import { ProfileStore } from "../store.ts";
+import type { Launcher } from "../src/launcher.ts";
+import { ensureStateDirectories, statePaths } from "../src/paths.ts";
+import { ProfileStore } from "../src/store.ts";
 import { handleDiagnosticsRoutes } from "../src/ui/diagnostics-routes.ts";
-import { extractZipTo } from "../unzip.ts";
+import { extractZipTo } from "../src/unzip.ts";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {

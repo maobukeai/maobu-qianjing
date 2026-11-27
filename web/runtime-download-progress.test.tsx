@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { RuntimeDownload } from "../runtime-download.ts";
+import type { RuntimeDownload } from "../src/runtime-download.ts";
 import { I18nProvider } from "./i18n.tsx";
 import { RuntimeDownloadProgressView, runtimeDownloadLabel, runtimeDownloadPercent } from "./runtime-download-progress.tsx";
 

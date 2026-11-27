@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
-import { buildNewProfile } from "../../create.ts";
-import { ENCRYPTED_VALUE_PREFIX } from "../../dpapi.ts";
-import { ProfileStore } from "../../store.ts";
+import { buildNewProfile } from "../create.ts";
+import { ENCRYPTED_VALUE_PREFIX } from "../dpapi.ts";
+import { ProfileStore } from "../store.ts";
 import {
   computeProxyEndpointHash,
   MAX_IMPORT_BYTES,

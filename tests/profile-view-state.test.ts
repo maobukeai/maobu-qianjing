@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { aggregateProfileTagCounts, createTagFilterMatcher, inProfileScope, matchesTagFilter, parseFavoriteProfiles, parseSavedProfileViews, serializeFavoriteProfiles, serializeSavedProfileViews, sameProfileView, type SavedProfileView } from "../profile-view-state.ts";
+import { aggregateProfileTagCounts, createTagFilterMatcher, inProfileScope, matchesTagFilter, parseFavoriteProfiles, parseSavedProfileViews, serializeFavoriteProfiles, serializeSavedProfileViews, sameProfileView, type SavedProfileView } from "../src/profile-view-state.ts";
 
 const saved: SavedProfileView = { id: `view_${"a".repeat(32)}`, name: "Overseas · running", filters: { scope: "favorites", query: "Research", group: "海外业务", status: "running", sort: { key: "name", dir: -1 }, hiddenColumns: ["no", "tags"], pageSize: 50 } };
 test("a saved view round-trips its actual filter and table layout without copying profile data", () => {

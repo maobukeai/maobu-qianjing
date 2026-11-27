@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { act, useState } from "react";
 import type { HTMLButtonElement, HTMLInputElement, HTMLElement } from "happy-dom";
-import { profileTagsUpdate } from "../profile-tags.ts";
+import { profileTagsUpdate } from "../src/profile-tags.ts";
 import { ProfileTagsDialog, type ProfileTagsTarget } from "../web/profile-tags.tsx";
 import { updateProfile } from "../web/api.ts";
 import { I18nProvider } from "../web/i18n.tsx";

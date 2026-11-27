@@ -3,15 +3,15 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createConnection } from "node:net";
-import { LifecycleAdmissionController } from "../lifecycle-admission.ts";
-import { ProfileStore } from "../store.ts";
-import { buildNewProfile } from "../create.ts";
-import { statePaths } from "../paths.ts";
-import { PythonRuntime } from "../python-runtime.ts";
-import { ScriptLibrary } from "../scripts.ts";
+import { LifecycleAdmissionController } from "../src/lifecycle-admission.ts";
+import { ProfileStore } from "../src/store.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { statePaths } from "../src/paths.ts";
+import { PythonRuntime } from "../src/python-runtime.ts";
+import { ScriptLibrary } from "../src/scripts.ts";
 
-import { serveAutomationApi, serveDashboard, serveDesktopAutomationApi, STANDALONE_SESSION_COOKIE, STANDALONE_SESSION_HEADER } from "../web.ts";
-const webSource = readFileSync(join(import.meta.dir, "..", "web.ts"), "utf8");
+import { serveAutomationApi, serveDashboard, serveDesktopAutomationApi, STANDALONE_SESSION_COOKIE, STANDALONE_SESSION_HEADER } from "../src/web.ts";
+const webSource = readFileSync(join(import.meta.dir, "..", "src", "web.ts"), "utf8");
 
 function rawLocalRequest(port: number, path: string, host: string, headers: Record<string, string> = {}): Promise<{ status: number; body: string }> {
     return new Promise((resolve, reject) => {

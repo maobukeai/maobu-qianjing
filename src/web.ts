@@ -7,7 +7,7 @@
  */
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { join } from "node:path";
-import index from "./web/index.html";
+import index from "../web/index.html";
 import { profileDisplayNo, type Launcher } from "./launcher.ts";
 import { ProfileStore } from "./store.ts";
 import type { AppConfigStore } from "./app-config.ts";
@@ -17,11 +17,11 @@ import type { StatePaths } from "./paths.ts";
 import type { RuntimeInventoryDeployment } from "./runtime-inventory.ts";
 import { handleRequest, isLoopbackAddress, rejectUntrustedLocalRequest, type BrowserLifecycleContext } from "./server.ts";
 import { handleUiRequest, type UiHealthMetadata } from "./ui.ts";
-import type { UiRosterTags } from "./src/ui/shared.ts";
-import { UiEventBus } from "./src/ui/events-bus.ts";
-import { MemoryWatermarkGuard } from "./src/metrics/memory-watermark-guard.ts";
-import { MetricsService } from "./src/metrics/metrics-service.ts";
-import type { ResourcePolicyStore } from "./src/metrics/resource-policy-store.ts";
+import type { UiRosterTags } from "./ui/shared.ts";
+import { UiEventBus } from "./ui/events-bus.ts";
+import { MemoryWatermarkGuard } from "./metrics/memory-watermark-guard.ts";
+import { MetricsService } from "./metrics/metrics-service.ts";
+import type { ResourcePolicyStore } from "./metrics/resource-policy-store.ts";
 import { subscribeRuntimeDownloads } from "./runtime-download.ts";
 import { ScriptLibrary, ScriptSupervisor } from "./scripts.ts";
 import { PythonRuntime } from "./python-runtime.ts";

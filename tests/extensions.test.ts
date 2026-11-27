@@ -7,7 +7,7 @@ import {
   installWebStoreExtension,
   parseWebStoreExtensionId,
   readManifestName,
-} from "../extensions.ts";
+} from "../src/extensions.ts";
 
 function concat(...chunks: Uint8Array[]): Uint8Array {
   const out = new Uint8Array(chunks.reduce((n, chunk) => n + chunk.length, 0));

@@ -1,18 +1,18 @@
 import { expect, test } from "bun:test";
-import { localeForCountry, localeForTimezone, normalizeProfileLocale } from "../profile-locale.ts";
-import { completeProfileFingerprint } from "../firefox-config.ts";
-import { buildNewProfile } from "../create.ts";
-import { deriveFingerprintFlags } from "../fingerprint.ts";
+import { localeForCountry, localeForTimezone, normalizeProfileLocale } from "../src/profile-locale.ts";
+import { completeProfileFingerprint } from "../src/firefox-config.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { deriveFingerprintFlags } from "../src/fingerprint.ts";
 import fonts from "camoufox-js/dist/mappings/fonts.config.js";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ProfileStore } from "../store.ts";
-import { parseExport, parseUpdateFile, rowsToUpdates, serializeAdsTxt, serializeXlsxRows } from "../parse.ts";
-import { importBuffers } from "../inbox.ts";
-import { parseImportFile } from "../import-formats.ts";
-import { writeXlsx } from "../xlsx.ts";
+import { ProfileStore } from "../src/store.ts";
+import { parseExport, parseUpdateFile, rowsToUpdates, serializeAdsTxt, serializeXlsxRows } from "../src/parse.ts";
+import { importBuffers } from "../src/inbox.ts";
+import { parseImportFile } from "../src/import-formats.ts";
+import { writeXlsx } from "../src/xlsx.ts";
 
 test("locale defaults distinguish countries within the same timezone continent", () => {
   for (const [country, timezone, locale] of [

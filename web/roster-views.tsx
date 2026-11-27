@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
-import { MAX_SAVED_VIEWS, sameProfileView, type ProfileViewFilters, type RosterScope, type SavedProfileView } from "../profile-view-state.ts";
+import { MAX_SAVED_VIEWS, sameProfileView, type ProfileViewFilters, type RosterScope, type SavedProfileView } from "../src/profile-view-state.ts";
 import { useTranslation } from "./i18n.tsx";
 import { AppIcon } from "./ui-primitives.tsx";
 import "./roster-views.css";

@@ -6,7 +6,7 @@ import { captureCandidateSource, recordCandidateBuild, verifyCandidateBuild } fr
 
 const version = "1.2.3";
 const versionFiles = {
-  "version.ts": `export const ALIASMODE_VERSION = "${version}";\n`,
+  "src/version.ts": `export const ALIASMODE_VERSION = "${version}";\n`,
   "package.json": JSON.stringify({ version }),
   "src-tauri/tauri.conf.json": JSON.stringify({ version }),
   "src-tauri/Cargo.toml": `[package]\nname = "aliasmode-desktop"\nversion = "${version}"\n`,

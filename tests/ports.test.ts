@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { allocatePort, probePortFree } from "../ports.ts";
+import { allocatePort, probePortFree } from "../src/ports.ts";
 
 function canBindLoopback(): boolean {
   try {

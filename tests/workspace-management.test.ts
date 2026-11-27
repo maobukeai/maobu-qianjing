@@ -4,13 +4,13 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, 
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
-import { ProfileStore } from "../store.ts";
-import { buildNewProfile } from "../create.ts";
-import { ensureStateDirectories, statePaths } from "../paths.ts";
-import { ONBOARDING_STATE_KEY, WorkspaceManagement } from "../workspace-management.ts";
-import { recoverWorkspaceUploads } from "../workspace-upload-staging.ts";
-import type { Launcher } from "../launcher.ts";
-import { ROSTER_DENSITY_KEY } from "../roster-density-state.ts";
+import { ProfileStore } from "../src/store.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { ensureStateDirectories, statePaths } from "../src/paths.ts";
+import { ONBOARDING_STATE_KEY, WorkspaceManagement } from "../src/workspace-management.ts";
+import { recoverWorkspaceUploads } from "../src/workspace-upload-staging.ts";
+import type { Launcher } from "../src/launcher.ts";
+import { ROSTER_DENSITY_KEY } from "../src/roster-density-state.ts";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => { for (const clean of cleanups.splice(0).reverse()) clean(); });
@@ -302,9 +302,9 @@ test("startup recovers a terminated process's staged upload without touching a l
   const script = `
     import { join } from "node:path";
     import { statSync } from "node:fs";
-    import { WorkspaceManagement } from "./workspace-management.ts";
-    import { ProfileStore } from "./store.ts";
-    import { statePaths } from "./paths.ts";
+    import { WorkspaceManagement } from "./src/workspace-management.ts";
+    import { ProfileStore } from "./src/store.ts";
+    import { statePaths } from "./src/paths.ts";
     const home = ${JSON.stringify(f.home)};
     const nonce = ${JSON.stringify(f.nonce)};
     const uploads = join(home, "backups", ".uploads");

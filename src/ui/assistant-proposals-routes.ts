@@ -19,10 +19,10 @@ import {
   type AssistantProxyVaultLookup,
   type ProposalExecuteInput,
   type ProposalStreamEvent,
-} from "../../assistant-proposals.ts";
-import type { Launcher } from "../../launcher.ts";
-import type { ProfileStore } from "../../store.ts";
-import { WorkspaceBusyError } from "../../workspace-maintenance.ts";
+} from "../assistant-proposals.ts";
+import type { Launcher } from "../launcher.ts";
+import type { ProfileStore } from "../store.ts";
+import { WorkspaceBusyError } from "../workspace-maintenance.ts";
 import { rejectUntrustedJsonMutation, type UiRuntimeOptions } from "./shared.ts";
 
 export interface AssistantProposalRouteOptions extends UiRuntimeOptions {

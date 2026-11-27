@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import net from "node:net";
 import tls from "node:tls";
 import { join } from "node:path";
-import { startProxyRelay } from "../proxy-relay.ts";
+import { startProxyRelay } from "../src/proxy-relay.ts";
 
 const EXPECTED_AUTH = "Basic " + Buffer.from("puser:ppass").toString("base64");
 

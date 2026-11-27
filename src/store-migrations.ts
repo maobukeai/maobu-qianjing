@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
-import { isEncryptedSecret, type LocalSecretProtector } from "../dpapi.ts";
+import { isEncryptedSecret, type LocalSecretProtector } from "./dpapi.ts";
 
 export const CURRENT_SCHEMA_VERSION = 4;
 

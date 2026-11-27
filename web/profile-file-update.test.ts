@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 import { createProfileFileUpdate } from "./profile-file-update.ts";
-import { ProfileStore } from "../store.ts";
-import { parseExport } from "../parse.ts";
-import { handleUiRequest } from "../ui.ts";
-import { writeXlsx } from "../xlsx.ts";
-import type { Launcher } from "../launcher.ts";
+import { ProfileStore } from "../src/store.ts";
+import { parseExport } from "../src/parse.ts";
+import { handleUiRequest } from "../src/ui.ts";
+import { writeXlsx } from "../src/xlsx.ts";
+import type { Launcher } from "../src/launcher.ts";
 
 function deferred<T>() { let resolve!: (value: T) => void; return { promise: new Promise<T>(yes => { resolve = yes; }), resolve: (value: T) => resolve(value) }; }
 const file = (text = "id,name,password\nfile_one,Changed,PRIVATE_ACCOUNT_VALUE", name = "C:\\PRIVATE_ACCOUNT_PATH\\PRIVATE_EXPORT.csv") => new File([text], name, { type: "text/csv" });

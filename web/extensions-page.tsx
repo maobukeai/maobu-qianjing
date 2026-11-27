@@ -3,7 +3,7 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "re
 import { createPortal } from "react-dom";
 import { MotionPresence } from "./desktop-motion.tsx";
 import type { Extension, ExtensionGroupReview, GroupExtensionDefaults, UiProfile } from "./api.ts";
-import type { ReviewedExtensionGroupSelection } from "../extension-group-revision.ts";
+import type { ReviewedExtensionGroupSelection } from "../src/extension-group-revision.ts";
 import { useTranslation } from "./i18n.tsx";
 import { AppIcon } from "./ui-primitives.tsx";
 import "./extensions-page.css";

@@ -1,11 +1,11 @@
-import { parseExport, serializeAdsTxt } from "../parse.ts";
+import { parseExport, serializeAdsTxt } from "../src/parse.ts";
 import { expect, test } from "bun:test";
 import {
   completeProfileFingerprint, createFirefoxProfileConfig, firefoxGraphicsRenderer, firefoxLaunchConfig, firefoxStartupPrefs, fitFirefoxWindow, graphicsIdentity,
   intelMacGraphicsVendor, setFirefoxScreen,
-} from "../firefox-config.ts";
+} from "../src/firefox-config.ts";
 import macVoiceLists from "../firefox-data/mac-voices.json";
-import type { FirefoxProfileConfig, JsonValue, Profile } from "../types.ts";
+import type { FirefoxProfileConfig, JsonValue, Profile } from "../src/types.ts";
 
 function profile(fingerprintSeed: number, config: Record<string, JsonValue> = {}, runtimeVersion = "156.0.1-beta.36"): Profile {
   return {

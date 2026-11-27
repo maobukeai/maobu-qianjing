@@ -1,4 +1,4 @@
-import { AppLockError, lockedResponse, type AppLockService } from "../../app-lock.ts";
+import { AppLockError, lockedResponse, type AppLockService } from "../app-lock.ts";
 import { noStoreJson, rejectUntrustedJsonMutation } from "./shared.ts";
 
 const APP_LOCK_PREFIX = "/ui/api/app-lock";

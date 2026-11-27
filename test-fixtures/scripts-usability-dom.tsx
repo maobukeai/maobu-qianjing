@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { act, useState } from "react";
 import type { HTMLButtonElement, HTMLInputElement, HTMLSelectElement, HTMLTextAreaElement, HTMLElement } from "happy-dom";
 import type { ScriptRecord } from "../contracts/local.ts";
-import type { ScriptRun } from "../scripts.ts";
+import type { ScriptRun } from "../src/scripts.ts";
 import type { UiProfile } from "../web/api.ts";
 import { ScriptsPage, ScriptRunPanel } from "../web/scripts.tsx";
 import { createDesktopCloseRegistry, DesktopCloseRegistryProvider } from "../web/desktop-close.tsx";

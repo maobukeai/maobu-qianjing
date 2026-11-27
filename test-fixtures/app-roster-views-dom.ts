@@ -3,8 +3,8 @@ import { mock } from "bun:test";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import type { HTMLButtonElement, HTMLInputElement, HTMLSelectElement, HTMLElement } from "happy-dom";
-import type { FolderInfo } from "../folders.ts";
-import { FAVORITE_PROFILES_KEY, SAVED_PROFILE_VIEWS_KEY, type SavedProfileView } from "../profile-view-state.ts";
+import type { FolderInfo } from "../src/folders.ts";
+import { FAVORITE_PROFILES_KEY, SAVED_PROFILE_VIEWS_KEY, type SavedProfileView } from "../src/profile-view-state.ts";
 import { createWebDomHarness } from "./web-dom.ts";
 
 const PAGE_KEY = "aliasmode.roster.pageSize", COLUMNS_KEY = "aliasmode.roster.hiddenColumns", SIDEBAR_KEY = "aliasmode.shell.sidebarCollapsed";

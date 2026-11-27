@@ -1,4 +1,4 @@
-import { isSafeProfileId } from "../profile-id.ts";
+import { isSafeProfileId } from "../src/profile-id.ts";
 
 export type CookieImportFormat = "single" | "json" | "netscape";
 export interface CookieImportTarget { id: string; name: string; platform?: string }

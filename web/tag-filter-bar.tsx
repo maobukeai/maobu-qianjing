@@ -1,11 +1,11 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { MAX_PROFILE_TAGS } from "../profile-tags.ts";
+import { MAX_PROFILE_TAGS } from "../src/profile-tags.ts";
 import {
   aggregateProfileTagCounts,
   matchesTagFilter,
   type AggregatedTagCount,
   type TagFilterMode,
-} from "../profile-view-state.ts";
+} from "../src/profile-view-state.ts";
 import { useTranslation } from "./i18n.tsx";
 import { AppIcon } from "./ui-primitives.tsx";
 import "./tag-filter-bar.css";

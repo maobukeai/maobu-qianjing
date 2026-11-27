@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { buildNewProfile } from "../create.ts";
-import { createSyncSnapshot, sealSyncSnapshot } from "../encrypted-sync.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { createSyncSnapshot, sealSyncSnapshot } from "../src/encrypted-sync.ts";
 import {
   applyProfilePackageImport,
   createProfilePackage,
@@ -11,9 +11,9 @@ import {
   ProfilePackagePreviewStore,
   sealProfilePackage,
   validateProfilePackage,
-} from "../profile-package.ts";
-import { listProfileEvents } from "../profile-timeline.ts";
-import { ProfileStore } from "../store.ts";
+} from "../src/profile-package.ts";
+import { listProfileEvents } from "../src/profile-timeline.ts";
+import { ProfileStore } from "../src/store.ts";
 
 const stores: ProfileStore[] = [];
 afterEach(() => {

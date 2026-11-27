@@ -14,10 +14,10 @@ import {
 } from "node:fs";
 import { lstat, readdir } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import type { CookieRecord } from "../../types.ts";
-import { renameWhenUnlocked } from "../../browser-install.ts";
-import { localStateDpapiKey } from "../../dpapi.ts";
-import { runPlaywrightWorker } from "../../playwright-runtime.ts";
+import type { CookieRecord } from "../types.ts";
+import { renameWhenUnlocked } from "../browser-install.ts";
+import { localStateDpapiKey } from "../dpapi.ts";
+import { runPlaywrightWorker } from "../playwright-runtime.ts";
 import { buildLabelScript } from "./launch-args.ts";
 import { IS_WINDOWS } from "./snapshot-utils.ts";
 

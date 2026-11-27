@@ -1,4 +1,4 @@
-import { proxyUrlPort } from "../proxy-url-port.ts";
+import { proxyUrlPort } from "../src/proxy-url-port.ts";
 
 export interface ParsedProxyInput {
   type: "http" | "socks5";

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { AppLockService } from "../app-lock.ts";
+import { AppLockService } from "../src/app-lock.ts";
 import { handleAppLockRoutes } from "../src/ui/app-lock-routes.ts";
 
 const cleanups: Array<() => void> = [];

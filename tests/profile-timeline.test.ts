@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { buildNewProfile } from "../create.ts";
+import { buildNewProfile } from "../src/create.ts";
 import {
   clearProfileEvents,
   inferLaunchFailureRecoveryKind,
@@ -8,8 +8,8 @@ import {
   recordProfileEvent,
   redactTimelineText,
   sanitizeTimelineDetail,
-} from "../profile-timeline.ts";
-import { ProfileStore } from "../store.ts";
+} from "../src/profile-timeline.ts";
+import { ProfileStore } from "../src/store.ts";
 
 const stores: ProfileStore[] = [];
 afterEach(() => {

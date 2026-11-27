@@ -8,8 +8,8 @@ import {
   isRpaTemplateId,
   listRpaTemplates,
   validateTemplateInputs,
-} from "../rpa-templates.ts";
-import { ScriptLibrary } from "../scripts.ts";
+} from "../src/rpa-templates.ts";
+import { ScriptLibrary } from "../src/scripts.ts";
 
 test("built-in RPA template library ships all 4 offline templates with valid ESM source and schemas", () => {
   const templates = listRpaTemplates();

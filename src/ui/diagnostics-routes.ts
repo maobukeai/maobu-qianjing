@@ -1,13 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { Launcher } from "../../launcher.ts";
-import type { ProfileStore } from "../../store.ts";
+import type { Launcher } from "../launcher.ts";
+import type { ProfileStore } from "../store.ts";
 import {
   createDiagnosticZip,
   runSystemDiagnostics,
   type ClientDesktopProbeInput,
   type SystemDiagnosticReport,
   type SystemDiagnosticsOptions,
-} from "../../system-diagnostics.ts";
+} from "../system-diagnostics.ts";
 import { noStoreJson, rejectUntrustedJsonMutation, type UiRuntimeOptions } from "./shared.ts";
 
 const DIAGNOSTICS_PREFIX = "/ui/api/diagnostics";

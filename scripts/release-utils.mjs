@@ -40,10 +40,10 @@ export function validatePublisherEnvironment(environment, { requirePrivateKey = 
 }
 export function validateProjectVersions(root, expected) {
   const read = path => readFileSync(resolve(root, path), "utf8");
-  const current = read("version.ts").match(/ALIASMODE_VERSION\s*=\s*"([^"]+)"/)?.[1];
+  const current = read("src/version.ts").match(/ALIASMODE_VERSION\s*=\s*"([^"]+)"/)?.[1];
   const version = releaseVersion(expected ?? current);
   const entries = {
-    "version.ts": current,
+    "src/version.ts": current,
     "package.json": JSON.parse(read("package.json")).version,
     "src-tauri/tauri.conf.json": JSON.parse(read("src-tauri/tauri.conf.json")).version,
     "src-tauri/Cargo.toml": read("src-tauri/Cargo.toml").match(/^version = "([^"]+)"$/m)?.[1],

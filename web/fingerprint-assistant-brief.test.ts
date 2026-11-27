@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { PresentableFingerprintCheck } from "../fingerprint-check-presentation.ts";
+import type { PresentableFingerprintCheck } from "../src/fingerprint-check-presentation.ts";
 import { buildFingerprintAssistantBrief } from "./fingerprint-assistant-brief.ts";
 import { translate } from "./i18n.tsx";
 import zhCN from "./locales/zh-CN.json";

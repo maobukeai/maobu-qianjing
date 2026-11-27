@@ -12,7 +12,7 @@ import {
   trackRuntimeDownload,
   writeDownloadChunk,
   type ResumableDownloadDeps,
-} from "../runtime-download.ts";
+} from "../src/runtime-download.ts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });

@@ -3,8 +3,8 @@ import {
   checkProxy,
   classifyProxyAttempts,
   type ProxyCheckAttempt,
-} from "../proxy-check.ts";
-import { EgressResponseError } from "../egress-transport.ts";
+} from "../src/proxy-check.ts";
+import { EgressResponseError } from "../src/egress-transport.ts";
 
 const direct = { ip: "198.51.100.10" };
 const exit = (ip: string) => ({ info: { ip, country: "NL" } }) satisfies ProxyCheckAttempt;

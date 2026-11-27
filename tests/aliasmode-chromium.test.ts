@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { windowsSystemTool } from "../browser-install.ts";
+import { windowsSystemTool } from "../src/browser-install.ts";
 import {
   aliasmodeChromiumArchive,
   aliasmodeChromiumExecutable,
@@ -23,13 +23,13 @@ import {
   shareChromiumComponents,
   supportsChromium155Host,
   type AliasmodeChromiumDeps,
-} from "../aliasmode-chromium.ts";
-import { runtimeDownloads } from "../runtime-download.ts";
+} from "../src/aliasmode-chromium.ts";
+import { runtimeDownloads } from "../src/runtime-download.ts";
 
 const WINDOWS_155 = aliasmodeChromiumArchive("win32");
-import { buildNewProfile } from "../create.ts";
-import { parseExport, serializeAdsTxt, serializeXlsxRows } from "../parse.ts";
-import { ProfileStore } from "../store.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { parseExport, serializeAdsTxt, serializeXlsxRows } from "../src/parse.ts";
+import { ProfileStore } from "../src/store.ts";
 
 /** Fake archive whose files carry their pinned hashes by content. */
 function fakeRelease(options: { archiveHash?: string; executableHash?: string } = {}) {

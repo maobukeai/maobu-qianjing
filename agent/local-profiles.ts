@@ -1,11 +1,11 @@
 import type { ProxyReplacementResult, ProxyReplacementsResponse } from "../contracts/local.ts";
-import { setFirefoxScreen } from "../firefox-config.ts";
-import { parseStrictProxy, parseStrictResolution } from "../parse.ts";
-import { assertValidProfile, isValidProfileName } from "../profile-validation.ts";
-import { normalizeProxySpec, proxyIdentityKey } from "../proxy.ts";
-import { parseProxyReplacementCsv, ProxyReplacementInputError } from "../proxy-replacements.ts";
-import type { ProfileStore } from "../store.ts";
-import type { Profile, ProxySpec } from "../types.ts";
+import { setFirefoxScreen } from "../src/firefox-config.ts";
+import { parseStrictProxy, parseStrictResolution } from "../src/parse.ts";
+import { assertValidProfile, isValidProfileName } from "../src/profile-validation.ts";
+import { normalizeProxySpec, proxyIdentityKey } from "../src/proxy.ts";
+import { parseProxyReplacementCsv, ProxyReplacementInputError } from "../src/proxy-replacements.ts";
+import type { ProfileStore } from "../src/store.ts";
+import type { Profile, ProxySpec } from "../src/types.ts";
 
 function invalid(message: string): never {
   throw new ProxyReplacementInputError(message);

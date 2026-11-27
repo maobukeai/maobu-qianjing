@@ -3,8 +3,8 @@ import {
   resolveDataSaverSettings,
   type AppSettings,
   type DataSaverSettings,
-} from "../../app-settings.ts";
-import type { JsonValue, Profile } from "../../types.ts";
+} from "../app-settings.ts";
+import type { JsonValue, Profile } from "../types.ts";
 import type { ProfileResourcePolicy, ResourcePolicyStore } from "../metrics/resource-policy-store.ts";
 import {
   applyChromiumResourcePreferences,

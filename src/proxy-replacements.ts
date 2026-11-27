@@ -1,5 +1,5 @@
 import { parse } from "csv-parse/sync";
-import type { ProxyReplacementRequestRow } from "./contracts/local.ts";
+import type { ProxyReplacementRequestRow } from "../contracts/local.ts";
 
 const CSV_PROXY_COLUMNS = ["type", "host", "port", "user", "pass"] as const;
 const CSV_SELECTORS = ["profileId", "username"] as const;

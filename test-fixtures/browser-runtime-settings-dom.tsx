@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { act } from "react";
-import type { RuntimeDownload } from "../runtime-download.ts";
+import type { RuntimeDownload } from "../src/runtime-download.ts";
 import { BrowserRuntimeSettings } from "../web/browser-runtime-settings.tsx";
 import { I18nProvider } from "../web/i18n.tsx";
 import type { BrowserRuntimeInventory } from "../web/settings-api.ts";

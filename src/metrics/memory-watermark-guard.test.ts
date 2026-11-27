@@ -4,7 +4,7 @@ import {
   dispatchWithLifecycleAdmission,
   LifecycleAdmissionController,
   LifecycleAdmissionError,
-} from "../../lifecycle-admission.ts";
+} from "../lifecycle-admission.ts";
 import { MemoryWatermarkGuard } from "./memory-watermark-guard.ts";
 import type { HostMemoryMetrics } from "./process-metrics.ts";
 

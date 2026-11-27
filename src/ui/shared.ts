@@ -1,16 +1,16 @@
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
-import { ALIASMODE_VERSION } from "../../version.ts";
-import type { Launcher } from "../../launcher.ts";
-import type { ProfileStore } from "../../store.ts";
-import type { AppConfigStore } from "../../app-config.ts";
-import type { StatePaths } from "../../paths.ts";
-import type { ChromiumRuntime, FingerprintVerdict, Profile, CookieRecord, ProxySpec } from "../../types.ts";
-import type { ProxyCheckResult } from "../../proxy-check.ts";
-import type { discoverLocalProxies } from "../../network-diagnostics.ts";
-import type { RuntimeInventoryDeployment } from "../../runtime-inventory.ts";
-import type { LocalAssistantService } from "../../local-assistant.ts";
-import type { FetchLike } from "../../geoip.ts";
+import { ALIASMODE_VERSION } from "../version.ts";
+import type { Launcher } from "../launcher.ts";
+import type { ProfileStore } from "../store.ts";
+import type { AppConfigStore } from "../app-config.ts";
+import type { StatePaths } from "../paths.ts";
+import type { ChromiumRuntime, FingerprintVerdict, Profile, CookieRecord, ProxySpec } from "../types.ts";
+import type { ProxyCheckResult } from "../proxy-check.ts";
+import type { discoverLocalProxies } from "../network-diagnostics.ts";
+import type { RuntimeInventoryDeployment } from "../runtime-inventory.ts";
+import type { LocalAssistantService } from "../local-assistant.ts";
+import type { FetchLike } from "../geoip.ts";
 import {
   parseStrictResolution,
   parseStrictPlatformOs,
@@ -19,27 +19,27 @@ import {
   parseStrictCores,
   parseStrictSeed,
   parseStrictProxy,
-} from "../../parse.ts";
-import type { ExtensionFetch } from "../../extensions.ts";
-import { isSafeProfileId, PROFILE_ID_ERROR } from "../../profile-id.ts";
-import { normalizeProfileNotes } from "../../profile-notes.ts";
-import type { ProfilePackagePreviewStore } from "../../profile-package.ts";
-import { normalizeProfileTags } from "../../profile-tags.ts";
-import { normalizeProfileLocale } from "../../profile-locale.ts";
-import { proxyHostPort, proxyLegacyString } from "../../proxy.ts";
-import { convertMobilePersonaToDesktop, editedProfileHardware, isMobileUserAgent } from "../../fingerprint.ts";
-import { firefoxGraphicsRenderer, setFirefoxScreen, syncFirefoxTimezone } from "../../firefox-config.ts";
-import type { ScriptLibrary, ScriptSupervisor } from "../../scripts.ts";
-import type { PythonRuntime } from "../../python-runtime.ts";
-import type { WorkspaceManagement } from "../../workspace-management.ts";
+} from "../parse.ts";
+import type { ExtensionFetch } from "../extensions.ts";
+import { isSafeProfileId, PROFILE_ID_ERROR } from "../profile-id.ts";
+import { normalizeProfileNotes } from "../profile-notes.ts";
+import type { ProfilePackagePreviewStore } from "../profile-package.ts";
+import { normalizeProfileTags } from "../profile-tags.ts";
+import { normalizeProfileLocale } from "../profile-locale.ts";
+import { proxyHostPort, proxyLegacyString } from "../proxy.ts";
+import { convertMobilePersonaToDesktop, editedProfileHardware, isMobileUserAgent } from "../fingerprint.ts";
+import { firefoxGraphicsRenderer, setFirefoxScreen, syncFirefoxTimezone } from "../firefox-config.ts";
+import type { ScriptLibrary, ScriptSupervisor } from "../scripts.ts";
+import type { PythonRuntime } from "../python-runtime.ts";
+import type { WorkspaceManagement } from "../workspace-management.ts";
 import type { UiEventBus } from "./events-bus.ts";
-import type { AppLockService } from "../../app-lock.ts";
-import type { AssistantProposalRegistry, AssistantProxyVaultLookup } from "../../assistant-proposals.ts";
-import type { AppSettingsStore } from "../../app-settings.ts";
+import type { AppLockService } from "../app-lock.ts";
+import type { AssistantProposalRegistry, AssistantProxyVaultLookup } from "../assistant-proposals.ts";
+import type { AppSettingsStore } from "../app-settings.ts";
 import type { MetricsService } from "../metrics/metrics-service.ts";
 import type { ResourcePolicyStore } from "../metrics/resource-policy-store.ts";
-import { buildFingerprintImportComparison, type FingerprintImportComparison } from "../../fingerprint-import-comparison.ts";
-import type { ImportOverrides } from "../../inbox.ts";
+import { buildFingerprintImportComparison, type FingerprintImportComparison } from "../fingerprint-import-comparison.ts";
+import type { ImportOverrides } from "../inbox.ts";
 
 /** Readiness metadata supplied by the desktop parent process. */
 export interface UiHealthMetadata {
@@ -216,7 +216,7 @@ export function listUiProfiles(store: ProfileStore): UiProfile[] {
 }
 
 // Imported late-bound type helper to avoid circular evaluation if needed; direct import from launcher.ts is safe:
-import { launchIdentityChanged } from "../../launcher.ts";
+import { launchIdentityChanged } from "../launcher.ts";
 
 export function noStoreJson(body: unknown, status = 200): Response {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });

@@ -1,4 +1,4 @@
-import { LocalJsonTransportError, requestLoopbackJson } from "../local-json-transport.ts";
+import { LocalJsonTransportError, requestLoopbackJson } from "../src/local-json-transport.ts";
 try {
   const result = await requestLoopbackJson(process.argv[2]!, JSON.parse(process.argv[3]!));
   console.log(JSON.stringify({ result }));

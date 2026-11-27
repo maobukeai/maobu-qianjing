@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { withCdpPage } from "../cdp.ts";
+import { withCdpPage } from "../src/cdp.ts";
 
 function stalledBrowser() {
   const never = new Promise<void>(() => {});

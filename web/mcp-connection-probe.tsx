@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { ALIASMODE_VERSION } from "../version.ts";
+import { ALIASMODE_VERSION } from "../src/version.ts";
 import type { IntegrationProbeResult } from "../agent/integration-probe.ts";
 import { copyText } from "./clipboard.ts";
 import { useTranslation } from "./i18n.tsx";

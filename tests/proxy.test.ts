@@ -8,7 +8,7 @@ import {
   proxyHostPort,
   proxyLegacyString,
   proxyUrl,
-} from "../proxy.ts";
+} from "../src/proxy.ts";
 
 test("normalizes supported proxy types and rejects unknown protocols", () => {
   expect(normalizeProxyType(" SOCKS5 ")).toBe("socks5");

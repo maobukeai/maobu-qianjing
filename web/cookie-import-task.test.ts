@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { createCookieImportTask, type CookieImportInput, type CookieImportSnapshot } from "./cookie-import-task.ts";
-import { ProfileStore } from "../store.ts";
-import { parseExport } from "../parse.ts";
-import { handleUiRequest } from "../ui.ts";
-import type { Launcher } from "../launcher.ts";
+import { ProfileStore } from "../src/store.ts";
+import { parseExport } from "../src/parse.ts";
+import { handleUiRequest } from "../src/ui.ts";
+import type { Launcher } from "../src/launcher.ts";
 
 const targets = [{ id: "one", name: "First environment" }, { id: "two", name: "Second environment" }];
 const input = (): CookieImportInput => ({ format: "json", input: { text: '[{"name":"session","value":"PRIVATE_COOKIE_VALUE_742","domain":"example.com","path":"/"}]' } });

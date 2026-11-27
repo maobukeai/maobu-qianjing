@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { parseImportFile } from "../import-formats.ts";
-import { parseExport, serializeXlsxRows } from "../parse.ts";
-import { isSafeProfileId } from "../profile-id.ts";
-import { writeXlsx } from "../xlsx.ts";
+import { parseImportFile } from "../src/import-formats.ts";
+import { parseExport, serializeXlsxRows } from "../src/parse.ts";
+import { isSafeProfileId } from "../src/profile-id.ts";
+import { writeXlsx } from "../src/xlsx.ts";
 
 const bytes = (text: string) => new TextEncoder().encode(text);
 

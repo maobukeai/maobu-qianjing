@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { ALIASMODE_VERSION } from "../version.ts";
+import { ALIASMODE_VERSION } from "../src/version.ts";
 import { getIntegrationInfo, type IntegrationInfo, type IntegrationInfoOptions } from "./integration-info.ts";
 import { READ_ONLY_MCP_ARGS, READ_ONLY_MCP_TOOLS } from "./mcp-scope.mjs";
 

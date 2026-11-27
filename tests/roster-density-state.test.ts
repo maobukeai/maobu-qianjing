@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { isRosterDensity, parseRosterDensity, ROSTER_DENSITY_KEY, ROSTER_DENSITY_ROW_HEIGHT } from "../roster-density-state.ts";
+import { isRosterDensity, parseRosterDensity, ROSTER_DENSITY_KEY, ROSTER_DENSITY_ROW_HEIGHT } from "../src/roster-density-state.ts";
 
 test("density stores one explicit workspace value and preserves the existing default", () => {
   expect(ROSTER_DENSITY_KEY).toBe("aliasmode.roster.density");

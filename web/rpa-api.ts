@@ -6,7 +6,7 @@ import type {
   RpaRecorderStatus,
   RpaTemplate,
 } from "../contracts/local.ts";
-import type { ScriptRun } from "../scripts.ts";
+import type { ScriptRun } from "../src/scripts.ts";
 import { getStandaloneSessionToken, notifyAppLockedFromResponse, notifyUnauthorizedResponse } from "./api.ts";
 
 type ScriptInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>;

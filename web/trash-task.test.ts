@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { createTrashReader, createTrashSelection, createTrashTask, type TrashPurgeApproval } from "./trash-task.ts";
-import { ProfileStore } from "../store.ts";
-import { parseExport } from "../parse.ts";
-import { handleTrashRequest } from "../trash.ts";
-import type { Launcher } from "../launcher.ts";
+import { ProfileStore } from "../src/store.ts";
+import { parseExport } from "../src/parse.ts";
+import { handleTrashRequest } from "../src/trash.ts";
+import type { Launcher } from "../src/launcher.ts";
 
 function deferred<T>() { let resolve!: (value: T) => void; return { promise: new Promise<T>(yes => { resolve = yes; }), resolve: (value: T) => resolve(value) }; }
 const json = (body: unknown, status = 200) => Response.json(body, { status });

@@ -3,7 +3,7 @@ import { Window, type HTMLButtonElement as HappyButtonElement } from "happy-dom"
 import * as React from "react";
 import { act } from "react";
 import type { Root } from "react-dom/client";
-import type { ProfileTimelineEvent } from "../profile-timeline.ts";
+import type { ProfileTimelineEvent } from "../src/profile-timeline.ts";
 import { I18nProvider } from "./i18n.tsx";
 import { ProfileTimeline } from "./profile-timeline.tsx";
 

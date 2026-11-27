@@ -1,5 +1,5 @@
 import * as React from "react";
-import type { RosterScope } from "../../profile-view-state.ts";
+import type { RosterScope } from "../../src/profile-view-state.ts";
 import { closeProfile, openProfile, raiseProfile, restartProfile, type UiProfile } from "../api.ts";
 import type { InspectionEditField } from "../environment-inspection.tsx";
 import { FingerprintImportBadge } from "../fingerprint-import-badge.tsx";

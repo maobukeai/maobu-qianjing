@@ -1,4 +1,4 @@
-import { fetchEgressEndpoint } from "../../egress-transport.ts";
+import { fetchEgressEndpoint } from "../../src/egress-transport.ts";
 try {
   const response = await fetchEgressEndpoint(process.argv[2]!, { relayPort: Number(process.argv[3]), signal: AbortSignal.timeout(3_000) });
   console.log(JSON.stringify({ status: response.status, body: await response.text() }));

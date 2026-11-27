@@ -23,7 +23,7 @@ import type {
   ScriptRecord,
   ScriptStepRecord,
   ScriptSummary,
-} from "./contracts/local.ts";
+} from "../contracts/local.ts";
 import { resolvePlaywrightRuntime, type PlaywrightRuntimeLayout } from "./playwright-runtime.ts";
 import { isSafeProfileId, PROFILE_ID_ERROR } from "./profile-id.ts";
 import { PYTHON_RUNTIME_FAILED, type PythonRuntime } from "./python-runtime.ts";

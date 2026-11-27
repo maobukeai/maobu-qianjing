@@ -2,7 +2,7 @@ import type {
   RpaCodegenOptions,
   RpaCodegenResult,
   RpaRecordedStep,
-} from "./contracts/local.ts";
+} from "../contracts/local.ts";
 
 const DEFAULT_MIN_DELAY_MS = 200;
 const DEFAULT_MAX_DELAY_MS = 600;

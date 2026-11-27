@@ -16,25 +16,25 @@ import {
   resolveEgressEndpoints,
   type EgressInfo,
   type EgressLookupOptions,
-} from "../../egress.ts";
+} from "../egress.ts";
 import {
   EgressResponseError,
   fetchEgressEndpoint,
   type EgressTransportOptions,
-} from "../../egress-transport.ts";
-import { normalizeProxySpec } from "../../proxy.ts";
+} from "../egress-transport.ts";
+import { normalizeProxySpec } from "../proxy.ts";
 import {
   classifyProxyAttempts,
   type ProxyCheckAttempt,
   type ProxyCheckResult,
-} from "../../proxy-check.ts";
+} from "../proxy-check.ts";
 import {
   startProxyRelay,
   type ProxyRelay,
   type RelayOptions,
   type UpstreamProxy,
-} from "../../proxy-relay.ts";
-import type { ProxySpec } from "../../types.ts";
+} from "../proxy-relay.ts";
+import type { ProxySpec } from "../types.ts";
 import type {
   ProxyVaultInternalRecord,
   ProxyVaultItemView,

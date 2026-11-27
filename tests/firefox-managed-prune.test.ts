@@ -2,8 +2,8 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { FIREFOX_MANAGED_RECORD, firefoxManagedDirectory, pruneManagedFirefoxRuntimes } from "../firefox-managed.ts";
-import { firefoxInstallDirectoryPrefix } from "../firefox-install.ts";
+import { FIREFOX_MANAGED_RECORD, firefoxManagedDirectory, pruneManagedFirefoxRuntimes } from "../src/firefox-managed.ts";
+import { firefoxInstallDirectoryPrefix } from "../src/firefox-install.ts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });

@@ -1,8 +1,8 @@
 import { test, expect } from "bun:test";
-import { analyze, fingerprintProbe, loginProbe, runDiagnostics, webrtcProbe, type ProfileReport } from "../diagnose.ts";
+import { analyze, fingerprintProbe, loginProbe, runDiagnostics, webrtcProbe, type ProfileReport } from "../src/diagnose.ts";
 import { runInNewContext } from "node:vm";
 import { createHash, webcrypto } from "node:crypto";
-import type { Profile } from "../types.ts";
+import type { Profile } from "../src/types.ts";
 
 test("fingerprint hashes read actual digest and audio bytes across a realm that forbids TypedArray element access", async () => {
   const canvasUrl = "data:image/png;base64,local-fixture";

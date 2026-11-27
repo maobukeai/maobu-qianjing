@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existingSearchProvider } from "../search-provider.ts";
+import { existingSearchProvider } from "../src/search-provider.ts";
 
 test("replaces a functional non-DuckDuckGo search provider", () => {
   expect(existingSearchProvider([

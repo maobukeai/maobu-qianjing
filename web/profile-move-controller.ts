@@ -1,4 +1,4 @@
-import { isSafeProfileId } from "../profile-id.ts";
+import { isSafeProfileId } from "../src/profile-id.ts";
 
 export interface ProfileMoveAttempt { readonly id: number; readonly ids: readonly string[]; readonly group: string; readonly workspaceId: string | null; }
 export interface ProfileMoveResult {

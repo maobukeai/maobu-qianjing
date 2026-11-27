@@ -8,7 +8,7 @@ import {
   desktopHealthMetadata,
   desktopReadyRecord,
   isDesktopShutdownCommand,
-} from "../desktop-runtime.ts";
+} from "../src/desktop-runtime.ts";
 
 const NONCE = "ab".repeat(32);
 
@@ -60,7 +60,7 @@ test("desktop control accepts only the fixed nonce-bound shutdown command", () =
 });
 
 test("desktop control gracefully shuts down when the parent stdin pipe closes", () => {
-  const source = readFileSync(join(import.meta.dir, "..", "cli.ts"), "utf8");
+  const source = readFileSync(join(import.meta.dir, "..", "src", "cli.ts"), "utf8");
   expect(source).toContain('process.stdin.once("end", shutdown);');
   expect(source).toContain('process.stdin.once("close", shutdown);');
 });

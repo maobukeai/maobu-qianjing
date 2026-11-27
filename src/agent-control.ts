@@ -10,7 +10,7 @@ import {
 import type { LifecycleAdmissionController } from "./lifecycle-admission.ts";
 import { ProxyReplacementInputError } from "./proxy-replacements.ts";
 import type { ProfileStore } from "./store.ts";
-import { editedLocalProfile, replaceLocalProfileProxies } from "./agent/local-profiles.ts";
+import { editedLocalProfile, replaceLocalProfileProxies } from "../agent/local-profiles.ts";
 import { buildStoredFingerprintReport } from "./fingerprint-report.ts";
 import { discoverLocalProxies, type LocalProxyDiscoveryOptions } from "./network-diagnostics.ts";
 import { isSafeProfileId } from "./profile-id.ts";

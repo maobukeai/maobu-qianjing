@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { buildNewProfile } from "../../create.ts";
-import { ProfileStore } from "../../store.ts";
+import { buildNewProfile } from "../create.ts";
+import { ProfileStore } from "../store.ts";
 import { MemoryWatermarkGuard } from "./memory-watermark-guard.ts";
 import {
   MetricsService,

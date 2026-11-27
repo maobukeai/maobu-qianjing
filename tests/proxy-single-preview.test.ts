@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { MAX_SINGLE_PROXY_ASSIGNMENT_IDS, SingleProxyPreviewInputError, validateSingleProxyCredentials, validateSingleProxyPreviewInput } from "../proxy-single-preview.ts";
+import { MAX_SINGLE_PROXY_ASSIGNMENT_IDS, SingleProxyPreviewInputError, validateSingleProxyCredentials, validateSingleProxyPreviewInput } from "../src/proxy-single-preview.ts";
 
 const request = {
   mode: "single" as const,

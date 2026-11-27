@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { resolve, sep, join, isAbsolute, dirname } from "node:path";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { ensureStateDirectories, legacyStatePaths, resolveStateRoot, statePaths } from "../paths.ts";
-import * as pathModule from "../paths.ts";
+import { ensureStateDirectories, legacyStatePaths, resolveStateRoot, statePaths } from "../src/paths.ts";
+import * as pathModule from "../src/paths.ts";
 
 const roots: string[] = [];
 afterEach(() => {

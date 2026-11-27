@@ -8,8 +8,8 @@ import { deflateRawSync } from "node:zlib";
 import { managedChromiumLocation } from "./aliasmode-chromium.ts";
 import { FIREFOX_RUNTIME_BUILDS, firefoxInstallDirectoryPrefix, type FirefoxRuntimeBuild } from "./firefox-install.ts";
 import { FIREFOX_MANAGED_RECORD, firefoxManagedDirectory } from "./firefox-managed.ts";
-import { getIntegrationInfo, type IntegrationInfo, type IntegrationInfoOptions } from "./agent/integration-info.ts";
-import { probeMcpIntegration, type IntegrationProbeOptions, type IntegrationProbeResult } from "./agent/integration-probe.ts";
+import { getIntegrationInfo, type IntegrationInfo, type IntegrationInfoOptions } from "../agent/integration-info.ts";
+import { probeMcpIntegration, type IntegrationProbeOptions, type IntegrationProbeResult } from "../agent/integration-probe.ts";
 import type { Launcher } from "./launcher.ts";
 import type { StatePaths } from "./paths.ts";
 import { resolvePlaywrightRuntime, type PlaywrightRuntimeLayout } from "./playwright-runtime.ts";
@@ -20,7 +20,7 @@ import {
   type RuntimeInventoryId,
 } from "./runtime-inventory.ts";
 import type { ProfileStore } from "./store.ts";
-import { LOW_DISK_SPACE_BYTES } from "./src/ui/shared.ts";
+import { LOW_DISK_SPACE_BYTES } from "./ui/shared.ts";
 import { ALIASMODE_VERSION } from "./version.ts";
 
 export const MAX_DIAGNOSTIC_ZIP_BYTES = 2 * 1024 * 1024; // 2 MiB hard ceiling

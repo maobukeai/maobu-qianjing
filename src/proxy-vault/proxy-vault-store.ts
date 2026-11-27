@@ -10,11 +10,11 @@
 import { createHash, randomBytes } from "node:crypto";
 import { isIP } from "node:net";
 import { parse as parseCsv } from "csv-parse/sync";
-import { canonicalIp } from "../../ip.ts";
-import { isSafeProfileId, PROFILE_ID_ERROR } from "../../profile-id.ts";
-import { normalizeProxySpec, parseProxySpec, type ProxyInput } from "../../proxy.ts";
-import type { ProfileStore } from "../../store.ts";
-import type { Profile, ProxySpec, ProxyType } from "../../types.ts";
+import { canonicalIp } from "../ip.ts";
+import { isSafeProfileId, PROFILE_ID_ERROR } from "../profile-id.ts";
+import { normalizeProxySpec, parseProxySpec, type ProxyInput } from "../proxy.ts";
+import type { ProfileStore } from "../store.ts";
+import type { Profile, ProxySpec, ProxyType } from "../types.ts";
 import { validateRefreshUrlSyntax, ProxyRefreshError } from "./proxy-refresh-url.ts";
 import {
   evaluateProxyVaultRisks,

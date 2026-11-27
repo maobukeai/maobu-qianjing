@@ -1,14 +1,14 @@
 /** Typed client for the dashboard's /ui/api/* endpoints. */
 import type { ScriptLanguage, ScriptRecord, ScriptSummary, } from "../contracts/local.ts";
-import type { ScriptRun } from "../scripts.ts";
-import type { PythonRuntimeStatus } from "../python-runtime.ts";
-import type { RuntimeDownload, RuntimeDownloadStatus } from "../runtime-download.ts";
-import type { FolderInfo } from "../folders.ts";
-import type { FingerprintImportComparison } from "../fingerprint-import-comparison.ts";
-import type { ExtensionGroupReview } from "../extension-group-revision.ts";
-import { isSafeProfileId } from "../profile-id.ts";
-export type { ExtensionGroupReview } from "../extension-group-revision.ts";
-export type { RuntimeDownload, RuntimeDownloadStatus } from "../runtime-download.ts";
+import type { ScriptRun } from "../src/scripts.ts";
+import type { PythonRuntimeStatus } from "../src/python-runtime.ts";
+import type { RuntimeDownload, RuntimeDownloadStatus } from "../src/runtime-download.ts";
+import type { FolderInfo } from "../src/folders.ts";
+import type { FingerprintImportComparison } from "../src/fingerprint-import-comparison.ts";
+import type { ExtensionGroupReview } from "../src/extension-group-revision.ts";
+import { isSafeProfileId } from "../src/profile-id.ts";
+export type { ExtensionGroupReview } from "../src/extension-group-revision.ts";
+export type { RuntimeDownload, RuntimeDownloadStatus } from "../src/runtime-download.ts";
 export interface UiProfile {
     id: string;
     name: string;

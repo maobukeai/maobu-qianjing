@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { compareAttestation, VERDICT_FIELDS } from "../fingerprint-attestation.ts";
-import { buildFingerprintImportComparison, FINGERPRINT_IMPORT_FIELD_LABELS, fingerprintImportCapturedAt, isFingerprintImportField } from "../fingerprint-import-comparison.ts";
-import type { ObservedFingerprint } from "../types.ts";
+import { compareAttestation, VERDICT_FIELDS } from "../src/fingerprint-attestation.ts";
+import { buildFingerprintImportComparison, FINGERPRINT_IMPORT_FIELD_LABELS, fingerprintImportCapturedAt, isFingerprintImportField } from "../src/fingerprint-import-comparison.ts";
+import type { ObservedFingerprint } from "../src/types.ts";
 
 const all: ObservedFingerprint = {
   canvas: "PRIVATE_CANVAS", audio: "PRIVATE_AUDIO", webglVendor: "PRIVATE_VENDOR", webglRenderer: "PRIVATE_RENDERER",

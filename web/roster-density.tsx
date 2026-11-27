@@ -1,8 +1,8 @@
 import { useId, useRef, type KeyboardEvent } from "react";
 import { useTranslation } from "./i18n.tsx";
-import { parseRosterDensity, type RosterDensity } from "../roster-density-state.ts";
+import { parseRosterDensity, type RosterDensity } from "../src/roster-density-state.ts";
 import "./roster-density.css";
-export { ROSTER_DENSITY_KEY, ROSTER_DENSITY_ROW_HEIGHT, isRosterDensity, parseRosterDensity, type RosterDensity } from "../roster-density-state.ts";
+export { ROSTER_DENSITY_KEY, ROSTER_DENSITY_ROW_HEIGHT, isRosterDensity, parseRosterDensity, type RosterDensity } from "../src/roster-density-state.ts";
 
 export interface RosterDensityControlProps {
   value: RosterDensity;

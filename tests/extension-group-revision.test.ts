@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { assertExtensionGroupRevision, canonicalExtensionSelection, createExtensionGroupReview, extensionGroupExpectedFingerprint, ExtensionGroupRevisionError, parseExtensionGroupSelection, validExtensionGroupFingerprint, type ExtensionGroupRevisionCode, type ExtensionGroupRevisionState } from "../extension-group-revision.ts";
+import { assertExtensionGroupRevision, canonicalExtensionSelection, createExtensionGroupReview, extensionGroupExpectedFingerprint, ExtensionGroupRevisionError, parseExtensionGroupSelection, validExtensionGroupFingerprint, type ExtensionGroupRevisionCode, type ExtensionGroupRevisionState } from "../src/extension-group-revision.ts";
 
 const baseline = (): ExtensionGroupRevisionState => ({ scope: "synthetic-workspace-generation", group: "Research", exists: true, defaults: ["a"], members: [
   { id: "one", incarnation: "PRIVATE_INCARNATION_ONE", engine: "chromium", extensions: ["a", "c"], name: "Custom selection", running: true },

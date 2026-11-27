@@ -6,10 +6,10 @@ import {
   AgentControlSession,
   parseAgentControlRequest,
   validAgentAuthorization,
-} from "../agent-control.ts";
-import { buildNewProfile } from "../create.ts";
-import type { AgentControlDeps } from "../agent-control.ts";
-import { BrowserLaunchError } from "../launcher.ts";
+} from "../src/agent-control.ts";
+import { buildNewProfile } from "../src/create.ts";
+import type { AgentControlDeps } from "../src/agent-control.ts";
+import { BrowserLaunchError } from "../src/launcher.ts";
 
 function wire(method: string, params: Record<string, unknown> = {}, id = 1): string {
   return JSON.stringify({ protocol: AGENT_CONTROL_PROTOCOL, id, method, params });

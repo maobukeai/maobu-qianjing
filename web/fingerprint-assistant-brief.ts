@@ -1,4 +1,4 @@
-import type { FingerprintCheckStatus, FingerprintTranslator } from "../fingerprint-check-presentation.ts";
+import type { FingerprintCheckStatus, FingerprintTranslator } from "../src/fingerprint-check-presentation.ts";
 import type { FingerprintReport } from "./settings-api.ts";
 
 // The report's labels and explanations are not part of the anonymous draft.

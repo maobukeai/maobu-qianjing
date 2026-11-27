@@ -1,12 +1,12 @@
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
-import { buildNewProfile } from "../create.ts";
-import type { Launcher } from "../launcher.ts";
-import { statePaths } from "../paths.ts";
-import { PROFILE_TEMPLATES_FILE, ProfileTemplateStore, type ProfileTemplateSettings } from "../profile-templates.ts";
-import { ProfileStore } from "../store.ts";
-import { handleUiRequest } from "../ui.ts";
+import { buildNewProfile } from "../src/create.ts";
+import type { Launcher } from "../src/launcher.ts";
+import { statePaths } from "../src/paths.ts";
+import { PROFILE_TEMPLATES_FILE, ProfileTemplateStore, type ProfileTemplateSettings } from "../src/profile-templates.ts";
+import { ProfileStore } from "../src/store.ts";
+import { handleUiRequest } from "../src/ui.ts";
 
 const parent = resolve(import.meta.dir, "..", "node_modules/.cache/profile-template-integration-tests"), roots: string[] = [], stores: ProfileStore[] = [];
 afterEach(() => {

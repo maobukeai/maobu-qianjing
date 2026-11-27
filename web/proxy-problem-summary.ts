@@ -1,4 +1,4 @@
-import type { ProxyCheckView } from "../proxy-tools-types.ts";
+import type { ProxyCheckView } from "../src/proxy-tools-types.ts";
 import { parsePastedProxy } from "./proxy-input.ts";
 
 type Translate = (key: string, values?: Record<string, string | number>) => string;

@@ -3,9 +3,9 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { defaultAppSettings, parseAppSettings, resolveOpenStartPageOnLaunch } from "../app-settings.ts";
+import { defaultAppSettings, parseAppSettings, resolveOpenStartPageOnLaunch } from "../src/app-settings.ts";
 import { renderStartPageHtml, START_PAGE_FILENAME, writeProfileStartPage } from "../src/launcher/start-page.ts";
-import type { Profile } from "../types.ts";
+import type { Profile } from "../src/types.ts";
 
 function makeProfile(overrides: Partial<Profile> = {}): Profile {
   return {

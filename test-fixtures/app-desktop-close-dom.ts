@@ -5,7 +5,7 @@ import type { Root } from "react-dom/client";
 import type { HTMLElement, HTMLButtonElement, HTMLInputElement, HTMLSelectElement } from "happy-dom";
 import type { DesktopCloseIntent, DesktopCloseNative, DesktopCloseResolved } from "../web/desktop-close-state.ts";
 import type { AppLockStatus } from "../web/app-lock-api.ts";
-import { getBrowserRuntimeInventory } from "../runtime-inventory.ts";
+import { getBrowserRuntimeInventory } from "../src/runtime-inventory.ts";
 import { createWebDomHarness } from "./web-dom.ts";
 
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }

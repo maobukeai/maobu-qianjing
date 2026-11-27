@@ -1,8 +1,8 @@
 import { test, expect } from "bun:test";
 import { createServer, type Socket } from "node:net";
-import { discoverLocalProxies, parseLocalProxyDiscoveryRequest, type LocalProxyHost } from "../network-diagnostics.ts";
-import { handleFeatureSettingsRequest } from "../feature-settings.ts";
-import type { ProfileStore } from "../store.ts";
+import { discoverLocalProxies, parseLocalProxyDiscoveryRequest, type LocalProxyHost } from "../src/network-diagnostics.ts";
+import { handleFeatureSettingsRequest } from "../src/feature-settings.ts";
+import type { ProfileStore } from "../src/store.ts";
 
 async function localServer(onData: (socket: Socket, data: Buffer) => void, host: LocalProxyHost = "127.0.0.1") {
   const sockets = new Set<Socket>();

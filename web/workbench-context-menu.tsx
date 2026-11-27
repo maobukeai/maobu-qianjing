@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { RosterDensity } from "../roster-density-state.ts";
+import type { RosterDensity } from "../src/roster-density-state.ts";
 import { useTranslation } from "./i18n.tsx";
 import { AppIcon, type IconName } from "./ui-primitives.tsx";
 import "./workbench-context-menu.css";

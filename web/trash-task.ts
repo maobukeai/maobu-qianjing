@@ -1,6 +1,6 @@
-import { isSafeProfileId } from "../profile-id.ts";
+import { isSafeProfileId } from "../src/profile-id.ts";
 import { notifyAppLockedFromResponse, notifyUnauthorizedResponse, withStandaloneAuthHeaders } from "./api.ts";
-import type { TrashProfileView } from "../proxy-tools-types.ts";
+import type { TrashProfileView } from "../src/proxy-tools-types.ts";
 
 export type TrashAction = "restore" | "purge";
 export type TrashFailureReason = "not_in_trash" | "permission_denied" | "profile_open" | "operation_failed" | "cancelled" | "unrecognized";

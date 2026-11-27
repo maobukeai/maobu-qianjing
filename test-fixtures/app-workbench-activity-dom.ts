@@ -3,7 +3,7 @@ import { mock } from "bun:test";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import type { HTMLElement, HTMLButtonElement, HTMLInputElement, HTMLSelectElement, HTMLTextAreaElement } from "happy-dom";
-import type { ScriptRun } from "../scripts.ts";
+import type { ScriptRun } from "../src/scripts.ts";
 import { createWebDomHarness } from "./web-dom.ts";
 import { activityTask, activityTrigger, openActivity, viewActivityTask } from "./activity-interaction.ts";
 

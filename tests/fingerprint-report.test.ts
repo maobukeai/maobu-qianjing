@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { buildStoredFingerprintReport } from "../fingerprint-report.ts";
-import { assessFingerprintQuality } from "../fingerprint-quality.ts";
-import { createFingerprintSource } from "../fingerprint-source.ts";
-import { launchPersona } from "../launcher.ts";
-import type { LaunchInfo, ObservedFingerprint, Profile } from "../types.ts";
+import { buildStoredFingerprintReport } from "../src/fingerprint-report.ts";
+import { assessFingerprintQuality } from "../src/fingerprint-quality.ts";
+import { createFingerprintSource } from "../src/fingerprint-source.ts";
+import { launchPersona } from "../src/launcher.ts";
+import type { LaunchInfo, ObservedFingerprint, Profile } from "../src/types.ts";
 
 const now = Date.parse("2026-11-09T10:00:00Z");
 function profile(overrides: Partial<Profile> = {}): Profile {

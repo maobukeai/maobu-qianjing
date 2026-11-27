@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { act } from "react";
 import type { HTMLSelectElement } from "happy-dom";
-import { defaultAppSettings } from "../app-settings.ts";
+import { defaultAppSettings } from "../src/app-settings.ts";
 import { ChromiumPreloadingSettings } from "../web/chromium-preloading-settings.tsx";
 import { I18nProvider } from "../web/i18n.tsx";
 import { createWebDomHarness } from "./web-dom.ts";

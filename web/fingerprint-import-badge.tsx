@@ -1,6 +1,6 @@
 import type { UiProfile } from "./api.ts";
 import { FINGERPRINT_IMPORT_FIELD_LABELS, fingerprintImportCapturedAt, isFingerprintImportField,
-  type FingerprintImportComparison, type FingerprintImportField } from "../fingerprint-import-comparison.ts";
+  type FingerprintImportComparison, type FingerprintImportField } from "../src/fingerprint-import-comparison.ts";
 import { useTranslation } from "./i18n.tsx";
 
 type BadgeProfile = Pick<UiProfile, "fpImportComparison" | "fpVerdict">;

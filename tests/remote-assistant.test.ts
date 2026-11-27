@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createServer as createHttpsServer } from "node:https";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { RemoteAssistantService, isRemoteAssistantModelId, normalizeRemoteAssistantEndpoint, type RemoteAssistantConnection } from "../remote-assistant.ts";
+import { RemoteAssistantService, isRemoteAssistantModelId, normalizeRemoteAssistantEndpoint, type RemoteAssistantConnection } from "../src/remote-assistant.ts";
 
 const gateway: RemoteAssistantConnection = { provider: "openai-compatible", endpoint: "https://gateway.example.test/api/v1", apiKey: "fixture-only-secret" };
 const chat = { model: "fixture-model", system: "Operator-reviewed drafts only.", messages: [{ role: "user" as const, content: "你好，猫步🐾" }] };
@@ -208,7 +208,7 @@ describe("model service errors and network limits", () => {
       const connection = { ...gateway, endpoint: `https://localhost:${port}/v1` };
       await expect(new RemoteAssistantService({ allowedLoopbackPorts: [port] }).listModels(connection)).rejects.toMatchObject({ code: "unavailable" });
       expect(requests).toBe(0);
-      const module = new URL("../remote-assistant.ts", import.meta.url).href;
+      const module = new URL("../src/remote-assistant.ts", import.meta.url).href;
       const child = Bun.spawn([process.execPath, "--no-env-file", "-e",
         `import { RemoteAssistantService } from ${JSON.stringify(module)};
         console.log(JSON.stringify(await new RemoteAssistantService({ allowedLoopbackPorts: [${port}] }).listModels(${JSON.stringify(connection)})));`], {

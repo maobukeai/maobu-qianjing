@@ -5,7 +5,7 @@ import process from "node:process";
 import { discoverRuntime } from "./runtime-client.mjs";
 import { configureClients, type SetupClient } from "./setup.ts";
 import { MCP_SCOPE_USAGE, parseMcpScopeArgs, READ_ONLY_MCP_ARGS, type McpScope } from "./mcp-scope.mjs";
-import { ALIASMODE_VERSION } from "../version.ts";
+import { ALIASMODE_VERSION } from "../src/version.ts";
 
 const VERSION = ALIASMODE_VERSION;
 // Tauri keeps Linux resources in lib/<productName> beside bin.

@@ -5,7 +5,7 @@ import { useTranslation } from "./i18n.tsx";
 import { MotionPresence } from "./desktop-motion.tsx";
 import { AppIcon } from "./ui-primitives.tsx";
 import { hasActiveWorkbenchModal } from "./workbench-shortcuts.ts";
-import type { ProfileViewFilters, SavedProfileView } from "../profile-view-state.ts";
+import type { ProfileViewFilters, SavedProfileView } from "../src/profile-view-state.ts";
 import { createProfileSearchIndex, searchProfileIndex, type CommandPaletteProfile } from "./profile-search.ts";
 export type { CommandPaletteProfile } from "./profile-search.ts";
 import "./command-palette.css";

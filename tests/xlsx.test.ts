@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { writeXlsx, readXlsx, XLSX_MAX_CELL } from "../xlsx.ts";
+import { writeXlsx, readXlsx, XLSX_MAX_CELL } from "../src/xlsx.ts";
 
 test("writeXlsx emits a real zip container", async () => {
   const bytes = await writeXlsx(["id"], [["k1"]]);
@@ -77,7 +77,7 @@ test("rejects bytes that are not a workbook", async () => {
 
 /** Pull xl/worksheets/sheet1.xml back out of a written workbook. */
 async function sheetXml(bytes: Uint8Array): Promise<string> {
-  const { zipEntries } = await import("../unzip.ts");
+  const { zipEntries } = await import("../src/unzip.ts");
   for await (const e of zipEntries(bytes)) {
     if (e.name === "xl/worksheets/sheet1.xml") return new TextDecoder().decode(await e.bytes());
   }
@@ -106,7 +106,7 @@ async function sharedStringsWorkbook(headers: string[], rows: string[][]): Promi
       cells.map((c, i) => `<c r="${col(i)}${r + 1}" t="s"><v>${idx(c)}</v></c>`).join("") +
       `</row>`)
     .join("");
-  const { buildZip } = await import("../xlsx.ts");
+  const { buildZip } = await import("../src/xlsx.ts");
   return buildZip([
     { name: "[Content_Types].xml", data: `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>` },
     { name: "_rels/.rels", data: `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>` },

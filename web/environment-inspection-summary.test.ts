@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { buildInspectionDiagnosticSummary, inspectionEvidenceSource, inspectionMeasurementCoverage, inspectionOverview } from "./environment-inspection.tsx";
 import type { FingerprintReport } from "./settings-api.ts";
-import { assessFingerprintQuality } from "../fingerprint-quality.ts";
-import { parseExport } from "../parse.ts";
+import { assessFingerprintQuality } from "../src/fingerprint-quality.ts";
+import { parseExport } from "../src/parse.ts";
 
 const report = (checks: FingerprintReport["checks"], measuredAt?: string): FingerprintReport => ({ profileId: "PRIVATE_ENVIRONMENT_ID", name: "PRIVATE_ACCOUNT_NAME", status: "consistent", summary: { pass: 999, warn: 999, fail: 999, unknown: 999 }, checks, ...(measuredAt ? { measuredAt } : {}) });
 const check = (id: string, status: FingerprintReport["checks"][number]["status"] = "pass") => ({ id, status, label: "PRIVATE_COOKIE_VALUE", detail: "203.0.113.44 http://user:PRIVATE_PROXY_CREDENTIAL@proxy.invalid", recommendation: "PRIVATE_RAW_GUIDANCE" });

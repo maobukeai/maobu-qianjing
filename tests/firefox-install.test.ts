@@ -3,9 +3,9 @@ import { createHash } from "node:crypto";
 import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { browserEnvText } from "../browser-install.ts";
-import { firefoxBuildForHost, firefoxReleaseArchiveUrl, installFirefox, type FirefoxRuntimeBuild } from "../firefox-install.ts";
-import { runtimeDownloads } from "../runtime-download.ts";
+import { browserEnvText } from "../src/browser-install.ts";
+import { firefoxBuildForHost, firefoxReleaseArchiveUrl, installFirefox, type FirefoxRuntimeBuild } from "../src/firefox-install.ts";
+import { runtimeDownloads } from "../src/runtime-download.ts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -15,7 +15,7 @@ for (const args of [["--engine", "firefox"], ["--engine", "invalid"]]) {
   test(`browser setup rejects incomplete engine options: ${args.join(" ")}`, async () => {
     const cwd = mkdtempSync(join(tmpdir(), "aliasmode-firefox-setup-cli-"));
     roots.push(cwd);
-    const child = Bun.spawn([process.execPath, join(import.meta.dir, "..", "cli.ts"), "install-browser", ...args], {
+    const child = Bun.spawn([process.execPath, join(import.meta.dir, "..", "src", "cli.ts"), "install-browser", ...args], {
       cwd, stdout: "pipe", stderr: "pipe",
     });
     const [status, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);

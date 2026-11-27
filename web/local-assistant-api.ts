@@ -1,4 +1,4 @@
-import type { LocalAssistantChatInput, LocalAssistantChatResult, LocalModelCatalog } from "../local-assistant.ts";
+import type { LocalAssistantChatInput, LocalAssistantChatResult, LocalModelCatalog } from "../src/local-assistant.ts";
 import { notifyAppLockedFromResponse, notifyUnauthorizedResponse, withStandaloneAuthHeaders } from "./api.ts";
 import type {
   AnomalyCriterion,
@@ -8,7 +8,7 @@ import type {
   ProposalExecutionSnapshot,
   ProposalRiskLevel,
   ProposalStreamEvent,
-} from "../assistant-proposals.ts";
+} from "../src/assistant-proposals.ts";
 
 export type {
   AnomalyCriterion,

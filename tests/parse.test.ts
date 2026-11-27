@@ -20,8 +20,8 @@ import {
   parseCookieText,
   mergeCookies,
   cookiesForEngine,
-} from "../parse.ts";
-import { deterministicSeed } from "../fingerprint.ts";
+} from "../src/parse.ts";
+import { deterministicSeed } from "../src/fingerprint.ts";
 
 const SAMPLE = `acc_id=476436
 id=k1d0cd11

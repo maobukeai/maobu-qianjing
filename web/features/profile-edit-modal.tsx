@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { localeTimezoneMismatch } from "../../profile-locale.ts";
+import { localeTimezoneMismatch } from "../../src/profile-locale.ts";
 import {
   checkProxy,
   clearProfileCache,

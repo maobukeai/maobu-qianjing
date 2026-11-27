@@ -1,11 +1,11 @@
 // @ts-expect-error Bun embeds this package data in compiled sidecars.
-import fingerprintNetworkDefinitionPath from "./node_modules/fingerprint-generator/data_files/fingerprint-network-definition.zip" with { type: "file" };
+import fingerprintNetworkDefinitionPath from "../node_modules/fingerprint-generator/data_files/fingerprint-network-definition.zip" with { type: "file" };
 // @ts-expect-error Bun embeds this package data in compiled sidecars.
-import inputNetworkDefinitionPath from "./node_modules/header-generator/data_files/input-network-definition.zip" with { type: "file" };
+import inputNetworkDefinitionPath from "../node_modules/header-generator/data_files/input-network-definition.zip" with { type: "file" };
 // @ts-expect-error Bun embeds this package data in compiled sidecars.
-import headerNetworkDefinitionPath from "./node_modules/header-generator/data_files/header-network-definition.zip" with { type: "file" };
+import headerNetworkDefinitionPath from "../node_modules/header-generator/data_files/header-network-definition.zip" with { type: "file" };
 // @ts-expect-error Bun embeds this package data in compiled sidecars.
-import webglDataPath from "./node_modules/camoufox-js/dist/data-files/webgl_data.db" with { type: "file" };
+import webglDataPath from "../node_modules/camoufox-js/dist/data-files/webgl_data.db" with { type: "file" };
 import { Database } from "bun:sqlite";
 import { isIP } from "node:net";
 import { availableParallelism } from "node:os";

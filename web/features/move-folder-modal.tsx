@@ -1,4 +1,4 @@
-import type { FolderInfo } from "../../folders";
+import type { FolderInfo } from "../../src/folders.ts";
 import { useTranslation } from "../i18n";
 import { AppIcon, ModalDialog } from "../ui-primitives";
 import "./group-management.css";

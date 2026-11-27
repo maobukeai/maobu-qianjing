@@ -1,7 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import { useTranslation } from "./i18n.tsx";
-import { folderScope, folderTree as buildFolderTree, type FolderInfo } from "../folders.ts";
-import type { TrashProfileView } from "../proxy-tools-types.ts";
+import { folderScope, folderTree as buildFolderTree, type FolderInfo } from "../src/folders.ts";
+import type { TrashProfileView } from "../src/proxy-tools-types.ts";
 import { proxyResultPage } from "./proxies.tsx";
 import { createTrashReader, createTrashSelection, createTrashTask, TRASH_FAILURE_REASONS, type TrashAction, type TrashTaskSnapshot } from "./trash-task.ts";
 import { useOptionalWorkspaceOperations, workspaceOperationMessage, type WorkspaceOperationCoordinator, type WorkspaceOperationLease } from "./workspace-operations.tsx";

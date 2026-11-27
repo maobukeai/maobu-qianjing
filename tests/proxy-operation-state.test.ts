@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { ProxyOperationState, ProxyOperationStateError, type ProxyOperationRow } from "../proxy-operation-state.ts";
+import { ProxyOperationState, ProxyOperationStateError, type ProxyOperationRow } from "../src/proxy-operation-state.ts";
 
 const ready = (index: number, profileId = `profile_${index}`): ProxyOperationRow => ({ index, profileId, status: "ready" });
 const binding = (state: ProxyOperationState, previewId: string) => ({ operationScope: state.operationScope, previewId, attemptId: crypto.randomUUID() });

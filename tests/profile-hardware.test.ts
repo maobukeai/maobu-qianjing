@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { buildNewProfile, type NewProfileInput } from "../create.ts";
-import { deriveFingerprintFlags, editedProfileHardware, generateProfileHardware } from "../fingerprint.ts";
-import { firefoxLaunchConfig } from "../firefox-config.ts";
-import { parseExport, serializeAdsTxt, serializeXlsxRows } from "../parse.ts";
-import { ProfileStore } from "../store.ts";
+import { buildNewProfile, type NewProfileInput } from "../src/create.ts";
+import { deriveFingerprintFlags, editedProfileHardware, generateProfileHardware } from "../src/fingerprint.ts";
+import { firefoxLaunchConfig } from "../src/firefox-config.ts";
+import { parseExport, serializeAdsTxt, serializeXlsxRows } from "../src/parse.ts";
+import { ProfileStore } from "../src/store.ts";
 
 const cloakProfile = () => {
   const profile = buildNewProfile({ chromiumRuntime: "cloakbrowser" }, () => false);
@@ -93,7 +93,7 @@ test("export and import keep stored hardware", () => {
 });
 
 test("the profile edit view shows the stored graphics card and cores", async () => {
-  const { handleUiRequest } = await import("../ui.ts");
+  const { handleUiRequest } = await import("../src/ui.ts");
   const store = new ProfileStore(":memory:");
   const cloak = cloakProfile();
   const firefox = buildNewProfile({ engine: "firefox", platformOs: "windows" }, () => false);

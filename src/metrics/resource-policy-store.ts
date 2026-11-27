@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { assertSafeProfileId } from "../../profile-id.ts";
+import { assertSafeProfileId } from "../profile-id.ts";
 
 export type ResourcePolicyMode = "inherit" | "on" | "off";
 

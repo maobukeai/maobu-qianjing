@@ -1,4 +1,4 @@
-import { API_SECURITY_HEADERS } from "../../server.ts";
+import { API_SECURITY_HEADERS } from "../server.ts";
 import { encodeSseEvent, SSE_KEEPALIVE_BYTES } from "./events-bus.ts";
 import { noStoreJson, rejectCrossOriginMutation, type UiRuntimeOptions } from "./shared.ts";
 

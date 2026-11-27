@@ -6,8 +6,8 @@ import {
   RpaRecorderManager,
   type RecorderChildProcess,
   type RecorderProcessFactory,
-} from "../rpa-recorder.ts";
-import { ScriptLibrary, ScriptSupervisor } from "../scripts.ts";
+} from "../src/rpa-recorder.ts";
+import { ScriptLibrary, ScriptSupervisor } from "../src/scripts.ts";
 
 const roots: string[] = [];
 afterEach(() => {

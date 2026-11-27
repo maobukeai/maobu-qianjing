@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
-import { buildFingerprintImportComparison, type FingerprintImportComparison } from "../fingerprint-import-comparison.ts";
+import { buildFingerprintImportComparison, type FingerprintImportComparison } from "../src/fingerprint-import-comparison.ts";
 import { FingerprintImportBadge } from "./fingerprint-import-badge.tsx";
 import { I18nProvider } from "./i18n.tsx";
 

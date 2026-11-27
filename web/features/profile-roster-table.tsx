@@ -1,6 +1,6 @@
 import { type CSSProperties, type FocusEvent, type KeyboardEvent, type MouseEvent, type MutableRefObject, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { RosterScope } from "../../profile-view-state.ts";
-import { ROSTER_DENSITY_ROW_HEIGHT, type RosterDensity } from "../../roster-density-state.ts";
+import type { RosterScope } from "../../src/profile-view-state.ts";
+import { ROSTER_DENSITY_ROW_HEIGHT, type RosterDensity } from "../../src/roster-density-state.ts";
 import type { DiagnoseReport, UiProfile } from "../api.ts";
 import { RosterSkeleton } from "../components/roster-skeleton.tsx";
 import { useEffectiveDesktopMotion } from "../desktop-motion.tsx";

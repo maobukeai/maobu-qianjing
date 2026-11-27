@@ -9,10 +9,10 @@
  * - Single-item edit plaintext is served only on `GET /ui/api/proxy-vault/:id/edit`.
  */
 
-import type { ProfileStore } from "../../store.ts";
-import type { ProxyType } from "../../types.ts";
-import { normalizeProxyType } from "../../proxy.ts";
-import { WorkspaceBusyError } from "../../workspace-maintenance.ts";
+import type { ProfileStore } from "../store.ts";
+import type { ProxyType } from "../types.ts";
+import { normalizeProxyType } from "../proxy.ts";
+import { WorkspaceBusyError } from "../workspace-maintenance.ts";
 import {
   ProxyRefreshCooldown,
   ProxyRefreshError,

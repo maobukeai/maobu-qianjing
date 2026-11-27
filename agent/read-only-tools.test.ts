@@ -3,13 +3,13 @@ import { createServer, type AddressInfo, type Socket } from "node:net";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createAliasModeMcp } from "./mcp-host.mjs";
-import { AGENT_CONTROL_PROTOCOL, AgentControlSession, type AgentControlDeps } from "../agent-control.ts";
-import { buildNewProfile } from "../create.ts";
-import { ProfileStore } from "../store.ts";
-import { buildStoredFingerprintReport } from "../fingerprint-report.ts";
-import { createFingerprintSource } from "../fingerprint-source.ts";
-import { launchPersona } from "../launcher.ts";
-import type { LaunchInfo } from "../types.ts";
+import { AGENT_CONTROL_PROTOCOL, AgentControlSession, type AgentControlDeps } from "../src/agent-control.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { ProfileStore } from "../src/store.ts";
+import { buildStoredFingerprintReport } from "../src/fingerprint-report.ts";
+import { createFingerprintSource } from "../src/fingerprint-source.ts";
+import { launchPersona } from "../src/launcher.ts";
+import type { LaunchInfo } from "../src/types.ts";
 
 async function localSession() {
   const store = new ProfileStore(":memory:");

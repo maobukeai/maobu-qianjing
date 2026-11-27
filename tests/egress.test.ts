@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { fetchDirectEgress, parseEgressResponse, resolveEgressEndpoints } from "../egress.ts";
-import { EgressResponseError } from "../egress-transport.ts";
+import { fetchDirectEgress, parseEgressResponse, resolveEgressEndpoints } from "../src/egress.ts";
+import { EgressResponseError } from "../src/egress-transport.ts";
 
 test("parseEgressResponse accepts JSON and plain IPv4/IPv6 responses", () => {
   expect(parseEgressResponse('{"ip":"203.0.113.4","country":"US"}')).toEqual({ ip: "203.0.113.4", country: "US" });

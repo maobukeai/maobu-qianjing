@@ -2,10 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { defaultAppSettings } from "../app-settings.ts";
-import { buildNewProfile } from "../create.ts";
-import { Launcher } from "../launcher.ts";
-import { ProfileStore } from "../store.ts";
+import { defaultAppSettings } from "../src/app-settings.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { Launcher } from "../src/launcher.ts";
+import { ProfileStore } from "../src/store.ts";
 import {
   applyChromiumResourcePreferences,
   buildChromiumResourceArgs,

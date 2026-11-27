@@ -1,11 +1,11 @@
 import { join } from "node:path";
-import { AppSettingsStore, defaultAppSettings, type AppSettings } from "../../app-settings.ts";
+import { AppSettingsStore, defaultAppSettings, type AppSettings } from "../app-settings.ts";
 import { buildWindowLabel, profileDisplayNo } from "../launcher/launch-args.ts";
 import { resolveEffectiveResourcePolicy } from "../launcher/resource-policy.ts";
-import type { Launcher } from "../../launcher.ts";
-import { isSafeProfileId, PROFILE_ID_ERROR } from "../../profile-id.ts";
-import { API_SECURITY_HEADERS } from "../../server.ts";
-import type { ProfileStore } from "../../store.ts";
+import type { Launcher } from "../launcher.ts";
+import { isSafeProfileId, PROFILE_ID_ERROR } from "../profile-id.ts";
+import { API_SECURITY_HEADERS } from "../server.ts";
+import type { ProfileStore } from "../store.ts";
 import { MetricsService, type MetricsSnapshot } from "../metrics/metrics-service.ts";
 import { ResourcePolicyStore } from "../metrics/resource-policy-store.ts";
 import { SSE_HEARTBEAT_INTERVAL_MS, SSE_KEEPALIVE_BYTES } from "./events-bus.ts";

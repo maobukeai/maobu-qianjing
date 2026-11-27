@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { applyChromiumPreloadingPreference, CHROMIUM_PRELOADING_RECORD, type ChromiumPreloadingMode } from "../chromium-preloading-preferences.ts";
+import { applyChromiumPreloadingPreference, CHROMIUM_PRELOADING_RECORD, type ChromiumPreloadingMode } from "../src/chromium-preloading-preferences.ts";
 
 const directories: string[] = [];
 afterEach(() => {

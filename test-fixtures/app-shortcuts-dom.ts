@@ -3,8 +3,8 @@ import { mock } from "bun:test";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import type { HTMLButtonElement, HTMLInputElement, HTMLSelectElement, HTMLElement } from "happy-dom";
-import { defaultAppSettings } from "../app-settings.ts";
-import { FAVORITE_PROFILES_KEY, SAVED_PROFILE_VIEWS_KEY } from "../profile-view-state.ts";
+import { defaultAppSettings } from "../src/app-settings.ts";
+import { FAVORITE_PROFILES_KEY, SAVED_PROFILE_VIEWS_KEY } from "../src/profile-view-state.ts";
 import { createWebDomHarness } from "./web-dom.ts";
 
 async function run(scenario: string) {

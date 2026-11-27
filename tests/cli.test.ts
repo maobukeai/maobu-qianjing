@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { CLOAKPIT_IMPORT_COMMAND, dispatchReadSessionWorker, lifecycleAdmissionOptionsFromEnv, runCompiledSidecarSmoke, runCloakpitImportCommand } from "../cli.ts";
+import { CLOAKPIT_IMPORT_COMMAND, dispatchReadSessionWorker, lifecycleAdmissionOptionsFromEnv, runCompiledSidecarSmoke, runCloakpitImportCommand } from "../src/cli.ts";
 
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 
@@ -10,11 +10,11 @@ import { dirname, join, resolve } from "node:path";
 
 import net from "node:net";
 
-import { statePaths } from "../paths.ts";
+import { statePaths } from "../src/paths.ts";
 
-import { applySourceRuntime, type SourceRuntime } from "../source-runtime.ts";
-import { ProfileStore } from "../store.ts";
-import { buildNewProfile } from "../create.ts";
+import { applySourceRuntime, type SourceRuntime } from "../src/source-runtime.ts";
+import { ProfileStore } from "../src/store.ts";
+import { buildNewProfile } from "../src/create.ts";
 
 async function removeTemporaryRoot(path: string): Promise<void> {
   for (let attempt = 0; ; attempt++) {
@@ -65,7 +65,7 @@ test("internal migration command exits before normal startup creates state", asy
   const destination = join(parent, "destination");
   const child = Bun.spawn([
     process.execPath,
-    join(import.meta.dir, "..", "cli.ts"),
+    join(import.meta.dir, "..", "src", "cli.ts"),
     "__import-cloakpit",
     "--source", join(parent, "missing"),
     "--state-root", destination,
@@ -81,7 +81,7 @@ test("source start reports an unavailable managed runtime before creating applic
   const stateRoot = join(parent, "state");
   const child = Bun.spawn([
     process.execPath,
-    join(import.meta.dir, "..", "cli.ts"),
+    join(import.meta.dir, "..", "src", "cli.ts"),
     "start",
     "--state-root", stateRoot,
   ], {
@@ -128,7 +128,7 @@ test("source start loads a managed runtime from its custom state root before ver
   const child = Bun.spawn([
     process.execPath,
     "--no-env-file",
-    join(import.meta.dir, "..", "cli.ts"),
+    join(import.meta.dir, "..", "src", "cli.ts"),
     "start",
     "--port", String(port),
     "--state-root", root, "--no-auth",
@@ -166,7 +166,7 @@ for (const mode of ["unconfigured", "local", "cloud"] as const) {
     const child = Bun.spawn([
       process.execPath,
       "--no-env-file",
-      join(import.meta.dir, "..", "cli.ts"),
+      join(import.meta.dir, "..", "src", "cli.ts"),
       "start",
       "--port", String(port),
       "--state-root", stateRoot,
@@ -285,7 +285,7 @@ test("compiled sidecar smoke restores before navigation and capture", async () =
 test("unsupported internal commands exit before binding a server or creating state", async () => {
   const parent = mkdtempSync(join(tmpdir(), "maobu-no-cloud-command-"));
   const stateRoot = join(parent, "must-not-be-created");
-  const child = Bun.spawn([process.execPath, join(import.meta.dir, "..", "cli.ts"), "__cloud-restore-fixture", "--state-root", stateRoot], { stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn([process.execPath, join(import.meta.dir, "..", "src", "cli.ts"), "__cloud-restore-fixture", "--state-root", stateRoot], { stdout: "pipe", stderr: "pipe" });
   const [output, error, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   expect(code).toBe(1);
   expect(output).not.toContain("fixture listening");
@@ -347,7 +347,7 @@ test("desktop local startup serves saved profiles without downloading engines an
   const nonce = "a".repeat(64);
   const dashboardSession = "c".repeat(64);
   const child = Bun.spawn([
-    process.execPath, "--no-env-file", join(import.meta.dir, "..", "cli.ts"), "start",
+    process.execPath, "--no-env-file", join(import.meta.dir, "..", "src", "cli.ts"), "start",
     "--state-root", root, "--desktop-root", root, "--desktop-stdio", "--port", "0",
   ], {
     cwd: root, stdin: "pipe", stdout: "pipe", stderr: "pipe",

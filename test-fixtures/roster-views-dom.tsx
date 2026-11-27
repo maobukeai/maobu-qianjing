@@ -3,7 +3,7 @@ import { act } from "react";
 import type { HTMLButtonElement, HTMLFormElement, HTMLInputElement, HTMLSelectElement } from "happy-dom";
 import { I18nProvider } from "../web/i18n.tsx";
 import { RosterViews, type RosterViewsProps } from "../web/roster-views.tsx";
-import { MAX_SAVED_VIEWS, type ProfileViewFilters, type RosterScope, type SavedProfileView } from "../profile-view-state.ts";
+import { MAX_SAVED_VIEWS, type ProfileViewFilters, type RosterScope, type SavedProfileView } from "../src/profile-view-state.ts";
 import { createWebDomHarness } from "./web-dom.ts";
 
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes; }); return { promise, resolve }; }

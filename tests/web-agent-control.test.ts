@@ -3,10 +3,10 @@ import WebSocket from "ws";
 import {
   AGENT_CONTROL_PATH,
   AGENT_CONTROL_PROTOCOL,
-} from "../agent-control.ts";
-import { LifecycleAdmissionController } from "../lifecycle-admission.ts";
-import { ProfileStore } from "../store.ts";
-import { serveDashboard } from "../web.ts";
+} from "../src/agent-control.ts";
+import { LifecycleAdmissionController } from "../src/lifecycle-admission.ts";
+import { ProfileStore } from "../src/store.ts";
+import { serveDashboard } from "../src/web.ts";
 
 function openSocket(url: string, nonce: string): Promise<WebSocket> {
   const socket = new WebSocket(url, AGENT_CONTROL_PROTOCOL, {

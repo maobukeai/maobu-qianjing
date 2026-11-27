@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { AGENT_CONTROL_MAX_MESSAGE_BYTES } from "../agent-control.ts";
-import { parseProxyReplacementCsv, ProxyReplacementInputError } from "../proxy-replacements.ts";
+import { AGENT_CONTROL_MAX_MESSAGE_BYTES } from "../src/agent-control.ts";
+import { parseProxyReplacementCsv, ProxyReplacementInputError } from "../src/proxy-replacements.ts";
 
 test("proxy CSV preserves BOM, CRLF, quoted fields, commas, and escaped quotes", () => {
   const csv = '\uFEFFusername,type,host,port,user,pass\r\n"account,one",socks5,"[2001:db8::1]",01080,"proxy,user","p,a""ss"\r\n';

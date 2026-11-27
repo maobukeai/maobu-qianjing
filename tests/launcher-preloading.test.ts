@@ -1,14 +1,14 @@
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
-import { ALIASMODE_CHROMIUM_EXECUTABLE_SHA256 } from "../aliasmode-chromium.ts";
-import { AppSettingsStore } from "../app-settings.ts";
-import { applyChromiumPreloadingPreference, CHROMIUM_PRELOADING_RECORD } from "../chromium-preloading-preferences.ts";
-import { buildNewProfile } from "../create.ts";
-import { handleFeatureSettingsRequest } from "../feature-settings.ts";
-import { BrowserLaunchError, Launcher } from "../launcher.ts";
-import { statePaths } from "../paths.ts";
-import { ProfileStore } from "../store.ts";
+import { ALIASMODE_CHROMIUM_EXECUTABLE_SHA256 } from "../src/aliasmode-chromium.ts";
+import { AppSettingsStore } from "../src/app-settings.ts";
+import { applyChromiumPreloadingPreference, CHROMIUM_PRELOADING_RECORD } from "../src/chromium-preloading-preferences.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { handleFeatureSettingsRequest } from "../src/feature-settings.ts";
+import { BrowserLaunchError, Launcher } from "../src/launcher.ts";
+import { statePaths } from "../src/paths.ts";
+import { ProfileStore } from "../src/store.ts";
 
 const parent = resolve(import.meta.dir, "..", "node_modules/.cache/launcher-preloading-tests"), roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) { if (!resolve(root).startsWith(parent + sep)) throw new Error("Unsafe synthetic test cleanup"); rmSync(root, { recursive: true, force: true }); } });

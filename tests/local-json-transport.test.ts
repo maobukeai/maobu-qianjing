@@ -3,7 +3,7 @@ import { createServer, type Socket } from "node:net";
 import { createServer as createHttpsServer } from "node:https";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { requestLoopbackJson } from "../local-json-transport.ts";
+import { requestLoopbackJson } from "../src/local-json-transport.ts";
 
 const tags = { method: "GET", path: "/api/tags" } as const;
 const chat = { method: "POST", path: "/api/chat" } as const;

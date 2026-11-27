@@ -1,6 +1,6 @@
 import type { UiProfile } from "./api.ts";
 import { parsePastedProxy } from "./proxy-input.ts";
-import type { ProxyCheckView, ProxyReplacementView, ProxyScope } from "../proxy-tools-types.ts";
+import type { ProxyCheckView, ProxyReplacementView, ProxyScope } from "../src/proxy-tools-types.ts";
 
 export type ProxyScopeProfile = Pick<UiProfile, "id" | "group" | "running" | "proxy" | "proxyError">;
 

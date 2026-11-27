@@ -3,7 +3,7 @@ import type {
   ProfilePackageConflictStrategy,
   ProfilePackageImportResult,
   ProfilePackagePreview,
-} from "../profile-package.ts";
+} from "../src/profile-package.ts";
 import { getStandaloneSessionToken, notifyAppLockedFromResponse, notifyUnauthorizedResponse } from "./api.ts";
 
 export type {
@@ -13,7 +13,7 @@ export type {
   ProfilePackageImportResult,
   ProfilePackagePreview,
   ProfilePackagePreviewItem,
-} from "../profile-package.ts";
+} from "../src/profile-package.ts";
 
 export interface ProfilePackageExportInput {
   ids: string[];

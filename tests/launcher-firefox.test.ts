@@ -3,12 +3,12 @@ import { afterEach, expect, test } from "bun:test";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { firefoxLaunchConfig, firefoxStartupPrefs, graphicsIdentity } from "../firefox-config.ts";
-import { FIREFOX_FONT_PACKS, firefoxFontPackPrefs, type FirefoxFontPack } from "../firefox-fonts.ts";
-import { Launcher, BrowserLaunchError, decodeMozLz4, type HostProcessSnapshot, type LauncherOptions } from "../launcher.ts";
-import { FirefoxOwnerError } from "../firefox-runtime.ts";
-import { ProfileStore } from "../store.ts";
-import type { Profile } from "../types.ts";
+import { firefoxLaunchConfig, firefoxStartupPrefs, graphicsIdentity } from "../src/firefox-config.ts";
+import { FIREFOX_FONT_PACKS, firefoxFontPackPrefs, type FirefoxFontPack } from "../src/firefox-fonts.ts";
+import { Launcher, BrowserLaunchError, decodeMozLz4, type HostProcessSnapshot, type LauncherOptions } from "../src/launcher.ts";
+import { FirefoxOwnerError } from "../src/firefox-runtime.ts";
+import { ProfileStore } from "../src/store.ts";
+import type { Profile } from "../src/types.ts";
 
 const cleanup: Array<() => void> = [];
 const LABEL = "Firefox profile · #1";

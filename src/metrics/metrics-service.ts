@@ -1,6 +1,6 @@
-import type { Launcher } from "../../launcher.ts";
-import type { ProfileStore } from "../../store.ts";
-import type { LaunchInfo } from "../../types.ts";
+import type { Launcher } from "../launcher.ts";
+import type { ProfileStore } from "../store.ts";
+import type { LaunchInfo } from "../types.ts";
 import {
   MemoryWatermarkGuard,
   type MemoryWatermarkStatus,

@@ -1,11 +1,11 @@
 import { test, expect } from "bun:test";
-import { captureFingerprint, recordCapture } from "../fingerprint-capture.ts";
+import { captureFingerprint, recordCapture } from "../src/fingerprint-capture.ts";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { ProfileStore } from "../store.ts";
-import { parseExport, serializeAdsTxt } from "../parse.ts";
-import type { FingerprintVerdict, ObservedFingerprint, Profile } from "../types.ts";
+import { ProfileStore } from "../src/store.ts";
+import { parseExport, serializeAdsTxt } from "../src/parse.ts";
+import type { FingerprintVerdict, ObservedFingerprint, Profile } from "../src/types.ts";
 
 function profile(overrides: Partial<Profile> = {}): Profile {
   return {

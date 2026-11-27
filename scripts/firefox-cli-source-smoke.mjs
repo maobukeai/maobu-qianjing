@@ -44,7 +44,7 @@ function dashboardFetch(path, init = {}) {
 const child = Bun.spawn([
   process.execPath,
   "--no-env-file",
-  join(import.meta.dir, "..", "cli.ts"),
+  join(import.meta.dir, "..", "src", "cli.ts"),
   "start",
   "--desktop-stdio",
   "--desktop-root", join(root, "desktop"),

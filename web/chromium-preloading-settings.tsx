@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import type { ChromiumPreloadingMode } from "../chromium-preloading-preferences.ts";
+import type { ChromiumPreloadingMode } from "../src/chromium-preloading-preferences.ts";
 import { useTranslation } from "./i18n.tsx";
 import { fetchSettings, patchSettings } from "./settings-api.ts";
 import { useDesktopCloseDraft } from "./desktop-close.tsx";

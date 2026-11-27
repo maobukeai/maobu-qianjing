@@ -28,7 +28,7 @@ import {
   keepUnreadableOrigins,
   sessionCaptureSeed,
   workerCaptureSeed,
-} from "../session.ts";
+} from "../src/session.ts";
 
 const PACKAGED_NODE = process.platform === "win32" ? "node.exe" : "node";
 

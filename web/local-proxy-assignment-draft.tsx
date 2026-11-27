@@ -1,6 +1,6 @@
 import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { isSafeProfileId } from "../profile-id.ts";
-import { MAX_SINGLE_PROXY_ASSIGNMENT_IDS, SingleProxyPreviewInputError, validateSingleProxyCredentials, type SingleProxyPreviewInput } from "../proxy-single-preview.ts";
+import { isSafeProfileId } from "../src/profile-id.ts";
+import { MAX_SINGLE_PROXY_ASSIGNMENT_IDS, SingleProxyPreviewInputError, validateSingleProxyCredentials, type SingleProxyPreviewInput } from "../src/proxy-single-preview.ts";
 import { useDesktopCloseDraft } from "./desktop-close.tsx";
 import { useTranslation } from "./i18n.tsx";
 import type { LocalProxyDraftCandidate } from "./settings-center.tsx";

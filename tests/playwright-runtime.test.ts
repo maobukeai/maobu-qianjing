@@ -12,7 +12,7 @@ import {
   resolvePlaywrightRuntime,
   runPlaywrightWorker,
   verifyPlaywrightRuntime,
-} from "../playwright-runtime.ts";
+} from "../src/playwright-runtime.ts";
 import { captureSession, operatePersistentContext, restoreSession } from "../playwright-worker.mjs";
 
 const PACKAGED_NODE = process.platform === "win32" ? "node.exe" : "node";

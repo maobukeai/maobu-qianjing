@@ -1,6 +1,6 @@
 import { join, resolve } from "node:path";
 import { dlopen, ptr } from "bun:ffi";
-import { windowsSystemTool } from "../../browser-install.ts";
+import { windowsSystemTool } from "../browser-install.ts";
 import {
   IS_WINDOWS,
   readSnapshotChildBounded,

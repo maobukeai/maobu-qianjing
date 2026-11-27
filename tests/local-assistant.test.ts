@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { LocalAssistantError, LocalAssistantService, LOCAL_ASSISTANT_LIMITS, buildWorkspaceOverview, normalizeAssistantEndpoint, type LocalAssistantChatInput, type LocalAssistantTransport, type WorkspaceOverview } from "../local-assistant.ts";
-import { LocalJsonTransportError } from "../local-json-transport.ts";
-import type { Profile } from "../types.ts";
+import { LocalAssistantError, LocalAssistantService, LOCAL_ASSISTANT_LIMITS, buildWorkspaceOverview, normalizeAssistantEndpoint, type LocalAssistantChatInput, type LocalAssistantTransport, type WorkspaceOverview } from "../src/local-assistant.ts";
+import { LocalJsonTransportError } from "../src/local-json-transport.ts";
+import type { Profile } from "../src/types.ts";
 
 const input: LocalAssistantChatInput = { model: "qwen3:8b", messages: [{ role: "user", content: "Help me draft a safe browser profile workflow." }] };
 const tags = { models: [{ name: input.model, model: input.model, size: 5_000_000_000, details: { parameter_size: "8.2B", quantization_level: "Q4_K_M" } }] };

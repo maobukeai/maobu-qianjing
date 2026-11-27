@@ -13,7 +13,7 @@ import type {
   RpaRecordedStep,
   RpaRecorderState,
   RpaRecorderStatus,
-} from "./contracts/local.ts";
+} from "../contracts/local.ts";
 import { callFirefoxOwner, type FirefoxOwner } from "./firefox-runtime.ts";
 import { resolvePlaywrightRuntime, type PlaywrightRuntimeLayout } from "./playwright-runtime.ts";
 import { isSafeProfileId, PROFILE_ID_ERROR } from "./profile-id.ts";

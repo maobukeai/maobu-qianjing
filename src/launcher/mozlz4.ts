@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { CookieRecord } from "../../types.ts";
-import { canonicalUserPageUrl } from "../../session.ts";
+import type { CookieRecord } from "../types.ts";
+import { canonicalUserPageUrl } from "../session.ts";
 
 export const FIREFOX_SESSION_FILES = [
   "sessionstore.jsonlz4",

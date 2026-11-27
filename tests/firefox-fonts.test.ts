@@ -15,8 +15,8 @@ import {
   pruneFirefoxFontPacks,
   type FirefoxFontPack,
   type FirefoxFontPackDeps,
-} from "../firefox-fonts.ts";
-import { runtimeDownloads } from "../runtime-download.ts";
+} from "../src/firefox-fonts.ts";
+import { runtimeDownloads } from "../src/runtime-download.ts";
 
 const cleanup: string[] = [];
 afterEach(() => { for (const path of cleanup.splice(0)) rmSync(path, { recursive: true, force: true }); });

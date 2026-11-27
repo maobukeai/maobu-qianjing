@@ -237,7 +237,7 @@ export async function startFirefoxOwner(
   }
   const runtime = resolvePlaywrightRuntime();
   const workerPath = runtime.kind === "source"
-    ? join(import.meta.dir, "firefox-worker.mjs")
+    ? join(import.meta.dir, "..", "firefox-worker.mjs")
     : join(runtime.root, "firefox-worker.mjs");
   let child: ChildProcess;
   try {

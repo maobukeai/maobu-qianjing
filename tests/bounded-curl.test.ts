@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { downloadBoundedCurl, type BoundedCurlOptions, type CurlDownloadSpawn } from "../bounded-curl.ts";
+import { downloadBoundedCurl, type BoundedCurlOptions, type CurlDownloadSpawn } from "../src/bounded-curl.ts";
 
 const directories: string[] = [];
 afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });

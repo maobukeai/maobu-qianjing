@@ -1,6 +1,6 @@
 import { dirname, join } from "node:path";
-import type { CookieRecord, LaunchInfo, LaunchPersona, Profile, ProxySpec } from "../../types.ts";
-import { ALIASMODE_CHROMIUM_WINDOW_LABEL } from "../../aliasmode-chromium.ts";
+import type { CookieRecord, LaunchInfo, LaunchPersona, Profile, ProxySpec } from "../types.ts";
+import { ALIASMODE_CHROMIUM_WINDOW_LABEL } from "../aliasmode-chromium.ts";
 
 /** Proxied profiles keep WebRTC on the proxy; direct ones stay on the default route (a system VPN). */
 export function webRtcPolicy(profile: Profile): string {

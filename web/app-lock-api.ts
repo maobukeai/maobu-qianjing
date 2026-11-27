@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AppLockStatus } from "../app-lock.ts";
+import type { AppLockStatus } from "../src/app-lock.ts";
 import { getStandaloneSessionToken } from "./api.ts";
 
 export type { AppLockStatus };

@@ -2,11 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AppSettingsStore } from "../app-settings.ts";
-import { buildNewProfile } from "../create.ts";
-import { DESKTOP_SESSION_HEADER } from "../desktop-runtime.ts";
-import { statePaths } from "../paths.ts";
-import { ProfileStore } from "../store.ts";
+import { AppSettingsStore } from "../src/app-settings.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { DESKTOP_SESSION_HEADER } from "../src/desktop-runtime.ts";
+import { statePaths } from "../src/paths.ts";
+import { ProfileStore } from "../src/store.ts";
 import { MemoryWatermarkGuard } from "../src/metrics/memory-watermark-guard.ts";
 import { MetricsService } from "../src/metrics/metrics-service.ts";
 import {
@@ -15,8 +15,8 @@ import {
 } from "../src/metrics/process-metrics.ts";
 import { ResourcePolicyStore } from "../src/metrics/resource-policy-store.ts";
 import { UiEventBus } from "../src/ui/events-bus.ts";
-import { handleUiRequest } from "../ui.ts";
-import { serveDashboard } from "../web.ts";
+import { handleUiRequest } from "../src/ui.ts";
+import { serveDashboard } from "../src/web.ts";
 import { createSseParser, type UiStreamEvent } from "../web/api.ts";
 
 const tempDirs: string[] = [];

@@ -6,7 +6,7 @@ import type {
   DiagnosticCheckResult,
   DiagnosticStatus,
   SystemDiagnosticReport,
-} from "../system-diagnostics.ts";
+} from "../src/system-diagnostics.ts";
 
 export type {
   ClientDesktopProbeInput,

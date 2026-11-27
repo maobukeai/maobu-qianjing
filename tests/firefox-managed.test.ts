@@ -3,9 +3,9 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import * as browserInstall from "../browser-install.ts";
-import { ensureManagedFirefox } from "../firefox-managed.ts";
-import type { FirefoxRuntimeBuild, installFirefox } from "../firefox-install.ts";
+import * as browserInstall from "../src/browser-install.ts";
+import { ensureManagedFirefox } from "../src/firefox-managed.ts";
+import type { FirefoxRuntimeBuild, installFirefox } from "../src/firefox-install.ts";
 
 const roots: string[] = [];
 const restoreSpies: Array<() => void> = [];

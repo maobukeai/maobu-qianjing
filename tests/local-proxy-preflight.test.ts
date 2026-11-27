@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createServer, type Socket } from "node:net";
-import { defaultAppSettings } from "../app-settings.ts";
-import { createLocalProxyPreflight, LOCAL_PROXY_PREFLIGHT_TIMEOUT_MS, LocalProxyPreflightError, loopbackProxyTarget, probeLoopbackProxy, type LocalProxyEndpoint } from "../local-proxy-preflight.ts";
+import { defaultAppSettings } from "../src/app-settings.ts";
+import { createLocalProxyPreflight, LOCAL_PROXY_PREFLIGHT_TIMEOUT_MS, LocalProxyPreflightError, loopbackProxyTarget, probeLoopbackProxy, type LocalProxyEndpoint } from "../src/local-proxy-preflight.ts";
 
 const endpoint = (port: number, type: "http" | "https" | "socks5" = "http", host = "127.0.0.1"): LocalProxyEndpoint => ({ host, port: String(port), type });
 const enabled = () => ({ ...defaultAppSettings(), network: { checkLocalProxyBeforeLaunch: true } });

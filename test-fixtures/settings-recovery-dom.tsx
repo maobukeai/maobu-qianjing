@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { act } from "react";
 import type { HTMLButtonElement, HTMLInputElement, HTMLSelectElement } from "happy-dom";
-import type { AppSettings } from "../app-settings.ts";
-import { getBrowserRuntimeInventory } from "../runtime-inventory.ts";
+import type { AppSettings } from "../src/app-settings.ts";
+import { getBrowserRuntimeInventory } from "../src/runtime-inventory.ts";
 import { I18nProvider } from "../web/i18n.tsx";
 import zhCN from "../web/locales/zh-CN.json";
 import { FeatureSettingsPanel, type FeatureSettingsTab } from "../web/settings-center.tsx";

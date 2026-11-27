@@ -1,7 +1,7 @@
 import {
   DEFAULT_BATCH_LAUNCH_MEMORY_GUARD_SETTINGS,
   type BatchLaunchMemoryGuardSettings,
-} from "../../app-settings.ts";
+} from "../app-settings.ts";
 import {
   createNativeProcessMetricsBackend,
   type HostMemoryMetrics,

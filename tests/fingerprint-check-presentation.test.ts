@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { isFingerprintCheckEvidence, isFingerprintCheckMessage, presentFingerprintCheck, projectFingerprintEvidence, renderFingerprintMessage } from "../fingerprint-check-presentation.ts";
+import { isFingerprintCheckEvidence, isFingerprintCheckMessage, presentFingerprintCheck, projectFingerprintEvidence, renderFingerprintMessage } from "../src/fingerprint-check-presentation.ts";
 import { translate } from "../web/i18n.tsx";
 import enUS from "../web/locales/en-US.json";
 import zhCN from "../web/locales/zh-CN.json";

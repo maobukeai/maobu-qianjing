@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
-import { applySourceRuntime, installSourceNode, setupSourceRuntime, type SourceRuntime } from "../source-runtime.ts";
+import { applySourceRuntime, installSourceNode, setupSourceRuntime, type SourceRuntime } from "../src/source-runtime.ts";
 
 const roots: string[] = [];
 function root() {

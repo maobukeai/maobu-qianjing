@@ -1,7 +1,7 @@
-import { validAgentAuthorization } from "../../agent-control.ts";
-import { RpaRecorderError, type RpaRecorderManager } from "../../rpa-recorder.ts";
-import { listRpaTemplates } from "../../rpa-templates.ts";
-import { ScriptError } from "../../scripts.ts";
+import { validAgentAuthorization } from "../agent-control.ts";
+import { RpaRecorderError, type RpaRecorderManager } from "../rpa-recorder.ts";
+import { listRpaTemplates } from "../rpa-templates.ts";
+import { ScriptError } from "../scripts.ts";
 import { msg, noStoreJson, rejectUntrustedJsonMutation, type UiRuntimeOptions } from "./shared.ts";
 
 /** Routes under `/ui/api/scripts*` protected by agent bearer token and JSON mutation checks. */

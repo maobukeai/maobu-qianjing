@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { RpaTemplate, RpaTemplateField, ScriptRecord } from "../contracts/local.ts";
-import type { ScriptRun } from "../scripts.ts";
+import type { ScriptRun } from "../src/scripts.ts";
 import { createScript, fetchProfiles, type UiProfile } from "./api.ts";
 import { useTranslation } from "./i18n.tsx";
 import { fetchRpaTemplates, startQueuedScriptRun } from "./rpa-api.ts";

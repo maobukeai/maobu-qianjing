@@ -1,4 +1,4 @@
-import type { RpaTemplate, RpaTemplateId, ScriptInput } from "./contracts/local.ts";
+import type { RpaTemplate, RpaTemplateId, ScriptInput } from "../contracts/local.ts";
 
 const COOKIE_WARMUP_SOURCE = `// Cookie Warmup Bot — smoothly browses local-configured URLs to build natural cookie state.
 // Uses only standard HTTP(S) URLs supplied in inputs; zero remote template fetches.

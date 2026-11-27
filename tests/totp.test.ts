@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { generateTotp, base32Decode } from "../totp.ts";
+import { generateTotp, base32Decode } from "../src/totp.ts";
 
 // RFC 6238 Appendix B (SHA1) — secret is base32("12345678901234567890").
 const SECRET = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";

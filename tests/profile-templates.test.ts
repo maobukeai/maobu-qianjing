@@ -1,11 +1,11 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
-import { buildNewProfile, defaultProfileEngine } from "../create.ts";
-import { defaultChromiumRuntime } from "../aliasmode-chromium.ts";
-import { deterministicSeed } from "../fingerprint.ts";
-import { FIREFOX_RUNTIME_VERSION, firefoxLaunchConfig } from "../firefox-config.ts";
-import { applyProfileTemplate, captureProfileTemplateSettings, emptyProfileTemplateCatalog, isProfileTemplateId, parseProfileTemplateCatalog, parseProfileTemplateSettings, previewProfileTemplate, PROFILE_TEMPLATE_LIMITS, ProfileTemplateError, ProfileTemplateStore, type ProfileTemplate, type ProfileTemplateErrorCode, type ProfileTemplateSettings } from "../profile-templates.ts";
+import { buildNewProfile, defaultProfileEngine } from "../src/create.ts";
+import { defaultChromiumRuntime } from "../src/aliasmode-chromium.ts";
+import { deterministicSeed } from "../src/fingerprint.ts";
+import { FIREFOX_RUNTIME_VERSION, firefoxLaunchConfig } from "../src/firefox-config.ts";
+import { applyProfileTemplate, captureProfileTemplateSettings, emptyProfileTemplateCatalog, isProfileTemplateId, parseProfileTemplateCatalog, parseProfileTemplateSettings, previewProfileTemplate, PROFILE_TEMPLATE_LIMITS, ProfileTemplateError, ProfileTemplateStore, type ProfileTemplate, type ProfileTemplateErrorCode, type ProfileTemplateSettings } from "../src/profile-templates.ts";
 
 const parent = resolve(import.meta.dir, "..", "node_modules/.cache/profile-template-tests"), roots: string[] = [], links: string[] = [];
 afterEach(() => {

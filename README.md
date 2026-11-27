@@ -157,8 +157,8 @@ bun run desktop:build:nsis
 若仅调试本地网页后端与前端界面（默认监听 `http://127.0.0.1:50400`，状态目录与桌面版隔离）：
 
 ```powershell
-bun cli.ts setup --state-root node_modules/.cache/local-dev
-bun cli.ts start --state-root node_modules/.cache/local-dev
+bun src/cli.ts setup --state-root node_modules/.cache/local-dev
+bun src/cli.ts start --state-root node_modules/.cache/local-dev
 ```
 
 运行项目完整验证套件：

@@ -4,10 +4,10 @@ import { closeSync, fstatSync, mkdirSync, openSync, writeFileSync, readFileSync,
 import { join, isAbsolute, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
-import { ProfileStore } from "../store.ts";
-import { AutofillBridge } from "../autofill-bridge.ts";
-import type { ExitLocation } from "../geoip.ts";
-import { autofillExtensionDir } from "../autofill-extension.ts";
+import { ProfileStore } from "../src/store.ts";
+import { AutofillBridge } from "../src/autofill-bridge.ts";
+import type { ExitLocation } from "../src/geoip.ts";
+import { autofillExtensionDir } from "../src/autofill-extension.ts";
 import {
   BrowserLaunchError,
   Launcher as ProductionLauncher,
@@ -41,16 +41,16 @@ import {
   type FetchFn,
   type SearchProviderEnsurer,
   type HostProcessSnapshot,
-} from "../launcher.ts";
-import { matchFirefoxProcesses } from "../firefox-lifecycle.ts";
-import { parseExport } from "../parse.ts";
-import { buildNewProfile } from "../create.ts";
-import { aliasmodeChromiumExecutable } from "../aliasmode-chromium.ts";
-import { SessionRestoreError, type readSessionInSubprocess } from "../session.ts";
-import type { FingerprintSample } from "../diagnose.ts";
-import { handleUiRequest } from "../ui.ts";
-import { fingerprintLaunchDigest } from "../fingerprint-source.ts";
-import { LocalProxyPreflightError } from "../local-proxy-preflight.ts";
+} from "../src/launcher.ts";
+import { matchFirefoxProcesses } from "../src/firefox-lifecycle.ts";
+import { parseExport } from "../src/parse.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { aliasmodeChromiumExecutable } from "../src/aliasmode-chromium.ts";
+import { SessionRestoreError, type readSessionInSubprocess } from "../src/session.ts";
+import type { FingerprintSample } from "../src/diagnose.ts";
+import { handleUiRequest } from "../src/ui.ts";
+import { fingerprintLaunchDigest } from "../src/fingerprint-source.ts";
+import { LocalProxyPreflightError } from "../src/local-proxy-preflight.ts";
 
 const linuxTest = process.platform === "win32" ? test.skip : test;
 
@@ -573,7 +573,7 @@ test("unavailable imported tabs do not replay successfully restored storage on e
 });
 
 test("captureLocalSession forwards bounded close options without overwriting unrelated exports", async () => {
-  const { CLOSE_SESSION_CAPTURE_OPTIONS } = await import("../launcher.ts");
+  const { CLOSE_SESSION_CAPTURE_OPTIONS } = await import("../src/launcher.ts");
   const store = seeded();
   makeDirect(store);
   const id = "k1d0cd11";
@@ -2135,7 +2135,7 @@ test("buildArgs keeps AliasMode and forwarded Automation ownership markers disti
 });
 
 test("CLI identifies the manager with the AliasMode marker, never the Automation marker", () => {
-  const cli = readFileSync(join(import.meta.dir, "..", "cli.ts"), "utf8");
+  const cli = readFileSync(join(import.meta.dir, "..", "src", "cli.ts"), "utf8");
   expect(cli).toContain('`--aliasmode-launcher-pid=${process.pid}`');
   expect(cli).toContain('has(rest, "no-sandbox") ? ["--no-sandbox"] : []');
   expect(cli).toContain('const unsafeCanary = has(rest, "unsafe-disable-identity-gates")');
@@ -5078,7 +5078,7 @@ test("a fresh launch refuses to spawn after an inconclusive profile-dir scan", a
   env.PATH = (process.env.PATH ?? "").split(";").filter((dir) => !/WindowsPowerShell/i.test(dir)).join(";");
   const child = Bun.spawn([
     process.execPath, "-e",
-    'const { readHostProcessSnapshot } = await import("./launcher.ts"); process.stdout.write(String((await readHostProcessSnapshot()) !== null));',
+    'const { readHostProcessSnapshot } = await import("./src/launcher.ts"); process.stdout.write(String((await readHostProcessSnapshot()) !== null));',
   ], { cwd: __repoDirname(import.meta.dir), env, stdout: "pipe", stderr: "ignore" });
   expect(await new Response(child.stdout).text()).toBe("true");
 }, 120_000);

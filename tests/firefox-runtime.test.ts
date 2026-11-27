@@ -7,8 +7,8 @@ import {
   forgetFirefoxOwner,
   reserveFirefoxOwner,
   type FirefoxOwner,
-} from "../firefox-runtime.ts";
-import { runPlaywrightWorker } from "../playwright-runtime.ts";
+} from "../src/firefox-runtime.ts";
+import { runPlaywrightWorker } from "../src/playwright-runtime.ts";
 import { camouEnvironment, firefoxLaunchOptions, observedFirefoxCaptureUrl, trackFirefoxPages } from "../firefox-worker.mjs";
 import { EventEmitter } from "node:events";
 

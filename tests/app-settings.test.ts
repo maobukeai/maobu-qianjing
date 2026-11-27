@@ -10,7 +10,7 @@ import {
   parseAppSettings,
   resolveBatchLaunchMemoryGuardSettings,
   resolveDataSaverSettings,
-} from "../app-settings.ts";
+} from "../src/app-settings.ts";
 
 const roots: string[] = [];
 const fixtureParent = resolve(import.meta.dir, "..", "node_modules", ".cache", "settings-tests");

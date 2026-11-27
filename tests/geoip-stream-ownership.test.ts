@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createConnection } from "node:net";
-import { lookupExitLocation, type FetchLike } from "../geoip.ts";
+import { lookupExitLocation, type FetchLike } from "../src/geoip.ts";
 
 function deferred<T = void>() {
   let resolve!: (value: T) => void;

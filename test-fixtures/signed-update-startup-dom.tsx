@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { act } from "react";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import { defaultAppSettings } from "../app-settings.ts";
+import { defaultAppSettings } from "../src/app-settings.ts";
 import { I18nProvider } from "../web/i18n.tsx";
 import type { SignedUpdateStatus } from "../web/signed-update-api.ts";
 import { SignedUpdateCard, useSignedUpdateStartup } from "../web/signed-updates.tsx";

@@ -4,10 +4,10 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { clearLocalSecretKeyCacheForTests, ENCRYPTED_VALUE_PREFIX } from "../dpapi.ts";
-import { ProfileStore } from "../store.ts";
-import { parseExport } from "../parse.ts";
-import type { Profile } from "../types.ts";
+import { clearLocalSecretKeyCacheForTests, ENCRYPTED_VALUE_PREFIX } from "../src/dpapi.ts";
+import { ProfileStore } from "../src/store.ts";
+import { parseExport } from "../src/parse.ts";
+import type { Profile } from "../src/types.ts";
 
 const SAMPLE = `id=k1d0cd11
 name=sophiaskye852

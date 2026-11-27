@@ -3,22 +3,22 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { buildNewProfile } from "../create.ts";
-import { managedChromiumLocation } from "../aliasmode-chromium.ts";
-import { FIREFOX_RUNTIME_BUILDS, firefoxInstallDirectoryPrefix } from "../firefox-install.ts";
-import { FIREFOX_MANAGED_RECORD, firefoxManagedDirectory } from "../firefox-managed.ts";
-import type { Launcher } from "../launcher.ts";
-import { ensureStateDirectories, statePaths } from "../paths.ts";
-import type { RuntimeInventoryDeployment } from "../runtime-inventory.ts";
-import { ProfileStore } from "../store.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { managedChromiumLocation } from "../src/aliasmode-chromium.ts";
+import { FIREFOX_RUNTIME_BUILDS, firefoxInstallDirectoryPrefix } from "../src/firefox-install.ts";
+import { FIREFOX_MANAGED_RECORD, firefoxManagedDirectory } from "../src/firefox-managed.ts";
+import type { Launcher } from "../src/launcher.ts";
+import { ensureStateDirectories, statePaths } from "../src/paths.ts";
+import type { RuntimeInventoryDeployment } from "../src/runtime-inventory.ts";
+import { ProfileStore } from "../src/store.ts";
 import {
   buildZipArchive,
   createDiagnosticZip,
   MAX_DIAGNOSTIC_ZIP_BYTES,
   redactDiagnosticText,
   runSystemDiagnostics,
-} from "../system-diagnostics.ts";
-import { extractZipTo } from "../unzip.ts";
+} from "../src/system-diagnostics.ts";
+import { extractZipTo } from "../src/unzip.ts";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {

@@ -1,5 +1,5 @@
 import { dlopen } from "bun:ffi";
-import { intelMacGraphicsVendor, type MacGraphicsVendor } from "../../firefox-config.ts";
+import { intelMacGraphicsVendor, type MacGraphicsVendor } from "../firefox-config.ts";
 import { readSnapshotChildBounded, type HostProcessRecord, type HostProcessSnapshot } from "./snapshot-utils.ts";
 
 export const DARWIN_PROCESS_SCAN_TIMEOUT_MS = 10_000;

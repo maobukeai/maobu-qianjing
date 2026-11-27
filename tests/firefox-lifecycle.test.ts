@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { matchFirefoxProcesses } from "../firefox-lifecycle.ts";
+import { matchFirefoxProcesses } from "../src/firefox-lifecycle.ts";
 
 const identity = {
   binaryPath: "/opt/aliasmode/firefox",

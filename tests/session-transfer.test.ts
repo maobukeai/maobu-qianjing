@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
-import { parseExport, parseUpdateFile, serializeAdsTxt, serializeXlsxRows } from "../parse.ts";
-import { parseImportFile } from "../import-formats.ts";
-import { importBuffers } from "../inbox.ts";
-import { ProfileStore } from "../store.ts";
-import { writeXlsx } from "../xlsx.ts";
-import { handleUiRequest } from "../ui.ts";
-import { Launcher } from "../launcher.ts";
+import { parseExport, parseUpdateFile, serializeAdsTxt, serializeXlsxRows } from "../src/parse.ts";
+import { parseImportFile } from "../src/import-formats.ts";
+import { importBuffers } from "../src/inbox.ts";
+import { ProfileStore } from "../src/store.ts";
+import { writeXlsx } from "../src/xlsx.ts";
+import { handleUiRequest } from "../src/ui.ts";
+import { Launcher } from "../src/launcher.ts";
 
 const profile = () => parseExport("id=transfer\nname=Original\ncookie=[]").profiles[0]!;
 const cookie = { name: "session", value: "test-only", domain: ".example.com", path: "/", secure: true, httpOnly: true };

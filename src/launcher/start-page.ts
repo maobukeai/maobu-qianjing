@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { Profile } from "../../types.ts";
+import type { Profile } from "../types.ts";
 import { writeFileAtomic } from "./profile-bootstrap.ts";
 
 export const START_PAGE_FILENAME = "maobu-start.html";

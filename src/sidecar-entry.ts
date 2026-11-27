@@ -10,7 +10,7 @@ export const MCP_MODE = "__mcp";
 if (import.meta.main) {
   const [mode, ...args] = process.argv.slice(2);
   if (mode === MCP_MODE) {
-    const { runAgentHelper } = await import("./agent/aliasmode-mcp.ts");
+    const { runAgentHelper } = await import("../agent/aliasmode-mcp.ts");
     await runAgentHelper(args);
   } else {
     const { runCli } = await import("./cli.ts");

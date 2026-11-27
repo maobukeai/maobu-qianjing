@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { defaultAppSettings, parseAppSettings } from "../app-settings.ts";
-import { buildNewProfile } from "../create.ts";
-import { CHROMIUM_MEMORY_SAVER_RENDERER_LIMIT, Launcher } from "../launcher.ts";
-import { ProfileStore } from "../store.ts";
+import { defaultAppSettings, parseAppSettings } from "../src/app-settings.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { CHROMIUM_MEMORY_SAVER_RENDERER_LIMIT, Launcher } from "../src/launcher.ts";
+import { ProfileStore } from "../src/store.ts";
 
 const base = () => ({ ...defaultAppSettings(), network: { checkLocalProxyBeforeLaunch: false } as Record<string, unknown> });
 

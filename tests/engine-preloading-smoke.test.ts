@@ -4,15 +4,15 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { availableParallelism } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ALIASMODE_CHROMIUM_ARCHIVE_SHA256, ALIASMODE_CHROMIUM_EXECUTABLE_SHA256 } from "../aliasmode-chromium.ts";
-import { AppSettingsStore } from "../app-settings.ts";
-import { sha256File } from "../browser-install.ts";
-import { CHROMIUM_PRELOADING_RECORD } from "../chromium-preloading-preferences.ts";
-import { createFingerprintSource } from "../fingerprint-source.ts";
-import { Launcher } from "../launcher.ts";
-import { createLocalProxyPreflight } from "../local-proxy-preflight.ts";
-import { ProfileStore } from "../store.ts";
-import type { Profile } from "../types.ts";
+import { ALIASMODE_CHROMIUM_ARCHIVE_SHA256, ALIASMODE_CHROMIUM_EXECUTABLE_SHA256 } from "../src/aliasmode-chromium.ts";
+import { AppSettingsStore } from "../src/app-settings.ts";
+import { sha256File } from "../src/browser-install.ts";
+import { CHROMIUM_PRELOADING_RECORD } from "../src/chromium-preloading-preferences.ts";
+import { createFingerprintSource } from "../src/fingerprint-source.ts";
+import { Launcher } from "../src/launcher.ts";
+import { createLocalProxyPreflight } from "../src/local-proxy-preflight.ts";
+import { ProfileStore } from "../src/store.ts";
+import type { Profile } from "../src/types.ts";
 import { ENGINE_QA_HOST, ENGINE_QA_PASS, ENGINE_QA_USER, engineQaOrigin, engineQaProxy } from "../test-fixtures/engine-smoke-proxy.ts";
 
 const run = process.env.MAOBU_ENGINE_QA === "1" && process.platform === "win32" ? test : test.skip;

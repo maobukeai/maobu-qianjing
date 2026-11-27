@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { WorkspaceBusyError, WorkspaceMaintenance, workspaceRequestMutates } from "../workspace-maintenance.ts";
+import { WorkspaceBusyError, WorkspaceMaintenance, workspaceRequestMutates } from "../src/workspace-maintenance.ts";
 
 test("maintenance waits for admitted changes and blocks new writers until release", async () => {
   const gate = new WorkspaceMaintenance();

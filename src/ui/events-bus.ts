@@ -1,7 +1,7 @@
-import type { Launcher } from "../../launcher.ts";
-import type { ProfileStore, StoreMutationEvent } from "../../store.ts";
-import type { RuntimeDownload } from "../../runtime-download.ts";
-import type { ScriptRun } from "../../scripts.ts";
+import type { Launcher } from "../launcher.ts";
+import type { ProfileStore, StoreMutationEvent } from "../store.ts";
+import type { RuntimeDownload } from "../runtime-download.ts";
+import type { ScriptRun } from "../scripts.ts";
 
 export type UiEventType =
   | "connected"

@@ -1,5 +1,5 @@
-import type { Launcher } from "../../launcher.ts";
-import { isSafeProfileId, PROFILE_ID_ERROR } from "../../profile-id.ts";
+import type { Launcher } from "../launcher.ts";
+import { isSafeProfileId, PROFILE_ID_ERROR } from "../profile-id.ts";
 import {
   createProfilePackage,
   isValidConflictStrategy,
@@ -11,11 +11,11 @@ import {
   ProfilePackagePreviewStore,
   sealProfilePackage,
   validatePackagePassword,
-} from "../../profile-package.ts";
-import { recordProfileEvent } from "../../profile-timeline.ts";
-import type { ProfileStore } from "../../store.ts";
-import type { Profile } from "../../types.ts";
-import { WorkspaceBusyError } from "../../workspace-maintenance.ts";
+} from "../profile-package.ts";
+import { recordProfileEvent } from "../profile-timeline.ts";
+import type { ProfileStore } from "../store.ts";
+import type { Profile } from "../types.ts";
+import { WorkspaceBusyError } from "../workspace-maintenance.ts";
 import {
   msg,
   noStoreJson,

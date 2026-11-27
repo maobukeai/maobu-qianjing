@@ -12,9 +12,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { FIREFOX_RUNTIME_VERSION, firefoxBuildForHost, installFirefox } from "../firefox-install.ts";
-import { installSourceNode } from "../source-runtime.ts";
-import { ALIASMODE_VERSION } from "../version.ts";
+import { FIREFOX_RUNTIME_VERSION, firefoxBuildForHost, installFirefox } from "../src/firefox-install.ts";
+import { installSourceNode } from "../src/source-runtime.ts";
+import { ALIASMODE_VERSION } from "../src/version.ts";
 import { compileSidecar, stageAgentRuntime } from "./prepare-windows-bundle.ts";
 
 const BUN_TARGET = "bun-linux-x64-baseline";

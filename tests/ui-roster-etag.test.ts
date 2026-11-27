@@ -4,10 +4,10 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ProfileStore } from "../store.ts";
-import { buildNewProfile } from "../create.ts";
-import { handleUiRequest, listUiProfiles } from "../ui.ts";
-import { serveDashboard } from "../web.ts";
+import { ProfileStore } from "../src/store.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { handleUiRequest, listUiProfiles } from "../src/ui.ts";
+import { serveDashboard } from "../src/web.ts";
 import { rosterBenchmarkData } from "../test-fixtures/roster-benchmark-data.ts";
 import type { UiRosterTags } from "../src/ui/shared.ts";
 

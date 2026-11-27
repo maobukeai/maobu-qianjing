@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { renameWithWindowsRetry, renameWithWindowsRetrySync } from "../windows-rename.ts";
+import { renameWithWindowsRetry, renameWithWindowsRetrySync } from "../src/windows-rename.ts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });

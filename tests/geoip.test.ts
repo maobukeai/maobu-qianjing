@@ -1,5 +1,5 @@
 import { test, expect, spyOn } from "bun:test";
-import { lookupExitLocation, lookupExitTimezone, attachTimezones, lookupProxyExitLocation } from "../geoip.ts";
+import { lookupExitLocation, lookupExitTimezone, attachTimezones, lookupProxyExitLocation } from "../src/geoip.ts";
 
 const GEOJS = "https://get.geojs.io/v1/ip/geo.json";
 const IP_API = "https://ipinfo.io/json";

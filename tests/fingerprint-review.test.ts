@@ -1,9 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
-import { buildNewProfile } from "../create.ts";
-import { reviewRunningFingerprint } from "../fingerprint-review.ts";
-import { ProfileStore } from "../store.ts";
-import type { FingerprintSample } from "../diagnose.ts";
-import { launchPersona } from "../launcher.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { reviewRunningFingerprint } from "../src/fingerprint-review.ts";
+import { ProfileStore } from "../src/store.ts";
+import type { FingerprintSample } from "../src/diagnose.ts";
+import { launchPersona } from "../src/launcher.ts";
 
 const stores: ProfileStore[] = [];
 afterEach(() => { for (const store of stores.splice(0)) store.close(); });

@@ -1,10 +1,10 @@
 import { test, expect } from "bun:test";
-import { ProfileStore } from "../store.ts";
-import { BrowserLaunchError, Launcher, type SpawnFn, type FetchFn, type CookieEnsurer } from "../launcher.ts";
-import { handleRequest, isLoopbackAddress, rejectUntrustedLocalRequest } from "../server.ts";
-import { LifecycleAdmissionController, dispatchWithLifecycleAdmission, } from "../lifecycle-admission.ts";
-import { parseExport } from "../parse.ts";
-import { handleUiRequest } from "../ui.ts";
+import { ProfileStore } from "../src/store.ts";
+import { BrowserLaunchError, Launcher, type SpawnFn, type FetchFn, type CookieEnsurer } from "../src/launcher.ts";
+import { handleRequest, isLoopbackAddress, rejectUntrustedLocalRequest } from "../src/server.ts";
+import { LifecycleAdmissionController, dispatchWithLifecycleAdmission, } from "../src/lifecycle-admission.ts";
+import { parseExport } from "../src/parse.ts";
+import { handleUiRequest } from "../src/ui.ts";
 const SAMPLE = `id=k1d0cd11
 name=acct
 group=g

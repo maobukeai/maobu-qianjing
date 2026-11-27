@@ -1,5 +1,5 @@
-import type { AssistantModel } from "../local-assistant.ts";
-import type { AssistantServiceProvider, AssistantServiceView, AssistantServicesCatalog } from "../assistant-model-services.ts";
+import type { AssistantModel } from "../src/local-assistant.ts";
+import type { AssistantServiceProvider, AssistantServiceView, AssistantServicesCatalog } from "../src/assistant-model-services.ts";
 import { notifyAppLockedFromResponse, notifyUnauthorizedResponse, withStandaloneAuthHeaders } from "./api.ts";
 import { AssistantRequestError } from "./local-assistant-api.ts";
 

@@ -7,7 +7,7 @@ import { createProxyAssignmentTask, type ProxyAssignmentAttempt, type ProxyAssig
 import { LocalProxyAssignmentDraft, localProxyAssignmentEndpoint, type LocalProxyAssignmentIntent, type LocalProxyAssignmentProfile } from "./local-proxy-assignment-draft.tsx";
 import { useOptionalWorkspaceOperations, workspaceOperationMessage, type WorkspaceOperationLease } from "./workspace-operations.tsx";
 import { useDesktopCloseDraft } from "./desktop-close.tsx";
-import { folderScope, type FolderInfo } from "../folders.ts";
+import { folderScope, type FolderInfo } from "../src/folders.ts";
 import { analyzeProxyList, matchingProxyChecks, proxyCheckOverview, proxyRosterSignature, proxyScopeOverview, type ProxyScopeProfile } from "./proxy-workflow.ts";
 import { ProxyVaultPanel, ProxyVaultPickerModal } from "./proxy-vault-panel.tsx";
 import { AppIcon } from "./ui-primitives.tsx";
@@ -20,7 +20,7 @@ import type {
   ProxyReplacementView,
   ProxyScope,
   SingleProxyPreviewInput,
-} from "../proxy-tools-types.ts";
+} from "../src/proxy-tools-types.ts";
 
 export class ProxyToolsError extends Error {}
 

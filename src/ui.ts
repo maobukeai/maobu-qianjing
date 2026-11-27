@@ -15,17 +15,17 @@ import type { ProfileStore } from "./store.ts";
 import { createProxyVaultLookup } from "./assistant-proposals.ts";
 import { handleFeatureSettingsRequest } from "./feature-settings.ts";
 import { API_SECURITY_HEADERS } from "./server.ts";
-import { handleAppLockRoutes } from "./src/ui/app-lock-routes.ts";
-import { handleAssistantProposalRoutes, type AssistantProposalRouteOptions } from "./src/ui/assistant-proposals-routes.ts";
-import { handleDiagnosticsRoutes, type DiagnosticsRouteOptions } from "./src/ui/diagnostics-routes.ts";
-import { handleEventsUiRoutes } from "./src/ui/events-routes.ts";
-import { handleGroupsAndExtensionsUiRoutes } from "./src/ui/groups-extensions-routes.ts";
-import { handleMetricsAndWindowsRoutes } from "./src/ui/metrics-windows-routes.ts";
-import { handleProfilePackageRoutes } from "./src/ui/profile-package-routes.ts";
-import { handleProfileTimelineRoutes } from "./src/ui/profile-timeline-routes.ts";
-import { handleProfilesUiRoutes } from "./src/ui/profiles-routes.ts";
-import { handleProxyVaultRoutes, type ProxyVaultRouteOptions } from "./src/ui/proxy-vault-routes.ts";
-import { handleScriptsUiRoutes } from "./src/ui/scripts-routes.ts";
+import { handleAppLockRoutes } from "./ui/app-lock-routes.ts";
+import { handleAssistantProposalRoutes, type AssistantProposalRouteOptions } from "./ui/assistant-proposals-routes.ts";
+import { handleDiagnosticsRoutes, type DiagnosticsRouteOptions } from "./ui/diagnostics-routes.ts";
+import { handleEventsUiRoutes } from "./ui/events-routes.ts";
+import { handleGroupsAndExtensionsUiRoutes } from "./ui/groups-extensions-routes.ts";
+import { handleMetricsAndWindowsRoutes } from "./ui/metrics-windows-routes.ts";
+import { handleProfilePackageRoutes } from "./ui/profile-package-routes.ts";
+import { handleProfileTimelineRoutes } from "./ui/profile-timeline-routes.ts";
+import { handleProfilesUiRoutes } from "./ui/profiles-routes.ts";
+import { handleProxyVaultRoutes, type ProxyVaultRouteOptions } from "./ui/proxy-vault-routes.ts";
+import { handleScriptsUiRoutes } from "./ui/scripts-routes.ts";
 import {
   listUiProfiles,
   LOW_DISK_SPACE_BYTES,
@@ -36,8 +36,8 @@ import {
   type UiHealthMetadata,
   type UiProfile,
   type UiRuntimeOptions,
-} from "./src/ui/shared.ts";
-import { handleSystemUiRoutes } from "./src/ui/system-routes.ts";
+} from "./ui/shared.ts";
+import { handleSystemUiRoutes } from "./ui/system-routes.ts";
 
 export {
   listUiProfiles,

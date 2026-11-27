@@ -1,8 +1,8 @@
 import { test, expect } from "bun:test";
-import { ProfileStore } from "../store.ts";
-import type { Launcher } from "../launcher.ts";
-import { parseExport } from "../parse.ts";
-import { handleUserApi } from "../adspower-users.ts";
+import { ProfileStore } from "../src/store.ts";
+import type { Launcher } from "../src/launcher.ts";
+import { parseExport } from "../src/parse.ts";
+import { handleUserApi } from "../src/adspower-users.ts";
 const SAMPLE = `id=k1d0cd11
 name=acct
 group=g

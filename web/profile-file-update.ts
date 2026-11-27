@@ -1,4 +1,4 @@
-import { isSafeProfileId } from "../profile-id.ts";
+import { isSafeProfileId } from "../src/profile-id.ts";
 
 export type ProfileFileUpdateFormat = "csv" | "txt" | "xlsx";
 export type ProfileFileUpdateReason = "file-format" | "identifier" | "proxy" | "screen" | "language" | "serial" | "validation";

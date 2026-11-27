@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { buildFingerprintImportComparison } from "../fingerprint-import-comparison.ts";
+import { buildFingerprintImportComparison } from "../src/fingerprint-import-comparison.ts";
 import { FingerprintImportBadge } from "../web/fingerprint-import-badge.tsx";
 import { I18nProvider, translate } from "../web/i18n.tsx";
 import { catalogs } from "../web/locales/registry.ts";

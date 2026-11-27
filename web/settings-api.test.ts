@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
 import * as api from "./settings-api.ts";
-import { defaultAppSettings } from "../app-settings.ts";
+import { defaultAppSettings } from "../src/app-settings.ts";
 import { getIntegrationInfo } from "../agent/integration-info.ts";
-import type { LocalProxyDiscoveryReport } from "../network-diagnostics.ts";
+import type { LocalProxyDiscoveryReport } from "../src/network-diagnostics.ts";
 
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });

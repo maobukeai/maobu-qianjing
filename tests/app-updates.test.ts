@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { AppUpdateService, compareAppVersions } from "../app-updates.ts";
+import { AppUpdateService, compareAppVersions } from "../src/app-updates.ts";
 const settings = { repository: "maobu/browser", channel: "stable" as const, checkOnStartup: false };
 function released(tag: string, extra: Record<string, unknown> = {}) { return { tag_name: tag, name: `Release ${tag}`, draft: false, prerelease: false, body: "Changes", published_at: "2026-11-08T12:00:00Z", assets: [], ...extra }; }
 function service(payload: unknown, options: Record<string, unknown> = {}) { return new AppUpdateService({ fetch: (async () => Response.json(payload)) as unknown as typeof fetch, currentVersion: "1.0.0", ...options }); }

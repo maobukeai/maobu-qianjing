@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { MAX_PROFILE_TAGS_JSON_BYTES, normalizeProfileTags, profileTagsUpdate, ProfileTagsValidationError } from "../profile-tags.ts";
+import { MAX_PROFILE_TAGS_JSON_BYTES, normalizeProfileTags, profileTagsUpdate, ProfileTagsValidationError } from "../src/profile-tags.ts";
 
 test("tag normalization accepts legacy text and exact arrays, deduplicates and permits explicit clearing", () => {
   expect(normalizeProfileTags(" Warmup, warmup，中文\nCafe\u0301, Café ")).toEqual(["Warmup", "中文", "Café"]);

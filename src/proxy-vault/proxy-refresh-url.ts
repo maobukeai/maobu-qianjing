@@ -19,8 +19,8 @@ import type { LookupAddress } from "node:dns";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { createConnection, isIP, type Socket } from "node:net";
 import { connect as tlsConnect, type ConnectionOptions as TlsConnectionOptions, type TLSSocket } from "node:tls";
-import { EgressResponseError, readHttp } from "../../egress-transport.ts";
-import { canonicalIp } from "../../ip.ts";
+import { EgressResponseError, readHttp } from "../egress-transport.ts";
+import { canonicalIp } from "../ip.ts";
 
 export const REFRESH_URL_MAX_LENGTH = 2048;
 export const REFRESH_URL_MAX_REDIRECTS = 2;

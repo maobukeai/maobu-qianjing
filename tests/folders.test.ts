@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { folderGrantPermission, folderScope, folderTree } from "../folders.ts";
+import { folderGrantPermission, folderScope, folderTree } from "../src/folders.ts";
 
 const folders = [
   { name: "Facebook/Fitness", parentName: "Facebook", label: "Fitness" },

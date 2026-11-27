@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ScriptArtifactRecord } from "../contracts/local.ts";
-import type { ScriptRun, ScriptRunProfile } from "../scripts.ts";
+import type { ScriptRun, ScriptRunProfile } from "../src/scripts.ts";
 import { MotionPresence } from "./desktop-motion.tsx";
 import { useTranslation } from "./i18n.tsx";
 import { fetchScriptArtifactBlob, fetchScriptRuns, stopScriptRunById } from "./rpa-api.ts";

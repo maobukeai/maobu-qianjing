@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { act, useState } from "react";
 import type { HTMLButtonElement, HTMLSelectElement, HTMLElement } from "happy-dom";
-import type { ScriptRun } from "../scripts.ts";
+import type { ScriptRun } from "../src/scripts.ts";
 import type { UiProfile } from "../web/api.ts";
 import { BackgroundScriptRunButton, backgroundScriptRuns } from "../web/background-script-run.tsx";
 import { ScriptRunPanel } from "../web/scripts.tsx";

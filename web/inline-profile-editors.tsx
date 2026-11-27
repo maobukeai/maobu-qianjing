@@ -3,7 +3,7 @@ import {
   MAX_PROFILE_NOTES_CHARACTERS,
   normalizeProfileNotes,
   ProfileNotesValidationError,
-} from "../profile-notes.ts";
+} from "../src/profile-notes.ts";
 import { updateProfile } from "./api.ts";
 import { useTranslation } from "./i18n.tsx";
 import { AppIcon, ModalDialog } from "./ui-primitives.tsx";

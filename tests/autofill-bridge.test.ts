@@ -2,11 +2,11 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AutofillBridge, AutofillTypingError, autofillSitePatterns, keystrokes, matchesAutofillSite, typeIntoPage } from "../autofill-bridge.ts";
-import { AUTOFILL_BACKGROUND, autofillExtensionDir } from "../autofill-extension.ts";
-import { ProfileStore } from "../store.ts";
-import { generateTotp } from "../totp.ts";
-import type { LaunchInfo, Profile } from "../types.ts";
+import { AutofillBridge, AutofillTypingError, autofillSitePatterns, keystrokes, matchesAutofillSite, typeIntoPage } from "../src/autofill-bridge.ts";
+import { AUTOFILL_BACKGROUND, autofillExtensionDir } from "../src/autofill-extension.ts";
+import { ProfileStore } from "../src/store.ts";
+import { generateTotp } from "../src/totp.ts";
+import type { LaunchInfo, Profile } from "../src/types.ts";
 
 const roots: string[] = [];
 const stores: ProfileStore[] = [];

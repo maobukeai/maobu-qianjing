@@ -4,18 +4,18 @@ import {
   AssistantProposalRegistry,
   createProxyVaultLookup,
   type ProposalStreamEvent,
-} from "../assistant-proposals.ts";
-import { buildNewProfile } from "../create.ts";
-import { handleFeatureSettingsRequest } from "../feature-settings.ts";
-import { LocalAssistantService } from "../local-assistant.ts";
+} from "../src/assistant-proposals.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { handleFeatureSettingsRequest } from "../src/feature-settings.ts";
+import { LocalAssistantService } from "../src/local-assistant.ts";
 import { ProxyVaultStore } from "../src/proxy-vault/proxy-vault-store.ts";
 import {
   handleAssistantProposalRoutes,
   type AssistantProposalRouteOptions,
 } from "../src/ui/assistant-proposals-routes.ts";
-import { ProfileStore } from "../store.ts";
-import type { Profile } from "../types.ts";
-import { WorkspaceBusyError } from "../workspace-maintenance.ts";
+import { ProfileStore } from "../src/store.ts";
+import type { Profile } from "../src/types.ts";
+import { WorkspaceBusyError } from "../src/workspace-maintenance.ts";
 
 const stores: ProfileStore[] = [];
 afterEach(() => {

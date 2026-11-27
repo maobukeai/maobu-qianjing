@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { proxyIdentityKey } from "../proxy.ts";
-import { buildProxyPreview, checkProfileProxies, selectProxyProfiles, type ProxyInventoryProfile } from "../proxy-bulk.ts";
-import type { ProxyProgressEvent } from "../proxy-tools-types.ts";
+import { proxyIdentityKey } from "../src/proxy.ts";
+import { buildProxyPreview, checkProfileProxies, selectProxyProfiles, type ProxyInventoryProfile } from "../src/proxy-bulk.ts";
+import type { ProxyProgressEvent } from "../src/proxy-tools-types.ts";
 
 const proxy = { type: "http" as const, host: "proxy.example", port: "8080", user: "account", pass: "private-value" };
 function profile(id: string, group = "one", overrides: Partial<ProxyInventoryProfile> = {}): ProxyInventoryProfile {

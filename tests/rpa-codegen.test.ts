@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { RpaRecordedStep } from "../contracts/local.ts";
-import { generateRpaScript } from "../rpa-codegen.ts";
+import { generateRpaScript } from "../src/rpa-codegen.ts";
 
 const sampleSteps: RpaRecordedStep[] = [
   { id: "step-1", index: 1, kind: "goto", timestamp: 1000, url: "https://example.com/login" },

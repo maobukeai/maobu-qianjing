@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { isSafeProfileId, MAX_PROFILE_ID_LENGTH } from "../profile-id.ts";
+import { isSafeProfileId, MAX_PROFILE_ID_LENGTH } from "../src/profile-id.ts";
 
 test("profile ids accept AdsPower/UUID forms (incl. mixed case) and reject filesystem aliases", () => {
   expect(isSafeProfileId("k1d0cd11")).toBe(true);

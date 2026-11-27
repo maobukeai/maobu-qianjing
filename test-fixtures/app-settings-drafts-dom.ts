@@ -6,8 +6,8 @@ import type { HTMLElement, HTMLButtonElement, HTMLInputElement, HTMLTextAreaElem
 import type { WorkspaceOperationCoordinator } from "../web/workspace-operations.tsx";
 import type { AppLockStatus } from "../web/app-lock-api.ts";
 import type { DesktopCloseRegistry } from "../web/desktop-close-state.ts";
-import type { RuntimeDownload } from "../runtime-download.ts";
-import { getBrowserRuntimeInventory } from "../runtime-inventory.ts";
+import type { RuntimeDownload } from "../src/runtime-download.ts";
+import { getBrowserRuntimeInventory } from "../src/runtime-inventory.ts";
 import { createWebDomHarness } from "./web-dom.ts";
 import { activityTrigger, viewActivityTask } from "./activity-interaction.ts";
 

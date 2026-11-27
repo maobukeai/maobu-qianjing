@@ -3,7 +3,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { ALIASMODE_VERSION } from "../version.ts";
+import { ALIASMODE_VERSION } from "../src/version.ts";
 import { getIntegrationInfo, type IntegrationInfo } from "./integration-info.ts";
 import { probeMcpIntegration } from "./integration-probe.ts";
 import { READ_ONLY_MCP_TOOLS } from "./mcp-scope.mjs";

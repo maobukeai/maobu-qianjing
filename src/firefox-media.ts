@@ -6,9 +6,9 @@
  * voice downloads, and the sound cards, headsets, displays and cameras common on each system.
  * The macOS lists (mac-voices.json) are what stock Firefox 156.0.1 itself lists on stock macOS.
  */
-import voiceManifests from "./firefox-data/voice-manifests.json";
-import macVoiceLists from "./firefox-data/mac-voices.json";
-import mediaCatalogue from "./firefox-data/media-devices.json";
+import voiceManifests from "../firefox-data/voice-manifests.json";
+import macVoiceLists from "../firefox-data/mac-voices.json";
+import mediaCatalogue from "../firefox-data/media-devices.json";
 import { seedFraction } from "./fingerprint.ts";
 import type { JsonValue } from "./types.ts";
 

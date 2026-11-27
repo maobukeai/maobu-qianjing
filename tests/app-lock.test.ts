@@ -12,7 +12,7 @@ import {
   cooldownMsForFailureCount,
   isPathAllowedWhileLocked,
   lockedResponse,
-} from "../app-lock.ts";
+} from "../src/app-lock.ts";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {

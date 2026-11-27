@@ -2,11 +2,11 @@ import { test, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { ProfileStore } from "../store.ts";
-import { importBuffers as rawImportBuffers, importInbox as rawImportInbox, prepareImportBuffers as rawPrepareImportBuffers } from "../inbox.ts";
-import { parseExport, serializeAdsTxt, serializeXlsxRows } from "../parse.ts";
-import { buildNewProfile } from "../create.ts";
-import { writeXlsx } from "../xlsx.ts";
+import { ProfileStore } from "../src/store.ts";
+import { importBuffers as rawImportBuffers, importInbox as rawImportInbox, prepareImportBuffers as rawPrepareImportBuffers } from "../src/inbox.ts";
+import { parseExport, serializeAdsTxt, serializeXlsxRows } from "../src/parse.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { writeXlsx } from "../src/xlsx.ts";
 
 // Imports look up proxy timezones; answer them locally so tests stay offline.
 const offlineTimezone = async () => Response.json({ status: "fail" });

@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { createServer as createHttpsServer } from "node:https";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { lookupExitLocation } from "../geoip.ts";
+import { lookupExitLocation } from "../src/geoip.ts";
 import { createConnectProxy } from "../test-fixtures/connect-proxy.ts";
 
 const gateway = (port: number) => ({ type: "http" as const, host: "127.0.0.1", port: String(port), user: "", pass: "" });

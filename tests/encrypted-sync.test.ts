@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
-import { buildNewProfile } from "../create.ts";
-import { createSyncSnapshot, listSyncSnapshots, openSyncSnapshot, previewSyncSnapshot, readSyncSnapshot, sealSyncSnapshot, validateSyncSnapshot, writeSyncSnapshot } from "../encrypted-sync.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { createSyncSnapshot, listSyncSnapshots, openSyncSnapshot, previewSyncSnapshot, readSyncSnapshot, sealSyncSnapshot, validateSyncSnapshot, writeSyncSnapshot } from "../src/encrypted-sync.ts";
 
 const roots: string[] = [];
 const fixtureParent = resolve(import.meta.dir, "..", "node_modules", ".cache", "sync-tests");

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { createServer as createTlsServer, type Server as TlsServer } from "node:tls";
-import { ProfileStore } from "../../store.ts";
+import { ProfileStore } from "../store.ts";
 import {
   checkVaultProxiesBatch,
   checkVaultProxy,

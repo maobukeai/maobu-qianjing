@@ -4,7 +4,7 @@ import type { HTMLElement, HTMLButtonElement, HTMLInputElement } from "happy-dom
 import { TrashPage } from "../web/trash.tsx";
 import { I18nProvider } from "../web/i18n.tsx";
 import { createWorkspaceOperationCoordinator, WorkspaceOperationsProvider } from "../web/workspace-operations.tsx";
-import type { TrashProfileView } from "../proxy-tools-types.ts";
+import type { TrashProfileView } from "../src/proxy-tools-types.ts";
 import type { TrashTaskSnapshot } from "../web/trash-task.ts";
 import { createWebDomHarness } from "./web-dom.ts";
 

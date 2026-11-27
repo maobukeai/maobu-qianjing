@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 export const PLAYWRIGHT_PROTOCOL_VERSION = 1;
 export const PLAYWRIGHT_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
@@ -135,7 +135,7 @@ export function resolvePlaywrightRuntime(
       workerPath: join(packagedRoot, "worker.mjs"),
     };
   }
-  const root = options.sourceRoot ?? import.meta.dir;
+  const root = options.sourceRoot ?? resolve(import.meta.dir, "..");
   return {
     kind: "source",
     root,

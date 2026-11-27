@@ -4,7 +4,7 @@ import type {
   ProfileEventType,
   ProfileRecoveryKind,
   ProfileTimelineEvent,
-} from "../profile-timeline.ts";
+} from "../src/profile-timeline.ts";
 import { getStandaloneSessionToken, notifyAppLockedFromResponse, notifyUnauthorizedResponse, type ProxyCheckResult } from "./api.ts";
 import { useTranslation } from "./i18n.tsx";
 import { AppIcon, ConfirmDialog } from "./ui-primitives.tsx";

@@ -1,13 +1,13 @@
 import { test, expect } from "bun:test";
-import { assessFingerprintQuality } from "../fingerprint-quality.ts";
-import type { Profile } from "../types.ts";
-import { createFingerprintSource } from "../fingerprint-source.ts";
-import { firefoxLaunchConfig, firefoxLaunchHardwareConcurrency } from "../firefox-config.ts";
-import { buildNewProfile } from "../create.ts";
-import { deriveFingerprintFlags } from "../fingerprint.ts";
-import type { Launcher } from "../launcher.ts";
-import { ProfileStore } from "../store.ts";
-import { handleUiRequest } from "../ui.ts";
+import { assessFingerprintQuality } from "../src/fingerprint-quality.ts";
+import type { Profile } from "../src/types.ts";
+import { createFingerprintSource } from "../src/fingerprint-source.ts";
+import { firefoxLaunchConfig, firefoxLaunchHardwareConcurrency } from "../src/firefox-config.ts";
+import { buildNewProfile } from "../src/create.ts";
+import { deriveFingerprintFlags } from "../src/fingerprint.ts";
+import type { Launcher } from "../src/launcher.ts";
+import { ProfileStore } from "../src/store.ts";
+import { handleUiRequest } from "../src/ui.ts";
 
 const now = Date.parse("2026-11-09T10:00:00Z");
 function profile(overrides: Partial<Profile> = {}): Profile {

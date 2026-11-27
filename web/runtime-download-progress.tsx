@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { RuntimeDownload } from "../runtime-download.ts";
+import type { RuntimeDownload } from "../src/runtime-download.ts";
 import { useTranslation } from "./i18n.tsx";
 import { AppIcon } from "./ui-primitives.tsx";
 import "./runtime-download-progress.css";

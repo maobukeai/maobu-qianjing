@@ -1,6 +1,6 @@
 import { statSync } from "node:fs";
 import { posix, win32 } from "node:path";
-import { ALIASMODE_VERSION } from "../version.ts";
+import { ALIASMODE_VERSION } from "../src/version.ts";
 import { READ_ONLY_MCP_ARGS } from "./mcp-scope.mjs";
 import catalog from "../docs/public/mcp-tools/current-source.json";
 

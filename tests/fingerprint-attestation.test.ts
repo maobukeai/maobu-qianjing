@@ -6,8 +6,8 @@ import {
   compareAttestation,
   captureAttestationVerdict,
   FP_BLOCK_KEYS,
-} from "../fingerprint-attestation.ts";
-import type { ObservedFingerprint } from "../types.ts";
+} from "../src/fingerprint-attestation.ts";
+import type { ObservedFingerprint } from "../src/types.ts";
 
 test("legacy non-scalars cannot stringify into exported fields or a capture verdict", () => {
   const legacy = { canvas: { toString: 0, valueOf: 0, private: "PRIVATE_LEGACY_FIELD" }, screen: ["1920*1080"], audio: true } as unknown as ObservedFingerprint;

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { isGroupDisclosureValue, profileGroupCollapsed, profileGroupSections, readGroupDisclosure, serializeGroupDisclosure, toggleProfileSelection } from "../profile-group-state.ts";
+import { isGroupDisclosureValue, profileGroupCollapsed, profileGroupSections, readGroupDisclosure, serializeGroupDisclosure, toggleProfileSelection } from "../src/profile-group-state.ts";
 
 const profiles = Array.from({ length: 45 }, (_, index) => ({ id: `p-${index}`, group: index < 25 ? "Parent / A" : "B", running: index % 4 === 0 }));
 
