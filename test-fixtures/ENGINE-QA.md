@@ -18,7 +18,7 @@ Run all five cases in PowerShell after preparing the verified local resources:
 
 ```powershell
 $env:MAOBU_ENGINE_QA = "1"
-bun test engine-smoke.test.ts engine-firefox-smoke.test.ts engine-firefox-cap-smoke.test.ts --timeout 180000
+bun test tests/engine-smoke.test.ts tests/engine-firefox-smoke.test.ts tests/engine-firefox-cap-smoke.test.ts --timeout 180000
 ```
 
 If the sandbox's default temporary directory is unavailable, use the cache preload described in [development progress](../docs/development-progress.md). The startup and network checkpoint at `reports/engine-qa/startup-network-current-kernels.log` records **5 pass, 0 fail, 202 assertions, 47.51 seconds** on 2026-11-09, including twelve real startup preflights across the four proxy cases. Evidence is retained in each generated run directory; each transport case records `localProxyStartupChecks: 3`. The earlier `workflows-current-kernels.log` and `preflight-enabled-current-kernels.log` checkpoints had the same counts and completed in 44.76 and 35.61 seconds. The `combined-current-kernels.log` checkpoint had 198 assertions and predated this preflight integration. The cap regression's successful `run-firefox-cap-izo4Im/evidence.json` includes the effective counts and confirmed process shutdown. Earlier failed evidence is kept for comparison and is not a current passing result.
