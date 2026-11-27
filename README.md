@@ -1,10 +1,68 @@
-# 猫步·千境 · 本地版
+<div align="center">
 
-当前源码版本为 `3.0.0`。Windows x64 候选版面向封闭测试。已完成隔离原生窗口、打包服务和中文路径验收。生产签名、干净 Windows 上的安装与升级，以及真实模型服务仍需按发布环境验收。参见 [发布签名说明](docs/release-signing.md) 和 [开发迭代记录](docs/iterations/2026-11-09-eight-hour.md)。
+<img src="src-tauri/icons/icon.png" width="84" height="84" alt="猫步·千境 Logo" />
+
+<h1>猫步·千境 · 本地版</h1>
+
+<p><strong>纯本地、零云端依赖的 Windows 指纹浏览器桌面工作台（基于 Tauri 2 + Bun + React）</strong></p>
+
+[![Release](https://img.shields.io/github/v/release/maobukeai/maobu-qianjing?label=Release&color=5548d9)](https://github.com/maobukeai/maobu-qianjing/releases/latest)
+![Platform](https://img.shields.io/badge/Platform-Windows%20x64-0ea5e9)
+![License](https://img.shields.io/badge/License-Apache--2.0-16a34a)
+![Local First](https://img.shields.io/badge/Mode-100%25%20Local%20%C2%B7%20No%20Cloud-6d28d9)
+
+<p>
+  <a href="https://github.com/maobukeai/maobu-qianjing/releases/latest">下载最新版</a> ·
+  <a href="#界面预览">界面预览</a> ·
+  <a href="#ai-工作台与快捷操作">核心功能</a> ·
+  <a href="#从源码构建">从源码构建</a> ·
+  <a href="#本地自动化">本地自动化</a>
+</p>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/workbench-dark.png" />
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/screenshots/workbench-light.png" />
+  <img src="docs/assets/screenshots/workbench-light.png" alt="猫步·千境 环境工作台主界面（自动适配 GitHub 浅色 / 深色主题）" width="100%" />
+</picture>
+
+</div>
+
+当前源码与官方签名发行版为 [`v3.1.0`](https://github.com/maobukeai/maobu-qianjing/releases/latest)，支持 Windows x64 安装包（NSIS）与内置 Ed25519 签名自动更新。已完成隔离原生窗口、打包服务、三档列表密度、智能桌面右键菜单、默认浏览器外链分流与中文路径验收。参见 [发布签名说明](docs/release-signing.md) 和 [开发迭代记录](docs/iterations/2026-11-09-eight-hour.md)。
 
 猫步·千境指纹浏览器是基于 AliasMode 修改的本地桌面应用，打开后直接管理本机环境，无需原作者账号。保留环境导入导出、分组、代理、会话保存、本地脚本、AdsPower 兼容 API 和本机 MCP；新增本地 AI 工作台、命令面板，以及网络、指纹、AI/MCP、同步与更新设置。
 
 首次使用可先新建一个测试环境，在「设置 → 网络与代理」核对本机代理，再到「指纹质量」看配置和采样证据。要迁移到另一台电脑，使用「同步与迁移」创建加密快照；要恢复浏览器存储、扩展和脚本，使用「工作区管理」的完整备份。`Ctrl` / `⌘` + `K` 可以直接搜索这些入口。
+
+## 界面预览
+
+> 主界面随 GitHub 外观自动切换浅色 / 深色截图，下方展示重点场景功能界面（均为隔离演示数据）：
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/assets/screenshots/ai-workbench.png" alt="AI 工作台与内联模型切换" width="100%" />
+      <br />
+      <strong>AI 工作台 · Markdown 富文本与内联模型切换</strong>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/assets/screenshots/start-page.png" alt="本地零流量启动页与指纹体检" width="100%" />
+      <br />
+      <strong>零流量启动页 · 实时指纹自检与中文检测入口</strong>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/assets/screenshots/network-settings.png" alt="设置中心网络与性能策略" width="100%" />
+      <br />
+      <strong>网络与性能策略 · 预加载 / 内存节省与代理前检</strong>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/assets/screenshots/context-menu-light.png" alt="全局桌面智能右键菜单" width="100%" />
+      <br />
+      <strong>智能右键菜单 · 按环境行、多选与工作区上下文切换</strong>
+    </td>
+  </tr>
+</table>
 
 ## 已移除的功能
 
@@ -50,7 +108,7 @@ AI 工作台支持本机 Ollama、OpenAI 兼容 API、Anthropic 和 Gemini。右
 
 在设置中心填写自己维护或信任的 GitHub `owner/repository`，可手动查询公开 Releases，或启用启动时查询列表。稳定通道忽略预发布版本；测试通道按语义版本比较稳定版和预发布版。应用展示版本、发行说明和官方发布页面，版本检查接口同时提供资产可用的 SHA-256。默认仓库为空，避免把原作者软件作为本地版的升级来源。
 
-发布者可按 [自有签名更新文档](docs/release-signing.md) 在构建时固定公钥和 HTTPS 清单端点。此类构建可单独开启启动时检查，发现版本后在应用内提醒；用户从更新页选择安装时，官方 Tauri updater 验签，应用保存并关闭会话后才启动安装器。普通构建未配置发布者时，签名通道不可用。设置里的 GitHub 仓库不能改变安装信任。源码提供签名构建、离线验签和手动触发的草稿发布工作流，本仓库尚未实际发布签名更新。
+发布者可按 [自有签名更新文档](docs/release-signing.md) 在构建时固定公钥和 HTTPS 清单端点。此类构建可单独开启启动时检查，发现版本后在应用内提醒；用户从更新页选择安装时，官方 Tauri updater 验签，应用保存并关闭会话后才启动安装器。普通未配置发布者公钥的本地源码构建不启用该签名通道；GitHub 公开签名版本（如 [`v3.1.0`](https://github.com/maobukeai/maobu-qianjing/releases/latest)）与 `latest.json` 更新清单已通过 GitHub Releases 发布。
 
 同步采用用户选择的文件夹和手动加密快照：可以将文件夹交给 OneDrive、Syncthing、NAS 或其他文件同步工具传送，再在另一台电脑预览和导入。快照使用 AES-256-GCM 与 scrypt，包含环境配置、账户资料、Cookie 和最近一次已保存的便携会话；密码至少 10 个字符，每次操作输入，应用不会保存。错误密码或文件损坏会使解密失败。
 
